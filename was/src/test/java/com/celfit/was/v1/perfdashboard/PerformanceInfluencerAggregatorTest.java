@@ -1,0 +1,248 @@
+package com.celfit.was.v1.perfdashboard;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler.DashboardRef;
+import java.time.LocalDate;
+import java.util.List;
+import org.junit.jupiter.api.Test;
+
+/**
+ * 인플루언서 집계 순수 함수 검증(스펙 2026-08-27 §4) — handle 그룹핑·결측 규칙·대표 표시값을
+ * DB 없이 고정한다. 정렬·페이지네이션은 호출부 몫이라 여기서 검증하지 않는다.
+ */
+class PerformanceInfluencerAggregatorTest {
+
+	@Test
+	void 지표는_아는_값만_합산하고_하나도_모르면_null이다() {
+		// A: views=100·likes=10(공개)·comments=1 / B: 피드(views null)·likes 숨김·comments 2 / C: 스냅샷 없음
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", "2026-08-06", true, 100L, 10L, false, 1L),
+				ref("a", "2026-08-05", true, null, 999L, true, 2L),
+				ref("a", "2026-08-04", false, null, null, false, null)));
+
+		assertThat(rows).hasSize(1);
+		var row = rows.get(0);
+		assertThat(row.handle()).isEqualTo("a");
+		assertThat(row.postCount()).isEqualTo(3);          // 스냅샷 없어도 센다
+		assertThat(row.views()).isEqualTo(100L);           // 아는 값만
+		assertThat(row.likes()).isEqualTo(10L);            // 숨김 제외
+		assertThat(row.likesKnownCount()).isEqualTo(1);
+		assertThat(row.comments()).isEqualTo(3L);          // 1+2 (숨김은 likes만 영향)
+		assertThat(row.latestPostAt()).isEqualTo("2026-08-06");
+	}
+
+	@Test
+	void 지표를_하나도_모르면_0이_아니라_null이다() {
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", "2026-08-06", false, null, null, false, null),
+				ref("a", "2026-08-05", false, null, null, false, null)));
+
+		var row = rows.get(0);
+		assertThat(row.postCount()).isEqualTo(2);
+		assertThat(row.views()).isNull();
+		assertThat(row.likes()).isNull();
+		assertThat(row.comments()).isNull();
+		assertThat(row.likesKnownCount()).isZero();
+		assertThat(row.ratedFollowers()).isNull();
+		assertThat(row.ratedEngaged()).isNull();
+	}
+
+	@Test
+	void 스냅샷_없는_ref의_지표는_합산과_rated에서_제외된다() {
+		// 스냅샷 없는 행에 값이 실려 있어도(방어) 합산 대상이 아니다 — 규칙 4·5의 hasSnapshots 게이트.
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", "2026-08-06", true, 100L, 10L, false, 1L, 1000L),
+				ref("a", "2026-08-05", false, 999L, 999L, false, 999L, 999L)));
+
+		var row = rows.get(0);
+		assertThat(row.postCount()).isEqualTo(2);
+		assertThat(row.views()).isEqualTo(100L);
+		assertThat(row.likes()).isEqualTo(10L);
+		assertThat(row.comments()).isEqualTo(1L);
+		assertThat(row.likesKnownCount()).isEqualTo(1);
+		assertThat(row.ratedFollowers()).isEqualTo(1000L);
+		assertThat(row.ratedEngaged()).isEqualTo(11L);
+	}
+
+	@Test
+	void rated는_팔로워와_좋아요_댓글을_모두_아는_게시물만_게시물당_팔로워_1회로_합산한다() {
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", "2026-08-06", true, 100L, 10L, false, 1L, 1000L),   // 적격
+				ref("a", "2026-08-05", true, 200L, 20L, false, 2L, 1000L),   // 적격
+				ref("a", "2026-08-04", true, 300L, 30L, false, 3L, null),    // 팔로워 미상
+				ref("a", "2026-08-03", true, 400L, 40L, true, 4L, 1000L),    // 좋아요 숨김
+				ref("a", "2026-08-02", true, 500L, 50L, false, null, 1000L)));	// 댓글 미상
+
+		var row = rows.get(0);
+		assertThat(row.ratedFollowers()).isEqualTo(2000L);            // 게시물당 1회씩
+		assertThat(row.ratedEngaged()).isEqualTo(33L);                // (10+1)+(20+2)
+		assertThat(row.likesKnownCount()).isEqualTo(4);               // 숨김 1건만 빠진다
+		assertThat(row.likes()).isEqualTo(110L);                      // 10+20+30+50
+		assertThat(row.comments()).isEqualTo(10L);                    // 1+2+3+4
+	}
+
+	@Test
+	void 좋아요만_미상인_ref는_likesKnownCount에서_빠진다() {
+		// 스냅샷은 있는데 likes만 미상인 조합(상류 refOf/refOfPoolRow에서 실제 발생) —
+		// 숨김이 아니어도 아는 행이 아니라서 likes 합계·rated 대상에서 빠진다.
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", "2026-08-06", true, 100L, 10L, false, 1L, 1000L),
+				ref("a", "2026-08-05", true, 200L, null, false, 2L, 1000L)));
+
+		var row = rows.get(0);
+		assertThat(row.likesKnownCount()).isEqualTo(1);
+		assertThat(row.likes()).isEqualTo(10L);
+		assertThat(row.views()).isEqualTo(300L);      // views·comments는 likes 미상과 무관
+		assertThat(row.comments()).isEqualTo(3L);
+		assertThat(row.ratedFollowers()).isEqualTo(1000L);
+		assertThat(row.ratedEngaged()).isEqualTo(11L);
+	}
+
+	@Test
+	void handle_미상_ref는_집계에서_빠진다() {
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref(null, "2026-08-06", true, 100L, 10L, false, 1L),
+				ref("", "2026-08-06", true, 100L, 10L, false, 1L),
+				ref("   ", "2026-08-06", true, 100L, 10L, false, 1L)));
+
+		assertThat(rows).isEmpty();
+	}
+
+	@Test
+	void 대표_표시값은_업로드_최신_ref_우선_첫_non_null이다() {
+		// 최신 ref는 displayName·profileImageUrl·followers 전부 null → 그다음 최신 ref 값 채택.
+		// 업로드일 미상 ref는 마지막 순번이라 대표값을 가져가지 못한다.
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", null, true, null, null, false, null, 999L, null, null, "미상표시", "img-null"),
+				ref("a", "2026-08-05", true, null, null, false, null, 500L, null, null, "뷰티러버", "img-05"),
+				ref("a", "2026-08-06", true, null, null, false, null, null, null, null, null, null)));
+
+		var row = rows.get(0);
+		assertThat(row.displayName()).isEqualTo("뷰티러버");
+		assertThat(row.profileImageUrl()).isEqualTo("img-05");
+		assertThat(row.followers()).isEqualTo(500L);
+	}
+
+	@Test
+	void 대표_표시값은_구_ref에_값이_있어도_최신_ref가_이긴다() {
+		// 두 ref 모두 표시값이 있고 값이 다르다 — 업로드 최신순 스캔이 아니면(입력 순·오름차순)
+		// 옛 값이 채택된다. 입력 순서는 일부러 옛 ref 먼저.
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", "2026-08-05", true, null, null, false, null, 500L, null, null, "옛이름", "img-05"),
+				ref("a", "2026-08-06", true, null, null, false, null, 1000L, null, null, "최신이름", "img-06")));
+
+		var row = rows.get(0);
+		assertThat(row.displayName()).isEqualTo("최신이름");
+		assertThat(row.profileImageUrl()).isEqualTo("img-06");
+		assertThat(row.followers()).isEqualTo(1000L);
+	}
+
+	@Test
+	void displayName은_빈_문자열을_부재로_보고_다음_ref로_넘어간다() {
+		// 최신 ref의 displayName이 ""다 — 상류 폴백(refOfPoolRow·fromBrandPost)과 같은 술어라면
+		// 빈 값은 이기지 못하고 그다음 최신 ref의 이름이 채택돼야 한다(FE 공백 렌더 방지).
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", "2026-08-05", true, null, null, false, null, null, null, null, "이름", null),
+				ref("a", "2026-08-06", true, null, null, false, null, null, null, null, "", null)));
+
+		assertThat(rows.get(0).displayName()).isEqualTo("이름");
+
+		// 전부 blank면 값이 없는 것과 같아 handle로 폴백한다.
+		var allBlank = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("beautylover", "2026-08-05", true, null, null, false, null, null, null, null, "  ", null),
+				ref("beautylover", "2026-08-06", true, null, null, false, null, null, null, null, "", null)));
+
+		assertThat(allBlank.get(0).displayName()).isEqualTo("beautylover");
+	}
+
+	@Test
+	void displayName은_전부_null이면_handle로_폴백한다() {
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("beautylover", "2026-08-06", true, 100L, 10L, false, 1L)));
+
+		var row = rows.get(0);
+		assertThat(row.displayName()).isEqualTo("beautylover");
+		assertThat(row.profileImageUrl()).isNull();
+		assertThat(row.followers()).isNull();
+	}
+
+	@Test
+	void brandAccountIds는_등장_순_distinct이고_미귀속은_안_실린다() {
+		// id "b1"→"b2" 등장 순은 HashSet 순회 순서(b2, b1)와 어긋난다 — 삽입 순 보존이 실제로 검증된다.
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", "2026-08-06", true, null, null, false, null, null, null, "b1", null, null),
+				ref("a", "2026-08-05", true, null, null, false, null, null, null, null, null, null),
+				ref("a", "2026-08-04", true, null, null, false, null, null, null, "b2", null, null),
+				ref("a", "2026-08-03", true, null, null, false, null, null, null, "b1", null, null),
+				ref("b", "2026-08-02", true, null, null, false, null, null, null, null, null, null)));
+
+		assertThat(rows.get(0).brandAccountIds()).containsExactly("b1", "b2");
+		assertThat(rows.get(1).brandAccountIds()).isEmpty();
+	}
+
+	@Test
+	void latestPostAt은_최신_업로드일이고_전부_미상이면_null이다() {
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", "2026-08-04", true, null, null, false, null),
+				ref("a", "2026-08-07", true, null, null, false, null),
+				ref("a", null, true, null, null, false, null),
+				ref("b", null, true, null, null, false, null)));
+
+		assertThat(rows.get(0).latestPostAt()).isEqualTo("2026-08-07");
+		assertThat(rows.get(1).latestPostAt()).isNull();
+	}
+
+	@Test
+	void sponsoredCount는_sponsored만_센다() {
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", "2026-08-06", true, null, null, false, null, null, "sponsored", null, null, null),
+				ref("a", "2026-08-05", true, null, null, false, null, null, "sponsored", null, null, null),
+				ref("a", "2026-08-04", true, null, null, false, null, null, "organic", null, null, null),
+				ref("a", "2026-08-03", true, null, null, false, null, null, "unknown", null, null, null),
+				ref("a", "2026-08-02", true, null, null, false, null, null, null, null, null, null)));
+
+		var row = rows.get(0);
+		assertThat(row.postCount()).isEqualTo(5);
+		assertThat(row.sponsoredCount()).isEqualTo(2);
+	}
+
+	@Test
+	void 같은_handle은_한_행으로_묶이고_결과는_handle_등장_순이다() {
+		// ref의 handle은 이미 소문자 계약(PR ①) — 집계기는 재정규화 없이 그대로 키로 쓴다.
+		// handle 쌍은 HashMap 순회 순서(glowup, beautylover)가 등장 순과 어긋나게 골랐다.
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("beautylover", "2026-08-06", true, 100L, null, false, null),
+				ref("glowup", "2026-08-05", true, 200L, null, false, null),
+				ref("beautylover", "2026-08-04", true, 300L, null, false, null)));
+
+		assertThat(rows).extracting(PerformanceInfluencerResponse::handle)
+				.containsExactly("beautylover", "glowup");
+		assertThat(rows.get(0).postCount()).isEqualTo(2);
+		assertThat(rows.get(0).views()).isEqualTo(400L);
+		assertThat(rows.get(1).postCount()).isEqualTo(1);
+	}
+
+	/** 지표 축만 varying — 표시값·분류 필드는 기본값(null). */
+	private static DashboardRef ref(String handle, String uploadedOn, boolean hasSnapshots,
+			Long views, Long likes, boolean likesHidden, Long comments) {
+		return ref(handle, uploadedOn, hasSnapshots, views, likes, likesHidden, comments, null);
+	}
+
+	/** 지표 + followers — rated 규칙 검증용. */
+	private static DashboardRef ref(String handle, String uploadedOn, boolean hasSnapshots,
+			Long views, Long likes, boolean likesHidden, Long comments, Long followers) {
+		return ref(handle, uploadedOn, hasSnapshots, views, likes, likesHidden, comments, followers,
+				null, null, null, null);
+	}
+
+	/** 전량 지정 — 집계와 무관한 나머지 필드(contentKey·source·status·campaignId)는 고정값. */
+	private static DashboardRef ref(String handle, String uploadedOn, boolean hasSnapshots,
+			Long views, Long likes, boolean likesHidden, Long comments, Long followers,
+			String sponsorship, String brandAccountId, String displayName, String profileImageUrl) {
+		return new DashboardRef("ck", "sc", "post", sponsorship, "collected",
+				uploadedOn == null ? null : LocalDate.parse(uploadedOn), brandAccountId, null,
+				handle, displayName, profileImageUrl, followers,
+				views, likes, likesHidden, comments, hasSnapshots);
+	}
+}

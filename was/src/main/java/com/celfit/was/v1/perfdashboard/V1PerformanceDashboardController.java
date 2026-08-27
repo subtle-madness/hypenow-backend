@@ -1,30 +1,32 @@
 package com.celfit.was.v1.perfdashboard;
 
 import com.celfit.was.auth.AppUserDetails;
-import com.celfit.was.v1.brandmonitoring.BrandAccountType;
 import com.celfit.was.v1.brandmonitoring.BrandSponsorshipClassifier;
 import com.celfit.was.v1.common.ApiResponse;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.monitoring.ItemStatus;
+import com.celfit.was.v1.perfdashboard.DashboardQueries.PageParams;
 import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler.DashboardRef;
+import com.celfit.was.v1.perfdashboard.PerformanceGrowthAggregator.Granularity;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.time.format.DateTimeParseException;
-import java.util.Arrays;
+import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
-import java.util.stream.Collectors;
+import java.util.function.Supplier;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -37,6 +39,10 @@ import org.springframework.web.bind.annotation.RestController;
  * <b>2단 조립</b>이다(2026-08-27): 경량 ref 인덱스 위에서 판정을 끝내고 응답에 실을 페이지만 카드로
  * 조립한다. 페이지 파라미터를 생략하면 전량이라 종전 응답과 같다(08-10 250건 상한 철폐 이후 계약).
  *
+ * <p><b>조건부 요청</b>(2026-08-13 ETag 설계) — 목록·비교·인플루언서·성장 4표면은
+ * {@code If-None-Match}가 현재 버전키와 같으면 조립 전에 304로 끝낸다({@link #conditional}).
+ * 단건은 제외다(응답이 작고 호출이 드물다, 설계 §1).
+ *
  * <p>브랜드 표면(§5·§6)과 달리 {@code monitoring.enabled} 조건부가 <b>아니다</b> — 대시보드는 브랜드
  * 연동 없는 유저(레거시 개인 추적만)도 쓰는 화면이고, 어셈블러가 monitoring 비활성 환경에서 브랜드
  * 계열을 건너뛰도록 이미 설계돼 있다.
@@ -44,10 +50,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/v1/performance-dashboard")
 public class V1PerformanceDashboardController {
-
-	private static final String FILTER_ALL = "all";
-	/** campaignId 전용 값 — "캠페인에 묶이지 않은 콘텐츠만"(값이 아니라 부재를 고르는 필터라 별도 어휘). */
-	private static final String CAMPAIGN_NONE = "none";
 
 	/** 정렬 키 값 공간(2026-08-27 §2) — 기본값이자 종전 응답 순서인 uploaded가 첫 원소다. */
 	private static final String SORT_UPLOADED = "uploaded";
@@ -58,6 +60,17 @@ public class V1PerformanceDashboardController {
 	private static final List<String> SORT_KEYS =
 			List.of(SORT_UPLOADED, SORT_VIEWS, SORT_LIKES, SORT_COMMENTS, SORT_ENGAGEMENT);
 
+	private static final String SORT_POSTS = "posts";
+	private static final String SORT_LATEST = "latest";
+
+	/**
+	 * 인플루언서 표면 전용 정렬 키(2026-08-27 §4) — 값 공간이 목록과 다르다: 집계 행엔 업로드일 축이
+	 * 없어 {@code uploaded} 대신 {@code latest}(최신 업로드일)·{@code posts}(게시물 수)가 들어간다.
+	 * 기본값은 첫 원소 {@code views}(FE 기본 화면이 조회수 랭킹이다).
+	 */
+	private static final List<String> INFLUENCER_SORT_KEYS =
+			List.of(SORT_VIEWS, SORT_LIKES, SORT_COMMENTS, SORT_ENGAGEMENT, SORT_POSTS, SORT_LATEST);
+
 	private static final String ORDER_DESC = "desc";
 	private static final String ORDER_ASC = "asc";
 
@@ -65,9 +78,31 @@ public class V1PerformanceDashboardController {
 	private static final String SNAPSHOT_MODE_FULL = "full";
 	private static final String SNAPSHOT_MODE_LATEST = "latest";
 
-	/** 페이지 크기 상한·기본값 — 브랜드 목록(PR #602)과 같은 캡이다. */
-	private static final int PAGE_LIMIT_MAX = 100;
-	private static final int PAGE_LIMIT_DEFAULT = 100;
+	/**
+	 * growth <b>Point 총량</b> 상한 — 응답 Point 수는 {@code 버킷 수 × (1 + 계정 축 크기)}다(총계 축 1개
+	 * + 계정 시리즈).
+	 *
+	 * <p>캘리브레이션(2026-08-28): 축을 곱에 넣으면 종전 750은 <b>정상 사용을 막는다</b> — FE 개요 탭의
+	 * 계정 성장 차트가 쓰는 일 입자 × 1년 × 계정 4개만으로 365 × 5 = 1,825다. 그래서 <b>4,000</b>이다:
+	 * 일 입자 1년 × 연결 7계정(365 × 8 = 2,920)은 통과하고, 일 입자 2년 × 7계정(5,840)은 400이라
+	 * granularity 상향으로 빠져나가게 된다. 막으려는 것은 수백만 Point(OOM·직렬화 붕괴) 시나리오라
+	 * 여기서 세 자릿수 배 거리가 남는다.
+	 */
+	private static final int MAX_GROWTH_POINTS = 4000;
+
+	/** growth 버킷 단위 값 공간 — 기본값은 {@code month}(개요 탭 초기 화면). */
+	private static final String GRANULARITY_DAY = "day";
+	private static final String GRANULARITY_WEEK = "week";
+	private static final String GRANULARITY_MONTH = "month";
+
+	/**
+	 * 계정 축 정렬(growth) — 브랜드 id는 숫자 문자열이라 숫자 오름차순이 자연스럽다. 숫자가 아닌 id가
+	 * 섞여도 죽지 않게 파싱 실패는 뒤로 보내고 문자열 순으로 이어 붙인다(전순서 보장).
+	 */
+	private static final Comparator<String> ACCOUNT_ID_ORDER = Comparator
+			.comparing(V1PerformanceDashboardController::accountIdOrder,
+					Comparator.nullsLast(Comparator.naturalOrder()))
+			.thenComparing(Comparator.naturalOrder());
 
 	/**
 	 * statusCounts 키 순서(FE 탭 순서) — 레거시 {@link ItemStatus} 어휘 그대로다. 브랜드 풀 합성
@@ -79,13 +114,68 @@ public class V1PerformanceDashboardController {
 	/** {@code status} 필터의 허용 값(가변인자 검증용) — 요청마다 배열을 만들지 않게 미리 굳힌다. */
 	private static final String[] STATUS_VALUES = STATUSES.toArray(String[]::new);
 
+	/**
+	 * 조건부 표면의 캐시 헤더(2026-08-13 설계 §4) — Spring Security 기본
+	 * ({@code no-cache, no-store, max-age=0, must-revalidate})을 <b>이 4표면에서만</b> 덮는다.
+	 *
+	 * <p>{@code no-store} 제거가 핵심이다: 저장이 금지되면 브라우저가 사본을 들고 있을 수 없어 304가
+	 * 아예 성립하지 않는다. {@code no-cache}는 "쓰지 말라"가 아니라 "쓰기 전에 매번 재검증하라"라
+	 * 우리 용도에 정확히 맞고, {@code private}은 인증 응답이 공유 캐시(Caddy·CDN)에 남아 다른 유저에게
+	 * 새는 것을 막는다. {@code max-age}는 두지 않는다 — 수집 완료 시각이 유동적이라 신선도 기한을
+	 * 약속할 수 없다.
+	 *
+	 * <p>{@link org.springframework.http.CacheControl} 빌더를 쓰지 않는 이유는 출력이
+	 * {@code "no-cache, private"}라 설계 §4가 못박은 문자열과 순서가 갈리기 때문이다(의미는 같으나
+	 * 문서·운영 로그 대조 기준이 어긋난다).
+	 */
+	private static final String CACHE_CONTROL = "private, no-cache";
+
 	private final PerformanceContentAssembler assembler;
 	private final PerformanceComparisonAssembler comparisonAssembler;
+	private final DashboardVersion dashboardVersion;
 
 	public V1PerformanceDashboardController(PerformanceContentAssembler assembler,
-			PerformanceComparisonAssembler comparisonAssembler) {
+			PerformanceComparisonAssembler comparisonAssembler, DashboardVersion dashboardVersion) {
 		this.assembler = assembler;
 		this.comparisonAssembler = comparisonAssembler;
+		this.dashboardVersion = dashboardVersion;
+	}
+
+	/**
+	 * 조건부 반환(2026-08-13 ETag 설계 §3) — 버전키를 <b>조립 전에</b> 계산해, 클라이언트가 든 사본과
+	 * 같으면 본문 없이 304로 끝낸다. 304 경로에서 {@link PerformanceContentAssembler#index}·조립·
+	 * 직렬화·전송이 전부 생략되는 것이 이 설계의 이득이라, 본문을 만든 뒤 해싱하는 방식
+	 * ({@code ShallowEtagHeaderFilter})으로는 얻을 수 없다.
+	 *
+	 * <p><b>호출은 값 공간 검증(400) 뒤여야 한다</b> — 잘못된 요청이 304로 가려지면 클라이언트는 400을
+	 * 못 보고 낡은 사본을 정답으로 믿는다. 그래서 각 라우트는 정규화·파싱을 전부 끝낸 자리에서 이
+	 * 메서드로 들어오고, 무거운 조립은 {@code body} 서플라이어 안으로 들어간다.
+	 *
+	 * <p>버전키에 URL·쿼리 파라미터는 들어가지 않는다 — 4표면이 같은 값을 받는다. 조건부 캐시 키는
+	 * 클라이언트 쪽에서 URI별이고 {@code If-None-Match}는 <b>같은 URI의 사본</b>에만 쓰이므로
+	 * (RFC 9110 §13.1.2) 안전하다: 파라미터가 다른 요청은 그 URI의 사본이 없어 헤더 자체를 보내지
+	 * 않는다. 조기 반환 지점이 컨트롤러라 CORS·인증 필터를 이미 통과한 뒤라는 점도 함께 지킨다(§5-①).
+	 */
+	private <T> ResponseEntity<T> conditional(long userId, String ifNoneMatch, Supplier<T> body) {
+		String etag = DashboardVersion.etagOf(dashboardVersion.compute(userId));
+		if (DashboardVersion.matches(ifNoneMatch, etag)) {
+			return cached(HttpStatus.NOT_MODIFIED, etag).build();
+		}
+		return cached(HttpStatus.OK, etag).body(body.get());
+	}
+
+	/**
+	 * ETag + 캐시 헤더를 얹은 응답 빌더 — 200·304가 <b>같은 헤더</b>를 실어야 한다(304에만 빠지면
+	 * 재검증 사이클이 한 번 돌고 끊긴다).
+	 *
+	 * <p>Security의 헤더 라이터는 {@code Cache-Control}·{@code Pragma}·{@code Expires} 중 하나라도 이미
+	 * 있으면 통째로 물러서므로, 여기서 {@code Cache-Control}을 직접 넣는 것만으로
+	 * {@code Pragma: no-cache}도 함께 걷힌다(설계 §4).
+	 */
+	private static ResponseEntity.BodyBuilder cached(HttpStatus status, String etag) {
+		return ResponseEntity.status(status)
+				.eTag(etag)
+				.header(HttpHeaders.CACHE_CONTROL, CACHE_CONTROL);
 	}
 
 	/**
@@ -122,8 +212,9 @@ public class V1PerformanceDashboardController {
 	 * 하이드레이트라 응답은 종전과 같다(하위 호환).
 	 */
 	@GetMapping("/contents")
-	public ApiResponse<List<PerformanceContentResponse>> contents(
+	public ResponseEntity<ApiResponse<List<PerformanceContentResponse>>> contents(
 			@AuthenticationPrincipal AppUserDetails principal,
+			@RequestHeader(value = "If-None-Match", required = false) String ifNoneMatch,
 			@RequestParam(required = false) String uploadedFrom,
 			@RequestParam(required = false) String uploadedTo,
 			@RequestParam(required = false) String source,
@@ -139,57 +230,63 @@ public class V1PerformanceDashboardController {
 			@RequestParam(required = false) Integer limit,
 			@RequestParam(required = false) Integer offset,
 			@RequestParam(required = false) String snapshotMode) {
-		String sourceFilter = normalizeFilter(source, "source", PerformanceContentAssembler.SOURCE_INDIVIDUAL,
-				PerformanceContentAssembler.SOURCE_DIRECT, PerformanceContentAssembler.SOURCE_TAGGED);
-		String sponsorshipFilter = normalizeFilter(sponsorship, "sponsorship", BrandSponsorshipClassifier.SPONSORED,
-				BrandSponsorshipClassifier.ORGANIC, BrandSponsorshipClassifier.UNKNOWN);
-		String statusFilter = normalizeFilter(status, "status", STATUS_VALUES);
+		String sourceFilter = DashboardQueries.normalizeFilter(source, "source",
+				PerformanceContentAssembler.SOURCE_INDIVIDUAL, PerformanceContentAssembler.SOURCE_DIRECT,
+				PerformanceContentAssembler.SOURCE_TAGGED);
+		String sponsorshipFilter = DashboardQueries.normalizeFilter(sponsorship, "sponsorship",
+				BrandSponsorshipClassifier.SPONSORED, BrandSponsorshipClassifier.ORGANIC,
+				BrandSponsorshipClassifier.UNKNOWN);
+		String statusFilter = DashboardQueries.normalizeFilter(status, "status", STATUS_VALUES);
 		// campaignId는 all(필터 없음)·none(캠페인 없음)·캠페인 id 문자열 셋을 받는다 — none 판정은
 		// matchesCampaign에서 한다.
-		String campaignFilter = normalizeFilter(campaignId);
-		String brandFilter = normalizeFilter(brandAccountId);
-		Set<String> accountIdsFilter = normalizeAccountIds(accountIds);
-		// 공용 normalizeFilter를 쓰지 않는다 — 이 파라미터만 미지정과 all이 다르다(아래 javadoc).
+		String campaignFilter = DashboardQueries.normalizeFilter(campaignId);
+		String brandFilter = DashboardQueries.normalizeFilter(brandAccountId);
+		Set<String> accountIdsFilter = DashboardQueries.normalizeAccountIds(accountIds);
+		// 공용 normalizeFilter를 쓰지 않는다 — 이 파라미터만 미지정과 all이 다르다(DashboardQueries javadoc).
 		// 함의 인자는 "브랜드를 콕 집어 물었는가"다 — 단수·복수 어느 쪽이든 accountType=all을 함의한다.
-		String accountTypeFilter = normalizeAccountType(accountType,
+		String accountTypeFilter = DashboardQueries.normalizeAccountType(accountType,
 				brandFilter != null || accountIdsFilter != null);
-		String authorFilter = normalizeAuthorUsername(authorUsername);
+		String authorFilter = DashboardQueries.normalizeAuthorUsername(authorUsername);
 		String sortKey = normalizeSort(sort);
 		boolean ascending = normalizeOrder(order);
 		boolean latestSnapshotOnly = normalizeSnapshotMode(snapshotMode);
-		LocalDate from = parseDate(uploadedFrom, "uploadedFrom");
-		LocalDate to = parseDate(uploadedTo, "uploadedTo");
-		PageParams page = normalizePage(limit, offset);
+		LocalDate from = DashboardQueries.parseDate(uploadedFrom, "uploadedFrom");
+		LocalDate to = DashboardQueries.parseDate(uploadedTo, "uploadedTo");
+		PageParams page = DashboardQueries.normalizePage(limit, offset);
 
-		// 인덱스 패스(경량) — 여기부터 페이지 슬라이스까지 전부 ref 위에서 끝낸다.
-		PerformanceContentAssembler.DashboardIndex index = assembler.index(principal.getUserId());
-		Set<String> competitorIds = index.competitorBrandAccountIds();
+		// 값 공간 검증이 전부 끝난 자리 — 여기부터가 조건부 반환 구간이다(304면 아래가 통째로 안 돈다).
+		return conditional(principal.getUserId(), ifNoneMatch, () -> {
+			// 인덱스 패스(경량) — 여기부터 페이지 슬라이스까지 전부 ref 위에서 끝낸다.
+			PerformanceContentAssembler.DashboardIndex index = assembler.index(principal.getUserId());
+			Set<String> competitorIds = index.competitorBrandAccountIds();
 
-		// 분류 필터 — statusCounts 모수의 술어다(status·업로드 기간은 여기 없다, 위 javadoc).
-		Predicate<DashboardRef> classification = r ->
-				(sourceFilter == null || sourceFilter.equals(r.source()))
-						&& (sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
-						&& matchesCampaign(r.campaignId(), campaignFilter)
-						&& matchesBrand(r.brandAccountId(), brandFilter, accountIdsFilter)
-						&& matchesAccountType(r.brandAccountId(), accountTypeFilter, competitorIds)
-						&& (authorFilter == null || authorFilter.equalsIgnoreCase(r.handle()));
+			// 분류 필터 — statusCounts 모수의 술어다(status·업로드 기간은 여기 없다, 위 javadoc).
+			Predicate<DashboardRef> classification = r ->
+					(sourceFilter == null || sourceFilter.equals(r.source()))
+							&& (sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
+							&& DashboardQueries.matchesCampaign(r.campaignId(), campaignFilter)
+							&& DashboardQueries.matchesBrand(r.brandAccountId(), brandFilter, accountIdsFilter)
+							&& DashboardQueries.matchesAccountType(r.brandAccountId(), accountTypeFilter,
+									competitorIds)
+							&& (authorFilter == null || authorFilter.equalsIgnoreCase(r.handle()));
 
-		// statusCounts 모수 — data는 여기서 status·기간을 더 걸어 갈라져 나온다(같은 모수 출신).
-		List<DashboardRef> counted = index.refs().stream().filter(classification).toList();
-		List<DashboardRef> filtered = counted.stream()
-				.filter(r -> statusFilter == null || statusFilter.equals(r.status()))
-				.filter(r -> withinUploadWindow(r.uploadedOn(), from, to))
-				.sorted(comparator(sortKey, ascending))
-				.toList();
-		List<DashboardRef> pageRefs = page == null ? filtered
-				: filtered.stream().skip(page.offset()).limit(page.limit()).toList();
+			// statusCounts 모수 — data는 여기서 status·기간을 더 걸어 갈라져 나온다(같은 모수 출신).
+			List<DashboardRef> counted = index.refs().stream().filter(classification).toList();
+			List<DashboardRef> filtered = counted.stream()
+					.filter(r -> statusFilter == null || statusFilter.equals(r.status()))
+					.filter(r -> DashboardQueries.withinUploadWindow(r.uploadedOn(), from, to))
+					.sorted(comparator(sortKey, ascending))
+					.toList();
+			List<DashboardRef> pageRefs = page == null ? filtered
+					: filtered.stream().skip(page.offset()).limit(page.limit()).toList();
 
-		// 하이드레이트(무거움)는 응답에 실을 ref만 — 반환 순서는 pageRefs 순서 그대로다.
-		List<PerformanceContentResponse> data = assembler.hydratePage(index, pageRefs);
-		if (latestSnapshotOnly) {
-			data = data.stream().map(PerformanceContentResponse::withLatestSnapshotOnly).toList();
-		}
-		return ApiResponse.ok(data, meta(filtered.size(), counted, index.lastCollectedAt(), page));
+			// 하이드레이트(무거움)는 응답에 실을 ref만 — 반환 순서는 pageRefs 순서 그대로다.
+			List<PerformanceContentResponse> data = assembler.hydratePage(index, pageRefs);
+			if (latestSnapshotOnly) {
+				data = data.stream().map(PerformanceContentResponse::withLatestSnapshotOnly).toList();
+			}
+			return ApiResponse.ok(data, meta(filtered.size(), counted, index.lastCollectedAt(), page));
+		});
 	}
 
 	/**
@@ -225,26 +322,235 @@ public class V1PerformanceDashboardController {
 	 * 화면의 존재 이유라 타입으로 축을 걸러낼 여지가 없다. 계정별 타입은 응답 필드로 내린다(스펙 §6).
 	 */
 	@GetMapping("/comparison")
-	public ApiResponse<PerformanceComparisonResponse> comparison(
+	public ResponseEntity<ApiResponse<PerformanceComparisonResponse>> comparison(
 			@AuthenticationPrincipal AppUserDetails principal,
+			@RequestHeader(value = "If-None-Match", required = false) String ifNoneMatch,
 			@RequestParam(required = false) String source,
 			@RequestParam(required = false) String sponsorship,
 			@RequestParam(required = false) String campaignId) {
-		String sourceFilter = normalizeFilter(source, "source", PerformanceContentAssembler.SOURCE_INDIVIDUAL,
-				PerformanceContentAssembler.SOURCE_DIRECT, PerformanceContentAssembler.SOURCE_TAGGED);
-		String sponsorshipFilter = normalizeFilter(sponsorship, "sponsorship", BrandSponsorshipClassifier.SPONSORED,
-				BrandSponsorshipClassifier.ORGANIC, BrandSponsorshipClassifier.UNKNOWN);
-		String campaignFilter = normalizeFilter(campaignId);
+		String sourceFilter = DashboardQueries.normalizeFilter(source, "source",
+				PerformanceContentAssembler.SOURCE_INDIVIDUAL, PerformanceContentAssembler.SOURCE_DIRECT,
+				PerformanceContentAssembler.SOURCE_TAGGED);
+		String sponsorshipFilter = DashboardQueries.normalizeFilter(sponsorship, "sponsorship",
+				BrandSponsorshipClassifier.SPONSORED, BrandSponsorshipClassifier.ORGANIC,
+				BrandSponsorshipClassifier.UNKNOWN);
+		String campaignFilter = DashboardQueries.normalizeFilter(campaignId);
 
-		// 인덱스 패스(2026-08-27) — 비교 집계는 업로드일·귀속 브랜드·최신 스냅샷 지표만 소비하고
-		// 그 값은 전부 ref에 있다. 카드 조립(스냅샷 시계열·표시 메타)은 이 표면에 필요 없다.
-		List<PerformanceContentAssembler.DashboardRef> filtered =
-				assembler.index(principal.getUserId()).refs().stream()
-						.filter(r -> (sourceFilter == null || sourceFilter.equals(r.source()))
-								&& (sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
-								&& matchesCampaign(r.campaignId(), campaignFilter))
-						.toList();
-		return ApiResponse.ok(comparisonAssembler.assemble(principal.getUserId(), filtered));
+		return conditional(principal.getUserId(), ifNoneMatch, () -> {
+			// 인덱스 패스(2026-08-27) — 비교 집계는 업로드일·귀속 브랜드·최신 스냅샷 지표만 소비하고
+			// 그 값은 전부 ref에 있다. 카드 조립(스냅샷 시계열·표시 메타)은 이 표면에 필요 없다.
+			List<PerformanceContentAssembler.DashboardRef> filtered =
+					assembler.index(principal.getUserId()).refs().stream()
+							.filter(r -> (sourceFilter == null || sourceFilter.equals(r.source()))
+									&& (sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
+									&& DashboardQueries.matchesCampaign(r.campaignId(), campaignFilter))
+							.toList();
+			return ApiResponse.ok(comparisonAssembler.assemble(principal.getUserId(), filtered));
+		});
+	}
+
+	/**
+	 * 인기 인플루언서 집계(스펙 2026-08-27 §4) — 목록과 같은 인덱스 ref를 작성자(handle)로 접는다.
+	 * DB 신규 쿼리는 없다(집계기는 순수 함수, {@link PerformanceInfluencerAggregator}).
+	 *
+	 * <p><b>필터는 전부 집계 모수에 적용된다</b> — 목록의 statusCounts처럼 "필터를 일부만 건 모수"가
+	 * 이 표면엔 없다. 랭킹 행 자체가 응답의 전부라, 필터가 걸리면 행도 {@code meta.total}도 같이 준다.
+	 *
+	 * <p><b>단수 {@code brandAccountId} 파라미터는 없다</b> — 신설 표면이라 구계약(08-12 단수 파라미터)
+	 * 짐을 지지 않는다. 브랜드 범위는 복수 {@code accountIds}가 정본이고, {@code accountType} 함의
+	 * (명시하면 all, 단 명시한 accountType이 이김)는 목록과 같은 규칙이다.
+	 *
+	 * <p>정렬은 <b>집계 후 응답 행</b> 기준이다(ref 기준인 목록과 다르다) — 합계·비율이 접힌 뒤라야
+	 * 나오는 값이라서다. 값 공간·기본값은 {@link #INFLUENCER_SORT_KEYS} 참고. 페이지는 정렬 후
+	 * 슬라이스이고 {@code meta.total}은 슬라이스 전 집계 행 전체 수다.
+	 */
+	@GetMapping("/influencers")
+	public ResponseEntity<ApiResponse<List<PerformanceInfluencerResponse>>> influencers(
+			@AuthenticationPrincipal AppUserDetails principal,
+			@RequestHeader(value = "If-None-Match", required = false) String ifNoneMatch,
+			@RequestParam(required = false) String uploadedFrom,
+			@RequestParam(required = false) String uploadedTo,
+			@RequestParam(required = false) String sponsorship,
+			@RequestParam(required = false) String campaignId,
+			@RequestParam(required = false) String accountIds,
+			@RequestParam(required = false) String accountType,
+			@RequestParam(required = false) String sort,
+			@RequestParam(required = false) String order,
+			@RequestParam(required = false) Integer limit,
+			@RequestParam(required = false) Integer offset) {
+		String sponsorshipFilter = DashboardQueries.normalizeFilter(sponsorship, "sponsorship",
+				BrandSponsorshipClassifier.SPONSORED, BrandSponsorshipClassifier.ORGANIC,
+				BrandSponsorshipClassifier.UNKNOWN);
+		String campaignFilter = DashboardQueries.normalizeFilter(campaignId);
+		Set<String> accountIdsFilter = DashboardQueries.normalizeAccountIds(accountIds);
+		// 함의 인자는 "브랜드를 콕 집어 물었는가" — 이 표면엔 단수 파라미터가 없어 accountIds뿐이다.
+		String accountTypeFilter = DashboardQueries.normalizeAccountType(accountType, accountIdsFilter != null);
+		String sortKey = normalizeSort(sort, INFLUENCER_SORT_KEYS, SORT_VIEWS);
+		boolean ascending = normalizeOrder(order);
+		LocalDate from = DashboardQueries.parseDate(uploadedFrom, "uploadedFrom");
+		LocalDate to = DashboardQueries.parseDate(uploadedTo, "uploadedTo");
+		PageParams page = DashboardQueries.normalizePage(limit, offset);
+
+		return conditional(principal.getUserId(), ifNoneMatch, () -> {
+			PerformanceContentAssembler.DashboardIndex index = assembler.index(principal.getUserId());
+			Set<String> competitorIds = index.competitorBrandAccountIds();
+			List<DashboardRef> filtered = index.refs().stream()
+					.filter(r -> (sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
+							&& DashboardQueries.matchesCampaign(r.campaignId(), campaignFilter)
+							// 단수 필터 자리는 항상 null이다(이 표면엔 파라미터가 없다 — 위 javadoc).
+							&& DashboardQueries.matchesBrand(r.brandAccountId(), null, accountIdsFilter)
+							&& DashboardQueries.matchesAccountType(r.brandAccountId(), accountTypeFilter,
+									competitorIds)
+							&& DashboardQueries.withinUploadWindow(r.uploadedOn(), from, to))
+					.toList();
+
+			List<PerformanceInfluencerResponse> rows = PerformanceInfluencerAggregator.aggregate(filtered).stream()
+					.sorted(influencerComparator(sortKey, ascending))
+					.toList();
+			List<PerformanceInfluencerResponse> data = page == null ? rows
+					: rows.stream().skip(page.offset()).limit(page.limit()).toList();
+
+			Map<String, Object> meta = new LinkedHashMap<>();
+			meta.put("total", rows.size());
+			meta.put("page", DashboardQueries.pageMeta(page));
+			return ApiResponse.ok(data, meta);
+		});
+	}
+
+	/**
+	 * 성장 시계열 집계(스펙 2026-08-28 §5) — 목록과 같은 인덱스 ref를 업로드일 버킷으로 접는다. DB
+	 * 신규 쿼리는 없다(집계기는 순수 함수, {@link PerformanceGrowthAggregator}).
+	 *
+	 * <p><b>페이지·정렬 파라미터가 없다</b> — 응답이 시계열 축 하나라 자를 지점도, 줄 세울 행도 없다.
+	 * 그래서 {@code meta}도 없이 {@code data} 하나만 내린다(FE 제안 셰이프).
+	 *
+	 * <p>필터는 목록과 같은 분류 축(sponsorship·accountIds·campaignId·accountType)이고 전부 집계
+	 * 모수에 적용된다. {@code from}·{@code to}는 ref 필터(업로드일 미상 제외)와 버킷 범위 양쪽에
+	 * 걸린다 — 지정하면 그 구간의 버킷이 빈 버킷 포함 연속 생성되고, 양끝 부분 버킷의 라벨은 구간과의
+	 * 교집합으로 클램프된다({@link PerformanceGrowthResponse.Point} javadoc).
+	 *
+	 * <p><b>계정 축 결정</b>: {@code accountIds}를 지정하면 그 목록 그대로다(순서 유지 — FE 범례 순서가
+	 * 요청 순서와 같아야 한다). 미지정이면 <b>연결 활성 브랜드 전체</b>
+	 * ({@code index.brandsById()})에서 accountType 술어를 통과하는 계정이다 — {@code /comparison}의
+	 * "축은 연결된 계정"과 같은 규칙이라 두 표면의 범례가 어긋나지 않고, 이 기간에 게시물이 0건인
+	 * 계정도 빈 시리즈로 남아 차트에서 계정이 사라지지 않는다. keySet 순회 순서는 조립 경로에 따라
+	 * 흔들릴 수 있어 <b>브랜드 id 숫자 오름차순으로 결정화</b>한다(같은 요청이 같은 축을 준다).
+	 *
+	 * <p><b>Point 총량 상한 {@value #MAX_GROWTH_POINTS}</b> — 응답이 실제로 만드는 점의 수
+	 * ({@code 버킷 수 × (1 + 계정 축 크기)})로 판정한다(넘으면 400). <b>버킷 단독 상한은 우회
+	 * 가능했다</b>(PR ③ 리뷰): 계정 축은 {@code accountIds}로 요청자가 정하는 값이라, 버킷 수가 상한
+	 * 이내여도 {@code accountIds}에 수백 개를 나열하면 Point가 버킷 수의 수백 배로 불어난다.
+	 * 판정은 두 번이다:
+	 * <ol>
+	 *   <li>양쪽을 지정한 요청은 {@code index()} <b>앞에서</b> 먼저 걸러진다(DB를 건드리지 않는 빠른
+	 *       400). 이 시점엔 계정 축이 아직 없어(미지정이면 연결 브랜드에서 나온다) <b>버킷 수만으로
+	 *       보수 판정</b>한다 — 한도는 같은 {@value #MAX_GROWTH_POINTS}라 두 판정이 일관된다(버킷
+	 *       수 자체가 한도를 넘으면 어떤 축에서도 넘는다). 축을 포함한 판정은 아래 재판정이 맡는다.</li>
+	 *   <li>{@code index()} 뒤에서 축과 유효 범위가 확정되면 다시 판정한다. 한쪽이라도 생략한 요청은
+	 *       반대쪽 끝이 <b>데이터 범위</b>(필터된 ref의 최소·최대 업로드일)로 확정돼야 범위를 알 수
+	 *       있어 여기서만 버킷 수가 나온다({@link PerformanceGrowthAggregator#effectiveRange} — 집계기와
+	 *       같은 메서드다). 이 재판정이 없으면 {@code ?granularity=day&to=9999-12-31} 한 방으로 수백만
+	 *       버킷 × (1 + 계정 수)개의 Point가 만들어진다 — 상한을 통째로 우회하는 구멍이었다.</li>
+	 * </ol>
+	 * 양쪽을 생략한 요청도 이 재판정을 받는다 — 수년치 레거시 데이터 + {@code granularity=day}면 막히고,
+	 * 400 메시지가 granularity 상향을 안내하므로 사용자가 스스로 빠져나올 수 있다(의도된 동작).
+	 * 계산은 버킷 시작일 사이의 걸음 수라 루프 없이 정확하다.
+	 */
+	@GetMapping("/growth")
+	public ResponseEntity<ApiResponse<PerformanceGrowthResponse>> growth(
+			@AuthenticationPrincipal AppUserDetails principal,
+			@RequestHeader(value = "If-None-Match", required = false) String ifNoneMatch,
+			@RequestParam(required = false) String from,
+			@RequestParam(required = false) String to,
+			@RequestParam(required = false) String granularity,
+			@RequestParam(required = false) String sponsorship,
+			@RequestParam(required = false) String accountIds,
+			@RequestParam(required = false) String campaignId,
+			@RequestParam(required = false) String accountType) {
+		String sponsorshipFilter = DashboardQueries.normalizeFilter(sponsorship, "sponsorship",
+				BrandSponsorshipClassifier.SPONSORED, BrandSponsorshipClassifier.ORGANIC,
+				BrandSponsorshipClassifier.UNKNOWN);
+		String campaignFilter = DashboardQueries.normalizeFilter(campaignId);
+		Set<String> accountIdsFilter = DashboardQueries.normalizeAccountIds(accountIds);
+		// 함의 인자는 "브랜드를 콕 집어 물었는가" — 이 표면엔 단수 파라미터가 없어 accountIds뿐이다.
+		String accountTypeFilter = DashboardQueries.normalizeAccountType(accountType, accountIdsFilter != null);
+		Granularity bucket = normalizeGranularity(granularity);
+		LocalDate fromDate = DashboardQueries.parseDate(from, "from");
+		LocalDate toDate = DashboardQueries.parseDate(to, "to");
+		// 값 공간 검증은 전부 인덱스 패스 앞이다 — 400으로 끝날 요청이 DB를 건드리면 안 된다.
+		// Point 예산은 여기서 "양쪽 지정" 요청만, 그것도 축을 뺀 버킷 수로 보수 판정한다(축은 아직
+		// 모른다 — 나머지는 축·유효 범위 확정 후 재판정, 아래).
+		checkPointBudget(bucket, fromDate, toDate, 0);
+
+		// 아래 예산 재판정(400)은 조건부 뒤라 304 경로에서는 돌지 않는다 — 문제가 아니다: 그 판정에
+		// 걸릴 요청은 200을 받은 적이 없어 클라이언트가 그 URL의 사본도 ETag도 갖고 있지 않다
+		// (If-None-Match는 같은 URI의 사본에만 실린다 — conditional javadoc).
+		// 예외는 `If-None-Match: *` 하나 — 사본 없이도 무조건 일치라 이 400이 304로 가려진다.
+		// 브라우저는 조건부 GET에 `*`를 쓰지 않으므로(수동 클라이언트만 도달) 수용한다.
+		return conditional(principal.getUserId(), ifNoneMatch, () -> {
+			PerformanceContentAssembler.DashboardIndex index = assembler.index(principal.getUserId());
+			Set<String> competitorIds = index.competitorBrandAccountIds();
+
+			// 계정 축 — 지정 목록(순서 유지) 아니면 연결 활성 브랜드에서 accountType 통과분(위 javadoc).
+			// 예산 재판정보다 앞이다(축 크기가 Point 총량의 곱셈 인자라서다) — 축 계산엔 필터 결과가
+			// 필요 없다(brandsById·competitorIds뿐). accountIds 축은 "요청한 것"이라, accountType 필터로
+			// 모수에서 빠진 계정도 축에는 남아 빈 시리즈로 내려간다.
+			List<String> accountAxis = accountIdsFilter != null ? List.copyOf(accountIdsFilter)
+					: index.brandsById().keySet().stream()
+							.filter(id -> DashboardQueries.matchesAccountType(id, accountTypeFilter,
+									competitorIds))
+							.sorted(ACCOUNT_ID_ORDER)
+							.toList();
+
+			List<DashboardRef> filtered = index.refs().stream()
+					.filter(r -> (sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
+							&& DashboardQueries.matchesCampaign(r.campaignId(), campaignFilter)
+							// 단수 필터 자리는 항상 null이다(이 표면엔 파라미터가 없다 — 위 javadoc).
+							&& DashboardQueries.matchesBrand(r.brandAccountId(), null, accountIdsFilter)
+							&& DashboardQueries.matchesAccountType(r.brandAccountId(), accountTypeFilter,
+									competitorIds)
+							&& DashboardQueries.withinUploadWindow(r.uploadedOn(), fromDate, toDate))
+					.toList();
+
+			// 예산 재판정 — 축 크기가 확정됐고, 생략한 끝은 데이터 범위로 확정되므로 여기서만 실제 Point
+			// 총량을 알 수 있다. 범위 산출은 집계기와 같은 메서드다(규칙이 갈리면 판정이 어긋난다).
+			PerformanceGrowthAggregator.Range range =
+					PerformanceGrowthAggregator.effectiveRange(filtered, fromDate, toDate);
+			checkPointBudget(bucket, range.from(), range.to(), accountAxis.size());
+
+			return ApiResponse.ok(
+					PerformanceGrowthAggregator.aggregate(filtered, bucket, fromDate, toDate, accountAxis));
+		});
+	}
+
+	/**
+	 * Point 총량 예산 판정 — 넘으면 400이다. 예산이 없으면 {@code granularity=day}에 수백 년 구간이
+	 * 오는 것만으로, 또는 {@code accountIds}에 계정을 수백 개 나열하는 것만으로 응답 Point가 수백만
+	 * 개가 된다(집계 자체는 싸지만 직렬화·FE 렌더가 무너진다).
+	 *
+	 * <p>인자는 <b>확정된 유효 범위</b>여야 한다 — 요청 파라미터를 그대로 넘기는 호출(사전 판정)은 양쪽을
+	 * 지정한 요청만 잡고, 나머지는 데이터 범위가 확정된 뒤 다시 불러야 한다(위 {@link #growth} javadoc).
+	 * 범위가 확정되지 않거나(둘 중 하나가 null — 유효 ref 0건) 뒤집힌 구간이면 버킷 자체가 없어
+	 * 판정할 것이 없다.
+	 *
+	 * @param accountCount 계정 축 크기 — Point는 버킷마다 총계 1개 + 계정 수만큼이라 곱셈 인자가
+	 *     {@code 1 + accountCount}다. 축이 아직 확정되지 않은 사전 판정은 0을 넘겨 보수 판정한다.
+	 */
+	private static void checkPointBudget(Granularity granularity, LocalDate from, LocalDate to,
+			int accountCount) {
+		if (from == null || to == null || from.isAfter(to)) {
+			return;
+		}
+		LocalDate first = PerformanceGrowthAggregator.bucketStart(from, granularity);
+		LocalDate last = PerformanceGrowthAggregator.bucketStart(to, granularity);
+		long buckets = switch (granularity) {
+			case DAY -> ChronoUnit.DAYS.between(first, last) + 1;
+			case WEEK -> ChronoUnit.DAYS.between(first, last) / 7 + 1;
+			case MONTH -> ChronoUnit.MONTHS.between(first, last) + 1;
+		};
+		if (buckets * (1L + accountCount) > MAX_GROWTH_POINTS) {
+			throw V1ApiException.validation("조회 구간이 너무 넓어요. 기간을 좁히거나 granularity를 높여 주세요.");
+		}
 	}
 
 	// ---------- meta ----------
@@ -264,12 +570,6 @@ public class V1PerformanceDashboardController {
 			statusCounts.merge(ref.status(), 1L, Long::sum);
 		}
 
-		// 페이지 정보는 meta.limit(형태 호환용 필드)과 분리한 additive 필드다 — 전량 응답이면
-		// {offset: 0, limit: null}(limit null = 안 잘랐다는 표식, 키는 유지 — 계약 무결성 규칙 #1).
-		Map<String, Object> pageMeta = new LinkedHashMap<>();
-		pageMeta.put("offset", page == null ? 0 : page.offset());
-		pageMeta.put("limit", page == null ? null : page.limit());
-
 		Map<String, Object> meta = new LinkedHashMap<>();
 		meta.put("total", total);
 		// 목록 상한 철폐(08-10) — 잘림이 없다. limit 키는 응답 형태 호환용으로 남기되 필터 후 전체
@@ -277,7 +577,7 @@ public class V1PerformanceDashboardController {
 		meta.put("limit", total);
 		meta.put("lastCollectedAt", KstTimestamps.toKstIso(lastCollectedAt));
 		meta.put("statusCounts", statusCounts);
-		meta.put("page", pageMeta);
+		meta.put("page", DashboardQueries.pageMeta(page));
 		return meta;
 	}
 
@@ -311,6 +611,54 @@ public class V1PerformanceDashboardController {
 				.thenComparing(tie);
 	}
 
+	/**
+	 * 인플루언서 정렬 비교자(§4) — 키가 <b>집계 행</b>이라 목록 {@link #comparator}와 따로 둔다. null
+	 * 키는 order와 무관하게 항상 마지막이고(순위 밖), 타이브레이크는 {@code handle}이라 전순서다 —
+	 * handle은 집계 행의 그룹 키(중복 없음)라 페이지 간 중복·누락이 생기지 않는다.
+	 *
+	 * <p>{@code latest}만 문자열 키다 — {@code latestPostAt}은 ISO date(YYYY-MM-DD)라 사전순이 곧
+	 * 시간순이고, 값이 이미 문자열이라 되파싱할 이유가 없다.
+	 */
+	private static Comparator<PerformanceInfluencerResponse> influencerComparator(String sortKey,
+			boolean ascending) {
+		Comparator<PerformanceInfluencerResponse> byKey;
+		if (SORT_LATEST.equals(sortKey)) {
+			byKey = Comparator.comparing(PerformanceInfluencerResponse::latestPostAt,
+					V1PerformanceDashboardController.<String>directional(ascending));
+		} else {
+			Function<PerformanceInfluencerResponse, Double> key = switch (sortKey) {
+				case SORT_LIKES -> r -> toDouble(r.likes());
+				case SORT_COMMENTS -> r -> toDouble(r.comments());
+				// postCount는 int라 항상 값이 있다(0건 작성자는 행 자체가 없다).
+				case SORT_POSTS -> r -> (double) r.postCount();
+				case SORT_ENGAGEMENT -> V1PerformanceDashboardController::engagementRateOf;
+				default -> r -> toDouble(r.views());   // SORT_VIEWS(기본값)
+			};
+			byKey = Comparator.comparing(key, V1PerformanceDashboardController.<Double>directional(ascending));
+		}
+		return byKey.thenComparing(PerformanceInfluencerResponse::handle);
+	}
+
+	/**
+	 * 집계 행의 참여율 = {@code ratedEngaged ÷ ratedFollowers} — 분모가 미상이거나 0이면 순위 밖
+	 * (null)이다. 분모·분자는 집계기가 같은 조건에서 함께 채우지만(둘 다 null이거나 둘 다 값),
+	 * 나눗셈 앞이라 분자도 같이 본다.
+	 *
+	 * <p>비율을 응답 필드로 내리지 않고 여기서만 계산하는 이유는 응답 계약이다 — 집계 행은 분자·분모를
+	 * 따로 내려 FE가 재평균 없이 합칠 수 있게 한다({@link PerformanceInfluencerResponse} javadoc).
+	 */
+	private static Double engagementRateOf(PerformanceInfluencerResponse row) {
+		if (row.ratedFollowers() == null || row.ratedFollowers() <= 0 || row.ratedEngaged() == null) {
+			return null;
+		}
+		return row.ratedEngaged() / (double) row.ratedFollowers();
+	}
+
+	/** 합계 정렬 키 — 미상(null)은 0으로 접지 않는다(0은 "전부 관측됐는데 0"이라 다른 값이다). */
+	private static Double toDouble(Long value) {
+		return value == null ? null : value.doubleValue();
+	}
+
 	/** 요청 방향 비교자 — null은 {@code order}와 무관하게 항상 마지막이다(위 javadoc). */
 	private static <T extends Comparable<? super T>> Comparator<T> directional(boolean ascending) {
 		return Comparator.nullsLast(ascending ? Comparator.<T>naturalOrder() : Comparator.<T>reverseOrder());
@@ -329,142 +677,22 @@ public class V1PerformanceDashboardController {
 		return (ref.latestLikes() + ref.latestComments()) / (double) ref.followers();
 	}
 
-	// ---------- 필터 ----------
+	// ---------- 표면별 정규화(공용 정규화·술어는 DashboardQueries) ----------
 
-	private static boolean withinUploadWindow(LocalDate uploadedOn, LocalDate from, LocalDate to) {
-		if (from == null && to == null) {
-			return true;
-		}
-		if (uploadedOn == null) {
-			// 업로드일을 모르는 콘텐츠(collecting·detecting 등 post 없는 아이템)는 기간 판정이 불가라
-			// data에서 제외한다 — 다만 statusCounts 모수에는 그대로 남는다(§7-1).
-			return false;
-		}
-		return (from == null || !uploadedOn.isBefore(from)) && (to == null || !uploadedOn.isAfter(to));
-	}
-
-	/**
-	 * 브랜드 범위 술어 — 복수 {@code accountIds}가 단수 {@code brandAccountId}를 이긴다(2026-08-27
-	 * §2, 신규약 우선). 둘 다 없으면 브랜드 범위 제한이 없다.
-	 */
-	private static boolean matchesBrand(String brandAccountId, String brandFilter, Set<String> accountIdsFilter) {
-		if (accountIdsFilter != null) {
-			return accountIdsFilter.contains(brandAccountId);
-		}
-		return brandFilter == null || brandFilter.equals(brandAccountId);
-	}
-
-	/**
-	 * 캠페인 필터 술어 정본 — 카드(목록)와 ref(비교)가 같은 규칙을 쓴다. {@code none}은 값이 아니라
-	 * 부재를 고르는 어휘라 별도 분기다(위 {@link #CAMPAIGN_NONE} 참고).
-	 */
-	private static boolean matchesCampaign(String campaignId, String filter) {
-		if (filter == null) {
-			return true;
-		}
-		return CAMPAIGN_NONE.equals(filter) ? campaignId == null : Objects.equals(campaignId, filter);
-	}
-
-	/**
-	 * accountType 필터(08-12) — {@code all}(=null)은 전량, {@code competitor}는 경쟁사 구독 소속만,
-	 * <b>미지정·own은 "경쟁사만 제외"</b>다.
-	 *
-	 * <p>미지정이 "own 브랜드만"이 아닌 이유: 이 응답에는 브랜드에 귀속되지 않는 레거시 개인 추적
-	 * 콘텐츠(brandAccountId null)가 섞여 있어, 문자 그대로 own만 남기면 경쟁사를 하나도 등록하지
-	 * 않은 유저의 성과 요약 숫자까지 줄어든다. 요청서의 의도(경쟁사가 내 성과를 오염시키지 않게)는
-	 * 경쟁사만 빼는 것으로 충족된다(스펙 §5).
-	 */
-	private static boolean matchesAccountType(String brandAccountId, String filter, Set<String> competitorIds) {
-		boolean competitor = brandAccountId != null && competitorIds.contains(brandAccountId);
-		if (BrandAccountType.COMPETITOR.equals(filter)) {
-			return competitor;
-		}
-		if (filter == null) {
-			return true;   // all — 미지정과 갈라지는 지점이다(normalizeAccountType 참고).
-		}
-		return !competitor;
-	}
-
-	/**
-	 * accountType 전용 정규화 — 다른 필터와 달리 미지정과 {@code all}이 다르다(미지정은 경쟁사 제외가
-	 * 기본, all은 전량). 그래서 공용 {@link #normalizeFilter(String, String, String...)}를 쓰지 않는다:
-	 * 그쪽에 태우면 미지정이 곧 전량이 되어 경쟁사 콘텐츠가 기본 성과 요약을 오염시킨다.
-	 *
-	 * <p>단, <b>미지정이면서 브랜드를 집어 물은 조회</b>({@code brandAccountId} 또는 {@code accountIds}
-	 * 명시)는 전량(all)이다 — 특정 브랜드를 지정한 요청에 경쟁사 제외 기본값까지 겹쳐 걸면 경쟁사
-	 * 브랜드 조회가 조용히 빈다(08-12 리뷰, 2026-08-27 복수 accountIds로 확장).
-	 *
-	 * @param brandSpecified 브랜드를 집어 물었는가(brandAccountId 또는 accountIds 명시) — 함의 판정용
-	 * @return null = 전량(all), {@code "own"} = 경쟁사 제외, {@code "competitor"} = 경쟁사만
-	 */
-	private static String normalizeAccountType(String raw, boolean brandSpecified) {
-		if (raw == null || raw.isBlank()) {
-			return brandSpecified ? null : BrandAccountType.OWN;
-		}
-		if (FILTER_ALL.equals(raw)) {
-			return null;
-		}
-		if (!BrandAccountType.isValid(raw)) {
-			throw V1ApiException.validation("accountType 값이 올바르지 않아요.");
-		}
-		return raw;
-	}
-
-	/** 미지정·{@code all}은 필터 없음(null), 그 외 값은 허용 목록 밖이면 400. */
-	private static String normalizeFilter(String raw, String param, String... allowed) {
-		String value = normalizeFilter(raw);
-		if (value == null) {
-			return null;
-		}
-		for (String candidate : allowed) {
-			if (candidate.equals(value)) {
-				return value;
-			}
-		}
-		throw V1ApiException.validation(param + " 값이 올바르지 않아요.");
-	}
-
-	/**
-	 * 값 공간이 열린 파라미터(brandAccountId)용 정규화 — 미지정·빈 값·{@code all}은 필터 없음.
-	 * 브랜드 id는 숫자 문자열이라 {@code all}이 실제 id와 충돌할 수 없어, FE의 "전체" 탭이 그대로
-	 * 넘어와도 전량으로 받아준다.
-	 */
-	private static String normalizeFilter(String raw) {
-		return raw == null || raw.isBlank() || FILTER_ALL.equals(raw) ? null : raw;
-	}
-
-	/**
-	 * 복수 브랜드 필터(2026-08-27 §2) — 쉼표 목록이다. 미지정·빈 값·{@code all}은 필터 없음(null,
-	 * FE의 "전체" 탭이 그대로 넘어와도 전량), 빈 항목은 무시하고 전부 비면 필터 없음이다.
-	 */
-	private static Set<String> normalizeAccountIds(String raw) {
-		if (raw == null || raw.isBlank() || FILTER_ALL.equals(raw)) {
-			return null;
-		}
-		Set<String> ids = Arrays.stream(raw.split(",")).map(String::trim).filter(s -> !s.isEmpty())
-				.collect(Collectors.toCollection(LinkedHashSet::new));
-		return ids.isEmpty() ? null : ids;
-	}
-
-	/**
-	 * 작성자 필터(2026-08-27 §2) — 미지정·빈 값은 필터 없음. 공용 {@link #normalizeFilter(String)}을
-	 * 쓰지 않는 이유는 값 공간이 인스타그램 핸들이라 {@code all}이 실제 계정명과 충돌할 수 있어서다
-	 * (핸들 {@code all}을 가진 작성자를 조회할 수 없게 만들지 않는다). 비교는 대소문자 무시다 —
-	 * 대시보드 handle은 소문자 계약이지만 레거시 아이템의 handle은 등록 시 입력값 그대로다.
-	 */
-	private static String normalizeAuthorUsername(String raw) {
-		if (raw == null || raw.isBlank()) {
-			return null;
-		}
-		return raw.trim();
-	}
-
-	/** 정렬 키 — 미지정·빈 값은 기본값 {@code uploaded}(종전 응답 순서), 값 공간 밖은 400. */
+	/** 목록 정렬 키 — 미지정·빈 값은 기본값 {@code uploaded}(종전 응답 순서), 값 공간 밖은 400. */
 	private static String normalizeSort(String raw) {
+		return normalizeSort(raw, SORT_KEYS, SORT_UPLOADED);
+	}
+
+	/**
+	 * 정렬 키 정규화 — 값 공간·기본값은 표면마다 다르고(목록 vs 인플루언서) 400 메시지만 같다. 그래서
+	 * {@link DashboardQueries}가 아니라 여기 둔다(공용화 기준은 "값 공간이 표면 간에 같아야 하는가").
+	 */
+	private static String normalizeSort(String raw, List<String> allowed, String fallback) {
 		if (raw == null || raw.isBlank()) {
-			return SORT_UPLOADED;
+			return fallback;
 		}
-		if (!SORT_KEYS.contains(raw)) {
+		if (!allowed.contains(raw)) {
 			throw V1ApiException.validation("sort 값이 올바르지 않아요.");
 		}
 		return raw;
@@ -481,6 +709,32 @@ public class V1PerformanceDashboardController {
 		return true;
 	}
 
+	/**
+	 * 버킷 단위 — 미지정·빈 값은 기본값 {@code month}, 값 공간 밖은 400. {@link DashboardQueries}가
+	 * 아니라 여기 두는 이유는 값 공간이 이 표면 전용이어서다(목록·인플루언서엔 이 축이 없다).
+	 */
+	private static Granularity normalizeGranularity(String raw) {
+		if (raw == null || raw.isBlank() || GRANULARITY_MONTH.equals(raw)) {
+			return Granularity.MONTH;
+		}
+		if (GRANULARITY_DAY.equals(raw)) {
+			return Granularity.DAY;
+		}
+		if (GRANULARITY_WEEK.equals(raw)) {
+			return Granularity.WEEK;
+		}
+		throw V1ApiException.validation("granularity 값이 올바르지 않아요.");
+	}
+
+	/** 계정 축 정렬 키 — 숫자로 못 읽는 id는 null(뒤로 밀린다, {@link #ACCOUNT_ID_ORDER}). */
+	private static Long accountIdOrder(String brandAccountId) {
+		try {
+			return Long.valueOf(brandAccountId);
+		} catch (NumberFormatException e) {
+			return null;
+		}
+	}
+
 	/** 스냅샷 모드 — 미지정·빈 값·{@code full}은 전체 이력(하위 호환). @return true면 최신 1개만 */
 	private static boolean normalizeSnapshotMode(String raw) {
 		if (raw == null || raw.isBlank() || SNAPSHOT_MODE_FULL.equals(raw)) {
@@ -490,39 +744,5 @@ public class V1PerformanceDashboardController {
 			throw V1ApiException.validation("snapshotMode 값이 올바르지 않아요.");
 		}
 		return true;
-	}
-
-	/**
-	 * 페이지 파라미터 정규화(2026-08-27 §2, 브랜드 목록 PR #602 관용구) — 둘 다 생략이면 null(전량,
-	 * 하위 호환). 하나라도 있으면 페이지 모드이고 나머지는 기본값(offset 0 · limit 100)이다.
-	 */
-	private static PageParams normalizePage(Integer limit, Integer offset) {
-		if (limit == null && offset == null) {
-			return null;
-		}
-		int lim = limit == null ? PAGE_LIMIT_DEFAULT : limit;
-		if (lim < 1 || lim > PAGE_LIMIT_MAX) {
-			throw V1ApiException.validation("limit은 1~" + PAGE_LIMIT_MAX + " 사이여야 해요.");
-		}
-		int off = offset == null ? 0 : offset;
-		if (off < 0) {
-			throw V1ApiException.validation("offset은 0 이상이어야 해요.");
-		}
-		return new PageParams(off, lim);
-	}
-
-	/** 정규화된 페이지 파라미터 — null이면 전량 모드다({@link #normalizePage} 참조). */
-	private record PageParams(int offset, int limit) {
-	}
-
-	private static LocalDate parseDate(String raw, String param) {
-		if (raw == null || raw.isBlank()) {
-			return null;
-		}
-		try {
-			return LocalDate.parse(raw);
-		} catch (DateTimeParseException e) {
-			throw V1ApiException.validation(param + "은 YYYY-MM-DD 형식이어야 해요.");
-		}
 	}
 }

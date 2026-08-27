@@ -56,6 +56,10 @@ class PerformanceContentAssemblerTest {
 	private static final BrandLinkRow OWN_LINK =
 			new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null);
 	private static final BrandAccountRow OWN_ACCOUNT = brandAccount(BRAND_ID, "brand");
+	/** 아카이브 사본이 없는 작성자의 원본 CDN 프로필 URL(POOL1) — 폴백 경로 판별용. */
+	private static final String POOL1_PROFILE_PIC_URL = "https://cdn.example.com/creator.jpg";
+	/** 아카이브된 작성자 프로필 오브젝트 경로(POOL2) — {@code /img/} 우선 경로 판별용. */
+	private static final String POOL2_IMAGE_OBJECT_PATH = "authors/ig-1.jpg";
 
 	@Mock
 	private TrackingItemAssembler trackingItemAssembler;
@@ -657,6 +661,8 @@ class PerformanceContentAssemblerTest {
 			assertThat(ref.campaignId()).isEqualTo(content.item().campaignId());
 			assertThat(ref.uploadedOn()).isEqualTo(PerformanceContentAssembler.uploadedOn(content));
 			assertThat(ref.handle()).isEqualTo(content.item().handle());
+			assertThat(ref.displayName()).isEqualTo(content.item().displayName());
+			assertThat(ref.profileImageUrl()).isEqualTo(content.item().profileImageUrl());
 			assertThat(ref.followers()).isEqualTo(content.item().followers());
 			var snaps = content.item().post() == null ? List.<SnapshotResponse>of()
 					: content.item().post().snapshots();
@@ -876,7 +882,12 @@ class PerformanceContentAssemblerTest {
 	 * POOL1 풀 전용). 겹침 코드만 하이드레이트되고 풀 전용은 인덱스 행 + 최신 스냅샷 1행으로 직조된다.
 	 */
 	private void givenIndexFixture() {
-		AuthorRow author = new AuthorRow("ig-1", "creator", "크리에이터", 1000L, null, false, null);
+		// 풀 전용 두 코드는 작성자 표시값의 두 축을 갈라 준다 — POOL1은 fullName 공백(→ handle 폴백) +
+		// 아카이브 사본 없음(→ 원본 CDN URL 폴백), POOL2는 fullName 존재 + 아카이브 오브젝트(→ /img/ 우선).
+		AuthorRow poolOneAuthor =
+				new AuthorRow("ig-1", "creator", "  ", 1000L, POOL1_PROFILE_PIC_URL, false, null);
+		AuthorRow poolTwoAuthor = new AuthorRow("ig-1", "creator", "크리에이터", 1000L,
+				"https://cdn.example.com/creator-expired.jpg", false, POOL2_IMAGE_OBJECT_PATH);
 		givenLegacy(
 				legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/",
 						List.of(snapshot("2026-08-06", 100L, null, 5L))),
@@ -893,7 +904,7 @@ class PerformanceContentAssemblerTest {
 		given(brandPostAssembler.hydrate(eq(USER_ID), eq(OWN_ACCOUNT), eq("own"), any(), eq(List.of("ABC")),
 				eq(false))).willReturn(List.of(overlapPost()));
 		given(brandPostAssembler.resolveAuthorsByKeys(any()))
-				.willReturn(Map.of("POOL1", author, "POOL2", author));
+				.willReturn(Map.of("POOL1", poolOneAuthor, "POOL2", poolTwoAuthor));
 		// 캠페인 다중 부착 — 응답 필드가 단수라 head("7")만 실린다(설계 §결정 3). POOL1은 매핑 없음.
 		given(brandPostAssembler.campaignIdsByCode(eq(BRAND_ID), any()))
 				.willReturn(Map.of("POOL2", List.of("7", "8")));
@@ -919,9 +930,14 @@ class PerformanceContentAssemblerTest {
 		return taggedPost("ABC", List.of(snapshot("2026-08-06", 120L, 8L, null)));
 	}
 
+	/**
+	 * 풀 전용 카드 — 작성자 fullName이 공백이라 displayName은 handle로 폴백하고, 프로필 이미지는
+	 * 아카이브 사본이 없어 원본 CDN URL로 폴백한다({@link #givenIndexFixture}의 POOL1 author 대응).
+	 */
 	private static BrandPostResponse poolOnlyPost() {
-		return taggedPost("POOL1",
-				List.of(snapshot("2026-08-05", 100L, 10L, 1L), snapshot("2026-08-06", 200L, 20L, 2L)));
+		return brandPost("POOL1", "tagged",
+				List.of(snapshot("2026-08-05", 100L, 10L, 1L), snapshot("2026-08-06", 200L, 20L, 2L)),
+				"브랜드 태그 캡션", false, BRAND_ID, List.of(), "tracking", "  ", POOL1_PROFILE_PIC_URL);
 	}
 
 	/**
@@ -929,13 +945,17 @@ class PerformanceContentAssemblerTest {
 	 * 나머지 픽스처는 세 값이 전부 상수(tracking·unknown·null)라 {@link
 	 * PerformanceContentAssembler} 경량 ref의 상태·협찬·캠페인 head 파생을 동치성 비교가
 	 * 판별하지 못한다 — 이 행이 그 셋을 실제 판별 대상으로 만든다.
+	 *
+	 * <p>프로필 이미지는 아카이브 사본 경로({@code /img/...})다 — 원본 CDN URL로 폴백하는 POOL1과
+	 * 짝을 이뤄 ref의 이미지 산지(아카이브 우선) 파생을 판별한다.
 	 */
 	private static BrandPostResponse hiddenSponsoredPoolPost() {
 		SnapshotResponse latest = snapshot("2026-08-04", 300L, 30L, 3L);
 		return new BrandPostResponse("POOL2", String.valueOf(BRAND_ID), "tagged",
 				"https://www.instagram.com/reel/POOL2/", "POOL2", "reels",
 				"2026-08-04T09:00:00+09:00", "브랜드 태그 캡션", null, null, null,
-				"https://www.instagram.com/creator/", "creator", "크리에이터", null, false, 1000L,
+				"https://www.instagram.com/creator/", "creator", "크리에이터",
+				"/img/" + POOL2_IMAGE_OBJECT_PATH, false, 1000L,
 				"sponsored", true, "hidden", "2026-08-04T09:30:00+09:00", null, latest, List.of(latest),
 				latest.comments(), false, 0L, List.of(), List.of("7", "8"),
 				"2026-08-04T09:30:00+09:00", "2026-08-07T03:00:00+09:00",
@@ -1082,11 +1102,19 @@ class PerformanceContentAssemblerTest {
 
 	private static BrandPostResponse brandPost(String shortcode, String source, List<SnapshotResponse> snapshots,
 			String caption, boolean commentsHidden, long brandId, List<String> campaignIds, String trackingStatus) {
+		return brandPost(shortcode, source, snapshots, caption, commentsHidden, brandId, campaignIds,
+				trackingStatus, "크리에이터", null);
+	}
+
+	/** 작성자 표시 필드까지 지정하는 산지 — displayName 폴백·프로필 이미지 산지 판별 픽스처가 쓴다. */
+	private static BrandPostResponse brandPost(String shortcode, String source, List<SnapshotResponse> snapshots,
+			String caption, boolean commentsHidden, long brandId, List<String> campaignIds, String trackingStatus,
+			String authorFullName, String authorProfilePicUrl) {
 		SnapshotResponse latest = snapshots.isEmpty() ? null : snapshots.get(snapshots.size() - 1);
 		return new BrandPostResponse(shortcode, String.valueOf(brandId), source,
 				"https://www.instagram.com/reel/" + shortcode + "/", shortcode, "reels",
 				"2026-08-06T09:00:00+09:00", caption, null, null, null,
-				"https://www.instagram.com/creator/", "creator", "크리에이터", null, false, 1000L,
+				"https://www.instagram.com/creator/", "creator", authorFullName, authorProfilePicUrl, false, 1000L,
 				"unknown", null, trackingStatus, "2026-08-06T09:30:00+09:00", null, latest, snapshots,
 				latest == null ? null : latest.comments(), commentsHidden, 0L, List.of(), campaignIds,
 				"2026-08-06T09:30:00+09:00", "2026-08-07T03:00:00+09:00",

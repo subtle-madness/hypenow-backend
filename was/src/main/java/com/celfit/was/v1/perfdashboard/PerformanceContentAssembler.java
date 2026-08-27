@@ -439,7 +439,8 @@ public class PerformanceContentAssembler {
 						: post.snapshots().get(post.snapshots().size() - 1);
 		return new DashboardRef(content.item().id(), content.canonicalPostId(), content.source(),
 				content.sponsorship(), content.item().status(), uploadedOn(content), content.brandAccountId(),
-				content.item().campaignId(), content.item().handle(), content.item().followers(),
+				content.item().campaignId(), content.item().handle(), content.item().displayName(),
+				content.item().profileImageUrl(), content.item().followers(),
 				latest == null ? null : latest.views(), latest == null ? null : latest.likes(),
 				latest != null && latest.likesHidden(), latest == null ? null : latest.comments(),
 				latest != null);
@@ -450,6 +451,11 @@ public class PerformanceContentAssembler {
 	 * {@code BrandPostAssembler.brandPost}·{@code snapshotOf})와 같다 — handle은 author_profile
 	 * 우선·열거 관측 폴백 후 소문자, views는 피드에서 null, 상태는 unavailable이면 hidden,
 	 * campaignId는 campaignIds의 head다.
+	 *
+	 * <p>작성자 표시값도 같은 규칙을 재현한다 — displayName은 fullName이 비면 handle로 폴백하고
+	 * (카드의 {@code fromBrandPost} 폴백과 동형), profileImageUrl은 아카이브 오브젝트 우선·원본 CDN
+	 * 폴백({@link BrandPostAssembler#resolveImageUrl})이다. 카드 경로가 이 값들을 {@code
+	 * BrandPostResponse}의 author 필드에서 받는 것과 같은 산지(author_profile 1행)를 쓴다.
 	 */
 	private static DashboardRef refOfPoolRow(String brandAccountId, BrandReadRepository.BrandPostIndexRow row,
 			BrandReadRepository.LatestSnapshotRow snap, BrandReadRepository.AuthorRow author,
@@ -457,6 +463,10 @@ public class PerformanceContentAssembler {
 		String username = author != null && author.username() != null ? author.username()
 				: row.rawAuthorUsername();
 		String handle = username == null ? "" : username.toLowerCase(Locale.ROOT);
+		String fullName = author == null ? null : author.fullName();
+		String displayName = fullName == null || fullName.isBlank() ? handle : fullName;
+		String profileImageUrl = author == null ? null
+				: BrandPostAssembler.resolveImageUrl(author.imageObjectPath(), author.profilePicUrl());
 		boolean reels = snap != null && CONTENT_TYPE_REELS.equalsIgnoreCase(snap.contentType());
 		return new DashboardRef(SYNTHETIC_ID_PREFIX + row.shortCode(), row.shortCode(),
 				BrandPostAssembler.resolveSource(row.tagDetectedAt(), row.directRegisteredAt(), registeredByUser),
@@ -465,7 +475,7 @@ public class PerformanceContentAssembler {
 				BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.captionMarker()),
 				row.unavailableAt() != null ? ItemStatus.HIDDEN : ItemStatus.TRACKING,
 				KstTimestamps.toKstDate(row.takenAt()), brandAccountId,
-				campaignIds.isEmpty() ? null : campaignIds.get(0), handle,
+				campaignIds.isEmpty() ? null : campaignIds.get(0), handle, displayName, profileImageUrl,
 				author == null ? null : author.followers(),
 				snap == null || !reels ? null : snap.views(),
 				snap == null ? null : snap.likes(), snap != null && snap.likesHidden(),
@@ -863,10 +873,15 @@ public class PerformanceContentAssembler {
 		static final BrandPool EMPTY = new BrandPool(Map.of(), null);
 	}
 
-	/** 대시보드 콘텐츠 1건의 경량 참조 — 필터·statusCounts·정렬·페이지·집계의 판정값 전부. */
+	/**
+	 * 대시보드 콘텐츠 1건의 경량 참조 — 필터·statusCounts·정렬·페이지·집계의 판정값 전부.
+	 * {@code displayName}·{@code profileImageUrl}은 인플루언서 집계가 카드를 조립하지 않고도 표시명·
+	 * 프로필 이미지를 낼 수 있게 하는 재료다 — 값은 카드({@code item})와 동치여야 한다(동치성 테스트가 고정).
+	 */
 	public record DashboardRef(String contentKey, String shortcode, String source, String sponsorship,
 			String status, LocalDate uploadedOn, String brandAccountId, String campaignId,
-			String handle, Long followers, Long latestViews, Long latestLikes, boolean latestLikesHidden,
+			String handle, String displayName, String profileImageUrl, Long followers,
+			Long latestViews, Long latestLikes, boolean latestLikesHidden,
 			Long latestComments, boolean hasSnapshots) {
 	}
 

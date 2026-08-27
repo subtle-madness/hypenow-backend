@@ -11,6 +11,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -33,7 +34,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.hamcrest.Matchers;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +44,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 /**
  * /v1/performance-dashboard 표면 계약(스펙 §7-1) — 필터 값 공간, statusCounts의 기간 필터 무관성,
@@ -62,6 +66,27 @@ class V1PerformanceDashboardControllerTest {
 
 	@MockitoBean
 	PerformanceComparisonAssembler comparisonAssembler;
+
+	@MockitoBean
+	DashboardVersion dashboardVersion;
+
+	/**
+	 * 기본 스텁의 버전키 — 이 클래스의 기존 표면 계약 테스트는 {@code If-None-Match}를 보내지 않아
+	 * 전부 조건부 <b>미스</b>(200)다. 304를 보려는 테스트만 아래 {@link #ETAG}를 명시적으로 실어 보낸다.
+	 */
+	private static final String VERSION = "0123456789abcdef0123456789abcdef";
+
+	/** 위 버전키의 ETag 표면 — 앞 16자 약한 검증자(설계 §2-7). 리터럴이라 산출 규칙과 독립이다. */
+	private static final String ETAG = "W/\"0123456789abcdef\"";
+
+	/** 설계 §4의 캐시 헤더 — Spring Security 기본(no-store)을 이 4표면에서만 덮는다. */
+	private static final String CACHE_CONTROL = "private, no-cache";
+
+	@BeforeEach
+	void 버전키_기본_스텁() {
+		// lenient: 400으로 끝나는 테스트는 버전 계산에 도달하지 않는다(값 공간 검증이 조건부보다 앞).
+		lenient().when(dashboardVersion.compute(7L)).thenReturn(VERSION);
+	}
 
 	private static AppUserDetails principal() {
 		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash", "USER",
@@ -105,9 +130,29 @@ class V1PerformanceDashboardControllerTest {
 	 * (legacyCards·brandByCode·brandsById·campaignsById)는 이 표면과 무관해 비워 둔다.
 	 */
 	private void givenIndexedRefs(DashboardRef... refs) {
+		givenIndexedRefs(Set.of(), refs);
+	}
+
+	/** 경쟁사 집합을 지정하는 ref 스텁 — accountType 함의(인플루언서 표면) 판정 근거다. */
+	private void givenIndexedRefs(Set<String> competitorBrandAccountIds, DashboardRef... refs) {
+		givenIndexedRefs(competitorBrandAccountIds, List.of(), refs);
+	}
+
+	/**
+	 * 연결 브랜드 축까지 지정하는 ref 스텁(growth 표면) — 계정 축이 게시물이 아니라
+	 * {@code brandsById}(연결 활성 브랜드)에서 나오므로 그 키셋이 픽스처의 일부다. 값(하이드레이트
+	 * 재료)은 이 표면이 보지 않아 비워 둔다 — 컨트롤러가 keySet만 소비한다는 것 자체가 이 스텁의 계약.
+	 *
+	 * <p>키 순서를 일부러 뒤집어 넣을 수 있게 {@link LinkedHashMap}이다(축 결정화 검증용).
+	 */
+	private void givenIndexedRefs(Set<String> competitorBrandAccountIds, List<String> brandAccountIds,
+			DashboardRef... refs) {
+		Map<String, PerformanceContentAssembler.DashboardIndex.BrandHydration> brandsById = new LinkedHashMap<>();
+		brandAccountIds.forEach(id -> brandsById.put(id,
+				new PerformanceContentAssembler.DashboardIndex.BrandHydration(null, null, Set.of())));
 		lenient().when(assembler.index(7L)).thenReturn(new DashboardIndex(
-				7L, List.of(refs), OffsetDateTime.parse("2026-08-07T18:00:00Z"), Set.of(),
-				Map.of(), Map.of(), Map.of(), Map.of()));
+				7L, List.of(refs), OffsetDateTime.parse("2026-08-07T18:00:00Z"), competitorBrandAccountIds,
+				Map.of(), Map.of(), brandsById, Map.of()));
 	}
 
 	private static DashboardIndex index(OffsetDateTime lastCollectedAt, Set<String> competitorBrandAccountIds,
@@ -124,7 +169,8 @@ class V1PerformanceDashboardControllerTest {
 		return new DashboardRef(content.item().id(), content.canonicalPostId(), content.source(),
 				content.sponsorship(), content.item().status(),
 				PerformanceContentAssembler.uploadedOn(content), content.brandAccountId(),
-				content.item().campaignId(), content.item().handle(), content.item().followers(),
+				content.item().campaignId(), content.item().handle(), content.item().displayName(),
+				content.item().profileImageUrl(), content.item().followers(),
 				latest == null ? null : latest.views(), latest == null ? null : latest.likes(),
 				latest != null && latest.likesHidden(), latest == null ? null : latest.comments(),
 				latest != null);
@@ -791,7 +837,504 @@ class V1PerformanceDashboardControllerTest {
 		then(assembler).should(never()).index(anyLong());
 	}
 
+	// ---------- 인플루언서 집계(2026-08-27 §4) ----------
+
+	private static final String INFLUENCERS = "/v1/performance-dashboard/influencers";
+
+	@Test
+	void influencers는_작성자별로_접고_기본_views_내림차순이다() throws Exception {
+		// 입력 순서는 beautylover가 먼저다 — 기본 정렬(views desc)이 실제로 도는지 보려면 등장 순과
+		// 기대 순서가 달라야 한다(집계기는 handle 등장 순을 유지한다).
+		// beautylover는 좋아요·참여율이 더 높다 — 기본 키가 views임을 못 박는다(likes·engagement가
+		// 기본값이면 순서가 뒤집힌다).
+		givenIndexedRefs(
+				influencerRef("1", "beautylover", "2026-08-02", "sponsored", "12", 1000L, 100L, 100L, 5L),
+				influencerRef("2", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L),
+				influencerRef("3", "glowdeep_92", "2026-08-06", "organic", "13", 1000L, 100L, 30L, 9L));
+
+		mockMvc.perform(get(INFLUENCERS).with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].handle").value(Matchers.contains("glowdeep_92", "beautylover")))
+				.andExpect(jsonPath("$.data[*].views").value(Matchers.contains(300, 100)))
+				.andExpect(jsonPath("$.data[*].likes").value(Matchers.contains(50, 100)))
+				// 집계기 배선 확인 — 행이 접히면서 건수·좋아요 모수·귀속 브랜드가 같이 실려야 한다.
+				.andExpect(jsonPath("$.data[0].postCount").value(2))
+				.andExpect(jsonPath("$.data[0].sponsoredCount").value(1))
+				.andExpect(jsonPath("$.data[0].likesKnownCount").value(2))
+				.andExpect(jsonPath("$.data[0].latestPostAt").value("2026-08-06"))
+				.andExpect(jsonPath("$.data[0].brandAccountIds").value(Matchers.contains("12", "13")))
+				.andExpect(jsonPath("$.meta.total").value(2))
+				// 신설 표면이라 목록의 statusCounts·limit·lastCollectedAt은 없다(meta는 total·page뿐).
+				.andExpect(jsonPath("$.meta", Matchers.aMapWithSize(2)))
+				.andExpect(jsonPath("$.meta.page.offset").value(0));
+
+		// 인플루언서 표면은 인덱스 ref만으로 답한다 — 목록용 카드 하이드레이션(비싼 패스)을 타면
+		// 신설 표면의 비용 이점이 사라진다.
+		then(assembler).should(never()).hydratePage(any(), anyList());
+	}
+
+	@Test
+	void influencers_필터는_집계_모수에_적용된다() throws Exception {
+		// 목록의 statusCounts 같은 "필터 예외 모수"가 없다 — 필터가 걸리면 행 자체와 total이 같이 준다.
+		givenIndexedRefs(
+				withCampaign(influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12",
+						1000L, 200L, 20L, 7L), "c-1"),
+				influencerRef("2", "beautylover", "2026-08-02", "organic", "12", 1000L, 100L, 10L, 5L));
+
+		mockMvc.perform(get(INFLUENCERS + "?sponsorship=sponsored").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].handle").value("glowdeep_92"))
+				.andExpect(jsonPath("$.data[0].postCount").value(1))
+				.andExpect(jsonPath("$.meta.total").value(1));
+
+		mockMvc.perform(get(INFLUENCERS + "?campaignId=c-1").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].handle").value(Matchers.contains("glowdeep_92")))
+				.andExpect(jsonPath("$.meta.total").value(1));
+
+		// none은 값이 아니라 부재를 고르는 어휘다(목록·비교와 같은 술어).
+		mockMvc.perform(get(INFLUENCERS + "?campaignId=none").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].handle").value(Matchers.contains("beautylover")))
+				.andExpect(jsonPath("$.meta.total").value(1));
+	}
+
+	@Test
+	void influencers_업로드_기간은_집계_모수를_좁히고_업로드일_미상은_빠진다() throws Exception {
+		// 기간을 지정하면 업로드일 미상 ref는 판정 불가라 모수 밖이다(목록 data와 같은 규칙).
+		givenIndexedRefs(
+				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L),
+				influencerRef("2", "glowdeep_92", "2026-08-01", "sponsored", "12", 1000L, 500L, 50L, 9L),
+				influencerRef("3", "beautylover", null, "sponsored", "12", 1000L, 700L, 70L, 3L));
+
+		mockMvc.perform(get(INFLUENCERS + "?uploadedFrom=2026-08-04").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].handle").value("glowdeep_92"))
+				.andExpect(jsonPath("$.data[0].postCount").value(1))
+				.andExpect(jsonPath("$.data[0].views").value(200))
+				.andExpect(jsonPath("$.meta.total").value(1));
+	}
+
+	@Test
+	void influencers_페이지는_정렬_후_슬라이스고_생략_시_전량이다() throws Exception {
+		// cosmelog·beautylover는 views 동률이다 — 타이브레이크(handle 오름차순)까지 전순서여야
+		// 페이지 간 중복·누락이 없다. 등장 순은 cosmelog가 먼저라 타이브레이크가 없으면 순서가 뒤집힌다.
+		givenIndexedRefs(
+				influencerRef("1", "cosmelog", "2026-08-02", "sponsored", "12", 1000L, 200L, 10L, 5L),
+				influencerRef("2", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 300L, 20L, 7L),
+				influencerRef("3", "beautylover", "2026-08-06", "sponsored", "12", 1000L, 200L, 30L, 9L));
+
+		// 정렬(views desc: glowdeep_92 → beautylover → cosmelog) 후 슬라이스라 둘째 행이 나와야 한다.
+		mockMvc.perform(get(INFLUENCERS + "?offset=1&limit=1").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].handle").value(Matchers.contains("beautylover")))
+				// total은 페이지가 아니라 집계 행 전체다.
+				.andExpect(jsonPath("$.meta.total").value(3))
+				.andExpect(jsonPath("$.meta.page.offset").value(1))
+				.andExpect(jsonPath("$.meta.page.limit").value(1));
+
+		mockMvc.perform(get(INFLUENCERS).with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].handle")
+						.value(Matchers.contains("glowdeep_92", "beautylover", "cosmelog")))
+				.andExpect(jsonPath("$.meta.total").value(3))
+				.andExpect(jsonPath("$.meta.page.offset").value(0))
+				// limit null = 안 잘랐다는 표식(키는 유지 — 계약 무결성 규칙 #1).
+				.andExpect(jsonPath("$.meta.page", Matchers.hasKey("limit")))
+				.andExpect(jsonPath("$.meta.page.limit").value(Matchers.nullValue()));
+	}
+
+	@Test
+	void influencers_engagement_정렬은_분모_미상을_마지막에_둔다() throws Exception {
+		givenIndexedRefs(
+				// 참여율 0.02 — 팔로워가 커서 낮다.
+				influencerRef("1", "beautylover", "2026-08-02", "sponsored", "12", 1000L, 100L, 10L, 10L),
+				// 팔로워 미상 → rated 분모 없음 → 순위 밖.
+				influencerRef("2", "cosmelog", "2026-08-03", "sponsored", "12", null, 100L, 10L, 10L),
+				// 참여율 0.2.
+				influencerRef("3", "glowdeep_92", "2026-08-05", "sponsored", "12", 100L, 100L, 10L, 10L));
+
+		mockMvc.perform(get(INFLUENCERS + "?sort=engagement").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].handle")
+						.value(Matchers.contains("glowdeep_92", "beautylover", "cosmelog")));
+
+		// null은 "작은 값"이 아니라 "순위 밖"이다 — order를 뒤집어도 앞으로 올라오지 않는다.
+		mockMvc.perform(get(INFLUENCERS + "?sort=engagement&order=asc").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].handle")
+						.value(Matchers.contains("beautylover", "glowdeep_92", "cosmelog")));
+	}
+
+	@Test
+	void influencers_정렬_키_6종은_각자_다른_축을_본다() throws Exception {
+		// 축마다 기대 순서가 전부 다른 픽스처다 — 키 하나가 다른 필드를 보면 즉시 어긋난다.
+		givenIndexedRefs(
+				influencerRef("1", "aromashop", "2026-08-01", "sponsored", "12", 1000L, 500L, 5L, 50L),
+				influencerRef("2", "beautylover", "2026-08-05", "sponsored", "12", 1000L, 100L, 300L, 12L),
+				influencerRef("3", "cosmelog", "2026-08-09", "sponsored", "12", 1000L, 200L, 20L, 5L),
+				influencerRef("4", "cosmelog", "2026-08-04", "sponsored", "12", 1000L, 50L, 10L, 5L));
+
+		Map<String, List<String>> expected = new LinkedHashMap<>();
+		expected.put("views", List.of("aromashop", "cosmelog", "beautylover"));            // 500·250·100
+		expected.put("likes", List.of("beautylover", "cosmelog", "aromashop"));            // 300·30·5
+		expected.put("comments", List.of("aromashop", "beautylover", "cosmelog"));         // 50·12·10
+		expected.put("posts", List.of("cosmelog", "aromashop", "beautylover"));            // 2·1·1(handle)
+		expected.put("latest", List.of("cosmelog", "beautylover", "aromashop"));           // 08-09·08-05·08-01
+		expected.put("engagement", List.of("beautylover", "aromashop", "cosmelog"));       // .312·.055·.02
+
+		for (Map.Entry<String, List<String>> entry : expected.entrySet()) {
+			mockMvc.perform(get(INFLUENCERS + "?sort=" + entry.getKey()).with(user(principal())))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.data[*].handle")
+							.value(Matchers.contains(entry.getValue().toArray(String[]::new))));
+		}
+	}
+
+	@Test
+	void influencers_sort_값_공간_밖은_400이다() throws Exception {
+		// uploaded는 목록 전용 키다 — 이 표면의 값 공간 밖이라 400이어야 한다(표면별 값 공간 분리).
+		for (String query : List.of("?sort=followers", "?sort=uploaded", "?order=random")) {
+			mockMvc.perform(get(INFLUENCERS + query).with(user(principal())))
+					.andExpect(status().isBadRequest())
+					.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+		}
+		// 검증은 인덱스 패스보다 앞이다 — 400으로 끝날 요청이 DB를 건드리면 안 된다.
+		then(assembler).should(never()).index(anyLong());
+	}
+
+	@Test
+	void influencers_accountIds는_함의를_포함해_목록과_같은_규칙이다() throws Exception {
+		givenIndexedRefs(Set.of("15"),
+				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L),
+				influencerRef("2", "rivalfan", "2026-08-06", "sponsored", "15", 1000L, 100L, 10L, 5L));
+
+		// 경쟁사 브랜드를 콕 집어 물었으므로 accountType=all이 함의된다(겹쳐 걸면 조용히 빈다).
+		mockMvc.perform(get(INFLUENCERS + "?accountIds=15").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].handle").value(Matchers.contains("rivalfan")))
+				.andExpect(jsonPath("$.meta.total").value(1));
+
+		// 미지정 기본값은 경쟁사 제외 — 함의가 진짜로 필요한 상황임을 같이 고정한다.
+		mockMvc.perform(get(INFLUENCERS).with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].handle").value(Matchers.contains("glowdeep_92")));
+
+		// 명시한 accountType이 함의를 이긴다(목록 §7-1과 같은 규칙).
+		mockMvc.perform(get(INFLUENCERS + "?accountIds=15&accountType=own").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(0))
+				.andExpect(jsonPath("$.meta.total").value(0));
+	}
+
+	// ---------- 성장 시계열(2026-08-28 §5) ----------
+
+	private static final String GROWTH = "/v1/performance-dashboard/growth";
+
+	@Test
+	void growth는_월_버킷_총계와_계정_시리즈를_내린다() throws Exception {
+		// 브랜드 12 귀속 1건 + individual(미귀속) 1건 — 둘 다 8월이라 월 버킷 1개다.
+		givenIndexedRefs(Set.of(), List.of("12"),
+				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L),
+				influencerRef("2", "beautylover", "2026-08-20", "organic", null, 500L, 100L, 10L, 3L));
+
+		mockMvc.perform(get(GROWTH).with(user(principal())))
+				.andExpect(status().isOk())
+				// 기본 granularity는 month다.
+				.andExpect(jsonPath("$.data.granularity").value("month"))
+				.andExpect(jsonPath("$.data.points.length()").value(1))
+				.andExpect(jsonPath("$.data.points[0].start").value("2026-08-01"))
+				.andExpect(jsonPath("$.data.points[0].end").value("2026-08-31"))
+				// 총계는 미귀속 individual까지 포함한다.
+				.andExpect(jsonPath("$.data.points[0].contentCount").value(2))
+				.andExpect(jsonPath("$.data.points[0].views").value(300))
+				// 계정 축은 연결 브랜드뿐 — 미귀속 individual은 시리즈가 없다.
+				.andExpect(jsonPath("$.data.accounts.length()").value(1))
+				.andExpect(jsonPath("$.data.accounts[0].brandAccountId").value("12"))
+				.andExpect(jsonPath("$.data.accounts[0].points[0].contentCount").value(1))
+				.andExpect(jsonPath("$.data.accounts[0].points[0].views").value(200))
+				// 시계열 축 하나뿐이라 목록형 meta(total·page)가 없다(FE 제안 셰이프).
+				.andExpect(jsonPath("$.meta").doesNotExist());
+	}
+
+	@Test
+	void growth_필터는_집계_모수에_적용된다() throws Exception {
+		givenIndexedRefs(Set.of(), List.of("12"),
+				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L),
+				influencerRef("2", "beautylover", "2026-08-20", "organic", "12", 500L, 100L, 10L, 3L));
+
+		mockMvc.perform(get(GROWTH + "?sponsorship=sponsored").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.points[0].contentCount").value(1))
+				.andExpect(jsonPath("$.data.points[0].views").value(200))
+				// 계정 시리즈도 같은 모수에서 접힌다(총계만 거르고 시리즈는 전량이면 축이 어긋난다).
+				.andExpect(jsonPath("$.data.accounts[0].points[0].contentCount").value(1));
+	}
+
+	@Test
+	void growth_from_to는_빈_버킷_연속_생성과_기간_필터를_함께_건다() throws Exception {
+		givenIndexedRefs(Set.of(), List.of("12"),
+				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L),
+				// 구간 밖 — 기간 필터로 모수에서 빠진다.
+				influencerRef("2", "glowdeep_92", "2026-08-09", "sponsored", "12", 1000L, 900L, 90L, 9L),
+				// 업로드일 미상 — 기간 지정 시 판정 불가라 빠진다(목록 data와 같은 규칙).
+				influencerRef("3", "beautylover", null, "sponsored", "12", 1000L, 700L, 70L, 3L));
+
+		mockMvc.perform(get(GROWTH + "?granularity=day&from=2026-08-05&to=2026-08-07")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.granularity").value("day"))
+				// 빈 날도 Point가 있어야 차트 축이 끊기지 않는다.
+				.andExpect(jsonPath("$.data.points[*].start")
+						.value(Matchers.contains("2026-08-05", "2026-08-06", "2026-08-07")))
+				.andExpect(jsonPath("$.data.points[*].contentCount").value(Matchers.contains(1, 0, 0)))
+				.andExpect(jsonPath("$.data.points[0].views").value(200))
+				// 계정 시리즈는 총계와 같은 축(개수·경계)이다.
+				.andExpect(jsonPath("$.data.accounts[0].points.length()").value(3));
+	}
+
+	@Test
+	void growth_granularity_값_밖은_400이고_index를_부르지_않는다() throws Exception {
+		for (String query : List.of("?granularity=year", "?granularity=hour", "?from=2026-08-32")) {
+			mockMvc.perform(get(GROWTH + query).with(user(principal())))
+					.andExpect(status().isBadRequest())
+					.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+		}
+		then(assembler).should(never()).index(anyLong());
+	}
+
+	@Test
+	void growth_버킷_수_상한을_넘는_구간은_400이다() throws Exception {
+		// day + 12년(약 4,384 버킷) — 축이 비어도 상한 4,000을 넘어 index() 앞 사전 판정에서 걸린다.
+		// 같은 구간도 month면(145 버킷) 통과해야 한다.
+		mockMvc.perform(get(GROWTH + "?granularity=day&from=2014-01-01&to=2026-01-01")
+						.with(user(principal())))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+		then(assembler).should(never()).index(anyLong());
+
+		givenIndexedRefs(Set.of(), List.of(),
+				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L));
+		mockMvc.perform(get(GROWTH + "?granularity=month&from=2023-01-01&to=2026-01-01")
+						.with(user(principal())))
+				.andExpect(status().isOk());
+	}
+
+	@Test
+	void growth_예산은_버킷과_계정_축의_곱이다() throws Exception {
+		// 버킷 수는 상한 이내(day + 60일 = 60버킷)지만 계정 축이 100개면 Point는 60 × 101 = 6,060개로
+		// 상한 4,000을 넘는다 — 축은 accountIds로 요청자가 정하는 값이라 버킷 단독 상한은 이렇게
+		// 우회됐다.
+		givenIndexedRefs(Set.of(), List.of("12"),
+				influencerRef("1", "glowdeep_92", "2026-01-05", "sponsored", "12", 1000L, 200L, 20L, 7L));
+		String manyIds = IntStream.rangeClosed(1, 100).mapToObj(Integer::toString)
+				.collect(Collectors.joining(","));
+
+		mockMvc.perform(get(GROWTH + "?granularity=day&from=2026-01-01&to=2026-03-01&accountIds=" + manyIds)
+						.with(user(principal())))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+		// 축 크기를 알려면 인덱스가 필요하다 — 이 판정은 index() 뒤다(딱 1회, 그 뒤로 진행 없음).
+		then(assembler).should().index(7L);
+		then(assembler).should(never()).hydratePage(any(), anyList());
+
+		// 같은 구간·같은 granularity라도 축이 작으면 통과한다(60 × 2 = 120) — 회귀 방지.
+		mockMvc.perform(get(GROWTH + "?granularity=day&from=2026-01-01&to=2026-03-01&accountIds=12")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.accounts.length()").value(1));
+
+		// 캘리브레이션 하한 — FE 개요 탭이 실제로 쓰는 규모(일 입자 × 1년 × 계정 7개 = 365 × 8 =
+		// 2,920)는 통과해야 한다. 상한을 다시 조이면 여기서 먼저 깨진다.
+		String sevenIds = IntStream.rangeClosed(1, 7).mapToObj(Integer::toString)
+				.collect(Collectors.joining(","));
+		mockMvc.perform(get(GROWTH + "?granularity=day&from=2025-01-01&to=2025-12-31&accountIds=" + sevenIds)
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.accounts.length()").value(7))
+				.andExpect(jsonPath("$.data.points.length()").value(365));
+	}
+
+	@Test
+	void growth_한쪽만_지정해도_상한은_유효_범위로_판정된다() throws Exception {
+		// 사전 판정(양쪽 지정)만 있으면 한쪽 생략이 상한을 통째로 우회한다 — 생략한 끝이 데이터
+		// 범위로 확정돼 rangeFrom=2026-08-05·rangeTo=9999-12-31, 약 290만 버킷이 만들어진다.
+		givenIndexedRefs(Set.of(), List.of("12"),
+				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L));
+
+		mockMvc.perform(get(GROWTH + "?granularity=day&to=9999-12-31").with(user(principal())))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+		// 유효 범위를 알려면 인덱스가 필요하다 — 이 판정만은 index() 뒤다(딱 1회, 그 뒤로 진행 없음).
+		then(assembler).should().index(7L);
+		then(assembler).should(never()).hydratePage(any(), anyList());
+	}
+
+	@Test
+	void growth_한쪽만_지정한_정상_범위는_반대끝이_데이터로_폴백된다() throws Exception {
+		// 재판정이 정상 조회까지 막지 않는지 — from만 주면 to는 데이터 최대 업로드일이다.
+		givenIndexedRefs(Set.of(), List.of("12"),
+				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L),
+				influencerRef("2", "glowdeep_92", "2026-08-07", "sponsored", "12", 1000L, 100L, 10L, 3L));
+
+		mockMvc.perform(get(GROWTH + "?granularity=day&from=2026-08-05").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.points[*].start")
+						.value(Matchers.contains("2026-08-05", "2026-08-06", "2026-08-07")))
+				.andExpect(jsonPath("$.data.points[*].contentCount").value(Matchers.contains(1, 0, 1)));
+	}
+
+	@Test
+	void growth_양쪽_생략도_데이터_범위가_넓으면_400이다() throws Exception {
+		// 파라미터가 하나도 없어도 day 버킷이면 수년치 레거시 데이터만으로 상한을 넘는다
+		// (2019-01-01~2026-08-05 = 2,774 버킷 × (1 + 계정 1) = 5,548 > 4,000).
+		// 400 메시지가 granularity 상향을 안내하므로 사용자가 스스로 빠져나올 수 있다(의도된 동작).
+		givenIndexedRefs(Set.of(), List.of("12"),
+				influencerRef("1", "glowdeep_92", "2019-01-01", "sponsored", "12", 1000L, 200L, 20L, 7L),
+				influencerRef("2", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 100L, 10L, 3L));
+
+		mockMvc.perform(get(GROWTH + "?granularity=day").with(user(principal())))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		// 같은 데이터·같은 파라미터라도 month면 통과한다(안내대로 빠져나갈 길이 실제로 있다).
+		mockMvc.perform(get(GROWTH).with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.points[0].start").value("2019-01-01"));
+	}
+
+	@Test
+	void growth_계정_축은_연결_브랜드고_accountIds가_있으면_그_순서다() throws Exception {
+		// 15는 경쟁사 — 미지정 기본값(경쟁사 제외)에서는 축에서도 빠진다.
+		givenIndexedRefs(Set.of("15"), List.of("15", "12"),
+				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L),
+				influencerRef("2", "rivalfan", "2026-08-06", "sponsored", "15", 1000L, 100L, 10L, 5L));
+
+		mockMvc.perform(get(GROWTH).with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.accounts[*].brandAccountId").value(Matchers.contains("12")))
+				.andExpect(jsonPath("$.data.points[0].contentCount").value(1));
+
+		// accountType=all이면 경쟁사도 축에 든다 — brandsById 순회 순서는 15가 먼저지만 축은 숫자
+		// 오름차순으로 결정화된다(순회 순서가 흔들려도 같은 요청이 같은 축을 준다).
+		mockMvc.perform(get(GROWTH + "?accountType=all").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.accounts[*].brandAccountId")
+						.value(Matchers.contains("12", "15")));
+
+		// accountIds를 지정하면 그 목록·그 순서 그대로다(경쟁사도 accountType=all 함의로 들어온다).
+		mockMvc.perform(get(GROWTH + "?accountIds=15,12").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.accounts[*].brandAccountId")
+						.value(Matchers.contains("15", "12")))
+				// 축 순서가 요청 순서라 첫 시리즈는 15(경쟁사)다 — id 정렬이면 뒤집힌다.
+				.andExpect(jsonPath("$.data.accounts[0].points[0].views").value(100))
+				.andExpect(jsonPath("$.data.accounts[1].points[0].views").value(200))
+				.andExpect(jsonPath("$.data.points[0].contentCount").value(2));
+	}
+
+	@Test
+	void growth는_하이드레이션을_부르지_않는다() throws Exception {
+		givenIndexedRefs(Set.of(), List.of("12"),
+				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L));
+
+		mockMvc.perform(get(GROWTH).with(user(principal())))
+				.andExpect(status().isOk());
+
+		// 시계열은 인덱스 ref만으로 답한다 — 카드 하이드레이션(비싼 패스)을 타면 이점이 사라진다.
+		then(assembler).should(never()).hydratePage(any(), anyList());
+	}
+
+	// ---------- 조건부 요청(2026-08-13 ETag 설계) ----------
+
+	@Test
+	void 같은_버전이면_304이고_조립이_돌지_않는다() throws Exception {
+		mockMvc.perform(get(CONTENTS).header("If-None-Match", ETAG).with(user(principal())))
+				.andExpect(status().isNotModified())
+				.andExpect(header().string("ETag", ETAG))
+				.andExpect(header().stringValues("Cache-Control", CACHE_CONTROL))
+				// 304는 본문을 실을 수 없다(설계 §5-④) — 잔재가 남으면 일부 클라이언트가 응답을
+				// 기다리며 멈춘다.
+				// 픽스처 메서드 content(...)와 이름이 겹쳐 정적 임포트 대신 한정한다.
+				.andExpect(MockMvcResultMatchers.content().string(""))
+				.andExpect(header().doesNotExist("Content-Length"));
+
+		// 이 설계의 이득 자체 — 조립·직렬화를 통째로 건너뛴다(응답 후 해싱 방식과 갈리는 지점, §3).
+		then(assembler).should(never()).index(anyLong());
+		then(assembler).should(never()).assemble(anyLong());
+	}
+
+	@Test
+	void 다른_버전이면_200과_ETag_캐시_헤더가_실린다() throws Exception {
+		givenIndexed(content("1", "tracking", "2026-08-06"));
+
+		mockMvc.perform(get(CONTENTS).header("If-None-Match", "W/\"0000000000000000\"")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(header().string("ETag", ETAG))
+				// stringValues로 값 목록 전체를 못박는다 — Security 기본값이 두 번째 Cache-Control로
+				// 따라붙으면 첫 값만 보는 단정은 통과해 버린다(no-store가 남은 채로 그린).
+				.andExpect(header().stringValues("Cache-Control", CACHE_CONTROL))
+				// Pragma: no-cache도 함께 걷힌다 — Security 헤더 라이터는 셋(Cache-Control·Pragma·
+				// Expires) 중 하나라도 이미 있으면 통째로 물러선다.
+				.andExpect(header().doesNotExist("Pragma"))
+				// 본문 계약은 불변이다 — 조건부는 헤더만 더한다(기존 단정과 같은 값).
+				.andExpect(jsonPath("$.data[0].item.id").value("1"))
+				.andExpect(jsonPath("$.meta.total").value(1));
+	}
+
+	@Test
+	void 파라미터_400은_조건부보다_앞이다() throws Exception {
+		mockMvc.perform(get(CONTENTS + "?sort=bogus").header("If-None-Match", ETAG).with(user(principal())))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+
+		// 잘못된 요청이 304로 가려지면 클라이언트는 낡은 사본을 정답으로 믿는다(400이 사라진다).
+		then(dashboardVersion).should(never()).compute(anyLong());
+	}
+
+	@Test
+	void 네_표면_모두_조건부가_걸리고_단건은_아니다() throws Exception {
+		for (String url : List.of(CONTENTS, COMPARISON, INFLUENCERS, GROWTH)) {
+			mockMvc.perform(get(url).header("If-None-Match", ETAG).with(user(principal())))
+					.andExpect(status().isNotModified())
+					.andExpect(header().string("ETag", ETAG))
+					.andExpect(header().string("Cache-Control", CACHE_CONTROL));
+		}
+		then(assembler).should(never()).index(anyLong());
+
+		// 단건은 제외(설계 §1) — 응답이 작고 호출이 드물다. If-None-Match를 보내도 그대로 200이고
+		// ETag도 없다(조건부 표면이 아니라는 뜻).
+		givenAssembled(content("1", "SC1", "tracking", "2026-08-06", "tagged", "unknown", null, "100"));
+		mockMvc.perform(get(CONTENTS + "/SC1").header("If-None-Match", ETAG).with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(header().doesNotExist("ETag"));
+	}
+
 	// ---------- 픽스처 ----------
+
+	/**
+	 * 인플루언서 집계용 ref 픽스처 — 이 표면이 보는 축(작성자·협찬·브랜드·업로드일·지표)만 채운다.
+	 * 스냅샷 있음·좋아요 숨김 아님 고정이라 지표가 그대로 합산 모수다(집계 규칙 자체는
+	 * {@link PerformanceInfluencerAggregatorTest}가 고정한다).
+	 */
+	private static DashboardRef influencerRef(String id, String handle, String uploadedOn, String sponsorship,
+			String brandAccountId, Long followers, Long views, Long likes, Long comments) {
+		return new DashboardRef(id, "SC" + id, "tagged", sponsorship, "tracking",
+				uploadedOn == null ? null : LocalDate.parse(uploadedOn), brandAccountId, null,
+				handle, "표시:" + handle, "https://cdn/" + handle + ".jpg", followers,
+				views, likes, false, comments, true);
+	}
+
+	/** 캠페인만 바꾼 ref 사본 — 파라미터를 하나 더 늘리는 대신 필요한 케이스에서만 감싼다. */
+	private static DashboardRef withCampaign(DashboardRef ref, String campaignId) {
+		return new DashboardRef(ref.contentKey(), ref.shortcode(), ref.source(), ref.sponsorship(), ref.status(),
+				ref.uploadedOn(), ref.brandAccountId(), campaignId, ref.handle(), ref.displayName(),
+				ref.profileImageUrl(), ref.followers(), ref.latestViews(), ref.latestLikes(),
+				ref.latestLikesHidden(), ref.latestComments(), ref.hasSnapshots());
+	}
 
 	/** 지표 픽스처 — 최신 스냅샷 1개를 실은 콘텐츠(정렬 키의 산지). 업로드일·작성자 팔로워는 인자다. */
 	private static PerformanceContentResponse metricContent(String id, String uploadedOn, Long followers,
@@ -852,7 +1395,7 @@ class V1PerformanceDashboardControllerTest {
 			String source, String sponsorship, String campaignId, String brandAccountId) {
 		return new DashboardRef(id, shortcode, source, sponsorship, status,
 				uploadedOn == null ? null : LocalDate.parse(uploadedOn), brandAccountId, campaignId,
-				"glowdeep_92", 12345L, null, null, false, null, false);
+				"glowdeep_92", "글로우딥", "https://cdn/author.jpg", 12345L, null, null, false, null, false);
 	}
 
 	/** uploadedAt이 null이면 post 자체가 없는 콘텐츠(collecting·detecting·not_uploaded)다. */
