@@ -1,0 +1,310 @@
+<title>캠페인 API 규모 스윕</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --surface: #fcfcfb;
+  --surface-2: #f3f2ef;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #8a887f;
+  --line: #e4e2dc;
+  --series: #2a78d6;
+  --series-soft: rgba(42, 120, 214, 0.10);
+  --good: #008300;
+  --good-bg: rgba(0, 131, 0, 0.08);
+  --warn-ink: #9a4b00;
+  --warn-bg: rgba(235, 104, 52, 0.09);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface: #1a1a19;
+    --surface-2: #232322;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --ink-3: #8b8a82;
+    --line: #34342f;
+    --series: #3987e5;
+    --series-soft: rgba(57, 135, 229, 0.16);
+    --good: #58b658;
+    --good-bg: rgba(88, 182, 88, 0.12);
+    --warn-ink: #e89a5f;
+    --warn-bg: rgba(217, 89, 38, 0.14);
+  }
+}
+:root[data-theme="dark"] {
+  --surface: #1a1a19;
+  --surface-2: #232322;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --ink-3: #8b8a82;
+  --line: #34342f;
+  --series: #3987e5;
+  --series-soft: rgba(57, 135, 229, 0.16);
+  --good: #58b658;
+  --good-bg: rgba(88, 182, 88, 0.12);
+  --warn-ink: #e89a5f;
+  --warn-bg: rgba(217, 89, 38, 0.14);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: "IBM Plex Sans KR", "Apple SD Gothic Neo", sans-serif;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 920px; margin: 0 auto; padding: 48px 24px 80px; }
+.eyebrow {
+  font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 500; margin-bottom: 10px;
+}
+h1 { font-size: 30px; font-weight: 700; margin: 0 0 6px; letter-spacing: -0.01em; text-wrap: balance; }
+.sub { color: var(--ink-2); margin: 0 0 30px; max-width: 62ch; }
+h2 { font-size: 19px; font-weight: 700; margin: 52px 0 14px; letter-spacing: -0.01em; }
+p { max-width: 68ch; margin: 0 0 14px; }
+code, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.92em; }
+.verdict {
+  border-left: 4px solid var(--good); background: var(--good-bg);
+  border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 0 0 28px;
+}
+.verdict strong { color: var(--good); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.tile { background: var(--surface-2); border-radius: 10px; padding: 14px 16px; }
+.tile .k { font-size: 12px; color: var(--ink-3); letter-spacing: 0.05em; }
+.tile .v { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.tile .d { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 720px) { .charts { grid-template-columns: 1fr; } }
+.chart-card {
+  background: var(--surface-2); border-radius: 12px; padding: 16px 14px 8px; position: relative;
+}
+.chart-card h3 { margin: 0 0 2px; font-size: 14.5px; font-weight: 700; padding: 0 6px; }
+.chart-card .note { font-size: 12px; color: var(--ink-2); margin: 0 0 6px; padding: 0 6px; }
+.legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--ink-2); padding: 4px 6px 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 18px; border-top: 2.5px solid var(--series); display: inline-block; }
+.legend i.dash { border-top-style: dashed; opacity: 0.55; }
+.tooltip {
+  position: absolute; pointer-events: none; background: var(--ink); color: var(--surface);
+  font-size: 11.5px; line-height: 1.45; padding: 6px 9px; border-radius: 6px;
+  font-family: "IBM Plex Mono", monospace; white-space: nowrap;
+  transform: translate(-50%, -110%); opacity: 0; transition: opacity 0.08s; z-index: 5;
+}
+svg text { font-family: "IBM Plex Sans KR", sans-serif; }
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { padding: 8px 14px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+thead th { background: var(--surface-2); color: var(--ink-2); font-weight: 500; font-size: 12px; letter-spacing: 0.04em; }
+tbody tr { border-top: 1px solid var(--line); }
+td .mono { color: var(--ink-2); }
+.callout {
+  border-left: 4px solid var(--warn-ink); background: var(--warn-bg);
+  border-radius: 0 8px 8px 0; padding: 14px 20px; margin: 18px 0;
+}
+.callout strong { color: var(--warn-ink); }
+ul { padding-left: 20px; max-width: 68ch; }
+li { margin-bottom: 6px; }
+pre {
+  background: var(--surface-2); border-radius: 10px; padding: 14px 18px;
+  overflow-x: auto; font-size: 13px; line-height: 1.6; margin: 10px 0;
+}
+.foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--ink-3); }
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">hypenow-backend · 성능 진단 · 2026-08-27</div>
+  <h1>캠페인 관리 API — 목 데이터 규모 스윕</h1>
+  <p class="sub">
+    캠페인 관리 화면의 두 조회 API(<code>GET /v1/monitoring/items</code>, <code>GET /v1/monitoring/campaigns</code>)를
+    로컬 벤치 DB에 파라미터별 목 데이터를 재시드해 가며 측정했다. 축 하나씩만 바꾸는 스윕으로
+    "데이터가 커지면 어디부터 느려지는가"를 귀속시키는 것이 목적.
+  </p>
+
+  <div class="verdict">
+    <strong>결론: 데이터 규모는 병목이 아니다.</strong>
+    전체 테이블을 운영의 450배(스냅샷 40만 행)로 키워도 응답은 18ms로 평평하고, 유일하게 기울기가 있는
+    축은 <b>요청 유저 자신의 추적 행 수(K)</b>뿐인데 그마저 행당 ~0.65ms의 깨끗한 선형이라 극단(300행)에도
+    213ms다. 운영에서 관측된 1.8~62초 꼬리는 이 데이터로는 재현되지 않는다 —
+    쿼리·스키마가 아니라 <b>운영 환경 요인(2코어 서버의 자원 경합·대기)</b>이라는 앞선 추정이 배제법으로 굳어졌다.
+  </div>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">N 축 (전체 테이블 크기)</div><div class="v">+0 ms</div><div class="d">유저 10 → 5,000명, 450배에도 평평</div></div>
+    <div class="tile"><div class="k">K 축 (내 추적 행 수)</div><div class="v">~0.65 ms/행</div><div class="d">유일한 기울기 — 선형, 절벽 없음</div></div>
+    <div class="tile"><div class="k">종합 극단 (x100)</div><div class="v">155 ms</div><div class="d">K=120 · D=28 · N=1,000 동시</div></div>
+    <div class="tile"><div class="k">운영 최악 실측</div><div class="v">62.6 s</div><div class="d">본 스윕으로 재현 불가 → 환경 요인</div></div>
+  </div>
+
+  <h2>축별 지연 곡선 — GET /v1/monitoring/items</h2>
+  <p><code>/v1/monitoring/campaigns</code>는 전 구간 3~4ms로 변동이 없어 차트에서 제외했다(아래 표 참조).</p>
+  <div class="charts">
+    <div class="chart-card" id="chart-K"></div>
+    <div class="chart-card" id="chart-D"></div>
+    <div class="chart-card" id="chart-C"></div>
+    <div class="chart-card" id="chart-N"></div>
+  </div>
+
+  <h2>전체 측정표</h2>
+  <p style="font-size:13.5px; color:var(--ink-2)">각 포인트는 재시드 + <code>ANALYZE</code> 후 워밍업 5회, 본측정 50회. 기준점은 N=10 · M=3 · K=12 · D=8 · C=12(운영 실측 분포 재현).</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>스윕 포인트</th><th>items p50</th><th>items p95</th><th>items p99</th><th>응답 크기</th><th>campaigns p50</th></tr></thead>
+    <tbody id="tbl-body"></tbody>
+  </table></div>
+
+  <h2>후속 실험 — 운영 꼬리의 범인: 커넥션 풀 대기 재현</h2>
+  <p>
+    스윕이 데이터 규모를 배제한 뒤, 유력 후보였던 <b>monitoring 읽기 전용 커넥션 풀(maxPoolSize 3)</b> 고갈을
+    로컬에서 재현했다. 헤비 시드(K=300 · D=90 · C=200)로 요청당 monitoring 쿼리를 무겁게 만들고
+    동시성만 올렸다:
+  </p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>동시 요청 수</th><th>p50</th><th>p95</th><th>max</th></tr></thead>
+    <tbody>
+      <tr><td>1 (순차)</td><td>1.04 s</td><td>1.06 s</td><td>1.06 s</td></tr>
+      <tr><td>5</td><td>1.65 s</td><td>2.49 s</td><td>2.52 s</td></tr>
+      <tr><td>10</td><td>3.28 s</td><td>4.39 s</td><td>6.13 s</td></tr>
+      <tr><td>20</td><td>6.73 s</td><td>7.48 s</td><td>12.31 s</td></tr>
+    </tbody>
+  </table></div>
+  <p style="margin-top:14px">
+    결정적 판별은 단계 분해 로그다. 같은 Postgres 컨테이너·같은 JVM에서 <b>어느 풀을 지나느냐만으로</b>
+    운명이 갈렸다:
+  </p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>단계 (지나는 풀)</th><th>순차 p50</th><th>동시 20 p50</th><th>동시 20 max</th></tr></thead>
+    <tbody>
+      <tr><td><code>lastSuccessfulSweepAt</code> — 31행 max() <span class="mono">(monitoring-ro, 3개)</span></td><td>0 ms</td><td><b>143 ms</b></td><td><b>2,444 ms</b></td></tr>
+      <tr><td><code>findTargets</code> — PK IN 조회 <span class="mono">(monitoring-ro, 3개)</span></td><td>24 ms</td><td><b>215 ms</b></td><td><b>2,648 ms</b></td></tr>
+      <tr><td><code>findSnapshots</code> — 실제 무거운 쿼리 <span class="mono">(monitoring-ro, 3개)</span></td><td>608 ms</td><td>2,085 ms*</td><td>—</td></tr>
+      <tr><td><code>MonitoringItemRepository.findByUser</code> <span class="mono">(app 풀, 10개)</span></td><td>18 ms</td><td>28 ms*</td><td>—</td></tr>
+      <tr><td>세션 조회·캠페인 조회 <span class="mono">(app 풀, 10개)</span></td><td>≤2 ms</td><td>≤1 ms*</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+  <p style="font-size:12.5px; color:var(--ink-3); margin-top:6px">* 동시 구간은 평균값.</p>
+  <div class="verdict" style="margin-top:16px">
+    <strong>메커니즘 확정: monitoring-ro 풀(3개) 고갈 대기.</strong>
+    31행 테이블의 max()가 2.4초까지 부푸는 동안 같은 DB의 app 풀 쿼리는 평시 그대로다 — 쿼리 비용이 아니라
+    <b>커넥션 획득 대기</b>이고, 이는 운영 단계 로그의 시그니처("하찮은 쿼리에 1.8초")와 정확히 일치한다.
+    운영에선 백업 등으로 쿼리가 일시 느려지는 순간 3짜리 풀이 즉시 마르며 증폭됐을 것.
+    수리 후보: 풀 확대(단 2코어 서버 제약 고려), monitoring 쿼리 왕복 병합(7회→1~2회 — 풀 점유 시간 자체를 축소),
+    <code>lastSuccessfulSweepAt</code> 캐싱.
+  </div>
+
+  <h2>운영 관측과의 대조</h2>
+  <p>
+    로컬 기준점(운영 규모 재현) p50 <b>18ms</b>는 운영 엣지 p50 <b>29ms</b>와 같은 자릿수로, 벤치 환경이
+    운영의 평시 성능을 정상적으로 재현함을 확인했다. 그러나 운영의 꼬리는 다르다:
+  </p>
+  <ul>
+    <li>운영 7일간 <code>GET /v1/monitoring/items</code> p99 <b>2.8초</b>, 최대 <b>62.6초</b> — 이 스윕의 어떤 포인트도 240ms를 넘지 못했다.</li>
+    <li>운영 단계 분해 로그에서 1.8초가 걸린 <code>findTargets</code>는 <b>134행 테이블의 PK IN 조회</b>, 1.8초가 걸린 <code>lastSuccessfulSweepAt</code>은 <b>31행 테이블의 단일 max()</b>다 — 플랜 문제로는 성립 불가.</li>
+    <li>8~62초 클러스터(08-25 15:51~52 KST)는 백업 직스트리밍 전환으로 서버 CPU가 포화됐던 시각과 겹친다.</li>
+  </ul>
+  <div class="callout">
+    <strong>다음 단계.</strong> 데이터·쿼리 트랙은 종결, 풀 대기 메커니즘은 위 실험으로 확정.
+    남은 것은 ① 운영 측 귀속 교차 확인(지연 시각 ↔ 백업 크론·CPU 메트릭·Hikari 대기 카운트, 전부 읽기 전용) —
+    선택 사항, ② 수리: <b>monitoring 쿼리 왕복 병합(요청당 7회→1~2회)</b>이 풀 점유 시간과 K 선형 기울기를
+    동시에 줄이는 최선 후보이고, 개선 전/후는 이 하네스(<code>bench/concurrent.sh</code> 동시 20 기준)로 검증한다.
+  </div>
+
+  <h2>재현 방법</h2>
+  <pre><code># 벤치 DB(전용 컨테이너, 포트 5544) + was 8091 기동 상태에서
+bench/seed.sh prod            # 운영 재현 규모 시드 (x10 | x100 | --옵션 지정)
+bench/run.sh 라벨              # 로그인→워밍업→50회 측정, p50/p95/p99 출력
+bench/sweep.sh all            # K·D·C·N 축 전체 스윕 → bench/results/*.csv</code></pre>
+  <p style="font-size:13.5px; color:var(--ink-2)">
+    시드는 두 DB에 걸친다 — app 스키마(유저·캠페인·추적 행)와 monitoring DB(target·post_meta·post_snapshot·
+    post_comment·profile_meta·profile_snapshot·sweep_run). 운영 실측 분포(POST 69:31, 상태 TRACKING 59% 등)와
+    조립 경로 계약(sweep_run ok=true 필수, FEED views NULL, followers NOT NULL)을 반영했다. 전부 로컬 —
+    운영에는 아무것도 쓰지 않았다.
+  </p>
+
+  <div class="foot">
+    측정: 2026-08-27, 로컬(Apple Silicon) · postgres:17-alpine · Spring Boot 4.1 · 순차 요청(동시성 1) ·
+    원본: <span class="mono">bench/results/sweep-20260827024610.csv</span>
+  </div>
+</div>
+
+<script>
+const SWEEPS = {
+  K: { title: "K — 내 추적 행 수", note: "유일한 기울기: 행당 ~0.65ms 선형", unit: "행",
+       pts: [{x:12,p50:19,p95:24},{x:33,p50:33,p95:40},{x:100,p50:79,p95:95},{x:300,p50:213,p95:223}] },
+  D: { title: "D — 게시물당 스냅샷 일수", note: "완만한 선형 (~0.35ms/일)", unit: "일",
+       pts: [{x:8,p50:19,p95:23},{x:28,p50:28,p95:31},{x:90,p50:48,p95:51}] },
+  C: { title: "C — 게시물당 댓글 수", note: "45개 컷 덕에 이내 평탄", unit: "개",
+       pts: [{x:12,p50:20,p95:23},{x:50,p50:28,p95:31},{x:200,p50:30,p95:32}] },
+  N: { title: "N — 배경 유저 수 (로그 축)", note: "450배에도 평평 — 인덱스 정상", unit: "명", log: true,
+       pts: [{x:10,p50:15,p95:20},{x:100,p50:18,p95:22},{x:1000,p50:18,p95:22},{x:5000,p50:18,p95:21}] },
+};
+
+const TABLE_ROWS = [
+  ["기준점 (baseline)", 19, 24, 26, "2.7 KB", 4],
+  ["K=33", 33, 40, 52, "5.7 KB", 4], ["K=100", 79, 95, 101, "15 KB", 4], ["K=300", 213, 223, 237, "42 KB", 4],
+  ["D=28", 28, 31, 34, "6.0 KB", 4], ["D=90", 48, 51, 61, "16 KB", 4],
+  ["C=50", 28, 31, 35, "3.7 KB", 4], ["C=200", 30, 32, 43, "3.7 KB", 4],
+  ["N=100", 18, 22, 23, "2.7 KB", 3], ["N=1000", 18, 22, 25, "2.7 KB", 3], ["N=5000", 18, 21, 27, "2.7 KB", 3],
+  ["x100 종합 (K=120·D=28·N=1000)", 155, 170, 172, "47 KB", 3],
+];
+document.getElementById("tbl-body").innerHTML = TABLE_ROWS.map(r =>
+  `<tr><td>${r[0]}</td><td>${r[1]} ms</td><td>${r[2]} ms</td><td>${r[3]} ms</td>` +
+  `<td><span class="mono">${r[4]}</span></td><td>${r[5]} ms</td></tr>`).join("");
+
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function renderChart(id, cfg) {
+  const card = document.getElementById(id);
+  const W = 420, H = 230, m = { t: 14, r: 40, b: 30, l: 42 };
+  const pts = cfg.pts;
+  const xs = v => cfg.log ? Math.log10(v) : v;
+  const xmin = xs(pts[0].x), xmax = xs(pts[pts.length - 1].x);
+  const ymax = Math.max(...pts.map(p => p.p95)) * 1.15;
+  const X = v => m.l + (xs(v) - xmin) / (xmax - xmin) * (W - m.l - m.r);
+  const Y = v => H - m.b - (v / ymax) * (H - m.t - m.b);
+  const line = key => pts.map((p, i) => (i ? "L" : "M") + X(p.x).toFixed(1) + " " + Y(p[key]).toFixed(1)).join(" ");
+
+  let grid = "", yticks = "";
+  const steps = 4;
+  for (let i = 0; i <= steps; i++) {
+    const v = Math.round(ymax / steps * i / 5) * 5;
+    const y = Y(v);
+    grid += `<line x1="${m.l}" x2="${W - m.r}" y1="${y}" y2="${y}" stroke="var(--line)" stroke-width="1"/>`;
+    yticks += `<text x="${m.l - 7}" y="${y + 3.5}" text-anchor="end" font-size="10" fill="var(--ink-3)">${v}</text>`;
+  }
+  const xticks = pts.map(p =>
+    `<text x="${X(p.x)}" y="${H - m.b + 16}" text-anchor="middle" font-size="10" fill="var(--ink-3)">${p.x.toLocaleString()}</text>`).join("");
+  const dots = pts.map(p =>
+    `<circle cx="${X(p.x)}" cy="${Y(p.p50)}" r="3.5" fill="var(--series)" stroke="var(--surface-2)" stroke-width="2"/>`).join("");
+  const last = pts[pts.length - 1];
+
+  card.innerHTML =
+    `<h3>${cfg.title}</h3><p class="note">${cfg.note}</p>
+     <svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto; display:block">
+       ${grid}${yticks}${xticks}
+       <text x="${m.l - 30}" y="${m.t - 2}" font-size="9.5" fill="var(--ink-3)">ms</text>
+       <path d="${line("p95")}" fill="none" stroke="var(--series)" stroke-width="1.8" stroke-dasharray="5 4" opacity="0.5"/>
+       <path d="${line("p50")}" fill="none" stroke="var(--series)" stroke-width="2.4"/>
+       ${dots}
+       <text x="${X(last.x) + 6}" y="${Y(last.p50) + 4}" font-size="10.5" font-weight="600" fill="var(--ink-2)">p50</text>
+       <text x="${X(last.x) + 6}" y="${Y(last.p95) - 4}" font-size="10.5" fill="var(--ink-3)">p95</text>
+     </svg>
+     <div class="legend"><span><i></i>p50</span><span><i class="dash"></i>p95</span>
+       <span style="margin-left:auto">x = ${cfg.unit}${cfg.log ? " (log)" : ""}</span></div>
+     <div class="tooltip"></div>`;
+
+  const svg = card.querySelector("svg"), tip = card.querySelector(".tooltip");
+  svg.addEventListener("mousemove", e => {
+    const r = svg.getBoundingClientRect();
+    const mx = (e.clientX - r.left) / r.width * W;
+    let best = pts[0], bd = Infinity;
+    for (const p of pts) { const d = Math.abs(X(p.x) - mx); if (d < bd) { bd = d; best = p; } }
+    tip.style.left = (X(best.x) / W * r.width) + "px";
+    tip.style.top = (Y(best.p50) / H * r.height + svg.offsetTop) + "px";
+    tip.innerHTML = `${cfg.title.split(" ")[0]}=${best.x.toLocaleString()}<br>p50 ${best.p50}ms · p95 ${best.p95}ms`;
+    tip.style.opacity = 1;
+  });
+  svg.addEventListener("mouseleave", () => { tip.style.opacity = 0; });
+}
+for (const [k, cfg] of Object.entries(SWEEPS)) renderChart("chart-" + k, cfg);
+</script>
