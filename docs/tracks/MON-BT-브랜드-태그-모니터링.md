@@ -393,6 +393,19 @@ tagged `taken_at` 프록시)은 코드리뷰로 기각·폐기** — 자연 완�
 파라미터(성과만 true, 목록·존재/중복 판정은 false), direct 등록 행 면제(§7-3)·경계일
 포함(covered 판정과 동일 규칙). DECISIONS.md 2026-08-20 두 항목 참조.
 
+해시태그 직접 수집 전환(2026-08-27 설계 확정 → **08-28 구현 완료, 브랜치
+`feat/hashtag-direct-collection`, PR 대기** — [설계](../superpowers/specs/2026-08-27-hashtag-direct-collection-design.md)):
+위 "해시태그 감지 확장"(08-11) 구조를 전면 폐기하고 `brand_tagged_post` 풀에 직접 편입한다.
+LLM 관련성 판정(`BrandMentionJudge`)·구 감지 테이블(`brand_hashtag_post`) 쓰기 중단, 신규
+`hashtag_detected_at` 성분 컬럼(tag_detected_at·direct_registered_at과 병존) + 매칭 태그 원장
+`brand_post_matched_tag` 신설. 판정 없이 전부 편입하되 브랜드 본인 계정 게시물은 규칙 기반
+제외, 브랜드당 1000 상한(tagged 2000과 별도 카운터), 수집 기간은 고정 90일 폐기하고 브랜드
+collectionMonths 적용. `/posts` 통합 목록에 source=hashtag로 합류 + 사용자 격리(장부∩매칭,
+기존 fail-open 폐기). 구 `/hashtag-posts`는 새 풀로 리라우팅 후 FE 전환 확인되면 다음 릴리스
+제거, 구 감지 테이블(`brand_hashtag_post`·`brand_hashtag_post_matched_tags`) DROP도 다음
+릴리스(expand-contract). `HashtagPostThumbnailArchiveJob`은 구 테이블 잔존 행 서빙 전용으로
+의도적으로 얼려두고 테이블과 함께 다음 릴리스 제거.
+
 ## 잔여 작업
 
 - **[수집 상한 v2 배포 후] 기존 capped 브랜드 커버리지 운영 보정 1회** — `collection_capped`·
