@@ -112,7 +112,7 @@ class PerformanceComparisonAssemblerTest {
 		PerformanceContentResponse.PerformancePostResponse post = uploadedAt == null ? null
 				: new PerformanceContentResponse.PerformancePostResponse(
 						"https://www.instagram.com/p/" + shortcode + "/", shortcode, "reels", uploadedAt,
-						"", List.of(), null, null, List.of(snapshots), null, false, 0, List.of());
+						"", List.of(), null, null, List.of(snapshots), null, null, false, 0, List.of());
 		return new PerformanceContentResponse(
 				new PerformanceContentResponse.PerformanceItemResponse(shortcode, "url", "tracking",
 						"handle", "이름", null, followers, null, null, null, null, "2026-01-01", 90,

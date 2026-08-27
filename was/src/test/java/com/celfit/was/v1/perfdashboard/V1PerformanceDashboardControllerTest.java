@@ -549,8 +549,8 @@ class V1PerformanceDashboardControllerTest {
 			String uploadedAt, String source, String sponsorship, String campaignId, String brandAccountId) {
 		String url = "https://www.instagram.com/reel/" + shortcode + "/";
 		PerformancePostResponse post = uploadedAt == null ? null : new PerformancePostResponse(url, shortcode,
-				"reels", uploadedAt, "캡션", List.of(), "https://cdn/thumb.jpg", null, List.of(), null, false,
-				0L, List.of());
+				"reels", uploadedAt, "캡션", List.of(), "https://cdn/thumb.jpg", null, List.of(), null, null,
+				false, 0L, List.of());
 		PerformanceItemResponse item = new PerformanceItemResponse(id, "url", status, "glowdeep_92", "글로우딥",
 				"https://cdn/author.jpg", 12345L, null, campaignId,
 				campaignId == null ? null : "여름 캠페인", url, "2026-08-01", 30, null, post, null);

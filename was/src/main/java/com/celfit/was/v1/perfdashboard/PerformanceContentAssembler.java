@@ -204,7 +204,8 @@ public class PerformanceContentAssembler {
 
 		return new PerformancePostResponse(post.url(), shortcode, post.contentType(), post.uploadedAt(),
 				post.caption(), post.matchedKeywords(), post.thumbnailUrl(), post.hiddenAt(), snapshots,
-				commentsTotal(snapshots), commentsHidden(snapshots), comments.size(), comments);
+				previousDayValues(snapshots), commentsTotal(snapshots), commentsHidden(snapshots),
+				comments.size(), comments);
 	}
 
 	/**
@@ -244,8 +245,8 @@ public class PerformanceContentAssembler {
 		PerformancePostResponse dashboardPost = new PerformancePostResponse(post.postUrl(), post.shortcode(),
 				post.contentType(), post.takenAt(), post.caption(),
 				// 브랜드 풀 게시물은 키워드 감지 경로가 아니다(브랜드 계정 태그·직접 등록이 곧 편입 사유).
-				List.of(), post.thumbnailUrl(), null, post.snapshots(), post.commentsTotal(),
-				post.commentsHidden(), post.commentsCollectedCount(), post.recentComments());
+				List.of(), post.thumbnailUrl(), null, post.snapshots(), previousDayValues(post.snapshots()),
+				post.commentsTotal(), post.commentsHidden(), post.commentsCollectedCount(), post.recentComments());
 		String campaignId = post.campaignIds().isEmpty() ? null : post.campaignIds().get(0);
 		String campaignName = campaignId == null ? null
 				: Optional.ofNullable(campaignsById.get(Long.valueOf(campaignId))).map(CampaignRow::name)
@@ -483,6 +484,16 @@ public class PerformanceContentAssembler {
 	private static TrackingItemResponse.SnapshotResponse latestOf(
 			List<TrackingItemResponse.SnapshotResponse> snapshots) {
 		return snapshots.isEmpty() ? null : snapshots.get(snapshots.size() - 1);
+	}
+
+	/** 직전 스냅샷(마지막에서 두 번째)의 지표 3종 — 목록 카드 증가분 표기 재료(2026-08-27). 2개 미만이면 null. */
+	static PerformanceContentResponse.PreviousDayValues previousDayValues(
+			List<TrackingItemResponse.SnapshotResponse> snapshots) {
+		if (snapshots == null || snapshots.size() < 2) {
+			return null;
+		}
+		TrackingItemResponse.SnapshotResponse prev = snapshots.get(snapshots.size() - 2);
+		return new PerformanceContentResponse.PreviousDayValues(prev.views(), prev.likes(), prev.comments());
 	}
 
 	private static Long commentsTotal(List<TrackingItemResponse.SnapshotResponse> snapshots) {

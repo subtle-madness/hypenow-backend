@@ -526,6 +526,87 @@ class PerformanceContentAssemblerTest {
 		assertThat(post.recentComments()).isEqualTo(comments);
 	}
 
+	// ---------- previousDayValues·withLatestSnapshotOnly(2026-08-27 목록 최적화) ----------
+
+	@Test
+	void 직전_스냅샷이_있으면_previousDayValues가_그_값이다() {
+		givenLegacy(twoSnapshotItem());
+		givenNoBrand();
+
+		PerformanceContentResponse content = assembler().assemble(USER_ID).contents().get(0);
+
+		assertThat(content.item().post().previousDayValues())
+				.isEqualTo(new PerformanceContentResponse.PreviousDayValues(100L, 10L, 1L));
+	}
+
+	@Test
+	void 스냅샷이_1개면_previousDayValues는_null이다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/",
+				List.of(snapshot("2026-08-06", 200L, 20L, 2L))));
+		givenNoBrand();
+
+		PerformanceContentResponse content = assembler().assemble(USER_ID).contents().get(0);
+
+		assertThat(content.item().post().previousDayValues()).isNull();
+	}
+
+	/** 레거시 계열은 <b>병합 후</b> 스냅샷이 기준이다 — 브랜드 관측이 앞 날짜를 더하면 그게 직전 값이 된다. */
+	@Test
+	void 레거시_previousDayValues는_브랜드_병합_후_스냅샷_기준이다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/",
+				List.of(snapshot("2026-08-06", 200L, 20L, 2L))));
+		givenBrand(taggedPost("ABC", List.of(snapshot("2026-08-05", 100L, 10L, 1L))));
+
+		var post = assembler().assemble(USER_ID).contents().get(0).item().post();
+
+		assertThat(post.snapshots()).hasSize(2);
+		assertThat(post.previousDayValues())
+				.isEqualTo(new PerformanceContentResponse.PreviousDayValues(100L, 10L, 1L));
+	}
+
+	/** 브랜드 풀 전용(합성 아이템) 경로도 같은 규칙이다 — 조립 경로가 둘이라 각각 고정한다. */
+	@Test
+	void 브랜드_풀_전용_콘텐츠도_previousDayValues가_채워진다() {
+		givenLegacy();
+		givenBrand(taggedPost("ABC",
+				List.of(snapshot("2026-08-05", 100L, 10L, 1L), snapshot("2026-08-06", 200L, 20L, 2L))));
+
+		var post = assembler().assemble(USER_ID).contents().get(0).item().post();
+
+		assertThat(post.previousDayValues())
+				.isEqualTo(new PerformanceContentResponse.PreviousDayValues(100L, 10L, 1L));
+	}
+
+	@Test
+	void withLatestSnapshotOnly는_최신_1개만_남기고_previousDayValues를_보존한다() {
+		givenLegacy(twoSnapshotItem());
+		givenNoBrand();
+		PerformanceContentResponse full = assembler().assemble(USER_ID).contents().get(0);
+
+		PerformanceContentResponse trimmed = full.withLatestSnapshotOnly();
+
+		assertThat(trimmed.item().post().snapshots()).hasSize(1);
+		assertThat(trimmed.item().post().snapshots().get(0).date()).isEqualTo("2026-08-06");
+		assertThat(trimmed.item().post().previousDayValues().views()).isEqualTo(100L);
+		// 스냅샷 외 나머지는 원본 그대로다 — 잘라내기가 다른 필드를 건드리면 목록 계약이 바뀐다.
+		assertThat(trimmed.item().post())
+				.usingRecursiveComparison().ignoringFields("snapshots").isEqualTo(full.item().post());
+		assertThat(trimmed.item())
+				.usingRecursiveComparison().ignoringFields("post").isEqualTo(full.item());
+		assertThat(trimmed).usingRecursiveComparison().ignoringFields("item").isEqualTo(full);
+	}
+
+	@Test
+	void withLatestSnapshotOnly는_스냅샷이_1개_이하거나_게시물이_없으면_자기_자신이다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/",
+				List.of(snapshot("2026-08-06", 200L, 20L, 2L))), legacyItem("901", "detecting", null, null));
+		givenNoBrand();
+		var contents = assembler().assemble(USER_ID).contents();
+
+		assertThat(contents.get(0).withLatestSnapshotOnly()).isSameAs(contents.get(0));
+		assertThat(contents.get(1).withLatestSnapshotOnly()).isSameAs(contents.get(1));
+	}
+
 	@Test
 	void shortcode는_url_경로에서_뽑고_형식이_다르면_null이다() {
 		assertThat(PerformanceContentAssembler.shortcodeOf("https://www.instagram.com/reel/ABC-1_2/")).isEqualTo("ABC-1_2");
@@ -577,6 +658,12 @@ class PerformanceContentAssemblerTest {
 						null, null, snapshots, List.of());
 		return new TrackingItemResponse(id, "url", status, "creator", "크리에이터", null, 500L, null, null, null,
 				postUrl, "2026-08-01", 30, null, post, null);
+	}
+
+	/** 스냅샷 2건(8-05 → 8-06) 레거시 아이템 — 직전 스냅샷 지표 검증용 픽스처. */
+	private static TrackingItemResponse twoSnapshotItem() {
+		return legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/",
+				List.of(snapshot("2026-08-05", 100L, 10L, 1L), snapshot("2026-08-06", 200L, 20L, 2L)));
 	}
 
 	private static TrackingItemResponse legacyItemWithCaption(String id, String postUrl, String caption) {
