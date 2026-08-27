@@ -1032,7 +1032,7 @@
 
 **Steps:**
 
-- [ ] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/MonitoringItemRepositoryTest.java`의 클래스 마지막 `}` 앞에 아래를 추가한다. 이 클래스는 `@BeforeEach 유저_시드`가 채우는 `userId` 필드와 `repository`·`campaignRepository`·`jdbcClient`를 이미 갖고 있으므로 그대로 쓴다.
+- [x] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/MonitoringItemRepositoryTest.java`의 클래스 마지막 `}` 앞에 아래를 추가한다. 이 클래스는 `@BeforeEach 유저_시드`가 채우는 `userId` 필드와 `repository`·`campaignRepository`·`jdbcClient`를 이미 갖고 있으므로 그대로 쓴다.
   ```java
   	/** 캠페인 이름 문맥 조회 전용 헬퍼 — 아래 테스트 3개에서만 쓴다. */
   	private long 이름있는_캠페인(long ownerId, String name) {
@@ -1083,13 +1083,13 @@
   ```
   `insertPending`의 시그니처는 이 파일 첫 테스트(`pending_선저장과_target_확정_왕복`)가 쓰는 것과 같다(userId, mode, registrationKey, campaignId, inputValue, sourceUrl, keywords, trackingDays, registeredOn).
 
-- [ ] 실행해 실패 확인
+- [x] 실행해 실패 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.MonitoringItemRepositoryTest"
   ```
   기대 출력: 컴파일 실패 — `cannot find symbol: method findCampaignNamesByTargetIds(long,List<Long>)`.
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/MonitoringItemRepository.java`의 `findActiveTargetIds` 뒤에 아래를 삽입한다.
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/MonitoringItemRepository.java`의 `findActiveTargetIds` 뒤에 아래를 삽입한다.
   ```java
   	/**
   	 * monitoring target id 묶음이 속한 캠페인 이름(2026-08-27 주간 다이제스트 §3 "캠페인 이름 문맥").
@@ -1115,13 +1115,13 @@
   	}
   ```
 
-- [ ] 실행해 통과 확인
+- [x] 실행해 통과 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.MonitoringItemRepositoryTest"
   ```
   기대 출력: `BUILD SUCCESSFUL`(새 테스트 4개 포함 전부 통과).
 
-- [ ] 커밋
+- [x] 커밋
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add was/src/main/java/com/celfit/was/monitoring/MonitoringItemRepository.java was/src/test/java/com/celfit/was/monitoring/MonitoringItemRepositoryTest.java
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign commit -m "$(cat <<'EOF'
