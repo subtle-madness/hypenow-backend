@@ -648,8 +648,11 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		long brandId = seedBrand("brand_official");
 		OffsetDateTime now = OffsetDateTime.now();
 		seedHashtagPost(brandId, "MULTI", "RELEVANT", now.minusDays(1).toString());
+		// brand_post_matched_tag의 FK는 통합 풀(brand_tagged_post)을 향한다(2026-08-27 산지 교체) — 매칭 태그를
+		// 붙이려면 먼저 그 short_code가 풀에 있어야 한다.
+		seedTaggedPost(brandId, "MULTI", now.minusDays(1).toString());
 		jdbc.sql("""
-				INSERT INTO brand_hashtag_post_matched_tags (brand_id, short_code, tag)
+				INSERT INTO brand_post_matched_tag (brand_id, short_code, tag)
 				VALUES (:brandId, 'MULTI', 'cclime'), (:brandId, 'MULTI', '끌리메')
 				""")
 				.param("brandId", brandId).update();
@@ -667,7 +670,9 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		OffsetDateTime now = OffsetDateTime.now();
 		seedHashtagPost(mine, "SAME", "RELEVANT", now.minusDays(1).toString());
 		seedHashtagPost(other, "SAME", "RELEVANT", now.minusDays(1).toString());
-		jdbc.sql("INSERT INTO brand_hashtag_post_matched_tags (brand_id, short_code, tag) VALUES (:brandId, 'SAME', 'other')")
+		// brand_post_matched_tag의 FK는 통합 풀(brand_tagged_post)을 향한다(2026-08-27 산지 교체).
+		seedTaggedPost(other, "SAME", now.minusDays(1).toString());
+		jdbc.sql("INSERT INTO brand_post_matched_tag (brand_id, short_code, tag) VALUES (:brandId, 'SAME', 'other')")
 				.param("brandId", other).update();
 
 		List<BrandReadRepository.MatchedTagRow> rows = repository.findMatchedTags(mine, List.of("SAME"));

@@ -511,12 +511,12 @@ class BrandPostAssemblerTest {
 		var rowWins = BrandPostAssembler.brandPost(100L,
 				new BrandReadRepository.BrandTaggedPostRow("ABC", "glowdeep_92", "9001",
 						OffsetDateTime.parse("2026-08-06T01:00:00Z"), OffsetDateTime.parse("2026-08-06T02:00:00Z"),
-						7L, rowCrawledLater, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null),
+						7L, rowCrawledLater, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null, null),
 				null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of(), false, BrandAccountType.OWN);
 		var accountWins = BrandPostAssembler.brandPost(100L,
 				new BrandReadRepository.BrandTaggedPostRow("ABC", "glowdeep_92", "9001",
 						OffsetDateTime.parse("2026-08-06T01:00:00Z"), OffsetDateTime.parse("2026-08-06T02:00:00Z"),
-						7L, rowCrawledEarlier, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null),
+						7L, rowCrawledEarlier, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null, null),
 				null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of(), false, BrandAccountType.OWN);
 		var rowNull = BrandPostAssembler.brandPost(100L,
 				taggedRow("ABC"), null, null, List.of(), List.of(), accountSwept, List.of(), false, Set.of(), false,
@@ -743,7 +743,7 @@ class BrandPostAssemblerTest {
 		var post = brandPost(
 				new BrandReadRepository.BrandTaggedPostRow("ABC", "glowdeep_92", "9001", null,
 						OffsetDateTime.parse("2026-08-06T02:00:00Z"), 0L, null,
-						OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null),
+						OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null, null),
 				null, null, List.of(), List.of(), List.of());
 
 		assertThat(BrandPostAssembler.uploadedOn(post)).isNull();
@@ -761,7 +761,7 @@ class BrandPostAssemblerTest {
 		var account = accountRow();
 		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
 				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "creator1", null,
-						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null, null)));
+						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null, null, null)));
 		when(repository.findPostMeta(anyCollection()))
 				.thenReturn(List.of(new BrandReadRepository.BrandPostMetaRow("ABC", "creator1", "FEED",
 						LocalDate.of(2026, 8, 7), "오늘 소개 #광고", null, null, null, null, null,
@@ -795,7 +795,7 @@ class BrandPostAssemblerTest {
 		var account = accountRow();
 		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
 				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "seed_creator", null,
-						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null, null)));
+						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null, null, null)));
 		when(repository.findPostMeta(anyCollection())).thenReturn(List.of());
 		when(itemRepository.findCampaignLinkedAccountHandles(7L)).thenReturn(List.of("seed_creator"));
 		when(campaignRepository.findShortCodesByUser(7L)).thenReturn(List.of());
@@ -825,7 +825,7 @@ class BrandPostAssemblerTest {
 		var account = accountRow();
 		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
 				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "direct_creator", null,
-						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null, null)));
+						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null, null, null)));
 		// 태그 자체 메타 조회(codes={"ABC"})와 시딩 산출용 조회(codes={"XYZ"})가 같은 메서드를 서로
 		// 다른 인자로 호출한다 — exact 매처로 구분해 둘을 뒤섞지 않는다.
 		when(repository.findPostMeta(eq(Set.of("ABC")))).thenReturn(List.of());
@@ -858,7 +858,7 @@ class BrandPostAssemblerTest {
 		var account = accountRow();
 		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
 				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "legacy_direct_creator", null,
-						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null, null)));
+						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null, null, null)));
 		when(repository.findPostMeta(eq(Set.of("ABC")))).thenReturn(List.of());
 		when(repository.findPostMeta(eq(Set.of("XYZ"))))
 				.thenReturn(List.of(new BrandReadRepository.BrandPostMetaRow("XYZ", "legacy_direct_creator", "FEED",
@@ -885,7 +885,7 @@ class BrandPostAssemblerTest {
 		var account = accountRow();
 		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
 				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "no_campaign_creator", null,
-						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null, null)));
+						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null, null, null)));
 		when(repository.findPostMeta(anyCollection())).thenReturn(List.of());
 		when(itemRepository.findCampaignLinkedAccountHandles(7L)).thenReturn(List.of());
 		when(campaignRepository.findShortCodesByUser(7L)).thenReturn(List.of());
@@ -928,7 +928,7 @@ class BrandPostAssemblerTest {
 		var account = accountRow();
 		when(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
 				.thenReturn(List.of(new BrandReadRepository.BrandTaggedPostRow("ABC", "creator1", null,
-						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null, null)));
+						SWEPT_AT, SWEPT_AT, 0L, null, SWEPT_AT, null, null, null)));
 		when(repository.findPostMeta(anyCollection()))
 				.thenReturn(List.of(new BrandReadRepository.BrandPostMetaRow("ABC", "creator1", "FEED",
 						LocalDate.of(2026, 8, 7), "오늘 소개 #광고", null, null, null, null, null,
@@ -1053,7 +1053,7 @@ class BrandPostAssemblerTest {
 		var row = new BrandReadRepository.BrandTaggedPostRow("ABC", "glowdeep_92", "9001",
 				OffsetDateTime.parse("2026-08-06T01:00:00Z"), OffsetDateTime.parse("2026-08-06T02:00:00Z"),
 				7L, null, null, OffsetDateTime.parse("2026-08-06T03:00:00Z"),
-				OffsetDateTime.parse("2026-08-20T18:00:00Z"));
+				OffsetDateTime.parse("2026-08-20T18:00:00Z"), null);
 
 		var post = BrandPostAssembler.brandPost(100L, row, null, null, List.of(), List.of(),
 				OffsetDateTime.parse("2026-08-07T18:00:00Z"), List.of(), false, Set.of(), false,
@@ -1094,7 +1094,7 @@ class BrandPostAssemblerTest {
 		return new BrandReadRepository.BrandTaggedPostRow(code, "glowdeep_92", "9001",
 				OffsetDateTime.parse(takenAt), OffsetDateTime.parse("2026-08-06T02:00:00Z"), 7L, null,
 				tagDetectedAt == null ? null : OffsetDateTime.parse(tagDetectedAt),
-				directRegisteredAt == null ? null : OffsetDateTime.parse(directRegisteredAt), null);
+				directRegisteredAt == null ? null : OffsetDateTime.parse(directRegisteredAt), null, null);
 	}
 
 	private static BrandReadRepository.BrandPostMetaRow meta(String code, String contentType, Boolean paid) {

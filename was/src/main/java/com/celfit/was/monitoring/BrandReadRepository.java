@@ -80,7 +80,7 @@ public class BrandReadRepository {
 		return jdbc.sql("""
 				SELECT short_code, author_username, author_ig_user_id, taken_at, first_seen_at,
 				       comments_collected_count, last_crawled_at, tag_detected_at, direct_registered_at,
-				       unavailable_at
+				       unavailable_at, hashtag_detected_at
 				FROM brand_tagged_post
 				WHERE brand_id = :brandId
 				  AND ( taken_at >= :cutoff OR direct_registered_at IS NOT NULL )
@@ -154,7 +154,7 @@ public class BrandReadRepository {
 		return jdbc.sql("""
 				SELECT short_code, author_username, author_ig_user_id, taken_at, first_seen_at,
 				       comments_collected_count, last_crawled_at, tag_detected_at, direct_registered_at,
-				       unavailable_at
+				       unavailable_at, hashtag_detected_at
 				FROM brand_tagged_post
 				WHERE brand_id = :brandId AND short_code IN (:shortCodes)
 				""")
@@ -302,18 +302,21 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 해시태그 발견 게시물의 매칭 태그 전체(2026-08-19, was 사용자 스코프 필터 지원) —
-	 * {@code brand_hashtag_post_matched_tags}(모니터링 스윕이 게시물당 매칭된 활성 태그 전부를
-	 * 기록하는 M:N 테이블, {@code matched_tag} 단일 컬럼과 별개). 조회자 본인의 태그 원장
-	 * ({@code app.brand_hashtag_tags})과의 교집합 판정은 was 코드({@code BrandHashtagPostAssembler})가
-	 * 한다 — 여기서는 monitoring DB만 읽는다(시스템 경계, app 스키마와 SQL 조인 금지).
+	 * 통합 풀 게시물의 매칭 태그 전체(2026-08-19 신설 → <b>2026-08-27 산지 교체</b>) —
+	 * {@code brand_post_matched_tag}(스윕이 게시물당 매칭된 활성 태그 전부를 기록하는 M:N 테이블).
+	 * 구 산지 {@code brand_hashtag_post_matched_tags}는 감지 구조 폐기와 함께 읽기를 중단했다
+	 * (테이블 DROP은 다음 릴리스 — expand-contract).
+	 *
+	 * <p>조회자 본인의 태그 원장({@code app.brand_hashtag_tags})과의 교집합 판정은 was 코드
+	 * ({@code BrandPostAssembler.filterVisibleToUser})가 한다 — 여기서는 monitoring DB만 읽는다
+	 * (시스템 경계, app 스키마와 SQL 조인 금지).
 	 */
 	public List<MatchedTagRow> findMatchedTags(long brandId, Collection<String> shortCodes) {
 		if (shortCodes.isEmpty()) {
 			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
 		}
 		return jdbc.sql("""
-				SELECT short_code, tag FROM brand_hashtag_post_matched_tags
+				SELECT short_code, tag FROM brand_post_matched_tag
 				WHERE brand_id = :brandId AND short_code IN (:shortCodes)
 				""")
 				.param("brandId", brandId).param("shortCodes", shortCodes)
@@ -429,11 +432,16 @@ public class BrandReadRepository {
 	 *
 	 * <p>{@code unavailableAt}(야간 스윕 단건 콜이 404를 받은 시각, null이면 정상 — 값이 있으면
 	 * trackingStatus가 hidden으로 내려간다, 2026-08-25 설계).
+	 *
+	 * <p>{@code hashtagDetectedAt}(2026-08-27 해시태그 직접 수집 설계 §1) — 해시태그 열거가 이
+	 * 게시물을 처음 편입한 시각. 세 타임스탬프가 모두 null이 아닐 수 있고(3성분 겹침), tag·direct가
+	 * 둘 다 null이면 hashtag-only 행이다. {@code source} 3원화와 사용자 격리 필터의 입력이다
+	 * ({@code BrandPostAssembler.resolveSource}·{@code filterVisibleToUser}).
 	 */
 	public record BrandTaggedPostRow(String shortCode, String authorUsername, String authorIgUserId,
 			OffsetDateTime takenAt, OffsetDateTime firstSeenAt, long commentsCollectedCount,
 			OffsetDateTime lastCrawledAt, OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
-			OffsetDateTime unavailableAt) {
+			OffsetDateTime unavailableAt, OffsetDateTime hashtagDetectedAt) {
 	}
 
 	/**
