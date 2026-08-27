@@ -47,23 +47,6 @@ public class BrandHashtagTagRepository {
 	}
 
 	/**
-	 * 이 브랜드에 원장 행이 하나라도 있는지(최초 시딩 판정, {@code V1BrandAccountService#ensureSeeded}
-	 * 전용) — 이 기능 출시 이전부터 monitoring이 이미 갖고 있던 브랜드 단위 태그는 아무 유저에게도
-	 * 귀속돼 있지 않다. 원장이 완전히 비어 있으면(=이 브랜드에서 태그 관리 API를 아직 아무도 안 건드림)
-	 * 최초 조작 유저가 monitoring의 현재 태그 전체를 물려받는다(정책 §정지조건 밖 — was 자체 완결
-	 * 시딩, 백필 마이그레이션 잡 불필요).
-	 */
-	public boolean existsForBrand(long brandId) {
-		Boolean exists = jdbcClient.sql("""
-				SELECT EXISTS (SELECT 1 FROM app.brand_hashtag_tags WHERE brand_id = :brandId)
-				""")
-				.param("brandId", brandId)
-				.query(Boolean.class)
-				.single();
-		return Boolean.TRUE.equals(exists);
-	}
-
-	/**
 	 * 이 태그를 excludingUserId 말고 다른 유저도 갖고 있는지(삭제 시맨틱, 08-19) —
 	 * {@code BrandDirectPostRepository#hasOtherRegistrant}와 같은 패턴. 있으면 monitoring 삭제 호출을
 	 * 건너뛴다 — 내 삭제가 다른 유저의 스윕 대상에서 태그를 빼면 안 된다.

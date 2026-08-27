@@ -1258,7 +1258,6 @@ class V1BrandAccountsControllerTest {
 	void 태그_교체는_204다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 
 		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/hashtag-tags")
 						.with(user(principal())).with(csrf())
@@ -1289,7 +1288,6 @@ class V1BrandAccountsControllerTest {
 	void 태그_추가는_204다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts/100/hashtag-tags")
 						.with(user(principal())).with(csrf())
@@ -1325,7 +1323,6 @@ class V1BrandAccountsControllerTest {
 	void monitoring_422_태그_추가_거부는_400_VALIDATION_FAILED로_매핑된다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 		willThrow(new MonitoringApiException("VALIDATION", "사용할 수 없는 문자가 포함된 태그입니다.", 422))
 				.given(commandClient).addHashtagTags(anyString(), any());
 
@@ -1353,14 +1350,13 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 
-		then(hashtagTagRepository).should(never()).existsForBrand(anyLong());
+		then(commandClient).should(never()).getHashtagTags(anyString());
 	}
 
 	@Test
 	void 태그_단건_삭제는_204다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 
 		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/hashtag-tags/{tag}", "리즈다")
 						.with(user(principal())).with(csrf()))
@@ -1385,7 +1381,6 @@ class V1BrandAccountsControllerTest {
 	void 태그_전체_삭제는_204다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 
 		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/hashtag-tags")
 						.with(user(principal())).with(csrf()))
@@ -1410,8 +1405,8 @@ class V1BrandAccountsControllerTest {
 
 	@Test
 	void monitoring_브랜드_비정합_404는_태그_교체에서_404로_매핑된다() throws Exception {
-		// 태그 조회(GET)는 이제 monitoring을 안 부르니 이 404 시나리오는 시딩(ensureSeeded)이 도는
-		// 쓰기 경로(PUT)로만 재현된다 — existsForBrand=false라 ensureSeeded가 getHashtagTags를 부른다.
+		// 태그 조회(GET)는 이제 monitoring을 안 부르니 이 404 시나리오는 승계(ensureSeeded)가 도는
+		// 쓰기 경로(PUT)로만 재현된다 — ensureSeeded는 매번 getHashtagTags를 부른다(08-27 diff 개정).
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 		given(commandClient.getHashtagTags("lizda_official"))

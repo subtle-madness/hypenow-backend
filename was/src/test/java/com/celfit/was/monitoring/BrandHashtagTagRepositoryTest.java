@@ -72,15 +72,6 @@ class BrandHashtagTagRepositoryTest extends IntegrationTest {
 		assertThat(repository.unionByBrand(brandId)).containsExactlyInAnyOrder("공통태그", "내태그", "남의태그");
 	}
 
-	@Test
-	void existsForBrand는_원장_행_유무를_판정한다() {
-		assertThat(repository.existsForBrand(brandId)).isFalse();
-
-		repository.addTags(userId, brandId, List.of("태그"));
-
-		assertThat(repository.existsForBrand(brandId)).isTrue();
-	}
-
 	/**
 	 * 삭제 시맨틱(요구사항, 08-19) — hasOtherRegistrant와 같은 패턴. 다른 유저가 같은 태그를 갖고
 	 * 있으면 내 삭제가 그 사실을 바꾸지 않아야 한다(monitoring 반영 여부는 호출부가 이 결과로 판단).

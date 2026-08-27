@@ -320,20 +320,28 @@ public class V1BrandAccountService {
 	}
 
 	/**
-	 * 최초 시딩(08-19) — 이 브랜드에 원장 행이 하나도 없으면(=이 기능 출시 이후 아직 아무도 태그
-	 * 관리 API를 안 건드림) monitoring의 현재 태그 전체를 이 유저에게 귀속시킨다. 이 기능 출시
-	 * 이전부터 있던 브랜드 단위 태그(자동 유도 계정명 태그 포함)는 원래 아무에게도 귀속돼 있지
-	 * 않으므로, 최초로 태그 관리를 조작하는 유저가 물려받는다 — 그래야 이후 PUT·삭제의 합집합·
-	 * "다른 소유자 없음" 판정이 기존 태그를 놓치지 않는다(별도 백필 마이그레이션 잡 불필요 —
-	 * 오프라인 배치 대신 최초 쓰기 시점에 자연히 수렴).
+	 * 무주 태그 승계(08-19 최초 시딩 → <b>2026-08-27 diff 개정</b>) — monitoring의 브랜드 단위 태그
+	 * 중 <b>아무 사용자에게도 귀속되지 않은 것만</b> 조작 사용자에게 귀속시킨다.
+	 *
+	 * <p>구 규칙("이 브랜드 원장이 완전히 비었으면 monitoring 태그 전체 승계")은 태그 장부 백필
+	 * (2026-08-27 설계 §4) 이후 <b>영영 발동하지 않는다</b> — 모든 활성 링크에 원장 행이 생기기
+	 * 때문이다. 그러면 격리 개정 이전부터 monitoring에만 있던 무주 태그가 {@link #putHashtagTags}의
+	 * 합집합 계산에서 계속 빠지고, PUT은 전체 교체 계약이라 그 태그가 monitoring에서 삭제된다.
+	 * 조건을 "원장 비었나"에서 "이 태그의 소유자가 있나"로 좁히면 백필 뒤에도 승계가 성립한다.
+	 *
+	 * <p>대가로 태그 관리 쓰기 경로마다 monitoring GET이 1콜 나간다(구 구조는 원장이 있으면
+	 * 건너뛰었다) — 사람이 누르는 저빈도 조작이라 수용한다. monitoring 태그가 0건이면 원장 조회도
+	 * 하지 않는다.
 	 */
 	private void ensureSeeded(long userId, long brandId, String username) {
-		if (hashtagTagRepository.existsForBrand(brandId)) {
+		List<String> current = normalizeTags(commandClient.getHashtagTags(username));
+		if (current.isEmpty()) {
 			return;
 		}
-		List<String> current = commandClient.getHashtagTags(username);
-		if (!current.isEmpty()) {
-			hashtagTagRepository.addTags(userId, brandId, normalizeTags(current));
+		Set<String> owned = hashtagTagRepository.unionByBrand(brandId);
+		List<String> unowned = current.stream().filter(tag -> !owned.contains(tag)).toList();
+		if (!unowned.isEmpty()) {
+			hashtagTagRepository.addTags(userId, brandId, unowned);
 		}
 	}
 

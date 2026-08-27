@@ -141,7 +141,6 @@ class V1BrandAccountServiceHashtagTagsTest {
 	 */
 	@Test
 	void putHashtagTags는_다른_유저_태그와의_합집합을_monitoring에_반영한다() {
-		given(hashtagTagRepository.existsForBrand(BRAND_ID)).willReturn(true);   // 이미 시딩됨
 		given(hashtagTagRepository.unionByBrand(BRAND_ID))
 				.willReturn(new LinkedHashSet<>(List.of("공통태그", "내옛태그")));
 		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID))
@@ -154,35 +153,55 @@ class V1BrandAccountServiceHashtagTagsTest {
 		then(hashtagTagRepository).should().replaceTags(USER_ID, BRAND_ID, List.of("새태그"));
 	}
 
-	/** 원장에 이 브랜드 행이 하나도 없으면(최초 조작) monitoring의 현재 태그를 이 유저에게 시딩한 뒤 진행한다. */
+	// ---------- 무주 태그 승계(2026-08-27 diff 개정) ----------
+
+	/**
+	 * 백필(Task 3) 이후에는 모든 브랜드에 원장 행이 있으므로 구 "원장이 완전히 비었을 때만 전량
+	 * 승계"는 영영 발동하지 않는다 — 그러면 격리 개정 이전부터 monitoring에만 있던 무주 태그가
+	 * PUT 합집합에서 누락되고, PUT은 전체 교체 계약이라 monitoring에서 삭제된다.
+	 * 승계 대상은 "아무 사용자에게도 귀속되지 않은 태그"뿐이다.
+	 */
 	@Test
-	void putHashtagTags는_원장이_비어있으면_monitoring_현재_태그를_먼저_시딩한다() {
-		given(hashtagTagRepository.existsForBrand(BRAND_ID)).willReturn(false);
-		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of("레거시태그"));
-		given(hashtagTagRepository.unionByBrand(BRAND_ID)).willReturn(Set.of());
-		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID)).willReturn(Set.of());
+	void addHashtagTags는_무주_태그만_조작_유저에게_승계한다() {
+		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of("무주태그", "남의태그"));
+		given(hashtagTagRepository.unionByBrand(BRAND_ID))
+				.willReturn(new LinkedHashSet<>(List.of("남의태그")));
 
-		service.putHashtagTags(USER_ID, BRAND_ID, List.of("새태그"));
+		service.addHashtagTags(USER_ID, BRAND_ID, List.of("새태그"));
 
-		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of("레거시태그"));
-		then(hashtagTagRepository).should().replaceTags(USER_ID, BRAND_ID, List.of("새태그"));
+		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of("무주태그"));
+		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of("새태그"));
 	}
 
+	/** 이미 누군가에게 귀속된 태그만 있으면 승계는 없다 — 남의 태그를 내 것으로 만들면 안 된다. */
 	@Test
-	void putHashtagTags는_원장이_있으면_시딩을_생략한다() {
-		given(hashtagTagRepository.existsForBrand(BRAND_ID)).willReturn(true);
+	void addHashtagTags는_전부_귀속된_태그면_승계하지_않는다() {
+		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of("남의태그"));
+		given(hashtagTagRepository.unionByBrand(BRAND_ID))
+				.willReturn(new LinkedHashSet<>(List.of("남의태그")));
+
+		service.addHashtagTags(USER_ID, BRAND_ID, List.of("새태그"));
+
+		then(hashtagTagRepository).should(never()).addTags(USER_ID, BRAND_ID, List.of("남의태그"));
+		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of("새태그"));
+	}
+
+	/** monitoring 태그가 아예 없으면 원장 조회조차 하지 않는다(불필요한 왕복 방지). */
+	@Test
+	void putHashtagTags는_monitoring_태그가_비면_승계하지_않는다() {
+		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of());
 		given(hashtagTagRepository.unionByBrand(BRAND_ID)).willReturn(Set.of());
 		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID)).willReturn(Set.of());
 
 		service.putHashtagTags(USER_ID, BRAND_ID, List.of("새태그"));
 
-		then(commandClient).should(never()).getHashtagTags(USERNAME);
+		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
+		then(hashtagTagRepository).should().replaceTags(USER_ID, BRAND_ID, List.of("새태그"));
 	}
 
 	/** 입력 정규화(trim → 선행 # 제거 → 소문자 → 중복 제거) — monitoring 정규화 규칙과 동일. */
 	@Test
 	void putHashtagTags는_입력을_정규화한다() {
-		given(hashtagTagRepository.existsForBrand(BRAND_ID)).willReturn(true);
 		given(hashtagTagRepository.unionByBrand(BRAND_ID)).willReturn(Set.of());
 		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID)).willReturn(Set.of());
 
@@ -194,7 +213,6 @@ class V1BrandAccountServiceHashtagTagsTest {
 
 	@Test
 	void putHashtagTags는_tags_null이면_빈_목록으로_교체한다() {
-		given(hashtagTagRepository.existsForBrand(BRAND_ID)).willReturn(true);
 		given(hashtagTagRepository.unionByBrand(BRAND_ID)).willReturn(Set.of());
 		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID)).willReturn(Set.of());
 
@@ -207,8 +225,6 @@ class V1BrandAccountServiceHashtagTagsTest {
 
 	@Test
 	void addHashtagTags는_원장에_추가만_하고_monitoring_ADD로_위임한다() {
-		given(hashtagTagRepository.existsForBrand(BRAND_ID)).willReturn(true);
-
 		service.addHashtagTags(USER_ID, BRAND_ID, List.of("새태그"));
 
 		then(commandClient).should().addHashtagTags(USERNAME, List.of("새태그"));
@@ -219,7 +235,7 @@ class V1BrandAccountServiceHashtagTagsTest {
 	void addHashtagTags는_빈_입력이면_시딩도_monitoring_호출도_없이_그대로_위임한다() {
 		service.addHashtagTags(USER_ID, BRAND_ID, List.of());
 
-		then(hashtagTagRepository).should(never()).existsForBrand(anyLong());
+		then(commandClient).should(never()).getHashtagTags(anyString());
 		then(commandClient).should().addHashtagTags(USERNAME, List.of());
 	}
 
@@ -228,7 +244,6 @@ class V1BrandAccountServiceHashtagTagsTest {
 	/** 다른 유저가 이 태그를 아직 갖고 있으면 monitoring 스윕 대상에서 빼지 않는다(요구사항, 08-19). */
 	@Test
 	void deleteHashtagTag는_다른_유저가_있으면_monitoring_삭제를_생략한다() {
-		given(hashtagTagRepository.existsForBrand(BRAND_ID)).willReturn(true);
 		given(hashtagTagRepository.hasOtherUserWithTag(BRAND_ID, "리즈다", USER_ID)).willReturn(true);
 
 		service.deleteHashtagTag(USER_ID, BRAND_ID, "리즈다");
@@ -239,7 +254,6 @@ class V1BrandAccountServiceHashtagTagsTest {
 
 	@Test
 	void deleteHashtagTag는_다른_유저가_없으면_monitoring에서도_지운다() {
-		given(hashtagTagRepository.existsForBrand(BRAND_ID)).willReturn(true);
 		given(hashtagTagRepository.hasOtherUserWithTag(BRAND_ID, "리즈다", USER_ID)).willReturn(false);
 
 		service.deleteHashtagTag(USER_ID, BRAND_ID, "리즈다");
@@ -263,7 +277,6 @@ class V1BrandAccountServiceHashtagTagsTest {
 	 */
 	@Test
 	void deleteAllHashtagTags는_다른_유저_소유_태그는_남기고_내_소유만_없는_태그를_monitoring에서_지운다() {
-		given(hashtagTagRepository.existsForBrand(BRAND_ID)).willReturn(true);
 		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID))
 				.willReturn(new LinkedHashSet<>(List.of("공유태그", "내전용태그")));
 		given(hashtagTagRepository.hasOtherUserWithTag(BRAND_ID, "공유태그", USER_ID)).willReturn(true);
