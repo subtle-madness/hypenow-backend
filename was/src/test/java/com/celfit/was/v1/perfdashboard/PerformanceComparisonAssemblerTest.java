@@ -109,7 +109,7 @@ class PerformanceComparisonAssemblerTest {
 			Long followers, Long views, Long likes, boolean likesHidden, Long comments) {
 		return new DashboardRef(shortcode, shortcode, "tagged", "unknown", "tracking",
 				uploadedOn == null ? null : LocalDate.parse(uploadedOn), brandAccountId, null,
-				"handle", followers, views, likes, likesHidden, comments, true);
+				"handle", "표시명", null, followers, views, likes, likesHidden, comments, true);
 	}
 
 	/** 관측 전무 ref — 스냅샷 0개라 지표는 전부 결측이고 숨김도 셀 수 없다(hasSnapshots=false). */
@@ -117,7 +117,7 @@ class PerformanceComparisonAssemblerTest {
 			String uploadedOn, Long followers) {
 		return new DashboardRef(shortcode, shortcode, "tagged", "unknown", "tracking",
 				uploadedOn == null ? null : LocalDate.parse(uploadedOn), brandAccountId, null,
-				"handle", followers, null, null, false, null, false);
+				"handle", "표시명", null, followers, null, null, false, null, false);
 	}
 
 	@Test

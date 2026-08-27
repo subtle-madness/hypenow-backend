@@ -871,8 +871,12 @@ public class BrandPostAssembler {
 	 * 폴백한다(sanitizeImageUrl 가드는 폴백 경로에 그대로 유지). 원본은 인스타 서명 URL이라 며칠~2주면
 	 * 만료된다 — 아카이브 사본이 서빙 정본이다. {@code /img/}는 was 엔드포인트가 아니라 celfit-front의
 	 * Vercel rewrite({@code /img/:path*} 글롭)라서 프론트 변경이 필요 없다.
+	 *
+	 * <p>공개 이유: 성과 대시보드의 경량 ref({@code PerformanceContentAssembler.refOfPoolRow})가 카드를
+	 * 조립하지 않고도 같은 아카이브 우선 규칙을 공유해야 한다 — 판정 함수를 이원화하면 ref와 카드의
+	 * 프로필 이미지가 갈린다.
 	 */
-	static String resolveImageUrl(String imageObjectPath, String originalUrl) {
+	public static String resolveImageUrl(String imageObjectPath, String originalUrl) {
 		if (imageObjectPath != null) {
 			return "/img/" + imageObjectPath;
 		}

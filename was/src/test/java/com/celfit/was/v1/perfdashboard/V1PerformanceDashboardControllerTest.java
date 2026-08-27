@@ -124,7 +124,8 @@ class V1PerformanceDashboardControllerTest {
 		return new DashboardRef(content.item().id(), content.canonicalPostId(), content.source(),
 				content.sponsorship(), content.item().status(),
 				PerformanceContentAssembler.uploadedOn(content), content.brandAccountId(),
-				content.item().campaignId(), content.item().handle(), content.item().followers(),
+				content.item().campaignId(), content.item().handle(), content.item().displayName(),
+				content.item().profileImageUrl(), content.item().followers(),
 				latest == null ? null : latest.views(), latest == null ? null : latest.likes(),
 				latest != null && latest.likesHidden(), latest == null ? null : latest.comments(),
 				latest != null);
@@ -852,7 +853,7 @@ class V1PerformanceDashboardControllerTest {
 			String source, String sponsorship, String campaignId, String brandAccountId) {
 		return new DashboardRef(id, shortcode, source, sponsorship, status,
 				uploadedOn == null ? null : LocalDate.parse(uploadedOn), brandAccountId, campaignId,
-				"glowdeep_92", 12345L, null, null, false, null, false);
+				"glowdeep_92", "글로우딥", "https://cdn/author.jpg", 12345L, null, null, false, null, false);
 	}
 
 	/** uploadedAt이 null이면 post 자체가 없는 콘텐츠(collecting·detecting·not_uploaded)다. */
