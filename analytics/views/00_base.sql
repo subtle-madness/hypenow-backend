@@ -7,6 +7,9 @@ CREATE SCHEMA IF NOT EXISTS analytics;
 
 -- influencer 노출 — 서빙 모수(뷰티 인플루언서) 필터 재료. 필터 자체는 상위 뷰(01·02·20) 몫.
 -- fnb 축(2026-08-24)은 노출만 — 현재 소비자 없음, 추후 카테고리 서빙 개편 재료(스펙 2026-08-23 §6).
+-- 홈/리빙 축(home_living*) 노출은 crawler 마이그레이션(V20260827090717)이 main 배포로 서버 raw DB에
+-- 반영된 뒤 다시 얹는다 — cd-test(staging)는 crawler를 배포하지 않아 컬럼 없는 DB에 뷰 적용이 깨진다
+-- (2026-08-27 run 33108790862 실측). F&B 때도 노출은 별도 후속 커밋(08-25)이었다.
 CREATE OR REPLACE VIEW analytics.v_base_influencer AS
 SELECT
   id AS influencer_id,

@@ -85,10 +85,11 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
 
     public static String buildPrompt(ObjectMapper om, List<ProfileCard> cards) {
         return """
-                너는 인플루언서 마케팅 리스트업 서비스의 분류기다. 각 인스타그램 계정을 두 카테고리 \
+                너는 인플루언서 마케팅 리스트업 서비스의 분류기다. 각 인스타그램 계정을 세 카테고리 \
                 축에서 독립적으로 분류한다: beauty(뷰티 제품 — 스킨케어·메이크업·향수·헤어/바디케어 \
-                제품 등), fnb(식품/음료 제품 — 가공식품·음료·건강기능식품·식재료 등). 한 계정이 두 축 \
-                모두에 해당할 수 있다(예: 뷰티 리뷰와 레시피를 함께 올리는 계정).
+                제품 등), fnb(식품/음료 제품 — 가공식품·음료·건강기능식품·식재료 등), home_living(홈/리빙 \
+                — 가구·인테리어 소품·주방/생활용품·홈데코 등). 한 계정이 여러 축에 해당할 수 있다(예: 뷰티 \
+                리뷰와 레시피를 함께 올리는 계정).
                 목적: 한국 시장에서 각 카테고리 제품을 시딩·협찬·광고할 한국인 인플루언서와, 그런 \
                 인플루언서를 필요로 하는 제품 회사를 찾는 것.
 
@@ -111,9 +112,21 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
                 개인이 매장을 탐방·리뷰하는 계정은 SERVICE가 아니라 INFLUENCER다.
                 - NONE: F&B 콘텐츠 중심이 아닌 계정
 
+                [home_living 축 분류]
+                - INFLUENCER: 캡션·bio를 한국어로 쓰는 홈/리빙 개인 크리에이터 — 두 부류 모두 포함한다. \
+                (1) 리빙 제품(가구·인테리어 소품·주방/생활용품·홈데코) 리뷰·공동구매·추천 계정, \
+                (2) 집꾸미기·홈스타일링·살림·정리수납·홈카페 콘텐츠 중심 계정(제품 리뷰가 주업이 \
+                아니어도 집·공간·살림이 콘텐츠의 중심이면 포함 — 예: 오늘의집류 집 기록 계정).
+                - FOREIGN_INFLUENCER: 홈/리빙 개인 크리에이터지만 글을 한국어로 쓰지 않는 계정
+                - COMPANY: 가구·리빙 제품을 제조·판매하는 회사(브랜드·쇼핑몰) 공식 계정 — 언어 무관
+                - SERVICE: 서비스 업체 공식 계정 — 인테리어 시공·리모델링·이사·입주청소·정리수납 대행·\
+                부동산 등, 그리고 시공 사례·견적 홍보 위주의 서비스 중심 개인
+                - NONE: 홈/리빙 콘텐츠 중심이 아닌 계정. 집이 배경으로만 등장하는 일상·가족·육아 \
+                계정은 홈/리빙이 아니다 — 콘텐츠의 주제가 집·공간·살림·리빙 제품인지로 판정하라.
+
                 경계 규칙:
-                - 두 축은 독립이다 — 한 축의 판정이 다른 축에 영향을 주지 않는다. 어느 쪽도 아니면 \
-                beauty=NOT_BEAUTY, fnb=NONE이다.
+                - 세 축은 독립이다 — 한 축의 판정이 다른 축에 영향을 주지 않는다. 어느 쪽도 아니면 \
+                beauty=NOT_BEAUTY, fnb=NONE, home_living=NONE이다.
                 - 시술 업체가 자체 제품도 팔면 콘텐츠 주력 기준으로 — 시술·매장 홍보 중심이면 \
                 BEAUTY_SERVICE, 제품 판매 중심이면 COMPANY. F&B 매장이 자체 제품(밀키트·원두·소스 등)을 \
                 온라인 판매해도 같은 기준 — 매장 홍보 중심이면 SERVICE, 제품 판매 중심이면 COMPANY.
@@ -138,7 +151,8 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
                 각 축에서 reason(근거)을 먼저 쓰고, 그 근거와 일관된 class를 마지막에 쓰라.
                 출력은 JSON 배열만: [{"username":"...",\
                 "beauty":{"reason":"한 줄","basis":"CAPTION|BIO|CATEGORY_ONLY","class":"INFLUENCER|FOREIGN_INFLUENCER|COMPANY|BEAUTY_SERVICE|NOT_BEAUTY"},\
-                "fnb":{"reason":"한 줄","basis":"CAPTION|BIO|CATEGORY_ONLY","class":"INFLUENCER|FOREIGN_INFLUENCER|COMPANY|SERVICE|NONE"}}]
+                "fnb":{"reason":"한 줄","basis":"CAPTION|BIO|CATEGORY_ONLY","class":"INFLUENCER|FOREIGN_INFLUENCER|COMPANY|SERVICE|NONE"},\
+                "home_living":{"reason":"한 줄","basis":"CAPTION|BIO|CATEGORY_ONLY","class":"INFLUENCER|FOREIGN_INFLUENCER|COMPANY|SERVICE|NONE"}}]
                 입력의 모든 username에 대해 정확히 한 항목씩. 다른 텍스트 금지.
 
                 """ + om.writeValueAsString(cards);
@@ -159,15 +173,19 @@ public class ClaudeCliBeautyJudge implements BeautyJudge {
             if (username == null || username.isBlank()) continue;
             JsonNode b = n.path("beauty");
             JsonNode f = n.path("fnb");
+            JsonNode h = n.path("home_living");
             BeautyClass beautyClass = parseBeautyClass(b.path("class").asString(null));
             CategoryClass fnbClass = parseCategoryClass(f.path("class").asString(null));
-            // 양축 모두 무효(모델 일탈)면 건너뛴다 — 해당 계정 두 축 다 미판정 유지, 다음 실행 재시도.
-            // 한 축만 무효면 그 축만 null — 유효한 축의 판정을 버릴 이유가 없다.
-            if (beautyClass == null && fnbClass == null) continue;
+            CategoryClass homeLivingClass = parseCategoryClass(h.path("class").asString(null));
+            // 세 축 모두 무효(모델 일탈)면 건너뛴다 — 해당 계정 전 축 미판정 유지, 다음 실행 재시도.
+            // 일부 축만 무효면 그 축만 null — 유효한 축의 판정을 버릴 이유가 없다.
+            if (beautyClass == null && fnbClass == null && homeLivingClass == null) continue;
             out.add(new Verdict(username, beautyClass, b.path("reason").asString(null),
                     normalizeBasis(b.path("basis").asString(null)),
                     fnbClass, f.path("reason").asString(null),
-                    normalizeBasis(f.path("basis").asString(null))));
+                    normalizeBasis(f.path("basis").asString(null)),
+                    homeLivingClass, h.path("reason").asString(null),
+                    normalizeBasis(h.path("basis").asString(null))));
         }
         return out;
     }

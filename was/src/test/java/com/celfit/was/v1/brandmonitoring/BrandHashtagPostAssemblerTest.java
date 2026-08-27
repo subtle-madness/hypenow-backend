@@ -16,6 +16,7 @@ import com.celfit.was.monitoring.BrandReadRepository;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -384,6 +385,119 @@ class BrandHashtagPostAssemblerTest {
 		assertThat(result).extracting(BrandHashtagPostResponse::shortcode).containsExactlyInAnyOrder("HHH", "III");
 		// 원장이 비어 있다는 걸 이미 아는 순간 매칭 조회는 불필요하다(원장 조회 1번으로 판정 종료).
 		verify(repository, never()).findMatchedTags(anyLong(), any());
+	}
+
+	// ---------- count 전용 경로(P2, 2026-08-27) ----------
+
+	/**
+	 * count는 목록과 <b>같은 판정</b>을 슬림 조회 위에서 태운 값이다 — 모든 count 테스트가 같은 시드에서
+	 * {@code countForBrand == assembleForBrand().size()}를 단언한다(판정을 복제하면 두 표면의 숫자가
+	 * 조용히 갈라진다). 시드는 두 조회에 한 번에 깐다 — 슬림 조회는 목록 조회와 술어가 동형이라
+	 * (리포지토리 테스트가 봉인) 같은 행 집합을 돌려주는 게 실제 계약이다.
+	 */
+	private static void givenHashtagSeed(BrandReadRepository repository,
+			BrandReadRepository.BrandHashtagPostRow... rows) {
+		given(repository.findHashtagPosts(eq(1L), any(), anyInt())).willReturn(List.of(rows));
+		given(repository.findHashtagPostCodes(eq(1L), any(), anyInt())).willReturn(
+				Stream.of(rows).map(BrandReadRepository.BrandHashtagPostRow::shortCode).toList());
+	}
+
+	@Test
+	void count는_tagged_겹침_행을_제외하고_목록_크기와_같다() {
+		var repository = mock(BrandReadRepository.class);
+		var directPostRepository = mock(BrandDirectPostRepository.class);
+		givenHashtagSeed(repository, hashtagRowWithAuthor("HHH", "poster1"),
+				hashtagRowWithAuthor("III", "poster2"));
+		given(repository.findBrandPoolStatus(eq(1L), any())).willReturn(List.of(
+				poolStatus("HHH", true, false),    // tagged-only — 제외
+				poolStatus("III", true, true)));   // direct 살아 있음 — 유지
+
+		var assembler = new BrandHashtagPostAssembler(repository, directPostRepository,
+				mock(BrandHashtagTagRepository.class));
+
+		assertThat(assembler.countForBrand(USER_ID, 1L)).isEqualTo(1);
+		assertThat(assembler.countForBrand(USER_ID, 1L)).isEqualTo(assembler.assembleForBrand(USER_ID, 1L).size());
+	}
+
+	@Test
+	void count는_내_태그_교집합만_센다() {
+		var repository = mock(BrandReadRepository.class);
+		var directPostRepository = mock(BrandDirectPostRepository.class);
+		var hashtagTagRepository = mock(BrandHashtagTagRepository.class);
+		givenHashtagSeed(repository, hashtagRowWithAuthor("HHH", "poster1"),
+				hashtagRowWithAuthor("III", "poster2"));
+		given(repository.findBrandPoolStatus(eq(1L), any())).willReturn(List.of());
+		given(hashtagTagRepository.findByUserAndBrand(USER_ID, 1L)).willReturn(Set.of("cclime"));
+		given(repository.findMatchedTags(eq(1L), any())).willReturn(List.of(
+				new BrandReadRepository.MatchedTagRow("HHH", "cclime"),
+				new BrandReadRepository.MatchedTagRow("III", "다른브랜드")));
+
+		var assembler = new BrandHashtagPostAssembler(repository, directPostRepository, hashtagTagRepository);
+
+		assertThat(assembler.countForBrand(USER_ID, 1L)).isEqualTo(1);
+		assertThat(assembler.countForBrand(USER_ID, 1L)).isEqualTo(assembler.assembleForBrand(USER_ID, 1L).size());
+	}
+
+	/** 매칭 기록이 없는 행은 목록과 같은 fail-open이다 — count에서만 숨으면 뱃지와 목록이 어긋난다. */
+	@Test
+	void count는_매칭_기록이_없으면_fail_open으로_센다() {
+		var repository = mock(BrandReadRepository.class);
+		var directPostRepository = mock(BrandDirectPostRepository.class);
+		var hashtagTagRepository = mock(BrandHashtagTagRepository.class);
+		givenHashtagSeed(repository, hashtagRowWithAuthor("HHH", "poster1"));
+		given(repository.findBrandPoolStatus(eq(1L), any())).willReturn(List.of());
+		given(hashtagTagRepository.findByUserAndBrand(USER_ID, 1L)).willReturn(Set.of("cclime"));
+		given(repository.findMatchedTags(eq(1L), any())).willReturn(List.of());   // 매칭 기록 없음
+
+		var assembler = new BrandHashtagPostAssembler(repository, directPostRepository, hashtagTagRepository);
+
+		assertThat(assembler.countForBrand(USER_ID, 1L)).isEqualTo(1);
+		assertThat(assembler.countForBrand(USER_ID, 1L)).isEqualTo(assembler.assembleForBrand(USER_ID, 1L).size());
+	}
+
+	/** 원장 미시딩(내 태그 0개)이면 목록과 같이 필터를 건너뛰고 전원을 센다. */
+	@Test
+	void count는_원장_미시딩이면_전원을_센다() {
+		var repository = mock(BrandReadRepository.class);
+		var directPostRepository = mock(BrandDirectPostRepository.class);
+		var hashtagTagRepository = mock(BrandHashtagTagRepository.class);
+		givenHashtagSeed(repository, hashtagRowWithAuthor("HHH", "poster1"),
+				hashtagRowWithAuthor("III", "poster2"));
+		given(repository.findBrandPoolStatus(eq(1L), any())).willReturn(List.of());
+		// findByUserAndBrand 미스텁 — Mockito 기본값 empty(시딩 전).
+
+		var assembler = new BrandHashtagPostAssembler(repository, directPostRepository, hashtagTagRepository);
+
+		assertThat(assembler.countForBrand(USER_ID, 1L)).isEqualTo(2);
+		assertThat(assembler.countForBrand(USER_ID, 1L)).isEqualTo(assembler.assembleForBrand(USER_ID, 1L).size());
+		verify(repository, never()).findMatchedTags(anyLong(), any());
+	}
+
+	/** 발견분이 하나도 없으면 후속 조회 없이 0 — 빈 IN 절·불필요한 왕복 방지(목록과 같은 관용구). */
+	@Test
+	void 발견_게시물이_없으면_count는_0이고_후속_조회를_생략한다() {
+		var repository = mock(BrandReadRepository.class);
+		var directPostRepository = mock(BrandDirectPostRepository.class);
+		var assembler = new BrandHashtagPostAssembler(repository, directPostRepository,
+				mock(BrandHashtagTagRepository.class));
+
+		assertThat(assembler.countForBrand(USER_ID, 1L)).isZero();
+		verify(repository, never()).findBrandPoolStatus(anyLong(), any());
+	}
+
+	/** count는 배지(brandPostId) 파생이 없다 — 등록자 원장은 셀 때 쓸 데가 없으므로 조회하지 않는다. */
+	@Test
+	void count는_등록자_원장을_조회하지_않는다() {
+		var repository = mock(BrandReadRepository.class);
+		var directPostRepository = mock(BrandDirectPostRepository.class);
+		givenHashtagSeed(repository, hashtagRowWithAuthor("HHH", "poster1"));
+		given(repository.findBrandPoolStatus(eq(1L), any())).willReturn(List.of(poolStatus("HHH", false, true)));
+
+		var assembler = new BrandHashtagPostAssembler(repository, directPostRepository,
+				mock(BrandHashtagTagRepository.class));
+
+		assertThat(assembler.countForBrand(USER_ID, 1L)).isEqualTo(1);
+		verify(directPostRepository, never()).shortCodesByUser(anyLong());
 	}
 
 	private static BrandReadRepository.BrandPoolStatusRow poolStatus(String shortCode, boolean tagDetected,
