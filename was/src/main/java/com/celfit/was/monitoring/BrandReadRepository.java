@@ -501,7 +501,7 @@ public class BrandReadRepository {
 			OffsetDateTime firstSeenAt, String imageObjectPath, String authorImageObjectPath) {
 	}
 
-	/** brand_hashtag_post_matched_tags 1행({@link #findMatchedTags}) — shortcode 1건에 매칭 태그 1건. */
+	/** brand_post_matched_tag 1행({@link #findMatchedTags}) — shortcode 1건에 매칭 태그 1건. */
 	public record MatchedTagRow(String shortCode, String tag) {
 	}
 
