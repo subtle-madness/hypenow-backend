@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -44,14 +45,18 @@ public class BrandDirectCollectService {
 	private final BrandSnapshotWriter writer;
 	private final TaggedPostRepository taggedPosts;
 	private final BrandCollectService collect;
+	/** 스윕당 브랜드당 단건 수집 상한(설계 §5) — 0 이하는 무제한. */
+	private final int sweepLimit;
 
 	public BrandDirectCollectService(HikerClient hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
-			TaggedPostRepository taggedPosts, BrandCollectService collect) {
+			TaggedPostRepository taggedPosts, BrandCollectService collect,
+			@Value("${monitoring.brand.unenumerated-sweep-limit:300}") int sweepLimit) {
 		this.hiker = hiker;
 		this.callContext = callContext;
 		this.writer = writer;
 		this.taggedPosts = taggedPosts;
 		this.collect = collect;
+		this.sweepLimit = sweepLimit;
 	}
 
 	/**
@@ -78,7 +83,8 @@ public class BrandDirectCollectService {
 	}
 
 	/**
-	 * 야간 스윕 2단계(설계 §3-2) — {@code unenumeratedDuePosts} 중 {@link BrandCrawlPolicy#due}인 것만
+	 * 야간 스윕 2단계(설계 §3-2, <b>2026-08-27 hashtag 일반화</b>) — {@code unenumeratedDuePosts}
+	 * (tagged 열거가 도달할 수 없는 direct·hashtag 성분 행) 중 {@link BrandCrawlPolicy#due}인 것만
 	 * 게시물 단위 격리로 단건 수집한다. N건(20) 배치마다 {@link BrandCollectService#enrich}를 불러
 	 * markEnriched가 finally로 보장되게 한다(08-13 완결 배치 서빙 규율 — direct-only 행은 태그 열거
 	 * 백스톱 자체가 없어 1단계보다 더 엄격히 지켜야 한다).
@@ -90,19 +96,29 @@ public class BrandDirectCollectService {
 	 * <p>게시자 프로필·댓글 병렬화는 {@code enrich} 안의 공유 워커 풀이 이미 한다 — 여기서 추가
 	 * 병렬화하지 않는다(전역 동시 콜 상한 계산이 깨진다).
 	 */
-	public void sweepDirect(BrandRow brand) {
+	public void sweepUnenumerated(BrandRow brand) {
 		callContext.scoped(brand.id(), () -> {
-			doSweepDirect(brand);
+			doSweepUnenumerated(brand);
 			return null;
 		});
 	}
 
-	private void doSweepDirect(BrandRow brand) {
+	private void doSweepUnenumerated(BrandRow brand) {
 		Instant now = Instant.now();
-		List<TaggedPostRepository.TrackedPost> due = taggedPosts
+		List<TaggedPostRepository.TrackedPost> dueAll = taggedPosts
 				.unenumeratedDuePosts(brand.id(), now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE)).stream()
 				.filter(t -> BrandCrawlPolicy.due(t.takenAt(), t.lastCrawledAt(), now))
 				.toList();
+		// 스윕당 상한(2026-08-27 설계 §5) — 구 감지 데이터 이관분은 last_crawled_at이 NULL이라 180일
+		// 안이면 전부 즉시 due다. 상한이 없으면 이관 직후 첫 스윕이 브랜드당 최대 1,000건의 단건 콜 +
+		// 보강 콜을 한 번에 쏟아내 "전역 동시 콜 14" 예산을 넘긴다. 모수 정렬이 미보강 우선이라
+		// (unenumeratedDuePosts) 잘리는 쪽은 항상 이미 보강된 행이고, 잔여는 다음 스윕이 이어받는다.
+		List<TaggedPostRepository.TrackedPost> due = sweepLimit > 0 && dueAll.size() > sweepLimit
+				? dueAll.subList(0, sweepLimit) : dueAll;
+		if (due.size() < dueAll.size()) {
+			log.info("2단계 단건 수집 상한({}) 컷 — 브랜드 {} due {}건 중 {}건만 수집, 잔여는 다음 스윕",
+					sweepLimit, brand.username(), dueAll.size(), due.size());
+		}
 		List<PostInfo> batch = new ArrayList<>();
 		for (TaggedPostRepository.TrackedPost t : due) {
 			collectOne(brand, t.shortCode(), now).ifPresent(batch::add);

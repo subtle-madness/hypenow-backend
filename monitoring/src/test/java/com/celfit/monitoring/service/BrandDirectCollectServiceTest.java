@@ -235,6 +235,10 @@ class BrandDirectCollectServiceTest {
 	}
 
 	private BrandDirectCollectService service() {
+		return serviceWithLimit(300);
+	}
+
+	private BrandDirectCollectService serviceWithLimit(int sweepLimit) {
 		// adDisclosureEnabled=false — 이 테스트는 direct 단건 수집 경로만 검증한다. 킬 스위치가
 		// 꺼져 있으면 judgeAdDisclosuresSafely가 adJudge를 아예 호출하지 않으므로(BrandCollectService
 		// 클래스 주석) null을 넘겨도 안전하다.
@@ -242,7 +246,7 @@ class BrandDirectCollectServiceTest {
 		// 커버리지 조회·기록 지점에 닿지 않는다(collect는 adjustLotteryMetrics 재사용 목적).
 		BrandCollectService collect = new BrandCollectService(client(), callContext, writer, snapshots, comments,
 				tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
-		return new BrandDirectCollectService(client(), callContext, writer, tagged, collect);
+		return new BrandDirectCollectService(client(), callContext, writer, tagged, collect, sweepLimit);
 	}
 
 	/** service()가 collect·direct 각자 별도 HikerClient(별도 fake 인스턴스)를 갖지만 같은 calls 리스트를 공유한다. */
@@ -305,7 +309,7 @@ class BrandDirectCollectServiceTest {
 		assertThat(tagged.upsertedDirect).isEmpty();
 	}
 
-	// ── sweepDirect — 격리 ───────────────────────────────────────────────────
+	// ── sweepUnenumerated — 격리 ───────────────────────────────────────────────────
 
 	@Test
 	void 부재_게시물은_삼키고_나머지는_계속_수집된다() {
@@ -314,7 +318,7 @@ class BrandDirectCollectServiceTest {
 		notFoundCodes.add("Gone");
 		postResponses.put("Alive", postJson("Alive", RECENT, 102));
 
-		service().sweepDirect(brand);   // 예외가 새면 여기서 터진다
+		service().sweepUnenumerated(brand);   // 예외가 새면 여기서 터진다
 
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("Alive");
 		assertThat(tagged.enriched).containsExactly("Alive");
@@ -325,7 +329,7 @@ class BrandDirectCollectServiceTest {
 		tagged.due.add(new TaggedPostRepository.TrackedPost("Ancient", Instant.ofEpochSecond(AGE_200D),
 				Instant.ofEpochSecond(NOW - 40L * 86400)));
 
-		service().sweepDirect(brand);
+		service().sweepUnenumerated(brand);
 
 		assertThat(postCalls()).isZero();
 		assertThat(writer.saved).isEmpty();
@@ -340,7 +344,7 @@ class BrandDirectCollectServiceTest {
 		notFoundCodes.add("Gone");
 		postResponses.put("Alive", postJson("Alive", RECENT, 105));
 
-		service().sweepDirect(brand);
+		service().sweepUnenumerated(brand);
 
 		// 404 게시물: 마킹만, 저장·touch 없음(마지막 수집값 보존)
 		assertThat(tagged.unavailable).containsExactly("Gone");
@@ -357,7 +361,7 @@ class BrandDirectCollectServiceTest {
 				Instant.now().minusSeconds(86400)));
 		postResponses.put("Recent", postJson("Recent", RECENT, 103));
 
-		service().sweepDirect(brand);
+		service().sweepUnenumerated(brand);
 
 		assertThat(postCalls()).isEqualTo(1);
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("Recent");
@@ -369,7 +373,7 @@ class BrandDirectCollectServiceTest {
 		tagged.due.add(new TaggedPostRepository.TrackedPost("Tier2Fresh", Instant.ofEpochSecond(AGE_25D),
 				Instant.now().minusSeconds(86400)));
 
-		service().sweepDirect(brand);
+		service().sweepUnenumerated(brand);
 
 		assertThat(postCalls()).isZero();
 
@@ -379,8 +383,29 @@ class BrandDirectCollectServiceTest {
 				Instant.now().minusSeconds(4L * 86400)));
 		postResponses.put("Tier2Due", postJson("Tier2Due", AGE_25D, 104));
 
-		service().sweepDirect(brand);
+		service().sweepUnenumerated(brand);
 
 		assertThat(postCalls()).isEqualTo(1);
+	}
+
+	// ── 스윕당 상한(2026-08-27 해시태그 직접 수집 설계 §5) ─────────────────────
+
+	/**
+	 * 이관분은 last_crawled_at이 NULL이라 전부 즉시 due다 — 상한이 없으면 첫 스윕이 브랜드당
+	 * 수백~1,000건의 단건 콜을 한 번에 쏟아내 전역 콜 예산을 넘긴다. 잔여는 다음 스윕이 이어받는다
+	 * (모수 정렬이 미보강 우선이라 이관분부터 충전된다).
+	 */
+	@Test
+	void 스윕당_상한을_넘는_due는_잘리고_다음_스윕으로_넘어간다() {
+		for (int i = 0; i < 5; i++) {
+			String code = "M" + i;
+			tagged.due.add(new TaggedPostRepository.TrackedPost(code, Instant.ofEpochSecond(RECENT), null));
+			postResponses.put(code, postJson(code, RECENT, 200 + i));
+		}
+
+		serviceWithLimit(2).sweepUnenumerated(brand);
+
+		assertThat(postCalls()).isEqualTo(2);
+		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("M0", "M1");
 	}
 }
