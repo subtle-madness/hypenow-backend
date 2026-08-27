@@ -50,7 +50,7 @@
       "id": 1,
       "type": "stat",
       "title": "API 5xx",
-      "description": "최근 1시간 앱 계층 5xx 건수(UNKNOWN·root·actuator 제외). 평시 0건이 정상이라(08-27 실측: 8월 한 달 0건) 옆 '엣지 5xx'와 같은 건수+임계 1 — 한 건이라도 뜨면 빨강. 5xx율·엔드포인트 분해는 클릭 → 운영/메트릭(was). 5xx가 없으면 status=5xx 시계열 자체가 없어 or vector(0)으로 0을 보장하되, `and on() up` 가드로 was 스크레이프가 죽으면 값 대신 빨강 '수집 끊김'이 뜬다.",
+      "description": "최근 1시간 앱 계층 5xx 건수(UNKNOWN·root·actuator 제외). 평시 0건이 정상이라(08-27 실측: 8월 한 달 0건) 옆 '엣지 5xx'와 같은 건수+임계 1 — 한 건이라도 뜨면 빨강. increase()가 아니라 현재값−1h전 값 차분인 이유: 5xx 시계열은 첫 500에서 탄생하는데 increase는 시계열 첫 증가분을 못 봐서 사상 첫 500이 0으로 눌린다(08-27 로컬 하니스 실측). clamp_min은 재시작 counter 리셋 방어. 5xx율·엔드포인트 분해는 클릭 → 운영/메트릭(was). or vector(0)으로 0건을 보장하되, `and on() up` 가드로 was 스크레이프가 죽으면 값 대신 빨강 '수집 끊김'이 뜬다.",
       "gridPos": {
         "x": 0,
         "y": 1,
@@ -133,7 +133,7 @@
           "instant": true,
           "range": false,
           "legendFormat": "1h API 5xx",
-          "expr": "(sum(increase(http_server_requests_seconds_count{status=~\"5..\",uri!~\"UNKNOWN|root|/actuator.*\"}[1h])) or vector(0)) and on() up{job=\"was\"} == 1"
+          "expr": "clamp_min((sum(http_server_requests_seconds_count{status=~\"5..\",uri!~\"UNKNOWN|root|/actuator.*\"}) or vector(0)) - (sum(http_server_requests_seconds_count{status=~\"5..\",uri!~\"UNKNOWN|root|/actuator.*\"} offset 1h) or vector(0)), 0) and on() up{job=\"was\"} == 1"
         }
       ]
     },
