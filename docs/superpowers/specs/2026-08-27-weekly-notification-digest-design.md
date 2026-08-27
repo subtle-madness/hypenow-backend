@@ -67,7 +67,7 @@
 | 섹션 | 데이터 소스 | 조회 방식 |
 |---|---|---|
 | 브랜드 새 게시물 | monitoring DB `brand_tagged_post`(+ `brand_hashtag_post` 매핑) | 지난주 발견분(발견 시각 기간 조회), 등록(direct)분 제외 |
-| 광고 미표기 | `brand_tagged_post.ad_verdict`/`ad_judged_at` × 등록 원장(`app.brand_post_registrations`) | 지난주에 미표기 판정된 등록 게시물. **FE 노출 킬 스위치(`AD_DISCLOSURE_EXPOSE`)를 알림도 동일하게 따른다** |
+| 광고 미표기 | `brand_post_meta.ad_verdict`/`ad_judged_at` × 등록 원장(`app.brand_direct_posts`, PK `(user_id, short_code)`) | 지난주에 미표기 판정된 등록 게시물. **FE 노출 킬 스위치(`AD_DISCLOSURE_EXPOSE`)를 알림도 동일하게 따른다** |
 | 수집 시작/종료 · 접근 불가 · 지표 숨김 | 기존 `alarm_event` 원장 | 주간 범위 조회. 지표 숨김 같은 상태 전이는 소급 조회가 불가능하므로 `AlarmRecorder` 적재는 그대로 유지, **소비 리듬만 주간으로** |
 
 - 기존 `DigestJob`(일일 09:00 + 10분 따라잡기)을 주간 잡으로 개조. `(user_id, 주 시작일)`
@@ -89,7 +89,9 @@
 
 - 주간 다이제스트와 같은 내용을 **주간 리포트 메일 1통**으로 발송. 발송 트리거는
   "주간 다이제스트 생성 직후" — 기존 5분 틱 + 디바운스 디스패처는 불필요해져 제거·단순화.
-- 실패 처리(유저 단위 격리, 재시도 상한, at-least-once)와 Resend 발송 스택은 유지.
+- 실패 처리(유저 단위 격리, 재시도 상한, at-least-once) 원칙은 유지. 발송 주체가 was로
+  오므로 메일 스택은 was의 기존 `com.celfit.was.mail`(비밀번호 재설정이 사용 중)을 쓰고,
+  monitoring 모듈의 발송 스택 사본은 디스패처와 함께 제거한다.
 - 문안은 기존 "임시 카피"를 폐기하고 주간 리포트 형식으로 정식 작성(딥링크 포함).
   사용자向 문안 엠대시 금지 규칙 준수.
 
