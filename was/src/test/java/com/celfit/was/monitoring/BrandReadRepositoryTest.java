@@ -308,14 +308,16 @@ class BrandReadRepositoryTest extends IntegrationTest {
 	}
 
 	/**
-	 * 프로젝션은 shortcode IN이 아니라 브랜드 스코프 조인이어야 한다(2026-08-27 스테이징 실측 —
-	 * 만 건대 IN 바인드가 요청당 2초대를 만들었다). 창·정산 술어는 findBrandPostsInWindow와 동형.
+	 * 인덱스 프로젝션은 단일 브랜드 창 스코프 조인이어야 한다(2026-08-27 스테이징 실측 — 만 건대
+	 * 브랜드에서 행×컬럼 매핑이 지배 비용이라 쿼리 왕복·컬럼을 최소화). 창·정산 술어는
+	 * findBrandPostsInWindow와 동형이고, 메타 없는 행도 LEFT JOIN으로 모수에 남아야 한다.
 	 */
 	@Test
-	void 협찬_판정_프로젝션은_브랜드_창_스코프로_유료협찬과_캡션만_읽는다() {
+	void 인덱스_프로젝션은_브랜드_창_스코프로_판정_입력만_읽는다() {
 		long brandId = seedBrand("brand");
 		long otherBrand = seedBrand("other_brand");
 		seedTaggedPost(brandId, "SHORT1", "2026-08-01T12:00:00+09:00");
+		seedTaggedPost(brandId, "NOMETA", "2026-08-03T12:00:00+09:00");      // 메타 미보강 — LEFT JOIN 유지
 		seedTaggedPost(brandId, "OLD1", "2024-01-01T12:00:00+09:00");        // 창 밖 — 제외
 		seedUnenrichedTaggedPost(brandId, "RAW1", "2026-08-02T12:00:00+09:00"); // 미정산 — enrichedOnly 제외
 		seedTaggedPost(otherBrand, "SHORT9", "2026-08-01T12:00:00+09:00");   // 남의 브랜드 — 제외
@@ -329,18 +331,26 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				       ('SHORT9', 'influencer_b', 'FEED', '2026-08-02', '', NULL, NULL, NULL, true)
 				""").update();
 
-		List<BrandReadRepository.SponsorshipMetaRow> rows = repository.findSponsorshipMetaForBrand(
+		List<BrandReadRepository.BrandPostIndexRow> rows = repository.findBrandPostIndex(
 				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), true);
 
-		assertThat(rows).hasSize(1);
-		assertThat(rows.get(0).shortCode()).isEqualTo("SHORT1");
-		assertThat(rows.get(0).caption()).isEqualTo("#협찬 후기");
-		assertThat(rows.get(0).isPaidPartnership()).isNull();   // null = 키 부재(판정 unknown) 보존
+		assertThat(rows).hasSize(2);
+		BrandReadRepository.BrandPostIndexRow enriched = rows.stream()
+				.filter(r -> r.shortCode().equals("SHORT1")).findFirst().orElseThrow();
+		assertThat(enriched.caption()).isEqualTo("#협찬 후기");
+		assertThat(enriched.isPaidPartnership()).isNull();   // null = 키 부재(판정 unknown) 보존
+		assertThat(enriched.tagDetectedAt()).isNotNull();
+		assertThat(enriched.directRegisteredAt()).isNull();
+		assertThat(enriched.takenAt()).isNotNull();
+		BrandReadRepository.BrandPostIndexRow noMeta = rows.stream()
+				.filter(r -> r.shortCode().equals("NOMETA")).findFirst().orElseThrow();
+		assertThat(noMeta.caption()).isNull();               // 메타 없음 → 판정 입력 null(unknown)
+		assertThat(noMeta.isPaidPartnership()).isNull();
 	}
 
-	/** direct 등록 행은 창 밖이어도 프로젝션에 포함된다 — findBrandPostsInWindow의 창 예외와 동형. */
+	/** direct 등록 행은 창 밖이어도 인덱스에 포함된다 — findBrandPostsInWindow의 창 예외와 동형. */
 	@Test
-	void 협찬_판정_프로젝션은_direct_등록_행을_창_밖이어도_포함한다() {
+	void 인덱스_프로젝션은_direct_등록_행을_창_밖이어도_포함한다() {
 		long brandId = seedBrand("brand");
 		seedDirectPost(brandId, "OLDDIRECT", "2024-01-01T12:00:00+09:00", "2026-08-01T12:00:00+09:00");
 		jdbc.sql("""
@@ -349,11 +359,30 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				VALUES ('OLDDIRECT', 'influencer_a', 'REELS', '2024-01-01', '', NULL, NULL, NULL, true)
 				""").update();
 
-		List<BrandReadRepository.SponsorshipMetaRow> rows = repository.findSponsorshipMetaForBrand(
+		List<BrandReadRepository.BrandPostIndexRow> rows = repository.findBrandPostIndex(
 				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), false);
 
 		assertThat(rows).hasSize(1);
 		assertThat(rows.get(0).isPaidPartnership()).isTrue();
+		assertThat(rows.get(0).directRegisteredAt()).isNotNull();
+	}
+
+	/** 하이드레이트용 풀 행 배치 조회 — 브랜드+shortcode 스코프, 다른 브랜드 행은 섞이지 않는다. */
+	@Test
+	void 풀_행_배치_조회는_요청한_shortcode만_돌려준다() {
+		long brandId = seedBrand("brand");
+		long otherBrand = seedBrand("other_brand");
+		seedTaggedPost(brandId, "SHORT1", "2026-08-01T12:00:00+09:00");
+		seedTaggedPost(brandId, "SHORT2", "2026-08-02T12:00:00+09:00");
+		seedTaggedPost(otherBrand, "SHORT1", "2026-08-01T12:00:00+09:00");   // 같은 코드, 남의 브랜드
+
+		List<BrandTaggedPostRow> rows = repository.findBrandPostsByShortCodes(brandId,
+				List.of("SHORT1", "MISSING"));
+
+		assertThat(rows).hasSize(1);
+		assertThat(rows.get(0).shortCode()).isEqualTo("SHORT1");
+		assertThat(rows.get(0).authorUsername()).isEqualTo("influencer_a");
+		assertThat(repository.findBrandPostsByShortCodes(brandId, List.of())).isEmpty();   // IN () 선처리
 	}
 
 	/** 최신 1행 판정은 captured_on 기준이어야 한다 — 물리 삽입 순서로 새는 것을 역순 삽입으로 잡는다. */
