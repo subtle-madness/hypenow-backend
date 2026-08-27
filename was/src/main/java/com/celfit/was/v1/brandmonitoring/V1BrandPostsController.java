@@ -173,17 +173,21 @@ public class V1BrandPostsController {
 	}
 
 	/**
-	 * 해시태그 발견 게시물 전용 표면(스펙 §8, 별도 탭 결정 2026-08-12) — {@link #list}(tagged·direct)와
-	 * 완전히 분리된 API다. 병합·필터·정렬·counts가 없다 — {@link BrandHashtagPostAssembler}가 최신순
-	 * 전량(상한은 그쪽 정책)을 그대로 내려준다. 소유 검증은 목록과 같은 관용구(403·404).
+	 * 구 해시태그 전용 표면(스펙 §8) — <b>2026-08-27 직접 수집 전환 이후 리라우팅</b>이다: 응답
+	 * 셰이프는 그대로 두고 데이터는 {@link #list}와 같은 통합 풀에서 온다
+	 * ({@link BrandHashtagPostAssembler}). FE가 통합 목록으로 전환하기 전에도 화면이 낡지 않게 하는
+	 * 전환기 장치이고, <b>다음 릴리스에 제거</b>한다. 소유 검증은 목록과 같은 관용구(403·404)이고,
+	 * 서빙 창도 목록과 같은 링크 창을 쓴다(두 화면의 모수가 어긋나면 안 된다).
 	 */
 	@GetMapping("/accounts/{accountId}/hashtag-posts")
 	public ApiResponse<List<BrandHashtagPostResponse>> hashtagPosts(
 			@AuthenticationPrincipal AppUserDetails principal, @PathVariable String accountId) {
 		long brandId = parseAccountId(accountId);
-		requireOwnership(principal.getUserId(), brandId);
-		findAccountOrThrow(brandId);
-		return ApiResponse.ok(hashtagPostAssembler.assembleForBrand(principal.getUserId(), brandId));
+		BrandLinkRow link = requireOwnership(principal.getUserId(), brandId);
+		BrandAccountRow account = findAccountOrThrow(brandId);
+		LocalDate windowStart = linkWindowStart(today(), link.collectionMonths());
+		return ApiResponse.ok(hashtagPostAssembler.assembleForBrand(principal.getUserId(), account,
+				link.accountType(), windowStart));
 	}
 
 	/**

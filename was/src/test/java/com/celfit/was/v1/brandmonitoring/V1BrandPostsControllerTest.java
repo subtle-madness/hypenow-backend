@@ -28,7 +28,6 @@ import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.AuthorRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandCommentRow;
-import com.celfit.was.monitoring.BrandReadRepository.BrandHashtagPostRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
@@ -618,72 +617,22 @@ class V1BrandPostsControllerTest {
 
 	// ---------- 해시태그 발견 게시물 전용 API(스펙 §8, 별도 탭 결정 2026-08-12) ----------
 
+	/**
+	 * 리라우팅(2026-08-27 설계 §3) — 구 엔드포인트가 통합 풀의 {@code source=hashtag} 행을 구
+	 * 셰이프로 내려준다. 격리(내 태그 매칭)도 본 목록과 같은 판정을 그대로 탄다.
+	 */
 	@Test
-	void 해시태그_발견_게시물_목록은_열거_필드를_그대로_내려준다() throws Exception {
-		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
+	void 해시태그_목록은_통합_풀에서_구_셰이프로_서빙된다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"),
+				hashtagOnlyRow("HHH", "2026-08-05T01:00:00Z"));
+		givenMyTagMatch("HHH");
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.length()").value(1))
 				.andExpect(jsonPath("$.data[0].shortcode").value("HHH"))
 				.andExpect(jsonPath("$.data[0].postUrl").value("https://www.instagram.com/p/HHH/"))
-				.andExpect(jsonPath("$.data[0].matchedTag").value("#브랜드명"))
-				.andExpect(jsonPath("$.data[0].takenAt").value("2026-08-06T10:00:00+09:00"))
-				.andExpect(jsonPath("$.data[0].caption").value("해시태그 캡션"))
-				.andExpect(jsonPath("$.data[0].contentType").value("reels"))
-				.andExpect(jsonPath("$.data[0].thumbnailUrl").value("https://cdn/hashtag-thumb.jpg"))
-				.andExpect(jsonPath("$.data[0].authorUsername").value("hashtag_influencer"))
-				.andExpect(jsonPath("$.data[0].authorFullName").value("해시태그 인플루언서"))
-				.andExpect(jsonPath("$.data[0].authorProfilePicUrl").value("https://cdn/hashtag-author.jpg"))
-				.andExpect(jsonPath("$.data[0].authorProfileUrl")
-						.value("https://www.instagram.com/hashtag_influencer/"))
-				.andExpect(jsonPath("$.data[0].likes").value(20))
-				.andExpect(jsonPath("$.data[0].comments").value(3))
-				.andExpect(jsonPath("$.data[0].sponsorship").value("unknown"))
-				.andExpect(jsonPath("$.data[0].firstSeenAt").value("2026-08-06T11:00:00+09:00"));
-	}
-
-	@Test
-	void 해시태그_발견_게시물_협찬은_캡션_확정_키워드로만_판정한다() throws Exception {
-		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z", "오늘의 #협찬 후기"),
-				hashtagRow("III", "2026-08-05T01:00:00Z", "그냥 일상"));
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data[?(@.shortcode=='HHH')].sponsorship").value(Matchers.contains("sponsored")))
-				.andExpect(jsonPath("$.data[?(@.shortcode=='III')].sponsorship").value(Matchers.contains("unknown")));
-	}
-
-	/**
-	 * 등록자 스코프 배지(요구사항, 08-19) — 남이 direct 등록(수집)한 발견 게시물은 내 목록에서
-	 * brandPostId가 null(미수집)이어야 한다. 해시태그 감지 데이터(행 자체)는 여전히 보인다.
-	 */
-	@Test
-	void 남이_수집한_발견_게시물은_내게_미수집으로_보인다() throws Exception {
-		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
-		given(brandReadRepository.findBrandPoolStatus(eq(100L), any())).willReturn(List.of(
-				new BrandReadRepository.BrandPoolStatusRow("HHH", false, true,
-						OffsetDateTime.parse("2026-08-06T01:00:00Z"))));
-		// directPostRepository.shortCodesByUser(7L) 미스텁 — Mockito 기본값 empty(내가 등록 안 함).
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.length()").value(1))
-				.andExpect(jsonPath("$.data[0].shortcode").value("HHH"))
-				.andExpect(jsonPath("$.data[0].brandPostId").value(org.hamcrest.Matchers.nullValue()));
-	}
-
-	/** 내가 직접 등록(수집)한 발견 게시물은 brandPostId가 채워진다. */
-	@Test
-	void 내가_수집한_발견_게시물은_brandPostId가_채워진다() throws Exception {
-		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
-		given(brandReadRepository.findBrandPoolStatus(eq(100L), any())).willReturn(List.of(
-				new BrandReadRepository.BrandPoolStatusRow("HHH", false, true,
-						OffsetDateTime.parse("2026-08-06T01:00:00Z"))));
-		given(directPostRepository.shortCodesByUser(7L)).willReturn(Set.of("HHH"));
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
-				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].matchedTag").value("끌리메"))
 				.andExpect(jsonPath("$.data[0].brandPostId").value("HHH"));
 	}
 
@@ -703,7 +652,7 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
 
-		then(brandReadRepository).should(never()).findHashtagPosts(anyLong(), any(), anyInt());
+		then(brandReadRepository).should(never()).findMatchedTags(anyLong(), any());
 	}
 
 	@Test
@@ -889,10 +838,6 @@ class V1BrandPostsControllerTest {
 				.willReturn(List.of(rows));
 	}
 
-	private void givenHashtag(BrandHashtagPostRow... rows) {
-		given(brandReadRepository.findHashtagPosts(anyLong(), any(), anyInt())).willReturn(List.of(rows));
-	}
-
 	/**
 	 * 등록자 전용 노출 요구사항(08-19) — direct-only 게시물은 등록자(app.brand_direct_posts 원장)만
 	 * 볼 수 있다. 이 파일의 principal은 항상 userId=7L이라 그 관점으로 원장을 스텁한다.
@@ -955,16 +900,6 @@ class V1BrandPostsControllerTest {
 		OffsetDateTime registeredAt = OffsetDateTime.parse("2026-08-07T02:00:00Z");
 		return new BrandTaggedPostRow(code, "glowdeep_92", "9001", OffsetDateTime.parse(takenAt), firstSeenAt, 7L,
 				registeredAt, firstSeenAt, registeredAt, null, null);
-	}
-
-	private static BrandHashtagPostRow hashtagRow(String code, String takenAt) {
-		return hashtagRow(code, takenAt, "해시태그 캡션");
-	}
-
-	private static BrandHashtagPostRow hashtagRow(String code, String takenAt, String caption) {
-		return new BrandHashtagPostRow(code, "#브랜드명", "hashtag_influencer", "해시태그 인플루언서",
-				"https://cdn/hashtag-author.jpg", OffsetDateTime.parse(takenAt), caption, "REELS",
-				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null);
 	}
 
 	private static BrandPostMetaRow meta(String code, String contentType, Boolean paid) {
