@@ -9,6 +9,8 @@ import com.celfit.was.v1.brandmonitoring.BrandHashtagPostAssembler;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
 import java.time.Clock;
 import java.util.concurrent.ThreadPoolExecutor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -27,20 +29,49 @@ import tools.jackson.databind.ObjectMapper;
 @ConditionalOnProperty(name = {"monitoring.enabled", "monitoring.brand.ai.enabled"}, havingValue = "true")
 public class BrandAiConfig {
 
+	private static final Logger log = LoggerFactory.getLogger(BrandAiConfig.class);
+
 	/** 동기 챗의 재시도 횟수 - 60초 응답 계약(설계 §5) 안에 들어오도록 짧게 잡는다. */
 	private static final int CHAT_MAX_ATTEMPTS = 2;
 	private static final long CHAT_RETRY_BASE_MILLIS = 2_000L;
 	private static final int ERROR_BODY_LOG_LIMIT = 2_000;
+	/** Vertex 요청 자체의 타임아웃(C2) - common-llm 기본 120초는 사람이 기다리는 이 경로엔 너무
+	 * 길다. 2회 재시도까지 감안해도 45초×2+백오프 ≈ 92초로, 에이전트 벽시계 예산(55초)이 한
+	 * 번 더 끊어준다. */
+	private static final int CHAT_REQUEST_TIMEOUT_SECONDS = 45;
 
+	/**
+	 * Vertex 자격증명·프로젝트가 기동 시점엔 비어 있을 수 있다(I5/M3) - GOOGLE_APPLICATION_CREDENTIALS
+	 * 미설정 상태에서 {@link VertexTokenProvider#fromEnv()}를 여기서 바로 부르면 빈 생성 자체가
+	 * 예외를 던져 BRAND_AI_ENABLED=true인 채 WAS 전체가 크래시루프에 빠진다(08-12 전력 있는 유형).
+	 * 미비하면 예외 대신 error 로그를 남기고, 호출 시점에만 명확히 실패하는 degraded 전송을 등록한다
+	 * - 컨트롤러의 기존 catch(RuntimeException) 경로가 이를 그대로 502 AI_UNAVAILABLE로 매핑한다.
+	 * AI Studio 폴백은 의도적으로 만들지 않는다(08-18 429 사고 원인 - 되살리지 않는다).
+	 */
 	@Bean
 	public ChatTransport brandAiChatTransport(
 			@Value("${monitoring.brand.ai.vertex-project}") String project,
 			@Value("${monitoring.brand.ai.vertex-location:global}") String location,
 			@Value("${monitoring.brand.ai.model:gemini-2.5-flash}") String model) {
+		if (!VertexTokenProvider.credentialsPresent() || project == null || project.isBlank()) {
+			log.error("AI 어시스턴트 Vertex 설정 미비 - GOOGLE_APPLICATION_CREDENTIALS={}, vertex-project={} "
+							+ "(WAS는 정상 기동하되 브랜드 AI 챗 호출마다 502 AI_UNAVAILABLE을 돌려줍니다)",
+					VertexTokenProvider.credentialsPresent() ? "설정됨" : "미설정",
+					project == null || project.isBlank() ? "미설정" : "설정됨");
+			return degradedTransport();
+		}
 		VertexHttpTransport http = new VertexHttpTransport(VertexTokenProvider.fromEnv(),
 				VertexHttpTransport.DEFAULT_BASE_URL, CHAT_RETRY_BASE_MILLIS,
-				CHAT_MAX_ATTEMPTS, ERROR_BODY_LOG_LIMIT);
+				CHAT_MAX_ATTEMPTS, ERROR_BODY_LOG_LIMIT, CHAT_REQUEST_TIMEOUT_SECONDS);
 		return new VertexChatTransport(http, project, location, model);
+	}
+
+	/** 호출 시점에만 실패하는 전송 - 빈 등록 자체는 절대 실패하지 않는다(I5/M3). */
+	private static ChatTransport degradedTransport() {
+		return body -> {
+			throw new IllegalStateException(
+					"AI 어시스턴트 Vertex 설정 미비 - GOOGLE_APPLICATION_CREDENTIALS 또는 vertex-project를 확인하세요.");
+		};
 	}
 
 	@Bean
@@ -70,7 +101,7 @@ public class BrandAiConfig {
 	@Bean
 	public BrandAiAgent brandAiAgent(GeminiChatClient brandAiChatClient, BrandAiToolbox brandAiToolbox,
 			ObjectMapper objectMapper) {
-		return new BrandAiAgent(brandAiChatClient, brandAiToolbox, objectMapper);
+		return new BrandAiAgent(brandAiChatClient, brandAiToolbox, objectMapper, Clock.systemUTC());
 	}
 
 	/**

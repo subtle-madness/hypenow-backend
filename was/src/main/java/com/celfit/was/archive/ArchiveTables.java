@@ -144,6 +144,11 @@ public final class ArchiveTables {
 	 * AI 어시스턴트 질문 로그(2026-08-27 브랜드 모니터링 AI 어시스턴트 PoC) — users CASCADE(직접
 	 * FK). BRAND_HASHTAG_TAGS와 같은 위상(자식 없음, 순정 CASCADE 자식이라 명시 DELETE 불필요 —
 	 * USERS 삭제 시 함께 사라진다).
+	 *
+	 * <p>question·answer는 자유 텍스트라 다른 아카이브 테이블과 달리 마스킹 없이 그대로 이관한다 —
+	 * 실수가 아니라 의식적 결정이다(M7). 질문 로그 자체가 이 PoC의 산출물(사용자가 어떤 질문을
+	 * 하는지가 다음 이터레이션의 입력이다)이고, 탈퇴 이관 아카이브는 접근 통제된 저장소라 원문
+	 * 보존이 USER_PII 마스킹 컬럼들과 같은 노출 위험을 지지 않는다고 판단했다.
 	 */
 	public static final ArchiveTable AI_CHAT_LOGS = new ArchiveTable(
 			"app.ai_chat_logs", List.of("id"), "t.user_id",

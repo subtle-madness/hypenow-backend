@@ -7,10 +7,14 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -32,6 +36,13 @@ class BrandAiAgentTest {
 				+ "\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5}}";
 	}
 
+	/** 안전 필터·길이 제한으로 후보 파트가 비어 끝난 응답(I7) - finishReason만 있고 text·functionCall이 없다. */
+	private static String blockedResponse(String finishReason) {
+		return "{\"candidates\":[{\"finishReason\":\"" + finishReason + "\","
+				+ "\"content\":{\"role\":\"model\",\"parts\":[]}}],"
+				+ "\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":0}}";
+	}
+
 	/** 스크립트를 순서대로 돌려주고, 다 떨어지면 마지막 응답을 반복한다. */
 	private ChatTransport scripted(List<String> script, List<String> captured) {
 		AtomicInteger index = new AtomicInteger();
@@ -43,7 +54,36 @@ class BrandAiAgentTest {
 	}
 
 	private BrandAiAgent agentWith(List<String> script, List<String> captured, BrandAiToolbox toolbox) {
-		return new BrandAiAgent(new GeminiChatClient(scripted(script, captured), om), toolbox, om);
+		return agentWith(script, captured, toolbox, Clock.systemUTC());
+	}
+
+	private BrandAiAgent agentWith(List<String> script, List<String> captured, BrandAiToolbox toolbox, Clock clock) {
+		return new BrandAiAgent(new GeminiChatClient(scripted(script, captured), om), toolbox, om, clock);
+	}
+
+	/** 첫 확인 이후 항상 예산을 넘긴 시각을 돌려주는 시계 - "벽시계 예산이 이미 소진된 상태"를
+	 * 결정론으로 재현한다(run()이 시작할 때 deadline을 한 번 계산하고, 그다음 매 호출 전 검사에서
+	 * 예산 초과로 나오게 한다). */
+	private static Clock exhaustedBudgetClock() {
+		Instant start = Instant.parse("2026-08-27T00:00:00Z");
+		AtomicInteger calls = new AtomicInteger();
+		return new Clock() {
+			@Override
+			public ZoneOffset getZone() {
+				return ZoneOffset.UTC;
+			}
+
+			@Override
+			public Clock withZone(java.time.ZoneId zone) {
+				return this;
+			}
+
+			@Override
+			public Instant instant() {
+				// 1번째 호출(run 진입 시 deadline 계산)만 start, 그 뒤로는 예산(55초)을 넘긴 시각.
+				return calls.getAndIncrement() == 0 ? start : start.plusMillis(BrandAiAgent.TIME_BUDGET_MILLIS + 1);
+			}
+		};
 	}
 
 	@Test
@@ -109,16 +149,91 @@ class BrandAiAgentTest {
 		given(toolbox.execute(anyLong(), anyString(), any()))
 				.willReturn(AiToolResult.ok("{}", 0, List.of()));
 		List<String> captured = new ArrayList<>();
-		// 스크립트가 끝없이 툴만 요청한다 - 상한이 없으면 무한 루프다
-		BrandAiAgent agent = agentWith(List.of(functionCall("list_brands", "{}")), captured, toolbox);
+		// 8번은 툴 호출, 그다음(강제 답변 턴)엔 실제 Vertex가 mode=NONE을 지키듯 텍스트로 답한다.
+		List<String> script = new ArrayList<>();
+		for (int i = 0; i < BrandAiAgent.MAX_TOOL_CALLS; i++) {
+			script.add(functionCall("list_brands", "{}"));
+		}
+		script.add(textAnswer("확인한 것만 답할게요"));
+		BrandAiAgent agent = agentWith(script, captured, toolbox);
 
 		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "알려줘")));
 
 		assertThat(outcome.toolCalls()).hasSize(8);
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_TOOL_CAP);
-		// 마지막 요청은 tools 필드 없이(= 툴 호출 불가) 상한 안내를 달고 나간다
+		assertThat(outcome.answer()).isEqualTo("확인한 것만 답할게요");
+		// 강제 답변 턴 요청은 tools 선언은 그대로 싣되 toolConfig mode=NONE으로 호출만 막는다(I8) -
+		// tools를 통째로 빼면 이전 턴의 functionCall/functionResponse 파트가 남은 히스토리와 조합돼
+		// Vertex 400 위험이 있다.
 		String last = captured.get(captured.size() - 1);
-		assertThat(om.readTree(last).has("tools")).isFalse();
-		assertThat(last).contains("조회 가능 횟수를 모두 썼습니다");
+		JsonNode lastBody = om.readTree(last);
+		assertThat(lastBody.path("tools").path(0).path("functionDeclarations").size()).isGreaterThan(0);
+		assertThat(lastBody.path("toolConfig").path("functionCallingConfig").path("mode").asString())
+				.isEqualTo("NONE");
+	}
+
+	@Test
+	void 강제_답변_턴에서도_계속_툴만_요청하면_LLM_호출_안전망으로_끝난다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.ok("{}", 0, List.of()));
+		List<String> captured = new ArrayList<>();
+		// 강제 답변 턴에서도(mode=NONE) 계속 툴만 요청하는 병리적 경우 - 조회 상한과 구분되는
+		// LLM 호출 안전망(12회)이 최종 방어선이다(M2).
+		BrandAiAgent agent = agentWith(List.of(functionCall("list_brands", "{}")), captured, toolbox);
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "알려줘")));
+
+		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_LLM_CALL_CAP);
+		assertThat(outcome.answer()).contains("정리하지 못했어요");
+		assertThat(captured).hasSize(BrandAiAgent.MAX_LLM_CALLS);
+	}
+
+	@Test
+	void 벽시계_예산이_이미_소진되면_즉시_강제_답변으로_전환한다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		List<String> captured = new ArrayList<>();
+		// 첫 LLM 호출 전에 이미 예산이 다 떨어진 상태 - 스크립트가 툴 호출을 내려도 강제 답변 턴으로
+		// 바로 전환돼야 하고, 그 턴이 텍스트를 냈으니 그 텍스트로 끝나야 한다(FALLBACK_ANSWER가 아님).
+		BrandAiAgent agent = agentWith(List.of(textAnswer("시간이 없어 지금까지 확인한 것만 답할게요")),
+				captured, toolbox, exhaustedBudgetClock());
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "알려줘")));
+
+		assertThat(outcome.answer()).isEqualTo("시간이 없어 지금까지 확인한 것만 답할게요");
+		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_TOOL_CAP);
+		assertThat(captured).hasSize(1);
+		assertThat(captured.get(0)).contains("답변 시간이 얼마 남지 않았습니다");
+		JsonNode body = om.readTree(captured.get(0));
+		assertThat(body.path("toolConfig").path("functionCallingConfig").path("mode").asString())
+				.isEqualTo("NONE");
+	}
+
+	@Test
+	void 실패한_툴_결과의_brandId는_따지_않는다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.failure("{\"error\":\"권한 없음\"}"));
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(
+				List.of(functionCall("list_posts", "{\"brandId\":99}"), textAnswer("확인하지 못했어요")),
+				captured, toolbox);
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "알려줘")));
+
+		// 소유 검증 실패 등 failed 결과의 brandId는 신뢰할 수 없다(M1) - 로그에 남기면 안 된다
+		assertThat(outcome.brandId()).isNull();
+	}
+
+	@Test
+	void 안전필터나_길이제한으로_막히면_OUTCOME_BLOCKED로_기록한다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(List.of(blockedResponse("MAX_TOKENS")), captured, toolbox);
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "알려줘")));
+
+		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_BLOCKED);
+		assertThat(outcome.answer()).contains("답변을 만들지 못했어요");
 	}
 }

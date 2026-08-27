@@ -37,6 +37,67 @@ class GeminiChatClientTest {
 	}
 
 	@Test
+	void thinkingBudget을_0으로_고정한다() {
+		List<String> sent = new ArrayList<>();
+		GeminiChatClient client = new GeminiChatClient(body -> {
+			sent.add(body);
+			return "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"끝\"}]}}]}";
+		}, om);
+
+		client.generate("시스템", List.of(client.userContent("질문")), List.of());
+
+		// I7 - gemini-2.5 dynamic thinking이 maxOutputTokens를 잠식해 MAX_TOKENS로 빈 응답이 되는 것을 막는다
+		assertThat(om.readTree(sent.get(0)).path("generationConfig").path("thinkingConfig")
+				.path("thinkingBudget").asInt()).isEqualTo(0);
+	}
+
+	@Test
+	void 강제답변_모드에서는_tools를_유지하되_toolConfig로_호출만_막는다() {
+		List<String> sent = new ArrayList<>();
+		GeminiChatClient client = new GeminiChatClient(body -> {
+			sent.add(body);
+			return "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"끝\"}]}}]}";
+		}, om);
+
+		client.generate("시스템", List.of(client.userContent("질문")),
+				List.of(new AiToolSpec("list_brands", "브랜드 목록", null)), true);
+
+		// I8 - tools를 통째로 빼면 이전 턴의 functionCall/functionResponse 파트가 남은 히스토리와
+		// 조합돼 Vertex 400 위험이 있다. tools는 유지하고 toolConfig mode만 NONE으로 막는다.
+		JsonNode body = om.readTree(sent.get(0));
+		assertThat(body.path("tools").path(0).path("functionDeclarations").size()).isEqualTo(1);
+		assertThat(body.path("toolConfig").path("functionCallingConfig").path("mode").asString())
+				.isEqualTo("NONE");
+	}
+
+	@Test
+	void finishReason과_thoughtsTokenCount를_읽는다() {
+		GeminiChatClient client = new GeminiChatClient(body -> """
+				{"candidates":[{"finishReason":"MAX_TOKENS","content":{"role":"model","parts":[]}}],
+				 "usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":0,"thoughtsTokenCount":2048}}
+				""", om);
+
+		LlmTurn turn = client.generate("시스템", List.of(client.userContent("질문")), List.of());
+
+		assertThat(turn.finishReason()).isEqualTo("MAX_TOKENS");
+		assertThat(turn.text()).isEmpty();
+		// I7-④ thinking 토큰을 outputTokens에 합산한다
+		assertThat(turn.outputTokens()).isEqualTo(2048);
+	}
+
+	@Test
+	void 후보_자체가_없으면_blockReason을_finishReason으로_대신한다() {
+		GeminiChatClient client = new GeminiChatClient(body -> """
+				{"candidates":[],"promptFeedback":{"blockReason":"SAFETY"},
+				 "usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":0}}
+				""", om);
+
+		LlmTurn turn = client.generate("시스템", List.of(client.userContent("질문")), List.of());
+
+		assertThat(turn.finishReason()).isEqualTo("SAFETY");
+	}
+
+	@Test
 	void 툴이_비면_tools_필드를_아예_싣지_않는다() {
 		List<String> sent = new ArrayList<>();
 		GeminiChatClient client = new GeminiChatClient(body -> {

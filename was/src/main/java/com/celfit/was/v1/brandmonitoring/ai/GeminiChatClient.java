@@ -28,8 +28,20 @@ public class GeminiChatClient {
 		this.objectMapper = objectMapper;
 	}
 
-	/** tools가 비면 tools 필드를 싣지 않는다 - 툴 호출 상한 도달 시 "답변만 하라"를 강제하는 수단이다. */
+	/** tools가 비면 tools 필드를 싣지 않는다 - 툴 정의 자체가 없는 호출용(현재 실사용처 없음, 방어적으로 유지). */
 	public LlmTurn generate(String systemPrompt, List<JsonNode> contents, List<AiToolSpec> tools) {
+		return generate(systemPrompt, contents, tools, false);
+	}
+
+	/**
+	 * toolCallsDisabled=true면 tools 선언은 그대로 싣되
+	 * {@code toolConfig.functionCallingConfig.mode="NONE"}으로 호출만 막는다(I8, 설계 §7 툴 상한
+	 * 강제 답변 턴 용도). tools를 통째로 빼면 이전 턴의 functionCall/functionResponse 파트가 남은
+	 * 히스토리와 조합돼 Vertex가 400을 돌려줄 위험이 있다 - Vertex 공식 권장 표현이 tools 유지 +
+	 * mode NONE이다.
+	 */
+	public LlmTurn generate(String systemPrompt, List<JsonNode> contents, List<AiToolSpec> tools,
+			boolean toolCallsDisabled) {
 		ObjectNode body = objectMapper.createObjectNode();
 		body.putObject("systemInstruction").putArray("parts").addObject().put("text", systemPrompt);
 		ArrayNode contentsNode = body.putArray("contents");
@@ -44,10 +56,16 @@ public class GeminiChatClient {
 					declaration.set("parameters", objectMapper.readTree(spec.parametersJson()));
 				}
 			}
+			if (toolCallsDisabled) {
+				body.putObject("toolConfig").putObject("functionCallingConfig").put("mode", "NONE");
+			}
 		}
 		ObjectNode generation = body.putObject("generationConfig");
 		generation.put("temperature", TEMPERATURE);
 		generation.put("maxOutputTokens", MAX_OUTPUT_TOKENS);
+		// thinkingBudget=0(I7) - gemini-2.5는 dynamic thinking이 기본이라 미지정 시 thinking 토큰이
+		// maxOutputTokens를 잠식해 finishReason=MAX_TOKENS로 parts 없이 끝날 수 있다.
+		generation.putObject("thinkingConfig").put("thinkingBudget", 0);
 		return parse(transport.post(body.toString()));
 	}
 
@@ -92,10 +110,17 @@ public class GeminiChatClient {
 		return content;
 	}
 
+	/**
+	 * finishReason은 candidates[0]에서 읽되(I7), 후보 자체가 없으면(안전 필터가 프롬프트를 통째로
+	 * 막은 경우) promptFeedback.blockReason으로 대신한다 - 둘 다 "정상 STOP이 아닌 이유"를
+	 * BrandAiAgent가 OUTCOME_BLOCKED 판정에 쓸 수 있게 하나의 문자열로 합쳐 돌려준다.
+	 */
 	private LlmTurn parse(String raw) {
 		JsonNode root = objectMapper.readTree(raw);
 		JsonNode usage = root.path("usageMetadata");
-		JsonNode parts = root.path("candidates").path(0).path("content").path("parts");
+		JsonNode candidates = root.path("candidates");
+		JsonNode candidate = candidates.path(0);
+		JsonNode parts = candidate.path("content").path("parts");
 		StringBuilder text = new StringBuilder();
 		List<LlmTurn.ToolCall> calls = new ArrayList<>();
 		for (JsonNode part : parts) {
@@ -108,8 +133,15 @@ public class GeminiChatClient {
 				text.append(part.path("text").asString());
 			}
 		}
+		String finishReason = candidate.hasNonNull("finishReason") ? candidate.path("finishReason").asString() : null;
+		if (candidates.isEmpty()) {
+			String blockReason = root.path("promptFeedback").path("blockReason").asString(null);
+			finishReason = blockReason != null ? blockReason : "NO_CANDIDATES";
+		}
+		// thoughtsTokenCount(I7-④) - dynamic thinking 소비분도 출력 토큰 예산에 합산해야 실사용량이 맞다.
+		int outputTokens = usage.path("candidatesTokenCount").asInt() + usage.path("thoughtsTokenCount").asInt();
 		return new LlmTurn(text.toString(), List.copyOf(calls),
-				usage.path("promptTokenCount").asInt(), usage.path("candidatesTokenCount").asInt());
+				usage.path("promptTokenCount").asInt(), outputTokens, finishReason);
 	}
 
 	/** 툴 결과 1건 - payloadJson은 {@link AiToolResult#payloadJson()} 그대로다. */

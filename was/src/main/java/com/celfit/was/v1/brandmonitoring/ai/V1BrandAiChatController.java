@@ -96,9 +96,13 @@ public class V1BrandAiChatController {
 	}
 
 	/**
-	 * 전용 풀에서 돌리고 60초에 끊는다. 끊긴 작업 스레드는 인터럽트를 걸어도 진행 중인 HTTP 응답
-	 * 수신까지는 마칠 수 있다(common-llm 전송이 인터럽트를 즉시 반영하지 않는다) - 전송 재시도를
-	 * 2회로 줄여(BrandAiConfig) 그 잔류 시간을 짧게 유지한다.
+	 * 전용 풀에서 돌리고 60초에 끊는다(C2). {@code future.cancel(true)}는 실행 중인 작업을
+	 * 인터럽트하지 <b>않는다</b> - {@link CompletableFuture}의 {@code cancel}은 명세상
+	 * {@code mayInterruptIfRunning}을 무시하고 항상 미래(future)만 예외적으로 완료시키므로, 이 호출
+	 * 뒤에도 작업 스레드는 계속 돈다(2 스레드 풀이라 반복되면 여전히 429 위험이 남는다는 한계가
+	 * 있다). 실질적인 방어는 여기가 아니라 에이전트 내부 벽시계 예산(BrandAiAgent, 55초)과 Vertex
+	 * 요청 타임아웃 단축(BrandAiConfig, 45초)이고, 이 60초 get()은 그 두 안전장치가 실패했을 때
+	 * 최소한 HTTP 응답만이라도 제때 끊어 사용자를 기다리게 하지 않는 최후 방어선이다.
 	 */
 	private BrandAiAgent.AgentOutcome runWithTimeout(long userId, List<AiChatMessage> messages) {
 		CompletableFuture<BrandAiAgent.AgentOutcome> future;

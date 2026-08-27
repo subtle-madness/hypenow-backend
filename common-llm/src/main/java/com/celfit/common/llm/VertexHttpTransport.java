@@ -31,26 +31,42 @@ public final class VertexHttpTransport {
 	public static final String DEFAULT_BASE_URL = "https://aiplatform.googleapis.com";
 	private static final int DEFAULT_MAX_ATTEMPTS = 6;
 	private static final int DEFAULT_ERROR_BODY_LOG_LIMIT = 2000;
+	/** 기존 사용처(monitoring·야간 배치) 무영향 기본값 — 사람이 기다리지 않는 경로라 넉넉히 잡는다. */
+	private static final int DEFAULT_REQUEST_TIMEOUT_SECONDS = 120;
 
 	private final Supplier<String> token;
 	private final String baseUrl;
 	private final long retryBaseMillis;
 	private final int maxAttempts;
 	private final int errorBodyLogLimit;
+	private final int requestTimeoutSeconds;
 	private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 
 	public VertexHttpTransport(Supplier<String> token, String baseUrl, long retryBaseMillis) {
-		this(token, baseUrl, retryBaseMillis, DEFAULT_MAX_ATTEMPTS, DEFAULT_ERROR_BODY_LOG_LIMIT);
+		this(token, baseUrl, retryBaseMillis, DEFAULT_MAX_ATTEMPTS, DEFAULT_ERROR_BODY_LOG_LIMIT,
+				DEFAULT_REQUEST_TIMEOUT_SECONDS);
 	}
 
-	/** 재시도 횟수·에러 로그 절단 한도를 주입하는 전체 생성자 — 테스트에서 재시도 대기·바디 길이를 줄이는 용도. */
+	/** 재시도 횟수·에러 로그 절단 한도를 주입하는 생성자 — 테스트에서 재시도 대기·바디 길이를 줄이는 용도. */
 	public VertexHttpTransport(Supplier<String> token, String baseUrl, long retryBaseMillis,
 			int maxAttempts, int errorBodyLogLimit) {
+		this(token, baseUrl, retryBaseMillis, maxAttempts, errorBodyLogLimit, DEFAULT_REQUEST_TIMEOUT_SECONDS);
+	}
+
+	/**
+	 * 요청 타임아웃까지 지정하는 전체 생성자(C2) — 사람이 동기로 기다리는 경로(브랜드 AI 챗 등)는
+	 * 기본 120초가 너무 길다: 1회 호출이 오래 매달리면 위의 재시도·백오프까지 겹쳐 벽시계 예산을
+	 * 순식간에 태운다. 이 필드는 전송 계층 설정이라 common-llm 소관이고, 기존 생성자들은 기본값을
+	 * 유지해 monitoring 등 기존 사용처는 무영향이다.
+	 */
+	public VertexHttpTransport(Supplier<String> token, String baseUrl, long retryBaseMillis,
+			int maxAttempts, int errorBodyLogLimit, int requestTimeoutSeconds) {
 		this.token = token;
 		this.baseUrl = baseUrl;
 		this.retryBaseMillis = retryBaseMillis;
 		this.maxAttempts = maxAttempts;
 		this.errorBodyLogLimit = errorBodyLogLimit;
+		this.requestTimeoutSeconds = requestTimeoutSeconds;
 	}
 
 	/** path는 baseUrl 이후 전체 경로(예: "/v1/projects/{p}/locations/{loc}/publishers/google/models/{m}:generateContent"). */
@@ -60,7 +76,7 @@ public final class VertexHttpTransport {
 			String responseBody;
 			try {
 				HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl + path))
-						.timeout(Duration.ofSeconds(120))
+						.timeout(Duration.ofSeconds(requestTimeoutSeconds))
 						.header("Content-Type", "application/json")
 						.header("Authorization", "Bearer " + token.get())
 						.POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8))

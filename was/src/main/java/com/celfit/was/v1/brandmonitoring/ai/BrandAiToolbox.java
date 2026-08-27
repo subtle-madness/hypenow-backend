@@ -64,6 +64,9 @@ public class BrandAiToolbox {
 	private static final int MAX_DAYS = 365;
 	private static final int CAPTION_EXCERPT_LENGTH = 120;
 	private static final int CAPTION_FULL_LENGTH = 1500;
+	/** 댓글 본문 절단 길이(I6) - 인스타 댓글은 최대 2,200자라 45건 무절단 × 매 턴 전체 재전송이면
+	 * O(k²)로 토큰이 터진다. 300자면 맥락 파악에는 충분하다. */
+	private static final int COMMENT_BODY_LENGTH = 300;
 
 	private static final String SORT_PERFORMANCE_DESC = "performance_desc";
 	/** {@link BrandPostAssembler#SOURCE_DIRECT}의 패키지 밖 사본 - 그쪽 상수는 패키지 전용이라 여기서
@@ -232,7 +235,7 @@ public class BrandAiToolbox {
 		for (TrackingItemResponse.PostCommentResponse row : rows) {
 			ObjectNode node = comments.addObject();
 			node.put("author", row.author());
-			node.put("body", row.text());
+			node.put("body", truncate(row.text(), COMMENT_BODY_LENGTH));
 			node.put("likeCount", row.likes());
 			node.put("commentedAt", row.createdAt());
 			node.put("ownerReplyText", row.reply() == null ? null : row.reply().text());
