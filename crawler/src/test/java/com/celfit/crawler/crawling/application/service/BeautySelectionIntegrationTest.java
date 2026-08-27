@@ -424,6 +424,78 @@ class BeautySelectionIntegrationTest extends IntegrationTest {
     }
 
     @Test
+    void 홈리빙_판정이_저장되고_재조회된다() {
+        Influencer inf = influencers.save(new Influencer(PREFIX + "hl-roundtrip"));
+        inf.classifyHomeLiving(CategoryClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "집꾸미기 계정", "CAPTION");
+        inf.setHomeLivingJudgedAt(Instant.parse("2026-08-27T00:00:00Z"));
+        inf.setHomeLivingCaptionCount((short) 5);
+        influencers.save(inf);
+
+        Influencer found = influencers.findByUsername(PREFIX + "hl-roundtrip").orElseThrow();
+        assertThat(found.getHomeLivingClass()).isEqualTo(CategoryClass.INFLUENCER);
+        assertThat(found.getHomeLiving()).isTrue();
+        assertThat(found.getHomeLivingCompany()).isFalse();
+        assertThat(found.getHomeLivingSource()).isEqualTo(Influencer.BEAUTY_SOURCE_CLAUDE);
+        assertThat(found.getHomeLivingReason()).isEqualTo("집꾸미기 계정");
+        assertThat(found.getHomeLivingBasis()).isEqualTo("CAPTION");
+        assertThat(found.getHomeLivingJudgedAt()).isEqualTo(Instant.parse("2026-08-27T00:00:00Z"));
+        assertThat(found.getHomeLivingCaptionCount()).isEqualTo((short) 5);
+    }
+
+    @Test
+    void 홈리빙_백필은_뷰티_판정_완료이고_홈리빙_미판정인_계정만_id순으로_고른다() {
+        Influencer judged = influencers.save(qualified("hlbf_judged"));    // beauty 판정됨, 홈/리빙 NULL → 대상
+        judged.classify(BeautyClass.NOT_BEAUTY, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        influencers.save(judged);
+        influencers.save(qualified("hlbf_unjudged"));                      // beauty NULL → 신규 경로 몫, 제외
+        Influencer done = influencers.save(qualified("hlbf_done"));        // 홈/리빙 판정 완료 → 제외
+        done.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        done.classifyHomeLiving(CategoryClass.NONE, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        influencers.save(done);
+        // fnb 판정 여부는 조건이 아니다 — fnb 미판정이어도 홈/리빙 백필 모수에 든다
+        // (선정 순서상 F&B 백필이 먼저 집지만, 쿼리 자체는 홈/리빙 축만 본다)
+        Influencer fnbNull = influencers.save(qualified("hlbf_fnb_null"));
+        fnbNull.classify(BeautyClass.NOT_BEAUTY, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        influencers.save(fnbNull);
+
+        var picked = influencers.findHomeLivingBackfillTargets(
+                InfluencerStatus.QUALIFIED, PageRequest.of(0, 10));
+
+        assertThat(picked).extracting(Influencer::getUsername)
+                .filteredOn(u -> u.startsWith(PREFIX))
+                .containsExactly(PREFIX + "hlbf_judged", PREFIX + "hlbf_fnb_null");
+    }
+
+    @Test
+    void 홈리빙_백필_잔여_카운트는_선정_쿼리와_같은_모수를_센다() {
+        long before = influencers.countHomeLivingBackfillRemaining(InfluencerStatus.QUALIFIED);
+
+        Influencer judged = influencers.save(qualified("hlcnt_judged"));   // 백필 모수 → +1
+        judged.classify(BeautyClass.NOT_BEAUTY, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        influencers.save(judged);
+        influencers.save(qualified("hlcnt_unjudged"));                     // beauty NULL → 신규 경로 몫
+        Influencer done = influencers.save(qualified("hlcnt_done"));       // 홈/리빙 판정 완료 → 제외
+        done.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        done.classifyHomeLiving(CategoryClass.NONE, Influencer.BEAUTY_SOURCE_CLAUDE, "r", null);
+        influencers.save(done);
+
+        assertThat(influencers.countHomeLivingBackfillRemaining(InfluencerStatus.QUALIFIED))
+                .isEqualTo(before + 1);
+    }
+
+    @Test
+    void 홈리빙_분류_밖의_값은_DB가_거부한다() {
+        Influencer inf = influencers.save(new Influencer(PREFIX + "hl-bad-class"));
+
+        assertThatThrownBy(() -> jdbc.update(
+                "update influencer set home_living_class = 'FURNITURE' where id = ?", inf.getId()))
+                .hasMessageContaining("influencer_home_living_class_check");
+        assertThatThrownBy(() -> jdbc.update(
+                "update influencer set home_living_basis = 'VIBES' where id = ?", inf.getId()))
+                .hasMessageContaining("influencer_home_living_basis_check");
+    }
+
+    @Test
     void fnb_분류_밖의_값은_DB가_거부한다() {
         // beauty 축과 같은 CHECK 제약(V18·V22 관용구) — enum 밖 문자열이 조용히 적재되지 않는다.
         Influencer inf = influencers.save(new Influencer(PREFIX + "fnb-bad-class"));

@@ -82,6 +82,24 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     List<Influencer> findFnbBackfillTargets(@Param("status") InfluencerStatus status, Pageable pageable);
 
     /**
+     * 홈/리빙 백필 대상: 뷰티 축은 판정 완료지만 홈/리빙 축이 미판정인 계정 — 카테고리 확장
+     * (스펙 2026-08-27 §3)의 기존 판정분 전체 재판정 경로. F&B 백필과 달리 fnb 축 상태는 묻지
+     * 않는다 — fnb도 미판정이면 F&B 백필 경로가 먼저 집고, 그때 홈/리빙 축도 첫 판정으로 같이
+     * 적용된다(선정 순서: 신규 → F&B 백필 → 홈/리빙 백필). id 순 Pageable로 결정적으로 소진한다.
+     */
+    @Query("select i from Influencer i where i.status = :status and i.beauty is not null "
+            + "and i.homeLiving is null order by i.id")
+    List<Influencer> findHomeLivingBackfillTargets(@Param("status") InfluencerStatus status, Pageable pageable);
+
+    /**
+     * 대시보드 홈/리빙 판정 그룹용: 백필 잔여 수 — 백필 선정(findHomeLivingBackfillTargets)과
+     * 같은 모수(뷰티 축 판정 완료 ∧ 홈/리빙 축 미판정)를 센다.
+     */
+    @Query("select count(i) from Influencer i where i.status = :status "
+            + "and i.beauty is not null and i.homeLiving is null")
+    long countHomeLivingBackfillRemaining(@Param("status") InfluencerStatus status);
+
+    /**
      * BEAUTY 재판정(rejudge) 대상: CLAUDE가 비뷰티로 판정했지만 판정 후 프로필 재료가 갱신된
      * (새 raw_profile 스냅샷이 생긴) 계정만 — 재료가 그대로면 같은 판정만 반복하므로 배치 낭비다.
      * cooldownBefore 이후(쿨다운 이내) 판정분은 제외한다 — F&amp;B 파이프라인 편입 계정은 수집

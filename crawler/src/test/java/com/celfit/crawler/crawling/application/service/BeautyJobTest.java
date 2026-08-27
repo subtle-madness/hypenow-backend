@@ -989,4 +989,176 @@ class BeautyJobTest {
 
         assertThat(inf.getBeautyCaptionCount()).isEqualTo((short) 0);
     }
+
+    @Test
+    void 신규_판정은_세_축을_모두_적용한다() {
+        Influencer a = qualified(1L, "a");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of(a));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                .thenReturn(Optional.empty());
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict(
+                "a", BeautyClass.NOT_BEAUTY, "뷰티 아님", "BIO",
+                CategoryClass.NONE, "F&B 아님", "BIO",
+                CategoryClass.INFLUENCER, "집꾸미기 계정", "BIO")));
+
+        BeautyJob.Summary s = job.run(TriggerType.MANUAL, false);
+
+        assertThat(a.getBeautyClass()).isEqualTo(BeautyClass.NOT_BEAUTY);
+        assertThat(a.getFnbClass()).isEqualTo(CategoryClass.NONE);
+        assertThat(a.getHomeLivingClass()).isEqualTo(CategoryClass.INFLUENCER);
+        assertThat(a.getHomeLiving()).isTrue();
+        assertThat(a.getHomeLivingCompany()).isFalse();
+        assertThat(a.getHomeLivingSource()).isEqualTo(Influencer.BEAUTY_SOURCE_CLAUDE);
+        assertThat(a.getHomeLivingJudgedAt()).isEqualTo(NOW);
+        assertThat(a.getHomeLivingCaptionCount()).isEqualTo((short) 0);
+        assertThat(s.homeLivingApplied()).isEqualTo(1);
+        assertThat(s.homeLivingPositive()).isEqualTo(1);
+        verify(influencers, times(1)).save(a);
+    }
+
+    @Test
+    void 홈리빙_백필은_홈리빙_축만_적용하고_뷰티_FnB_판정을_보존한다() {
+        Influencer inf = qualified(1L, "kept_hl");
+        inf.classify(BeautyClass.INFLUENCER, Influencer.BEAUTY_SOURCE_MANUAL, "수동", null);
+        inf.classifyFnb(CategoryClass.NONE, Influencer.BEAUTY_SOURCE_CLAUDE, "F&B 아님", "CAPTION");
+        inf.setFnbCaptionCount((short) 3);   // 캡션 기반 F&B 판정 — 정착 가드로 보존돼야 한다
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findFnbBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findHomeLivingBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                .thenReturn(Optional.empty());
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("kept_hl",
+                BeautyClass.NOT_BEAUTY, "모델이 딴소리", "BIO",
+                CategoryClass.INFLUENCER, "모델이 딴소리2", "BIO",
+                CategoryClass.INFLUENCER, "살림 계정", "BIO")));
+
+        BeautyJob.Summary s = job.run(TriggerType.MANUAL, false);
+
+        // 뷰티 축 보존 (백필 마스크) — MANUAL INFLUENCER 그대로
+        assertThat(inf.getBeautyClass()).isEqualTo(BeautyClass.INFLUENCER);
+        assertThat(inf.getBeautySource()).isEqualTo(Influencer.BEAUTY_SOURCE_MANUAL);
+        // F&B 축 보존 (정착 가드 — 캡션 기반 기존 판정은 재적용 금지)
+        assertThat(inf.getFnbClass()).isEqualTo(CategoryClass.NONE);
+        // 홈/리빙 축만 적용
+        assertThat(inf.getHomeLivingClass()).isEqualTo(CategoryClass.INFLUENCER);
+        assertThat(s.homeLivingApplied()).isEqualTo(1);
+        assertThat(s.judgedBeauty()).isZero();
+        assertThat(s.fnbApplied()).isZero();
+    }
+
+    @Test
+    void 홈리빙_백필은_FnB_백필이_쓴_만큼만_남은_한도로_호출된다() {
+        when(settings.beautyBatchLimit()).thenReturn(10);
+        List<Influencer> newcomers = List.of(qualified(1L, "n1"), qualified(2L, "n2"));
+        List<Influencer> fnbBackfill = List.of(qualified(3L, "f1"), qualified(4L, "f2"), qualified(5L, "f3"));
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(newcomers);
+        when(influencers.findFnbBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(fnbBackfill);
+        when(influencers.findHomeLivingBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(anyLong()))
+                .thenReturn(Optional.empty());   // 재료 없음 — 카드 생성은 생략, 선정 호출만 검증
+
+        job.run(TriggerType.MANUAL, false);
+
+        ArgumentCaptor<Pageable> cap = ArgumentCaptor.forClass(Pageable.class);
+        verify(influencers).findHomeLivingBackfillTargets(eq(InfluencerStatus.QUALIFIED), cap.capture());
+        // 한도 10 - 신규 2 - F&B 백필 3 = 5
+        assertThat(cap.getValue().getPageSize()).isEqualTo(5);
+    }
+
+    @Test
+    void 캡션_기반_홈리빙_판정은_재판정에서_덮이지_않는다() {
+        Influencer inf = qualified(1L, "settled_hl");
+        inf.classify(BeautyClass.NOT_BEAUTY, Influencer.BEAUTY_SOURCE_CLAUDE, "비뷰티", "CAPTION");
+        inf.classifyHomeLiving(CategoryClass.INFLUENCER, Influencer.BEAUTY_SOURCE_CLAUDE, "집꾸미기", "CAPTION");
+        inf.setHomeLivingCaptionCount((short) 5);
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findFnbBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findHomeLivingBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findRejudgeTargets(eq(InfluencerStatus.QUALIFIED),
+                eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(), any(Pageable.class)))
+                .thenReturn(List.of(inf));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                .thenReturn(Optional.empty());
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("settled_hl",
+                BeautyClass.NOT_BEAUTY, "여전히 비뷰티", "BIO",
+                null, null, null,
+                CategoryClass.NONE, "이번엔 아니라 함", "BIO")));
+
+        BeautyJob.Summary s = job.run(TriggerType.MANUAL, true);   // rejudge 경로
+
+        // 캡션 기반(count=5>0) 홈/리빙 판정은 자동 재적용 금지 — 노이즈 뒤집힘 차단(정착 규칙)
+        assertThat(inf.getHomeLivingClass()).isEqualTo(CategoryClass.INFLUENCER);
+        assertThat(s.homeLivingApplied()).isZero();
+    }
+
+    @Test
+    void 캡션0_홈리빙_판정은_캡션이_생기면_업그레이드_재판정된다() {
+        Influencer inf = qualified(1L, "upgrade_hl");
+        inf.classify(BeautyClass.NOT_BEAUTY, Influencer.BEAUTY_SOURCE_CLAUDE, "비뷰티", "BIO");
+        inf.classifyHomeLiving(CategoryClass.NONE, Influencer.BEAUTY_SOURCE_CLAUDE, "근거 부족", "BIO");
+        inf.setHomeLivingCaptionCount((short) 0);
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findFnbBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findHomeLivingBackfillTargets(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(influencers.findRejudgeTargets(eq(InfluencerStatus.QUALIFIED),
+                eq(Influencer.BEAUTY_SOURCE_CLAUDE), any(), any(Pageable.class)))
+                .thenReturn(List.of(inf));
+        // 이번 실행엔 캡션이 있다 — 업그레이드 조건(0건 → N건) 성립
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("fullName", "이름");
+        payload.put("biography", "bio");
+        payload.put("latestPosts", List.of(Map.of("caption", "선반 조립 브이로그")));
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L)).thenReturn(Optional.of(
+                new RawProfile(1L, null, RawSource.LEGACY_ENVELOPE, payload, Instant.EPOCH)));
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("upgrade_hl",
+                BeautyClass.NOT_BEAUTY, "비뷰티", "CAPTION",
+                null, null, null,
+                CategoryClass.INFLUENCER, "실측 캡션이 리빙", "CAPTION")));
+
+        BeautyJob.Summary s = job.run(TriggerType.MANUAL, true);   // rejudge 경로
+
+        assertThat(inf.getHomeLivingClass()).isEqualTo(CategoryClass.INFLUENCER);
+        assertThat(inf.getHomeLivingCaptionCount()).isEqualTo((short) 1);
+        assertThat(s.homeLivingApplied()).isEqualTo(1);
+    }
+
+    @Test
+    void 수동_홈리빙_판정은_어느_경로로도_덮이지_않는다() {
+        Influencer inf = qualified(1L, "manual_hl");
+        when(influencers.findByStatusAndBeautyIsNull(eq(InfluencerStatus.QUALIFIED), any(Pageable.class)))
+                .thenReturn(List.of(inf));
+        inf.classifyHomeLiving(CategoryClass.INFLUENCER, Influencer.BEAUTY_SOURCE_MANUAL, "수동", null);
+        when(rawProfiles.findTopByInfluencerIdOrderByCapturedAtDesc(1L))
+                .thenReturn(Optional.of(legacyProfile(1L, "이름", "bio")));
+        when(rawMediaPages.findTopByInfluencerIdAndSourceOrderByCapturedAtDesc(anyLong(), any()))
+                .thenReturn(Optional.empty());
+        when(judge.judge(any())).thenReturn(List.of(new BeautyJudge.Verdict("manual_hl",
+                BeautyClass.NOT_BEAUTY, "비뷰티", "BIO",
+                CategoryClass.NONE, "F&B 아님", "BIO",
+                CategoryClass.NONE, "모델이 뒤집으려 함", "BIO")));
+
+        job.run(TriggerType.MANUAL, false);
+
+        assertThat(inf.getHomeLivingClass()).isEqualTo(CategoryClass.INFLUENCER);
+        assertThat(inf.getHomeLivingSource()).isEqualTo(Influencer.BEAUTY_SOURCE_MANUAL);
+    }
 }
