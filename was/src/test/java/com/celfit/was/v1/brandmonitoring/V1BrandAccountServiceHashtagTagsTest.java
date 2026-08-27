@@ -2,6 +2,7 @@ package com.celfit.was.v1.brandmonitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -59,6 +60,45 @@ class V1BrandAccountServiceHashtagTagsTest {
 				brandReadRepository, new BrandAccountAssembler(3), userRepository, hashtagTagRepository);
 		given(linkRepository.findActiveByUserAndBrand(USER_ID, BRAND_ID)).willReturn(Optional.of(link()));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account()));
+	}
+
+	// ---------- 링크 생성 시딩(2026-08-27 태그 장부 갭 수정 §4) ----------
+
+	/**
+	 * 신규 브랜드 링크를 만들면 그 사용자의 장부에 monitoring 자동 시드와 같은 계정명 유도 태그가
+	 * 남아야 한다 — 남지 않으면 해시태그 게시물 격리 필터(내 태그 ∩ 매칭 태그)가 이 사용자에게
+	 * 아무것도 통과시키지 못한다(08-27 진단된 갭).
+	 */
+	@Test
+	void 신규_링크_생성은_계정명_유도_태그를_장부에_시딩한다() {
+		given(commandClient.registerBrand(USERNAME, null, 12, BrandAccountType.OWN))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(BRAND_ID, USERNAME, 100L, "ACTIVE"));
+
+		service.register(USER_ID, USERNAME, BrandAccountType.OWN, 12);
+
+		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of(USERNAME));
+	}
+
+	/** 멱등 재-POST(이미 연결된 브랜드)는 시딩하지 않는다 — 사용자가 지운 태그가 되살아나면 안 된다. */
+	@Test
+	void 멱등_재_POST는_장부를_시딩하지_않는다() {
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(link()));
+
+		service.register(USER_ID, USERNAME, BrandAccountType.OWN, null);
+
+		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
+		then(commandClient).should(never()).registerBrand(anyString(), any(), anyInt(), anyString());
+	}
+
+	/** 계정명이 무효 문자로 시작해 유도 태그가 0개면 원장 호출 자체가 없다(빈 목록 삽입 금지). */
+	@Test
+	void 유도_태그가_없으면_시딩을_건너뛴다() {
+		given(commandClient.registerBrand(".beauty", null, 12, BrandAccountType.OWN))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(BRAND_ID, ".beauty", 100L, "ACTIVE"));
+
+		service.register(USER_ID, ".beauty", BrandAccountType.OWN, 12);
+
+		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
 	}
 
 	// ---------- 조회 ----------

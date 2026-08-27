@@ -132,9 +132,34 @@ public class V1BrandAccountService {
 			compensate(registered.brandId(), username);
 			throw e;
 		}
+		// 태그 장부 시딩(2026-08-27 해시태그 직접 수집 설계 §4) — 신규 링크에만 건다. 멱등 재-POST는
+		// 위 alreadyLinked 분기에서 이미 반환됐으므로 여기 도달하지 않는다(지운 태그 부활 방지).
+		seedLedgerTagsSafely(userId, registered.brandId(), username);
 		// 등록 응답의 status는 monitoring이 "ACTIVE"로 하드코딩해 보내므로 준비 상태 판정에 쓸 수 없다 —
 		// 상태는 항상 brand_account 조회가 정본이다(§5-2).
 		return get(userId, registered.brandId());
+	}
+
+	/**
+	 * 신규 링크 장부 시딩(2026-08-27 해시태그 직접 수집 설계 §4) — monitoring
+	 * {@code BrandRegistrationService.seedHashtagsSafely}가 {@code brand_hashtag}에 심는 계정명 유도
+	 * 태그와 <b>같은 규칙</b>({@link BrandHashtagTags#derive})으로 이 사용자의 장부에도 같은 태그를
+	 * 남긴다. 자동 등록 태그가 장부에 기록되지 않아 해시태그 격리 필터가 빈 교집합을 보던 갭
+	 * (08-27 진단)의 수정이다. {@code addTags}는 ON CONFLICT DO NOTHING이라 재호출도 무해하다.
+	 *
+	 * <p>monitoring 쪽 시드와 같은 이유로 실패를 격리한다: 링크는 이미 커밋됐고, 여기서 던지면
+	 * 재시도가 멱등 경로(시딩 없음)로 접혀 그 사용자의 장부가 <b>영구히</b> 비어 버린다. 시딩 실패의
+	 * 실피해는 "이 사용자에게 해시태그 게시물이 안 보임"이고, 태그 관리 API로 직접 추가하면 복구된다.
+	 */
+	private void seedLedgerTagsSafely(long userId, long brandId, String username) {
+		try {
+			List<String> derived = List.copyOf(BrandHashtagTags.derive(username));
+			if (!derived.isEmpty()) {
+				hashtagTagRepository.addTags(userId, brandId, derived);
+			}
+		} catch (RuntimeException e) {
+			log.warn("해시태그 태그 장부 시딩 실패(격리) — userId={}, brandId={}: {}", userId, brandId, e.toString());
+		}
 	}
 
 	/**
