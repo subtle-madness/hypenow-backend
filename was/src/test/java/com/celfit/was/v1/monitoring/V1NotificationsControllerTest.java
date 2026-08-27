@@ -214,4 +214,57 @@ class V1NotificationsControllerTest {
 
 		then(repository).shouldHaveNoInteractions();
 	}
+
+	@Test
+	void 주간_항목의_metrics가_응답에_그대로_실린다() throws Exception {
+		String itemsJson = """
+				[{"category":"brand","type":"brand_new_posts","summary":"브랜드를 언급한 새 게시물을 찾았어요",\
+				"count":12,"metrics":{"views":123456,"likes":7890,"comments":123}}]""";
+		given(repository.findRecentByUser(eq(7L), eq(30))).willReturn(List.of(
+				row(1L, LocalDate.of(2026, 8, 17), OffsetDateTime.parse("2026-08-24T00:00:00Z"), null, itemsJson)));
+		given(repository.countByUser(7L)).willReturn(1L);
+
+		mockMvc.perform(get("/v1/notifications").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].date").value("2026-08-17"))
+				.andExpect(jsonPath("$.data[0].items[0].category").value("brand"))
+				.andExpect(jsonPath("$.data[0].items[0].type").value("brand_new_posts"))
+				.andExpect(jsonPath("$.data[0].items[0].count").value(12))
+				.andExpect(jsonPath("$.data[0].items[0].metrics.views").value(123456))
+				.andExpect(jsonPath("$.data[0].items[0].metrics.likes").value(7890))
+				.andExpect(jsonPath("$.data[0].items[0].metrics.comments").value(123));
+	}
+
+	@Test
+	void metrics가_없는_기존_일일_항목도_그대로_읽힌다() throws Exception {
+		// 개편 전에 쌓인 일일 다이제스트 행은 metrics 키가 없다 - 히스토리로 보존되므로(설계 §7)
+		// 응답 조립이 깨지면 안 된다.
+		String itemsJson = """
+				[{"category":"content","type":"collection_started","summary":"새로 수집을 시작한 콘텐츠가 있어요","count":2}]""";
+		given(repository.findRecentByUser(eq(7L), eq(30))).willReturn(List.of(
+				row(1L, LocalDate.of(2026, 7, 30), OffsetDateTime.parse("2026-07-30T00:00:00Z"), null, itemsJson)));
+		given(repository.countByUser(7L)).willReturn(1L);
+
+		mockMvc.perform(get("/v1/notifications").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].items[0].count").value(2))
+				.andExpect(jsonPath("$.data[0].items[0].metrics").doesNotExist());
+	}
+
+	@Test
+	void metrics의_null_지표는_키를_유지한_채_내려간다() throws Exception {
+		// 조회수가 그 주에 전부 NULL이면 views는 null이다 - 키를 지우면 프론트가 0과 구분하지 못한다.
+		String itemsJson = """
+				[{"category":"brand","type":"brand_new_posts","summary":"브랜드를 언급한 새 게시물을 찾았어요",\
+				"count":3,"metrics":{"views":null,"likes":30,"comments":3}}]""";
+		given(repository.findRecentByUser(eq(7L), eq(30))).willReturn(List.of(
+				row(1L, LocalDate.of(2026, 8, 17), OffsetDateTime.parse("2026-08-24T00:00:00Z"), null, itemsJson)));
+		given(repository.countByUser(7L)).willReturn(1L);
+
+		mockMvc.perform(get("/v1/notifications").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].items[0].metrics.views").doesNotExist())
+				.andExpect(jsonPath("$.data[0].items[0].metrics").exists())
+				.andExpect(jsonPath("$.data[0].items[0].metrics.likes").value(30));
+	}
 }

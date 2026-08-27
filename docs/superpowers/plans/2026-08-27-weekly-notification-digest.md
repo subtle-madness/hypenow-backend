@@ -1575,7 +1575,7 @@
 
 **Steps:**
 
-- [ ] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/v1/monitoring/V1NotificationsControllerTest.java`의 클래스 마지막 `}` 앞에 아래 3개 테스트를 추가한다.
+- [x] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/v1/monitoring/V1NotificationsControllerTest.java`의 클래스 마지막 `}` 앞에 아래 3개 테스트를 추가한다.
   ```java
   	@Test
   	void 주간_항목의_metrics가_응답에_그대로_실린다() throws Exception {
@@ -1632,13 +1632,15 @@
   ```
   > `metrics.views`가 null일 때 `jsonPath(...).doesNotExist()`인 이유: Jackson은 키를 내리지만 JsonPath는 null 값을 `doesNotExist`로 판정한다. 키 존재 자체는 바로 위 `metrics").exists()`가 확인한다.
 
-- [ ] 실행해 실패 확인
+- [x] 실행해 실패 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.v1.monitoring.V1NotificationsControllerTest"
   ```
   기대 출력: `주간_항목의_metrics가_응답에_그대로_실린다` 실패 — items json의 `metrics` 미지 속성으로 역직렬화 예외(`UnrecognizedPropertyException` 계열)가 나거나 `metrics.views` JsonPath 미존재.
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/v1/monitoring/DigestResponse.java`를 아래 전문으로 교체한다.
+  실측: 신규 3개 중 2개 실패(`주간_항목의_metrics가_응답에_그대로_실린다`, `metrics의_null_지표는_키를_유지한_채_내려간다`) — 둘 다 `com.jayway.jsonpath.PathNotFoundException`(`metrics.*` 경로 없음). 세 번째(`metrics가_없는_기존_일일_항목도_그대로_읽힌다`)는 itemsJson에 애초에 `metrics` 키가 없어 구현 전에도 통과 — 회귀 가드 역할이라 실패 목록에 없는 게 정상.
+
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/v1/monitoring/DigestResponse.java`를 아래 전문으로 교체한다.
   ```java
   package com.celfit.was.v1.monitoring;
 
@@ -1682,13 +1684,15 @@
   }
   ```
 
-- [ ] 실행해 통과 확인
+- [x] 실행해 통과 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.v1.monitoring.V1NotificationsControllerTest"
   ```
   기대 출력: `BUILD SUCCESSFUL` — 기존 계약 테스트(목록 30건 상한·meta.total·readAt 명시적 null·읽음 400 분기)와 새 3개가 함께 통과.
 
-- [ ] 커밋
+  실측: `BUILD SUCCESSFUL`, 19개 전체 통과.
+
+- [x] 커밋
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add was/src/main/java/com/celfit/was/v1/monitoring/DigestResponse.java was/src/test/java/com/celfit/was/v1/monitoring/V1NotificationsControllerTest.java
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign commit -m "$(cat <<'EOF'
