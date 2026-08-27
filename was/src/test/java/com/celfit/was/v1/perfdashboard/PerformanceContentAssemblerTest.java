@@ -4,10 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.entry;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyCollection;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
@@ -55,8 +52,6 @@ class PerformanceContentAssemblerTest {
 	private static final long BRAND_ID = 42L;
 	private static final OffsetDateTime LAST_COLLECTED = OffsetDateTime.parse("2026-08-07T02:00:00+09:00");
 	private static final OffsetDateTime BRAND_SWEPT_AT = OffsetDateTime.parse("2026-08-07T03:00:00+09:00");
-	/** 인덱스 시나리오의 브랜드 풀 전용 코드(레거시 겹침이 없는 쪽) — 시계열·댓글 미조회 고정에 쓴다. */
-	private static final Set<String> POOL_ONLY_CODES = Set.of("POOL1");
 	private static final BrandLinkRow OWN_LINK =
 			new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null);
 	private static final BrandAccountRow OWN_ACCOUNT = brandAccount(BRAND_ID, "brand");
@@ -698,15 +693,23 @@ class PerformanceContentAssemblerTest {
 		assertThat(overlap.brandAccountId()).isEqualTo("42");
 	}
 
+	/**
+	 * P0의 비용 절감 자체를 고정한다 — 무거운 조립(스냅샷 시계열·표시 메타·댓글 배치)은 전부
+	 * {@link BrandPostAssembler} 안에서 일어나므로, 이 클래스가 지킬 수 있는 계약은 <b>그 경계로
+	 * 무엇을 넘기느냐</b>다: 하이드레이트 입력은 겹침 코드({@code ABC})뿐이고 — 풀 전용 코드가
+	 * 섞이면 그 코드의 시계열·메타 조회가 되살아난다 — 전량 조립({@code assembleBrandPosts})은
+	 * 아예 타지 않는다.
+	 */
 	@Test
-	void index는_풀_전용_코드에_스냅샷_시계열과_댓글을_조회하지_않는다() {
+	void index는_겹침_코드만_하이드레이트하고_전량_조립은_타지_않는다() {
 		givenIndexFixture();
 
 		assembler().index(USER_ID);
 
-		then(brandReadRepository).should(never()).findSnapshots(argThat(codes ->
-				codes.stream().anyMatch(POOL_ONLY_CODES::contains)));
-		then(brandReadRepository).should(never()).findComments(anyCollection(), anyInt());
+		then(brandPostAssembler).should()
+				.hydrate(eq(USER_ID), any(), any(), any(), eq(List.of("ABC")), eq(false));
+		then(brandPostAssembler).should(never())
+				.assembleBrandPosts(anyLong(), any(), anyBoolean(), any(), anyBoolean(), any());
 	}
 
 	/** 후속 하이드레이트(Task 5) 재료 — 인덱스가 이미 읽은 것을 다시 읽지 않게 실어 나른다. */
@@ -721,7 +724,7 @@ class PerformanceContentAssemblerTest {
 		assertThat(index.legacyCards()).containsOnlyKeys("900", "901");
 		assertThat(index.legacyCards().get("900").brandAccountId()).isEqualTo("42");
 		// 겹침 코드(ABC)는 레거시 카드가 정본이라 풀 전용 매핑에 들지 않는다.
-		assertThat(index.brandByCode()).containsExactly(entry("POOL1", "42"));
+		assertThat(index.brandByCode()).containsOnly(entry("POOL1", "42"), entry("POOL2", "42"));
 		assertThat(index.brandsById()).containsOnlyKeys("42");
 		assertThat(index.brandsById().get("42").account()).isEqualTo(OWN_ACCOUNT);
 		assertThat(index.brandsById().get("42").accountType()).isEqualTo("own");
@@ -828,6 +831,7 @@ class PerformanceContentAssemblerTest {
 	 * POOL1 풀 전용). 겹침 코드만 하이드레이트되고 풀 전용은 인덱스 행 + 최신 스냅샷 1행으로 직조된다.
 	 */
 	private void givenIndexFixture() {
+		AuthorRow author = new AuthorRow("ig-1", "creator", "크리에이터", 1000L, null, false, null);
 		givenLegacy(
 				legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/",
 						List.of(snapshot("2026-08-06", 100L, null, 5L))),
@@ -836,19 +840,24 @@ class PerformanceContentAssemblerTest {
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(OWN_LINK));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(OWN_ACCOUNT));
 		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false))).willReturn(List.of(
-				taggedRow("ABC", "2026-08-06T09:00:00+09:00"), taggedRow("POOL1", "2026-08-06T09:00:00+09:00")));
+				taggedRow("ABC", "2026-08-06T09:00:00+09:00"), taggedRow("POOL1", "2026-08-06T09:00:00+09:00"),
+				hiddenSponsoredRow("POOL2", "2026-08-04T09:00:00+09:00")));
 		given(brandReadRepository.findLatestSnapshotsForBrand(eq(BRAND_ID), any(), eq(false))).willReturn(List.of(
-				latestSnapshot("ABC", 120L, 8L, null), latestSnapshot("POOL1", 200L, 20L, 2L)));
+				latestSnapshot("ABC", 120L, 8L, null), latestSnapshot("POOL1", 200L, 20L, 2L),
+				latestSnapshot("POOL2", 300L, 30L, 3L)));
 		given(brandPostAssembler.hydrate(eq(USER_ID), eq(OWN_ACCOUNT), eq("own"), any(), eq(List.of("ABC")),
 				eq(false))).willReturn(List.of(overlapPost()));
-		given(brandPostAssembler.resolveAuthorsByKeys(any())).willReturn(Map.of("POOL1",
-				new AuthorRow("ig-1", "creator", "크리에이터", 1000L, null, false, null)));
+		given(brandPostAssembler.resolveAuthorsByKeys(any()))
+				.willReturn(Map.of("POOL1", author, "POOL2", author));
+		// 캠페인 다중 부착 — 응답 필드가 단수라 head("7")만 실린다(설계 §결정 3). POOL1은 매핑 없음.
+		given(brandPostAssembler.campaignIdsByCode(eq(BRAND_ID), any()))
+				.willReturn(Map.of("POOL2", List.of("7", "8")));
 	}
 
 	/** 같은 시나리오를 전량 조립(슬림) 경로로도 스텁한다 — 동치성 비교의 기준선. */
 	private void givenFullAssemblyBaseline() {
 		given(brandPostAssembler.assembleBrandPosts(USER_ID, OWN_ACCOUNT, false, BrandPostScope.ALL, true, "own"))
-				.willReturn(List.of(overlapPost(), poolOnlyPost()));
+				.willReturn(List.of(overlapPost(), poolOnlyPost(), hiddenSponsoredPoolPost()));
 	}
 
 	private static BrandPostResponse overlapPost() {
@@ -860,11 +869,36 @@ class PerformanceContentAssemblerTest {
 				List.of(snapshot("2026-08-05", 100L, 10L, 1L), snapshot("2026-08-06", 200L, 20L, 2L)));
 	}
 
+	/**
+	 * 풀 전용 카드 — 삭제·비공개 감지(hidden) + 유료협찬 관측(sponsored) + 캠페인 2건 부착.
+	 * 나머지 픽스처는 세 값이 전부 상수(tracking·unknown·null)라 {@link
+	 * PerformanceContentAssembler} 경량 ref의 상태·협찬·캠페인 head 파생을 동치성 비교가
+	 * 판별하지 못한다 — 이 행이 그 셋을 실제 판별 대상으로 만든다.
+	 */
+	private static BrandPostResponse hiddenSponsoredPoolPost() {
+		SnapshotResponse latest = snapshot("2026-08-04", 300L, 30L, 3L);
+		return new BrandPostResponse("POOL2", String.valueOf(BRAND_ID), "tagged",
+				"https://www.instagram.com/reel/POOL2/", "POOL2", "reels",
+				"2026-08-04T09:00:00+09:00", "브랜드 태그 캡션", null, null, null,
+				"https://www.instagram.com/creator/", "creator", "크리에이터", null, false, 1000L,
+				"sponsored", true, "hidden", "2026-08-04T09:30:00+09:00", null, latest, List.of(latest),
+				latest.comments(), false, 0L, List.of(), List.of("7", "8"),
+				"2026-08-04T09:30:00+09:00", "2026-08-07T03:00:00+09:00",
+				null, List.of(), List.of(), false);
+	}
+
 	/** 태그 감지 행(전원 노출) — 캡션·유료협찬 관측은 브랜드 풀 픽스처와 같은 값(협찬 unknown). */
 	private static BrandPostIndexRow taggedRow(String shortCode, String takenAt) {
 		return new BrandPostIndexRow(shortCode, OffsetDateTime.parse(takenAt),
 				OffsetDateTime.parse("2026-08-06T09:30:00+09:00"), null, null, "브랜드 태그 캡션", null,
 				"creator", "ig-1");
+	}
+
+	/** 삭제·비공개 감지 + 유료협찬 관측 행 — status(hidden)·sponsorship(sponsored) 파생 판별용. */
+	private static BrandPostIndexRow hiddenSponsoredRow(String shortCode, String takenAt) {
+		return new BrandPostIndexRow(shortCode, OffsetDateTime.parse(takenAt),
+				OffsetDateTime.parse("2026-08-04T09:30:00+09:00"), null, true, "브랜드 태그 캡션",
+				OffsetDateTime.parse("2026-08-07T01:00:00+09:00"), "creator", "ig-1");
 	}
 
 	/** 직접 등록 전용 행(tag_detected_at 없음) — 등록자에게만 보이고 커버리지 클램프 면제 대상이다. */
