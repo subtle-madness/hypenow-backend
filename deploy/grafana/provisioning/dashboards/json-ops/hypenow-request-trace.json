@@ -322,6 +322,76 @@
       ]
     },
     {
+      "id": 5,
+      "type": "bargauge",
+      "title": "단계 분해 — 느린 요청 (>1s)",
+      "description": "이 요청이 어느 단계에서 몇 ms를 썼는지 — 총 1초 이상 걸린 요청에 한해 was가 남기는 \"요청 단계\" 구조화 로그(리포지토리 메서드 자동 계측, RepositoryTimingAspect)를 request_id로 파싱한다. 단계 = 리포지토리 메서드(SQL 실행 + JDBC 행 매핑 포함 벽시계)이고, \"기타(조립·직렬화·응답쓰기)\"는 리포지토리 밖 앱 CPU(총시간 − 리포지토리 합계). 전송 지연은 미포함 — 전체 요청 테이블의 엣지 duration과의 차로 본다. calls가 큰 단계는 N+1 의심. 패널이 비면 이 요청은 총 1초 미만(로그 미기록)이다. stage=·ms= 키 이름은 SlowRequestStageLogFilter와 정규식 계약. 아래 요청 로그 패널의 \"요청 단계 요약\" 줄에 method·uri·총시간이 있다.",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "hypenow-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "단계 로그 없음 (총 1초 미만 요청)",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 3000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "hypenow-loki"
+          },
+          "queryType": "instant",
+          "instant": true,
+          "legendFormat": "{{stage}}",
+          "expr": "sort_desc(max by (stage) (max_over_time({service=~\"was|monitoring\"} |= `[$request_id]` |= `요청 단계 stage=` | regexp `stage=(?P<stage>\\S+) ms=(?P<ms>[0-9]+)` | unwrap ms [$__range])))"
+        }
+      ]
+    },
+    {
       "id": 2,
       "type": "logs",
       "title": "요청 로그 (was·monitoring 통합, 시간 오름차순)",
@@ -330,7 +400,7 @@
         "h": 18,
         "w": 24,
         "x": 0,
-        "y": 27
+        "y": 33
       },
       "datasource": {
         "type": "loki",

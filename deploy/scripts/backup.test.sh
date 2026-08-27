@@ -10,7 +10,13 @@
 # **crawler 로컬 보관 정리에 반드시 도달**해야 한다. backup.sh의 그 구간은 `if` 본문이라
 # set -e가 살아 있어서, 비치명 처리를 빼먹으면 스크립트가 즉사하고 로컬 보관 정리가
 # 건너뛰어져 덤프가 하루 ~8.5GiB씩 무한 누적된다(07-30 디스크 87% 사고의 재발 경로).
-# 케이스 ③④⑤가 그 회귀를 직접 잡는다 — 비치명 처리를 되돌리면 즉시 FAIL한다(실측 확인).
+# 케이스 ④⑤⑥이 그 회귀를 직접 잡는다 — 비치명 처리를 되돌리면 즉시 FAIL한다(실측 확인).
+#
+# (08-27: 08-25 직스트리밍 전환에 맞춰 정비 — ① 기대값을 "로컬 1개"→"0개"로(성공 시 로컬
+#  crawler 사본 0개가 새 의미론), 스트리밍 실패 폴백(②)과 analysis만 실패(③)를 분리.
+#  rclone 스텁의 rcat은 stdin을 끝까지 읽는다 — 안 읽으면 실제 rclone과 달리 파이프
+#  업스트림(tee)이 SIGPIPE로 죽는 레이스가 생겨 성공 케이스가 간헐 실패한다(실측).
+#  ⑦은 CPU 상한 자기 래핑(systemd-run 재실행) 검증 — 08-26 밤 cpu-high 알람 대응.)
 set -uo pipefail
 SCRIPT="$1"
 
@@ -29,17 +35,21 @@ EOF
 #!/usr/bin/env bash
 echo "-- dummy dump"
 EOF
-  # rclone 스텁 — FAILMODE에 따라 특정 하위명령만 실패시킨다
+  # rclone 스텁 — FAILMODE에 따라 특정 하위명령만 실패시킨다.
+  # ⚠ rcat은 stdin을 반드시 소진할 것(cat >/dev/null) — 실제 rclone은 스트림을 끝까지
+  # 읽지만, 스텁이 바로 exit하면 tee가 SIGPIPE로 죽어 성공 케이스가 간헐 FAIL한다.
   cat > "$SB/bin/rclone" <<'EOF'
 #!/usr/bin/env bash
 sub="$1"
 case "$FAILMODE:$sub" in
-  upload:copy)      exit 1 ;;                       # analysis·crawler 업로드 실패(캡 초과)
+  stream:rcat)      cat >/dev/null; exit 1 ;;       # crawler 직스트리밍 업로드 실패
+  upload:copy)      exit 1 ;;                       # analysis 업로드 실패(캡 초과)
   monitoring:copy)  [[ "$*" == *monitoring* ]] && exit 1 ;;   # monitoring만 실패
   trim:lsf)         exit 1 ;;                       # crawler 개수 트리밍 실패
   rolling:delete)   exit 1 ;;                       # 기간 롤링 실패
 esac
 case "$sub" in
+  rcat)        cat >/dev/null ;;
   listremotes) echo "b2:" ;;
   lsf)         echo "crawler-20260701-000000.sql.gz"; echo "crawler-20260702-000000.sql.gz" ;;
 esac
@@ -54,7 +64,9 @@ EOF
   echo x | gzip > "$SB/backups/crawler-pre-KEEPME.sql.gz"   # 수동 스냅샷 — 절대 지워지면 안 됨
 
   local out rc
-  out="$(HOME="$SB" FAILMODE="$failmode" PATH="$SB/bin:$PATH" bash "$SCRIPT" 2>&1)"; rc=$?
+  # BACKUP_CPU_CAPPED=1: CPU 상한 자기 래핑(systemd-run 재실행)을 건너뛰고 본문만 검증 —
+  # 래핑 자체는 케이스 ⑦이 sudo 스텁으로 따로 검증한다
+  out="$(HOME="$SB" FAILMODE="$failmode" BACKUP_CPU_CAPPED=1 PATH="$SB/bin:$PATH" bash "$SCRIPT" 2>&1)"; rc=$?
   local n_local n_pre
   n_local="$(find "$SB/backups" -name 'crawler-[0-9]*.sql.*' | wc -l | tr -d ' ')"
   n_pre="$(find "$SB/backups" -name 'crawler-pre-*' | wc -l | tr -d ' ')"
@@ -70,14 +82,47 @@ EOF
 }
 
 echo "=== backup.sh 회귀 테스트 ==="
-# 전부 성공: 오프사이트 OK → 로컬 crawler 1개만 남김
-run_case "① 정상 — 로컬 1개로 정리"                  none       1 0
-# 업로드 실패(캡 초과): offsite_ok=false → 로컬 $LOCAL_CRAWLER_KEEP(=2)개로 버팀
-# (08-04 로컬 보존 3→2 반영 — 선-회전이 구 1개 + 신규 1개로 유지한다)
-run_case "② 업로드 실패(캡) — 로컬 2개로 버팀"        upload     2 0
-# ↓ 회귀 방지 핵심 3건: 뒷정리 실패에도 로컬 보관 정리에 도달해야 한다
-run_case "③ monitoring만 실패 — 로컬 정리 도달"       monitoring 1 0
-run_case "④ 개수 트리밍 실패 — 로컬 정리 도달"        trim       1 0
-run_case "⑤ 기간 롤링 실패 — 로컬 정리 도달"          rolling    1 0
+# 전부 성공: 스트리밍 성공 + 오프사이트 OK → 로컬 crawler 0개(08-25 새 의미론)
+run_case "① 정상 — 스트리밍 성공, 로컬 0개"          none       0 0
+# 스트리밍(rcat) 실패: 로컬 폴백 덤프 생성 → 선-회전 구본 1 + 신규 1 = 2개로 버팀
+run_case "② 스트리밍 실패 — 로컬 폴백 2개로 버팀"     stream     2 0
+# analysis 업로드만 실패: 스트리밍은 성공(로컬 신규 없음) → 선-회전 구본 1개만 잔존
+run_case "③ analysis 업로드 실패 — 로컬 구본 1개"     upload     1 0
+# ↓ 회귀 방지 핵심 3건: 뒷정리 실패에도 로컬 보관 정리(전량 삭제)에 도달해야 한다
+run_case "④ monitoring만 실패 — 로컬 정리 도달"       monitoring 0 0
+run_case "⑤ 개수 트리밍 실패 — 로컬 정리 도달"        trim       0 0
+run_case "⑥ 기간 롤링 실패 — 로컬 정리 도달"          rolling    0 0
+
+# ⑦ CPU 상한 자기 래핑 — BACKUP_CPU_CAPPED 미설정이면 sudo systemd-run(CPUQuota) 유닛으로
+# 재실행해야 한다(08-26 밤 hypenow-api-cpu-high: 스트리밍 전환으로 백업 CPU가 85~89% 지속.
+# 실험 실측으로 CPUQuota=35%가 안전선). sudo 스텁이 인자를 기록한 뒤 페이로드를
+# BACKUP_CPU_CAPPED=1로 직접 실행 — 래핑→본문 완주까지 한 번에 검증한다.
+SB="$(mktemp -d)"
+mkdir -p "$SB/backups" "$SB/deploy" "$SB/bin"
+printf 'DB_USER=u\nRAW_DB_USER=u\nMONITORING_DB_USER=u\n' > "$SB/deploy/.env"
+printf '#!/usr/bin/env bash\necho "-- dummy dump"\n' > "$SB/bin/docker"
+cat > "$SB/bin/rclone" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in rcat) cat >/dev/null ;; listremotes) echo "b2:" ;; lsf) : ;; esac
+exit 0
+EOF
+cat > "$SB/bin/sudo" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$SUDO_LOG"
+[[ "$*" == *systemd-run* ]] || exit 0   # `sudo -n true` 가드 호출은 성공만 흉내
+while [ "$#" -gt 0 ] && [ "$1" != "/bin/bash" ]; do shift; done
+BACKUP_CPU_CAPPED=1 exec "$@"
+EOF
+chmod +x "$SB/bin/docker" "$SB/bin/rclone" "$SB/bin/sudo"
+out6="$(HOME="$SB" FAILMODE=none SUDO_LOG="$SB/sudo.log" PATH="$SB/bin:$PATH" bash "$SCRIPT" 2>&1)"; rc6=$?
+verdict=OK
+grep -q -- 'CPUQuota=35%' "$SB/sudo.log" 2>/dev/null || verdict="FAIL(systemd-run CPUQuota=35% 재실행 없음)"
+[ "$rc6" = 0 ] || verdict="$verdict FAIL(종료코드 $rc6 != 기대 0)"
+ls "$SB/backups"/analysis-*.sql.zst >/dev/null 2>&1 || verdict="$verdict FAIL(래핑 후 본문 미완주)"
+if [ "$verdict" = OK ]; then pass=$((pass+1)); else fail=$((fail+1)); fi
+printf '%-46s → %s\n' "⑦ CPU 상한 래핑 — systemd-run 재실행" "$verdict"
+[ "$verdict" = OK ] || { echo "---- 출력 ----"; echo "$out6"; cat "$SB/sudo.log" 2>/dev/null; echo "--------------"; }
+rm -rf "$SB"
+
 echo "=== 통과 $pass / 실패 $fail ==="
 [ "$fail" = 0 ]
