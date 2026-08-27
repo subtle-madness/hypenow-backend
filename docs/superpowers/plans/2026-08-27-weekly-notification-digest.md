@@ -626,7 +626,7 @@
 
 **Steps:**
 
-- [ ] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/BrandWeeklyReadRepositoryTest.java`에 아래 전문을 쓴다(`BrandReadRepositoryTest`와 같은 관용구: `monitoring-brand-schema.sql` 픽스처 + 직접 시드).
+- [x] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/BrandWeeklyReadRepositoryTest.java`에 아래 전문을 쓴다(`BrandReadRepositoryTest`와 같은 관용구: `monitoring-brand-schema.sql` 픽스처 + 직접 시드).
   ```java
   package com.celfit.was.monitoring;
 
@@ -818,13 +818,13 @@
   }
   ```
 
-- [ ] 실행해 실패 확인
+- [x] 실행해 실패 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.BrandWeeklyReadRepositoryTest"
   ```
   기대 출력: 컴파일 실패 — `cannot find symbol: class WeeklyPostMetrics`, `cannot find symbol: method findTaggedPostsDiscoveredBetween(...)`.
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyPostMetrics.java`에 아래 전문을 쓴다.
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyPostMetrics.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -843,7 +843,7 @@
   }
   ```
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/BrandReadRepository.java`의 `findHashtagPosts` 메서드가 끝나는 302행(`}`) 뒤에 아래 3개 메서드를 삽입한다.
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/BrandReadRepository.java`의 `findHashtagPosts` 메서드가 끝나는 302행(`}`) 뒤에 아래 3개 메서드를 삽입한다.
   ```java
   	/**
   	 * 지난주 <b>태그 열거로 새로 발견된</b> 게시물 + 최신 스냅샷 지표(설계 §4 브랜드 새 게시물).
@@ -923,13 +923,15 @@
   	}
   ```
 
-- [ ] 실행해 통과 확인
+- [x] 실행해 통과 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.BrandWeeklyReadRepositoryTest"
   ```
-  기대 출력: `BUILD SUCCESSFUL`, 7개 테스트 통과.
+  기대 출력: `BUILD SUCCESSFUL`, 7개 테스트 통과. (실측: 7개 전부 통과)
 
-- [ ] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/BrandLinkRepositoryTest.java`에 아래 전문을 쓴다(파일이 이미 있으면 클래스 안에 `findAllActive` 테스트 2개만 추가한다).
+- [x] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/BrandLinkRepositoryTest.java`에 아래 전문을 쓴다(파일이 이미 있으면 클래스 안에 `findAllActive` 테스트 2개만 추가한다).
+  실제로는 파일이 이미 있었다(기존 15개 테스트 보유) — 전문을 덮어쓰지 않고 `findAllActive` 테스트
+  2개(해제 제외 검증 + 정렬 검증)만 `lockUser` 테스트 앞에 추가했다. `List` import 1줄 추가.
   ```java
   package com.celfit.was.monitoring;
 
@@ -974,13 +976,13 @@
   }
   ```
 
-- [ ] 실행해 실패 확인
+- [x] 실행해 실패 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.BrandLinkRepositoryTest"
   ```
   기대 출력: 컴파일 실패 — `cannot find symbol: method findAllActive()`.
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/BrandLinkRepository.java`의 `findAllActiveByUser` 메서드 뒤에 아래를 삽입한다.
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/BrandLinkRepository.java`의 `findAllActiveByUser` 메서드 뒤에 아래를 삽입한다.
   ```java
   	/**
   	 * 전 유저의 활성 연결(2026-08-27 주간 다이제스트) — 주간 잡이 유저별 브랜드 목록을 유저 수만큼
@@ -998,13 +1000,13 @@
   	}
   ```
 
-- [ ] 실행해 통과 확인
+- [x] 실행해 통과 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.BrandLinkRepositoryTest" --tests "com.celfit.was.monitoring.BrandWeeklyReadRepositoryTest"
   ```
-  기대 출력: `BUILD SUCCESSFUL`.
+  기대 출력: `BUILD SUCCESSFUL`. (실측: BrandLinkRepositoryTest 15개 + BrandWeeklyReadRepositoryTest 7개 전부 통과)
 
-- [ ] 커밋
+- [x] 커밋
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add was/src/main/java/com/celfit/was/monitoring/WeeklyPostMetrics.java was/src/main/java/com/celfit/was/monitoring/BrandReadRepository.java was/src/main/java/com/celfit/was/monitoring/BrandLinkRepository.java was/src/test/java/com/celfit/was/monitoring/BrandWeeklyReadRepositoryTest.java was/src/test/java/com/celfit/was/monitoring/BrandLinkRepositoryTest.java
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign commit -m "$(cat <<'EOF'

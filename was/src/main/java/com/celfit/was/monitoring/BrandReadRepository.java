@@ -302,6 +302,83 @@ public class BrandReadRepository {
 	}
 
 	/**
+	 * 지난주 <b>태그 열거로 새로 발견된</b> 게시물 + 최신 스냅샷 지표(설계 §4 브랜드 새 게시물).
+	 * direct 등록분은 제외한다 — 사용자가 스스로 넣은 게시물은 "발견 소식"이 아니다.
+	 * 같은 게시물이 유저의 브랜드 두 개에 동시에 걸리면 DISTINCT ON이 한 건으로 접는다.
+	 * 스냅샷이 아직 없는 발견분도 모수에 남도록 LEFT JOIN이며, 그때 지표는 전부 null이다.
+	 */
+	public List<WeeklyPostMetrics> findTaggedPostsDiscoveredBetween(Collection<Long> brandIds,
+			OffsetDateTime from, OffsetDateTime toExclusive) {
+		if (brandIds.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT DISTINCT ON (t.short_code) t.short_code, t.author_username,
+				       s.content_type, s.views, s.likes, s.comments
+				FROM brand_tagged_post t
+				LEFT JOIN brand_post_snapshot s ON s.short_code = t.short_code
+				WHERE t.brand_id IN (:brandIds)
+				  AND t.direct_registered_at IS NULL
+				  AND t.tag_detected_at >= :from AND t.tag_detected_at < :toExclusive
+				ORDER BY t.short_code, s.captured_on DESC NULLS LAST
+				""")
+				.param("brandIds", brandIds)
+				.param("from", from)
+				.param("toExclusive", toExclusive)
+				.query(WeeklyPostMetrics.class)
+				.list();
+	}
+
+	/**
+	 * 지난주 <b>해시태그 스윕이 새로 발견한</b> 관련 게시물(설계 §4). 이 표면은 스냅샷·보강이
+	 * 없어(스펙 2026-08-11 §5 보류) 지표가 열거 관측값 그대로고 조회수 자체가 없다 — views는
+	 * 항상 null로 내려 합산 규칙(릴스만 조회수)과 자연히 정합한다.
+	 */
+	public List<WeeklyPostMetrics> findHashtagPostsDiscoveredBetween(Collection<Long> brandIds,
+			OffsetDateTime from, OffsetDateTime toExclusive) {
+		if (brandIds.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT DISTINCT ON (short_code) short_code, author_username, content_type,
+				       NULL::bigint AS views, likes, comments
+				FROM brand_hashtag_post
+				WHERE brand_id IN (:brandIds) AND verdict = 'RELEVANT'
+				  AND first_seen_at >= :from AND first_seen_at < :toExclusive
+				ORDER BY short_code, first_seen_at DESC
+				""")
+				.param("brandIds", brandIds)
+				.param("from", from)
+				.param("toExclusive", toExclusive)
+				.query(WeeklyPostMetrics.class)
+				.list();
+	}
+
+	/**
+	 * 후보 shortcode 중 지난주에 <b>광고 미표기</b>로 판정된 것(설계 §4 광고 미표기).
+	 * 후보(= 그 유저가 등록한 게시물)는 app 스키마 원장에서 오고 여기 파라미터로 들어온다 —
+	 * monitoring DB와 app 스키마를 SQL로 조인하지 않는다(시스템 경계, 조합은 was 코드).
+	 * 판정 컬럼의 실제 위치는 brand_post_meta다(V20260817160000).
+	 */
+	public List<String> findNotDisclosedJudgedBetween(Collection<String> shortCodes,
+			OffsetDateTime from, OffsetDateTime toExclusive) {
+		if (shortCodes.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT short_code FROM brand_post_meta
+				WHERE short_code IN (:shortCodes) AND ad_verdict = 'NOT_DISCLOSED'
+				  AND ad_judged_at >= :from AND ad_judged_at < :toExclusive
+				ORDER BY short_code
+				""")
+				.param("shortCodes", shortCodes)
+				.param("from", from)
+				.param("toExclusive", toExclusive)
+				.query(String.class)
+				.list();
+	}
+
+	/**
 	 * 해시태그 발견 게시물의 매칭 태그 전체(2026-08-19, was 사용자 스코프 필터 지원) —
 	 * {@code brand_hashtag_post_matched_tags}(모니터링 스윕이 게시물당 매칭된 활성 태그 전부를
 	 * 기록하는 M:N 테이블, {@code matched_tag} 단일 컬럼과 별개). 조회자 본인의 태그 원장
