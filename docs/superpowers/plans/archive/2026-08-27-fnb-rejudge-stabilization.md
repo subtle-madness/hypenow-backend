@@ -1,5 +1,6 @@
 # F&B 재판정 루프 안정화 구현 계획
 
+> 상태: ✅ 구현/실행/반영됨 (2026-08-27 구현 — 쿨다운 d0980671 · 정착 규칙 9baa509a, `:crawler:test` 507건 전체 통과)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** F&B 판정이 재판정 루프에서 반복해서 덮이는 것을 막는다 — 캡션 기반 판정은 정착(수동 교정만), 비뷰티 재판정은 계정당 월 1회로 제한.
