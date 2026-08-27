@@ -263,7 +263,7 @@ class V1NotificationsControllerTest {
 
 		mockMvc.perform(get("/v1/notifications").with(user(principal())))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data[0].items[0].metrics.views").doesNotExist())
+				.andExpect(jsonPath("$.data[0].items[0].metrics.views").value(Matchers.nullValue()))
 				.andExpect(jsonPath("$.data[0].items[0].metrics").exists())
 				.andExpect(jsonPath("$.data[0].items[0].metrics.likes").value(30));
 	}
