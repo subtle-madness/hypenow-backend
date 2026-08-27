@@ -64,6 +64,53 @@
         ],
         "includeAll": false,
         "multi": false
+      },
+      {
+        "name": "level",
+        "label": "레벨",
+        "type": "custom",
+        "query": "전체 : .*, ERROR : ERROR, WARN : WARN, INFO : INFO",
+        "current": {
+          "text": "전체",
+          "value": ".*",
+          "selected": true
+        },
+        "options": [
+          {
+            "text": "전체",
+            "value": ".*",
+            "selected": true
+          },
+          {
+            "text": "ERROR",
+            "value": "ERROR",
+            "selected": false
+          },
+          {
+            "text": "WARN",
+            "value": "WARN",
+            "selected": false
+          },
+          {
+            "text": "INFO",
+            "value": "INFO",
+            "selected": false
+          }
+        ],
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "logger",
+        "label": "로거",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": "",
+          "selected": false
+        },
+        "options": []
       }
     ]
   },
@@ -100,7 +147,13 @@
           "unit": "short",
           "custom": {
             "fillOpacity": 10
-          }
+          },
+          "links": [
+            {
+              "title": "이 로거의 ERROR만 로그 탐색에서 보기",
+              "url": "/d/hypenow-ops-logs?var-module=${module}&var-level=ERROR&var-logger=${__field.labels.logger}&${__url_time_range}"
+            }
+          ]
         },
         "overrides": []
       },
@@ -112,13 +165,13 @@
           "expr": "sum by (logger) (count_over_time({service=\"$module\", level=\"ERROR\"} | regexp `\\] (?P<logger>[\\w.]+)\\s+: ` [$__auto]))"
         }
       ],
-      "description": "어떤 클래스가 언제 ERROR를 냈는지. 로거명은 스레드 대괄호 뒤를 앵커로 추출한다."
+      "description": "어떤 클래스가 언제 ERROR를 냈는지. 로거명은 스레드 대괄호 뒤를 앵커로 추출한다. 점을 클릭하면 아래 로그 탐색이 그 로거의 ERROR만 보이게 필터된다."
     },
     {
       "id": 3,
       "type": "timeseries",
       "title": "WARN 추이 (로거별)",
-      "description": "ERROR로 안 올라오는 반복 잡음(예: Hiker 404 미완주 보존)의 규모. Hiker는 4xx도 과금이라 WARN이어도 비용 신호다.",
+      "description": "ERROR로 안 올라오는 반복 잡음(예: Hiker 404 미완주 보존)의 규모. Hiker는 4xx도 과금이라 WARN이어도 비용 신호다. 점을 클릭하면 아래 로그 탐색이 그 로거의 WARN만 보이게 필터된다.",
       "gridPos": {
         "x": 8,
         "y": 1,
@@ -134,7 +187,13 @@
           "unit": "short",
           "custom": {
             "fillOpacity": 10
-          }
+          },
+          "links": [
+            {
+              "title": "이 로거의 WARN만 로그 탐색에서 보기",
+              "url": "/d/hypenow-ops-logs?var-module=${module}&var-level=WARN&var-logger=${__field.labels.logger}&${__url_time_range}"
+            }
+          ]
         },
         "overrides": []
       },
@@ -151,7 +210,7 @@
       "id": 4,
       "type": "table",
       "title": "로거별 ERROR Top 15",
-      "description": "어느 클래스가 시끄러운지가 원인 추적의 첫 갈래다. 로거명은 스레드 대괄호 뒤를 앵커로 추출한다.",
+      "description": "어느 클래스가 시끄러운지가 원인 추적의 첫 갈래다. 로거명은 스레드 대괄호 뒤를 앵커로 추출한다. 행을 클릭하면 아래 로그 탐색이 그 로거의 ERROR만 보이게 필터된다.",
       "gridPos": {
         "x": 16,
         "y": 1,
@@ -164,7 +223,13 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "short",
+          "links": [
+            {
+              "title": "이 로거의 ERROR만 로그 탐색에서 보기",
+              "url": "/d/hypenow-ops-logs?var-module=${module}&var-level=ERROR&var-logger=${__data.fields.logger}&${__url_time_range}"
+            }
+          ]
         },
         "overrides": []
       },
@@ -300,7 +365,7 @@
       "id": 9,
       "type": "logs",
       "title": "로그 탐색",
-      "description": "$module 서비스 전체 로그.",
+      "description": "$module 서비스 로그 — 상단 레벨·로거 변수로 필터된다(기본: 전체). 추이 패널의 점·행 클릭으로도 채워진다. 로거 필터는 본문 포함 검색이라 원복은 로거 입력을 비우면 된다.",
       "gridPos": {
         "x": 0,
         "y": 19,
@@ -324,7 +389,7 @@
         {
           "refId": "A",
           "queryType": "range",
-          "expr": "{service=\"$module\"}"
+          "expr": "{service=\"$module\", level=~\"$level\"} |= \"$logger\""
         }
       ]
     }

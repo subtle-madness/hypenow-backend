@@ -31,7 +31,10 @@ public class V1InfluencerDiscoveryPageService {
 		List<InfluencerCard> cards = assembler.toCards(rows, repository.findShares(handles),
 				repository.findBrands(handles), repository.findThumbs(handles),
 				repository.findEngagements(handles));
-		return new DiscoveryPage(cards, repository.countCards(q));
+		// total은 본 쿼리 윈도우(count(*) OVER ()) — countCards 재실행은 0행(offset 초과·공집합)
+		// 폴백뿐이다(2026-08-27 count 통합).
+		long total = rows.isEmpty() ? repository.countCards(q) : rows.getFirst().totalCount();
+		return new DiscoveryPage(cards, total);
 	}
 
 	/** 캐시에 실리는 페이지 묶음 — 조립 완료 카드(개인화 없음). */

@@ -53,6 +53,7 @@ crawler:
     batch-limit: 50
   beauty:
     batch-limit: 500
+    rejudge-cooldown-days: 30
   reels:
     batch-limit: 10
     actor-results-limit: 6

@@ -23,6 +23,13 @@ public class MirrorConfig {
 		return new MirrorJob(rawJdbcTemplate, analysisDataSource);
 	}
 
+	/** 발굴 사전집계 matview 갱신기 — 입력 변경 잡 완료 시 AnalyticsJobService가 호출. */
+	@Bean
+	public DerivedViewRefresher derivedViewRefresher(
+			@Qualifier("analysisDataSource") DataSource analysisDataSource) {
+		return new DerivedViewRefresher(analysisDataSource);
+	}
+
 	/**
 	 * 미러 대상 등록부 — 서빙 뷰 3종(B1) + 인플루언서 상세 2종(C1) + 랜딩 통계 1종(P3)
 	 * + 크롤링 비용 1종(2026-08-13).
