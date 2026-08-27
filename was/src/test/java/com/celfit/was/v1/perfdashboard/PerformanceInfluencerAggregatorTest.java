@@ -83,6 +83,23 @@ class PerformanceInfluencerAggregatorTest {
 	}
 
 	@Test
+	void 좋아요만_미상인_ref는_likesKnownCount에서_빠진다() {
+		// 스냅샷은 있는데 likes만 미상인 조합(상류 refOf/refOfPoolRow에서 실제 발생) —
+		// 숨김이 아니어도 아는 행이 아니라서 likes 합계·rated 대상에서 빠진다.
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", "2026-08-06", true, 100L, 10L, false, 1L, 1000L),
+				ref("a", "2026-08-05", true, 200L, null, false, 2L, 1000L)));
+
+		var row = rows.get(0);
+		assertThat(row.likesKnownCount()).isEqualTo(1);
+		assertThat(row.likes()).isEqualTo(10L);
+		assertThat(row.views()).isEqualTo(300L);      // views·comments는 likes 미상과 무관
+		assertThat(row.comments()).isEqualTo(3L);
+		assertThat(row.ratedFollowers()).isEqualTo(1000L);
+		assertThat(row.ratedEngaged()).isEqualTo(11L);
+	}
+
+	@Test
 	void handle_미상_ref는_집계에서_빠진다() {
 		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
 				ref(null, "2026-08-06", true, 100L, 10L, false, 1L),
@@ -108,6 +125,20 @@ class PerformanceInfluencerAggregatorTest {
 	}
 
 	@Test
+	void 대표_표시값은_구_ref에_값이_있어도_최신_ref가_이긴다() {
+		// 두 ref 모두 표시값이 있고 값이 다르다 — 업로드 최신순 스캔이 아니면(입력 순·오름차순)
+		// 옛 값이 채택된다. 입력 순서는 일부러 옛 ref 먼저.
+		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
+				ref("a", "2026-08-05", true, null, null, false, null, 500L, null, null, "옛이름", "img-05"),
+				ref("a", "2026-08-06", true, null, null, false, null, 1000L, null, null, "최신이름", "img-06")));
+
+		var row = rows.get(0);
+		assertThat(row.displayName()).isEqualTo("최신이름");
+		assertThat(row.profileImageUrl()).isEqualTo("img-06");
+		assertThat(row.followers()).isEqualTo(1000L);
+	}
+
+	@Test
 	void displayName은_전부_null이면_handle로_폴백한다() {
 		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
 				ref("beautylover", "2026-08-06", true, 100L, 10L, false, 1L)));
@@ -120,14 +151,15 @@ class PerformanceInfluencerAggregatorTest {
 
 	@Test
 	void brandAccountIds는_등장_순_distinct이고_미귀속은_안_실린다() {
+		// id "b1"→"b2" 등장 순은 HashSet 순회 순서(b2, b1)와 어긋난다 — 삽입 순 보존이 실제로 검증된다.
 		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
-				ref("a", "2026-08-06", true, null, null, false, null, null, null, "b2", null, null),
+				ref("a", "2026-08-06", true, null, null, false, null, null, null, "b1", null, null),
 				ref("a", "2026-08-05", true, null, null, false, null, null, null, null, null, null),
-				ref("a", "2026-08-04", true, null, null, false, null, null, null, "b1", null, null),
-				ref("a", "2026-08-03", true, null, null, false, null, null, null, "b2", null, null),
+				ref("a", "2026-08-04", true, null, null, false, null, null, null, "b2", null, null),
+				ref("a", "2026-08-03", true, null, null, false, null, null, null, "b1", null, null),
 				ref("b", "2026-08-02", true, null, null, false, null, null, null, null, null, null)));
 
-		assertThat(rows.get(0).brandAccountIds()).containsExactly("b2", "b1");
+		assertThat(rows.get(0).brandAccountIds()).containsExactly("b1", "b2");
 		assertThat(rows.get(1).brandAccountIds()).isEmpty();
 	}
 
@@ -160,13 +192,14 @@ class PerformanceInfluencerAggregatorTest {
 	@Test
 	void 같은_handle은_한_행으로_묶이고_결과는_handle_등장_순이다() {
 		// ref의 handle은 이미 소문자 계약(PR ①) — 집계기는 재정규화 없이 그대로 키로 쓴다.
+		// handle 쌍은 HashMap 순회 순서(glowup, beautylover)가 등장 순과 어긋나게 골랐다.
 		var rows = PerformanceInfluencerAggregator.aggregate(List.of(
 				ref("beautylover", "2026-08-06", true, 100L, null, false, null),
-				ref("aromashop", "2026-08-05", true, 200L, null, false, null),
+				ref("glowup", "2026-08-05", true, 200L, null, false, null),
 				ref("beautylover", "2026-08-04", true, 300L, null, false, null)));
 
 		assertThat(rows).extracting(PerformanceInfluencerResponse::handle)
-				.containsExactly("beautylover", "aromashop");
+				.containsExactly("beautylover", "glowup");
 		assertThat(rows.get(0).postCount()).isEqualTo(2);
 		assertThat(rows.get(0).views()).isEqualTo(400L);
 		assertThat(rows.get(1).postCount()).isEqualTo(1);
