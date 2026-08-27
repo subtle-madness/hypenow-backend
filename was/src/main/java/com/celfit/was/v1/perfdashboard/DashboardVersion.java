@@ -32,18 +32,34 @@ import org.springframework.stereotype.Component;
  *   <li>브랜드 스윕 워터마크 — 내 연결 브랜드의 {@code brand_account} 행에서 응답에 영향을 주는
  *       6필드({@link #brandWatermarks} 참조). 스윕 시각만으로는 부족하다: 창 확장·재활성화처럼
  *       <b>스윕 밖</b>에서 그 행을 바꾸는 경로가 있고, 브랜드는 유저 간 공유 자산이라 <b>남의</b>
- *       등록·확장이 내 응답을 바꾼다.</li>
+ *       등록·확장이 내 응답을 바꾼다. 다만 스윕 워터마크가 <b>스윕이 쓰는 모든 데이터를</b> 덮는
+ *       것은 아니다 — 아래 "수용된 지연" 참조.</li>
  *   <li>유저 자신의 쓰기 — {@link DashboardVersionRepository}의 행 지문 5종</li>
  *   <li>KST 날짜 — 데이터가 하나도 안 바뀌어도 자정을 넘기면 상태 유도와 365일 창이 달라진다</li>
  *   <li>배포 세대({@code cacheEpoch}) — 응답 스키마가 바뀐 배포에서 옛 ETag가 맞으면 새 필드가 영영
  *       안 나간다(설계 §2-6)</li>
  * </ol>
- * 이미지 아카이브 워터마크(§2-1 ③)는 <b>의도적으로 뺐다</b> — {@code brand_post_meta}가 22,003행에
- * 해당 인덱스가 없어 순차 스캔이고, 미반영 상한은 스윕 워터마크가 매일 바뀌므로 하루다(설계 §2-5 ③).
- * 그동안 서빙되는 값은 지금도 쓰는 원본 CDN URL이라 회귀가 아니다.
+ * <p><b>수용된 지연 3건</b> — 어느 것도 "영구 미반영"이 아니다. 상한이 <b>하루</b>이고
+ * (다음 스윕이 워터마크를 반드시 움직인다), 유저 자신의 쓰기나 KST 자정이 먼저 오면 그보다 빨리
+ * 풀린다. 과소 무효화지만 <b>자가 치유</b>라 수용한다:
+ * <ol>
+ *   <li><b>이미지 아카이브 워터마크</b>(§2-1 ③)는 <b>의도적으로 뺐다</b> — {@code brand_post_meta}가
+ *       22,003행에 해당 인덱스가 없어 순차 스캔이고, 미반영 상한은 스윕 워터마크가 매일 바뀌므로
+ *       하루다(설계 §2-5 ③). 그동안 서빙되는 값은 지금도 쓰는 원본 CDN URL이라 회귀가 아니다.</li>
+ *   <li><b>브랜드 direct 2단계 스윕</b> — {@code BrandSweepJob.runSweep}은 브랜드마다
+ *       {@code collect.sweep} → {@code touchSwept} → {@code directCollect.sweepDirect} 순으로 돈다.
+ *       워터마크({@code last_swept_at})가 direct 단계 <b>앞에서</b> 찍히므로, 그 런의 direct 갱신분
+ *       (직접 등록 게시물의 새 스냅샷)은 이번 워터마크 밖이고 다음 스윕에서야 키를 움직인다.</li>
+ *   <li><b>등록 직후 비동기 지표 백필</b>({@code RegistrationService.scheduleMetricsBackfill}, ~1분)
+ *       — 등록 자체는 app 쓰기라 유저 쓰기 지문이 키를 <b>1회</b> 움직이지만, 그 뒤 백그라운드가
+ *       채우는 저장·리포스트 값은 app을 다시 쓰지 않는다. 그래서 백필된 스냅샷은 다음 스윕·유저의
+ *       다음 쓰기·KST 자정 중 <b>먼저 오는 것</b>까지 키를 안 움직인다.</li>
+ * </ol>
  *
  * <p>런타임 토글({@code monitoring.brand.ad-disclosure.expose} 등)은 {@code @Value} 시동 속성이라
  * 변경에 재배포가 따르고, 그 재배포가 {@code cacheEpoch}를 바꿔 전 ETag를 무효화한다 — 별도 입력이 아니다.
+ * 런타임 DB 설정({@code app.app_setting})은 <b>현재 대시보드 4표면의 입력이 아님을 확인했다</b>
+ * (2026-08-28) — 이후 app_setting 기반 토글이 이 표면에 들어오면 지문에 추가할 것.
  */
 @Component
 public class DashboardVersion {
@@ -165,13 +181,19 @@ public class DashboardVersion {
 	 *   <caption>필드 ↔ 응답 영향 지점</caption>
 	 *   <tr><th>필드</th><th>응답 영향</th></tr>
 	 *   <tr><td>{@code id}</td><td>행 식별(정렬 키)</td></tr>
-	 *   <tr><td>{@code last_swept_at}</td><td>스윕 세대 — 게시물·스냅샷이 통째로 갱신되는 지점</td></tr>
+	 *   <tr><td>{@code last_swept_at}</td><td>스윕 세대 — 게시물·스냅샷이 갱신되는 <b>주된</b> 지점
+	 *       (전부는 아니다: 같은 런의 direct 2단계는 이 값이 찍힌 <b>뒤</b>에 돈다 — 클래스 javadoc
+	 *       "수용된 지연" ②·③)</td></tr>
 	 *   <tr><td>{@code covered_until}</td><td>목록의 커버리지 클램프 술어 · {@code /comparison}의 covered 판정</td></tr>
 	 *   <tr><td>{@code backfill_completed_at}</td><td>{@code /comparison}의 {@code accountCovered} 판정</td></tr>
 	 *   <tr><td>{@code last_swept_on}</td><td>〃 (같은 술어의 다른 절)</td></tr>
 	 *   <tr><td>{@code collection_months}</td><td>{@code /comparison}의 창 시작일({@code today.minusMonths})</td></tr>
 	 *   <tr><td>{@code collection_started_at}</td><td>{@code /comparison} 응답 필드(수집 시작 시각)</td></tr>
 	 * </table>
+	 *
+	 * <p>{@code username}은 응답에 실리지만 <b>일부러 뺐다</b> — 계정명 변경은 스윕 <b>안에서</b>
+	 * 갱신되므로 같은 런의 {@code last_swept_at}이 전이적으로 덮는다(스윕 밖 경로가 없다). 뒤 4필드와
+	 * 다른 점이 이것이라, 여기 넣으면 지문만 길어지고 무효화 시점은 그대로다.
 	 *
 	 * <p><b>스윕 시각 2개만으로는 부족하다.</b> 뒤 4필드는 창 확장·재활성화·상한 조정
 	 * ({@code BrandRepository.expandWindow}·{@code insertOrReactivate}·{@code raiseWindowCapped}) 같은

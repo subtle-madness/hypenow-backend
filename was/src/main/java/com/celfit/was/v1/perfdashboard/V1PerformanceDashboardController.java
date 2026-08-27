@@ -485,6 +485,8 @@ public class V1PerformanceDashboardController {
 		// 아래 예산 재판정(400)은 조건부 뒤라 304 경로에서는 돌지 않는다 — 문제가 아니다: 그 판정에
 		// 걸릴 요청은 200을 받은 적이 없어 클라이언트가 그 URL의 사본도 ETag도 갖고 있지 않다
 		// (If-None-Match는 같은 URI의 사본에만 실린다 — conditional javadoc).
+		// 예외는 `If-None-Match: *` 하나 — 사본 없이도 무조건 일치라 이 400이 304로 가려진다.
+		// 브라우저는 조건부 GET에 `*`를 쓰지 않으므로(수동 클라이언트만 도달) 수용한다.
 		return conditional(principal.getUserId(), ifNoneMatch, () -> {
 			PerformanceContentAssembler.DashboardIndex index = assembler.index(principal.getUserId());
 			Set<String> competitorIds = index.competitorBrandAccountIds();

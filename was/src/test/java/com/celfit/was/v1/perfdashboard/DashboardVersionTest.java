@@ -26,8 +26,10 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.info.BuildProperties;
 
 /**
- * 버전키 계산기 단위 테스트(08-13 설계 §6 "단위" 층) — 입력 8종이 <b>각각 단독으로</b> 키를 바꾸는지가
- * 이 테스트의 전부다. ETag가 입력 하나를 놓치면 그건 실패가 아니라 <b>낡은 데이터의 조용한 서빙</b>이라
+ * 버전키 계산기 단위 테스트(08-13 설계 §6 "단위" 층) — 입력이 <b>각각 단독으로</b> 키를 바꾸는지가
+ * 이 테스트의 전부다. 테이블 주도 케이스는 <b>10항목</b>이다(설계 §2-1의 입력 종류를 실제로 흔들 수
+ * 있는 단위까지 편 것 — ① 레거시 스윕 1 + ② 브랜드 계정 행 필드 4 + ④ 유저 쓰기 지문 5).
+ * ⑤ KST 날짜와 ⑥ 배포 세대는 시계·{@code BuildProperties}를 갈아야 해 각자 별도 테스트다. ETag가 입력 하나를 놓치면 그건 실패가 아니라 <b>낡은 데이터의 조용한 서빙</b>이라
  * 여기서 고정한다(설계 §2-1).
  *
  * <p>지문 SQL 자체는 여기서 검증하지 않는다(리포지토리 mock) — SQL은
@@ -40,8 +42,9 @@ class DashboardVersionTest {
 	// ---------- 픽스처 ----------
 
 	/**
-	 * 버전키 입력 8종 + 시계 + monitoring 활성 여부를 모아 둔 가변 픽스처 — 테이블 주도 테스트가
-	 * 기준값에서 하나씩만 흔든다.
+	 * 버전키 입력 전부 + 시계 + monitoring 활성 여부를 모아 둔 가변 픽스처 — 테이블 주도 테스트가
+	 * 기준값에서 하나씩만 흔든다. 원문자는 설계 §2-1의 입력 번호다(③ 이미지 아카이브 워터마크는
+	 * 의도적으로 뺐다 — {@code DashboardVersion} javadoc "수용된 지연" ①).
 	 */
 	private static final class Inputs {
 
@@ -64,7 +67,7 @@ class DashboardVersionTest {
 		// ⑤ KST 날짜
 		Instant now = Instant.parse("2026-08-28T05:00:00Z");   // KST 2026-08-28 14:00
 		boolean monitoringEnabled = true;
-		// ⑤ 배포 세대 — 기본은 BuildProperties 부재("dev" 폴백, 로컬·테스트 환경)
+		// ⑥ 배포 세대(설계 §2-6) — ⑤와 별개 축이다. 기본은 BuildProperties 부재("dev" 폴백, 로컬·테스트)
 		ObjectProvider<BuildProperties> buildProperties = buildPropertiesProvider(null);
 	}
 
