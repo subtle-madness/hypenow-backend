@@ -1148,7 +1148,7 @@
 
 **Steps:**
 
-- [ ] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/WeeklyDigestAssemblerTest.java`에 아래 전문을 쓴다.
+- [x] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/WeeklyDigestAssemblerTest.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -1349,13 +1349,13 @@
   }
   ```
 
-- [ ] 실행해 실패 확인
+- [x] 실행해 실패 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.WeeklyDigestAssemblerTest"
   ```
   기대 출력: 컴파일 실패 — `cannot find symbol: class DigestItem`, `class WeeklyDigestInput`, `class WeeklyDigestAssembler`.
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/DigestItem.java`에 아래 전문을 쓴다.
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/DigestItem.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -1378,7 +1378,7 @@
   }
   ```
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyDigestInput.java`에 아래 전문을 쓴다.
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyDigestInput.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -1405,7 +1405,7 @@
   }
   ```
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyDigestAssembler.java`에 아래 전문을 쓴다.
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyDigestAssembler.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -1544,13 +1544,13 @@
   }
   ```
 
-- [ ] 실행해 통과 확인
+- [x] 실행해 통과 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.WeeklyDigestAssemblerTest"
   ```
-  기대 출력: `BUILD SUCCESSFUL`, 15개 테스트 통과.
+  기대 출력: `BUILD SUCCESSFUL`, 15개 테스트 통과. (실측: 16개 — 계획 작성 시 수기 카운트 오차, 테스트 전문은 계획과 동일)
 
-- [ ] 커밋
+- [x] 커밋
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add was/src/main/java/com/celfit/was/monitoring/DigestItem.java was/src/main/java/com/celfit/was/monitoring/WeeklyDigestInput.java was/src/main/java/com/celfit/was/monitoring/WeeklyDigestAssembler.java was/src/test/java/com/celfit/was/monitoring/WeeklyDigestAssemblerTest.java
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign commit -m "$(cat <<'EOF'
