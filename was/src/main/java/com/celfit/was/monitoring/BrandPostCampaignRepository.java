@@ -83,7 +83,7 @@ public class BrandPostCampaignRepository {
 	/**
 	 * 유저가 캠페인에 연결한 브랜드 풀 게시물 shortcode(seededAuthor 캠페인 도출 재료, 2026-08-18
 	 * 캠페인 도출 개정 — direct 통합 이후분). brand_id 무관 유저 스코프(캠페인은 브랜드가 아니라 유저
-	 * 단위 개념 — {@link BrandPostAssembler#assembleForBrand} 주석 참조)다. tagged·direct 공통 —
+	 * 단위 개념 — {@link BrandPostAssembler#assembleBrandPosts} 주석 참조)다. tagged·direct 공통 —
 	 * 이 테이블이 두 산지 모두를 커버하므로({@code upsert} 호출부가 direct 등록 시 campaignId 파라미터
 	 * 하나뿐이라도, 트랙 결정상 tagged에도 부착 여지가 열려 있다) {@code BrandDirectPostRepository.
 	 * findCampaignLinkedShortCodes}(레거시 monitoring_items 경유, 이관 전 매핑 전용)와 상호 배타적으로

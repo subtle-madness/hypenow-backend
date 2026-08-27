@@ -344,7 +344,7 @@ class BrandPostAssemblerTest {
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, false);
 
-		assembler.assembleForBrand(7L, account, BrandAccountType.OWN);
+		assembler.indexForBrand(7L, account, false);
 
 		verify(repository).findBrandPostsInWindow(eq(42L), any(), eq(true));
 	}

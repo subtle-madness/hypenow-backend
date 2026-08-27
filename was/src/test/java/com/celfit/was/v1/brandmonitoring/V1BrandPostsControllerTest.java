@@ -112,6 +112,23 @@ class V1BrandPostsControllerTest {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link()));
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(account()));
+		// 인덱스 패스 경량 프로젝션(2026-08-27 목록 타임아웃 해소)은 기존 표시 메타·스냅샷 스텁에서
+		// 파생시킨다 — 이 클래스의 시드 관용구(findPostMeta·findSnapshots 고정)를 그대로 재사용하고,
+		// 두 산지의 값이 어긋나 counts·정렬이 풀 조립과 불일치하는 시드 실수도 원천 차단한다.
+		given(brandReadRepository.findSponsorshipMeta(any())).willAnswer(inv ->
+				brandReadRepository.findPostMeta(inv.getArgument(0)).stream()
+						.map(m -> new BrandReadRepository.SponsorshipMetaRow(m.shortCode(),
+								m.isPaidPartnership(), m.caption()))
+						.toList());
+		given(brandReadRepository.findLatestViews(any())).willAnswer(inv -> {
+			var latest = new java.util.LinkedHashMap<String, BrandSnapshotRow>();
+			for (BrandSnapshotRow row : brandReadRepository.findSnapshots(inv.getArgument(0))) {
+				latest.merge(row.shortCode(), row, (a, b) -> b.capturedOn().isAfter(a.capturedOn()) ? b : a);
+			}
+			return latest.values().stream()
+					.map(r -> new BrandReadRepository.LatestViewsRow(r.shortCode(), r.contentType(), r.views()))
+					.toList();
+		});
 	}
 
 	// ---------- 목록 ----------
@@ -232,8 +249,14 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.data[0].source").value("tagged"));
 	}
 
+	/**
+	 * 목록 표면 계약(2026-08-27 FE 요청 1) — 목록 그리드는 댓글을 렌더하지 않으므로
+	 * {@code recentComments}를 싣지 않는다(빈 배열·키 유지, 계약 무결성 규칙 #1). 댓글 윈도우 쿼리
+	 * 자체가 돌면 안 된다(08-12 실측 조립 시간의 57%). 스냅샷 유래 지표(commentsTotal)는 유지.
+	 * 댓글은 상세 조회 전용이다({@code 상세는_댓글을_포함한다}).
+	 */
 	@Test
-	void 목록은_tagged_게시물의_지표와_댓글을_함께_내려준다() throws Exception {
+	void 목록은_지표만_내려주고_댓글은_비운다() throws Exception {
 		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"));
 		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", true)));
 		given(brandReadRepository.findSnapshots(any())).willReturn(List.of(
@@ -254,11 +277,126 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.data[0].snapshots.length()").value(2))
 				.andExpect(jsonPath("$.data[0].latestSnapshot.views").value(300))
 				.andExpect(jsonPath("$.data[0].commentsTotal").value(12))
-				.andExpect(jsonPath("$.data[0].commentsCollectedCount").value(1))
-				.andExpect(jsonPath("$.data[0].recentComments[0].author").value("gl***92"))
+				.andExpect(jsonPath("$.data[0].commentsCollectedCount").value(0))
+				.andExpect(jsonPath("$.data[0]", Matchers.hasKey("recentComments")))
+				.andExpect(jsonPath("$.data[0].recentComments.length()").value(0))
 				// nullable 키는 생략하지 않고 명시적 null(계약 무결성 규칙 #1).
 				.andExpect(jsonPath("$.data[0]", Matchers.hasKey("trackingEndedAt")))
 				.andExpect(jsonPath("$.data[0].trackingEndedAt").value(Matchers.nullValue()));
+
+		then(brandReadRepository).should(never()).findComments(any(), anyInt());
+	}
+
+	// ---------- 페이지네이션(2026-08-27 FE 요청 2·3) ----------
+
+	@Test
+	void limit_offset은_정렬된_전량의_슬라이스다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"),
+				taggedRow("CCC", "2026-08-04T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("AAA", "REELS", null), meta("BBB", "REELS", null), meta("CCC", "REELS", null)));
+
+		// 두 페이지 합집합 = 전량, 중복·누락 없음 — 정렬(업로드 최신순 + shortcode)이 페이지 간 일관.
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?limit=2").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("AAA", "BBB")));
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?limit=2&offset=2")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("CCC")));
+	}
+
+	@Test
+	void 페이지네이션에도_total_counts는_전체_기준이다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"),
+				taggedRow("CCC", "2026-08-04T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("AAA", "REELS", true), meta("BBB", "REELS", false), meta("CCC", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?limit=1").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				// total·counts는 전량 계산 값 — 페이지로 잘리면 FE 필터 칩 숫자가 무너진다.
+				.andExpect(jsonPath("$.meta.total").value(3))
+				.andExpect(jsonPath("$.meta.counts.all").value(3))
+				.andExpect(jsonPath("$.meta.counts.sponsored").value(1))
+				.andExpect(jsonPath("$.meta.counts.organic").value(1))
+				.andExpect(jsonPath("$.meta.counts.unknown").value(1))
+				// meta.limit은 수집 상한 의미 그대로 — 페이지 정보는 meta.page로 분리(FE 협의 반영).
+				.andExpect(jsonPath("$.meta.limit").value(2000))
+				.andExpect(jsonPath("$.meta.page.offset").value(0))
+				.andExpect(jsonPath("$.meta.page.limit").value(1));
+	}
+
+	@Test
+	void 페이지네이션은_필터_적용_후에_잘린다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"),
+				taggedRow("CCC", "2026-08-04T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("AAA", "REELS", true), meta("BBB", "REELS", false), meta("CCC", "REELS", true)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?sponsorship=sponsored&limit=1&offset=1")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("CCC")))
+				.andExpect(jsonPath("$.meta.total").value(2))    // 필터 후 전체(sponsored 2건)
+				.andExpect(jsonPath("$.meta.counts.all").value(3));
+	}
+
+	@Test
+	void 파라미터_생략_시_meta_page는_전량_표식이다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("AAA", "REELS", null), meta("BBB", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(2))
+				.andExpect(jsonPath("$.meta.page.offset").value(0))
+				.andExpect(jsonPath("$.meta.page", Matchers.hasKey("limit")))
+				.andExpect(jsonPath("$.meta.page.limit").value(Matchers.nullValue()));
+	}
+
+	@Test
+	void offset만_주면_limit은_기본_100이다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"),
+				taggedRow("CCC", "2026-08-04T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("AAA", "REELS", null), meta("BBB", "REELS", null), meta("CCC", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?offset=1").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("BBB", "CCC")))
+				.andExpect(jsonPath("$.meta.page.offset").value(1))
+				.andExpect(jsonPath("$.meta.page.limit").value(100));
+	}
+
+	@Test
+	void limit_offset_범위_밖은_400이다() throws Exception {
+		for (String query : List.of("limit=0", "limit=101", "offset=-1")) {
+			mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?" + query).with(user(principal())))
+					.andExpect(status().isBadRequest())
+					.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+		}
+	}
+
+	@Test
+	void performance_정렬도_페이지_간_일관이다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"),
+				taggedRow("CCC", "2026-08-04T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("AAA", "REELS", null), meta("BBB", "REELS", null), meta("CCC", "REELS", null)));
+		given(brandReadRepository.findSnapshots(any())).willReturn(List.of(
+				snapshotRow("AAA", 6, 100L), snapshotRow("BBB", 6, 900L)));   // CCC는 스냅샷 없음 → null 마지막
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?sort=performance_desc&limit=2")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("BBB", "AAA")));
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?sort=performance_desc&limit=2&offset=2")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("CCC")));
 	}
 
 	@Test
@@ -559,6 +697,35 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.data.id").value("AAA"))
 				.andExpect(jsonPath("$.data.source").value("tagged"))
 				.andExpect(jsonPath("$.data.sponsorship").value("sponsored"));
+	}
+
+	/** 상세도 인덱스 경로다(2026-08-27) — 브랜드 전량이 아니라 요청된 shortcode 1건만 풀 조립한다. */
+	@Test
+	void 상세는_해당_게시물만_조립한다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("BBB", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/posts/BBB").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.id").value("BBB"));
+
+		then(brandReadRepository).should().findPostMeta(eq(Set.of("BBB")));
+		then(brandReadRepository).should().findSnapshots(eq(Set.of("BBB")));
+	}
+
+	/** 목록이 댓글을 비우는 계약(FE 요청 1)의 반쪽 — 댓글은 상세에서만 내려간다. */
+	@Test
+	void 상세는_댓글을_포함한다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
+		given(brandReadRepository.findComments(any(), anyInt())).willReturn(List.of(
+				new BrandCommentRow("AAA", "c1", "glowdeep_92", "좋아요", 3L,
+						OffsetDateTime.parse("2026-08-06T05:00:00Z"), null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/posts/AAA").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.commentsCollectedCount").value(1))
+				.andExpect(jsonPath("$.data.recentComments[0].author").value("gl***92"));
 	}
 
 	@Test

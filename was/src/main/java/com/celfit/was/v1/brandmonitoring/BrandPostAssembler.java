@@ -102,23 +102,9 @@ public class BrandPostAssembler {
 		this.exposeAdDisclosure = exposeAdDisclosure;
 	}
 
-	/**
-	 * 브랜드 1계정의 게시물 전량(필터 전) — 업로드 최신순, takenAt 미상은 마지막.
-	 * 소유권 검증은 호출부 책임이다(여기 오는 account는 이미 내 브랜드여야 한다).
-	 *
-	 * @param viewerAccountType 조회 유저의 이 브랜드 연결 accountType(2026-08-19 경쟁사 판정 제거
-	 *                          설계 §4) — competitor면 광고 표기 4필드를 노출하지 않는다({@link
-	 *                          #brandPost} 참조). 과도기 폴백(direct 산지)은 애초에 그 필드들의
-	 *                          산지가 없어(항상 null) 영향 없다.
-	 */
-	public List<BrandPostResponse> assembleForBrand(long userId, BrandAccountRow account, String viewerAccountType) {
-		// 표시 표면이라 정산분만 — 게시자·댓글이 붙기 전의 반쯤 빈 카드를 목록·상세·counts에 싣지 않는다.
-		// 목록 표면은 커버리지 클램프를 걸지 않는다 — 컷 밖 기수집분도 계속 서빙한다(수집 상한 v1 §3-3).
-		List<BrandPostResponse> brandPool = assembleBrandPosts(userId, account, true, BrandPostScope.ENRICHED_ONLY,
-				false, viewerAccountType);
-		List<BrandPostResponse> legacyPending = assembleLegacyPending(userId, account.id());
-		return mergeWithLegacyPending(brandPool, legacyPending);
-	}
+	// 브랜드 화면(목록·상세·counts)의 진입점이던 assembleForBrand(전량 풀 조립 + 레거시 병합)는
+	// 2026-08-27 목록 타임아웃 해소로 indexForBrand + hydrate 2단 조립에 흡수됐다 — 표시 표면
+	// 계약(정산분만 ENRICHED_ONLY·커버리지 클램프 없음·풀 우선 병합)은 그 두 메서드가 그대로 승계한다.
 
 	// ---------- 인덱스/하이드레이트(2026-08-27 목록 타임아웃 해소 설계) ----------
 
@@ -284,8 +270,8 @@ public class BrandPostAssembler {
 	/**
 	 * 브랜드 풀(tagged ∪ direct) 조립 — {@code brand_tagged_post} 한 산지에서 통째로 읽는다(설계
 	 * §결정 1). 공개 이유: 성과 대시보드는 레거시 전량을 이미 자기가 조립해 두고 브랜드 풀만 얹으면
-	 * 되는데, {@link #assembleForBrand}를 부르면 그 안에서 과도기 폴백까지 한 번 더 돌아 유저 전량
-	 * 배치 조회가 통째로 중복된다. 브랜드 화면의 진입점은 여전히 {@code assembleForBrand}다.
+	 * 되므로 과도기 폴백이 붙는 경로를 태우면 유저 전량 배치 조회가 통째로 중복된다. 브랜드 화면의
+	 * 진입점은 {@link #indexForBrand} + {@link #hydrate}다(2026-08-27 2단 조립).
 	 *
 	 * <p>{@code withComments=false}면 댓글 배치 조회를 아예 돌리지 않는다(08-12 성과 대시보드 고정
 	 * 지연 대응). 08-12 운영 덤프 실측에서 브랜드 1계정 조립 415ms 중 237ms(57%)가 댓글 윈도우 쿼리 +
@@ -305,8 +291,8 @@ public class BrandPostAssembler {
 	 *               서빙, v1 §3-3)과 존재·중복 판정 소비자("있는데 없다고 답하면 안 됨")가 쓴다.
 	 *               scope처럼 편의 오버로드를 두지 않는다 — 호출부가 매번 의도를 밝힌다.
 	 * @param viewerAccountType 조회 유저의 이 브랜드 연결 accountType(2026-08-19 경쟁사 판정 제거
-	 *                          설계 §4, {@link #assembleForBrand} 참조) — {@link #brandPost}에
-	 *                          그대로 넘긴다.
+	 *                          설계 §4) — competitor면 광고 표기 4필드를 노출하지 않는다.
+	 *                          {@link #brandPost}에 그대로 넘긴다.
 	 */
 	public List<BrandPostResponse> assembleBrandPosts(long userId, BrandAccountRow account, boolean withComments,
 			BrandPostScope scope, boolean capToCoverage, String viewerAccountType) {
@@ -752,27 +738,8 @@ public class BrandPostAssembler {
 				null, List.of(), List.of(), false);
 	}
 
-	/**
-	 * 브랜드 풀과 과도기 폴백을 shortcode로 합친다 — <b>브랜드 풀이 우선</b>이다(정본 산지). 이론상
-	 * 이관 전 매핑과 브랜드 풀이 같은 shortcode를 가질 일은 없다(이관되면 폴백 조회 대상에서
-	 * 빠진다) — 그래도 안전망으로 겹치면 브랜드 풀 값을 살린다. 광고 표기 판정 4필드(adDisclosure 등)의
-	 * "tagged 값 승격" 병합은 더 이상 필요 없다 — brand_tagged_post가 단일 산지가 된 뒤로
-	 * {@link #brandPost}가 그 필드들을 이미 source(tagged/direct)와 무관하게 meta에서 직접 채운다.
-	 */
-	private static List<BrandPostResponse> mergeWithLegacyPending(List<BrandPostResponse> brandPool,
-			List<BrandPostResponse> legacyPending) {
-		Map<String, BrandPostResponse> byCode = new LinkedHashMap<>();
-		for (BrandPostResponse post : brandPool) {
-			byCode.put(post.shortcode(), post);
-		}
-		for (BrandPostResponse post : legacyPending) {
-			byCode.putIfAbsent(post.shortcode(), post);
-		}
-		return byCode.values().stream()
-				.sorted(Comparator.comparing(BrandPostAssembler::uploadedOn, Comparator.nullsLast(Comparator.reverseOrder()))
-						.thenComparing(BrandPostResponse::shortcode))
-				.toList();
-	}
+	// 풀 우선 병합(mergeWithLegacyPending)은 indexForBrand의 legacyByCode 구성(풀 코드와 겹치면
+	// 제외)으로 흡수됐다 — 병합 규칙 자체(브랜드 풀이 정본)는 그대로다.
 
 	/**
 	 * 업로드 날짜(KST) — takenAt은 산지에 따라 타임스탬프(브랜드 풀)와 날짜(과도기 폴백, 레거시
