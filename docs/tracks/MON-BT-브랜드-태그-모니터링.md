@@ -302,8 +302,8 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
 수집 개수 상한(2026-08-19 — **구현 완료**,
 [spec 2026-08-19](../superpowers/specs/2026-08-19-brand-collection-post-limit-design.md) ·
 [plan(아카이브)](../superpowers/plans/archive/2026-08-19-brand-collection-post-limit.md)):
-전역 설정 `monitoring.brand.collection-post-limit`(기본 **2,000**, **0 이하면 무제한** —
-`backfill-max-per-run` 관용 일치) 신설. 한 실행의 열거량이 상한에 닿으면 INFO 로그와 함께
+전역 설정 `monitoring.brand.collection-post-limit`(기본 **2,000**, **0 이하면 무제한**) 신설.
+한 실행의 열거량이 상한에 닿으면 INFO 로그와 함께
 **의도된 자연 종료**로 끊고, `coveredCutoff=true`로 `touchCrawledDepth`를 **목표 컷 전체**에
 찍는다 — 컷 밖(더 깊은) 게시물은 실크롤 없이 `last_crawled_at`이 갱신돼 ①매 스윕이 같은
 깊이를 다시 여는 due 낭비 루프가 끊기고 ②마지막 수집 시점 지표로 **동결된 채 계속 서빙**된다
@@ -424,6 +424,18 @@ tagged `taken_at` 프록시)은 코드리뷰로 기각·폐기** — 자연 완�
     (`common-llm` 모듈 신설 — DECISIONS.md 08-18 항목 참조). 상한 기본값은 도입 직후
     1000 → **0(무제한)으로 원복**(같은 날 사용자 결정 — 429의 원인은 상한이 아니라 무료 키
     쿼터였고 Vertex + 서킷브레이커로 무제한이 안전. 상한은 env로만 임시 사용).
+    **08-27 1회 실행 상한 폐기**(DECISIONS.md 08-27 항목 참조 — 당초 "LLM 호출 수로 계량
+    단위 교정"으로 착수했다가 사용자 논의로 방향이 바뀌어 상한 자체를 없앴다): 상한(총량
+    분산)은 필요 없는 게 아니라 해로운 기능이었다 — verdict NULL 게시물은 FE에서 배지
+    미표시·위험 카운트 제외로 서빙되는데, 08-18에 잔량 29,455건을 상한 1000으로 한 달간
+    분산한 게 무해했던 건 당시 expose가 꺼져 있었기 때문이고, 08-19 노출 개통 후에는 같은
+    상황이 "한 달간 틀린 데이터 서빙"이 된다. 분산은 비용 총액을 줄이지도 않는다(미룰
+    뿐이다). `AdDisclosureJudgeService`에서 상한 관련 상수·필드·생성자 파라미터·루프
+    상단 break를 전부 제거 — 버스트 속도 방어는 워커 풀 동시성(`concurrency` 4)이, 장애
+    폭주 방어는 연속 실패 서킷브레이커(`llm-failure-abort-threshold`, 무변경)가 그대로
+    담당한다. 잘못된 판정이 배포됐을 때의 대응은 `enabled` 킬 스위치·`AD_DISCLOSURE_EXPOSE`·
+    리셋 후 재배포가 정본이다. 프로퍼티 `backfill-max-per-run` 삭제(기본값이 이미
+    0=무제한이었으므로 운영 동작은 무변화).
   - 캡션·videoUrl 저장값 폴백 — 일시적 결손(보강 미완주 등) 시 캡션 부재를 그대로
     `NOT_DISCLOSED`로 오판정하지 않도록 방어.
   - `judgePosts` 성공 요약 로그 — 배치당 verdict 분포를 남겨 드라이런 검토 근거로 쓴다.

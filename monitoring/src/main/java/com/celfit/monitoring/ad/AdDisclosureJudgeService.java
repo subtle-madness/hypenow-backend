@@ -52,15 +52,18 @@ import org.slf4j.LoggerFactory;
  * #backfillRunning}은 기동 백필과 스윕 말미 백필이 겹칠 때 동시 실행을 막는 가드다.
  *
  * <p><b>백필 방어선</b>(2026-08-18 429 폭주 실측 계기 — #490 백필 기동 즉시·상한 제거 후 스테이징
- * 무료 키 쿼터 공유로 15분간 분당 83~146건 429). 두 가지 안전 밸브를 둔다:
- * <ul>
- *   <li>{@link #llmFailureAbortThreshold} — LLM 호출 연속 실패가 이 값에 도달하면 진행 중 배치
- *   완료 후 런 자체를 중단한다({@link #circuitOpen}). verdict는 NULL로 남아 다음 주기가 재시도한다.
- *   임계 도달 이후 서킷이 열린 동안 제출되는 항목은 LLM을 아예 호출하지 않고 스킵한다(추가 소모 방지).
- *   <li>{@link #backfillMaxPerRun} — 1회 호출에서 처리(시도)하는 총 건수 상한. 0 이하면 무제한
- *   (2026-08-18 이전 계약과 동일). 도달하면 정상 종료하고 잔여 건수를 로그로 남긴다 — 대량 잔량이
- *   있어도 다음 주기가 이어서 처리하므로 한 번의 기동 러너가 워커 풀을 장시간 독점하지 않는다.
- * </ul>
+ * 무료 키 쿼터 공유로 15분간 분당 83~146건 429). {@link #llmFailureAbortThreshold} — LLM 호출
+ * 연속 실패가 이 값에 도달하면 진행 중 배치 완료 후 런 자체를 중단한다({@link #circuitOpen}).
+ * verdict는 NULL로 남아 다음 주기가 재시도한다. 임계 도달 이후 서킷이 열린 동안 제출되는 항목은
+ * LLM을 아예 호출하지 않고 스킵한다(추가 소모 방지).
+ *
+ * <p><b>1회 실행 처리량 상한은 두지 않는다</b>(2026-08-27 결정, DECISIONS.md 참조 — 08-18에
+ * 재도입했던 프로퍼티 기반 상한을 같은 결정으로 폐기). 상한(총량 분산)은 verdict NULL 잔량을
+ * 오래 남기는데, expose 개통(08-19) 이후에는 그 잔량이 곧 FE의 부분 판정·과소 위험 카운트
+ * 서빙으로 이어져 상한이 있는 동안 사용자가 틀린 데이터를 본다 — 분산은 총 LLM 비용을 줄이지도
+ * 않고 미룰 뿐이다. 버스트 속도 방어는 워커 풀 동시성({@code ad-disclosure.concurrency})이,
+ * 장애 폭주 방어는 위 서킷브레이커가 이미 담당한다. 잘못된 판정이 배포됐을 때는 {@code enabled}
+ * 킬 스위치·{@code AD_DISCLOSURE_EXPOSE}·리셋 후 재배포로 대응하는 것이 정본이다.
  */
 public class AdDisclosureJudgeService {
 
@@ -70,8 +73,6 @@ public class AdDisclosureJudgeService {
 	private static final int DEFAULT_BACKFILL_BATCH_SIZE = 500;
 	/** LLM 연속 실패 서킷브레이커 임계 — 08-18 429 폭주 방어선. */
 	private static final int DEFAULT_LLM_FAILURE_ABORT_THRESHOLD = 10;
-	/** 1회 백필 호출 처리 상한 — 0 이하면 무제한. 08-18 429 폭주 방어선(상한 재도입). */
-	private static final int DEFAULT_BACKFILL_MAX_PER_RUN = 1000;
 	/**
 	 * 한글 판별 — 음절(U+AC00–U+D7A3)·자모(U+1100–U+11FF 조합형, U+3130–U+318F 호환형) 어디에도
 	 * 없으면 캡션이 완전 비한국어라고 본다(2026-08-27 FOREIGN_POST 분리 결정, DECISIONS.md 참조).
@@ -83,40 +84,30 @@ public class AdDisclosureJudgeService {
 	private final Executor worker;
 	private final int batchSize;
 	private final int llmFailureAbortThreshold;
-	private final int backfillMaxPerRun;
 	private final AtomicBoolean backfillRunning = new AtomicBoolean(false);
 	private final AtomicInteger consecutiveLlmFailures = new AtomicInteger(0);
 	private final AtomicBoolean circuitOpen = new AtomicBoolean(false);
 
 	public AdDisclosureJudgeService(BrandPostMetaRepository metaRepo, AdDisclosureExtractor extractor,
 			Executor worker) {
-		this(metaRepo, extractor, worker, DEFAULT_BACKFILL_BATCH_SIZE, DEFAULT_LLM_FAILURE_ABORT_THRESHOLD,
-				DEFAULT_BACKFILL_MAX_PER_RUN);
+		this(metaRepo, extractor, worker, DEFAULT_BACKFILL_BATCH_SIZE, DEFAULT_LLM_FAILURE_ABORT_THRESHOLD);
 	}
 
-	/** Spring 배선용 — 서킷브레이커 임계·백필 1회 상한을 app 설정에서 주입(08-18 429 실측 방어선). */
+	/** Spring 배선용 — 서킷브레이커 임계를 app 설정에서 주입(08-18 429 실측 방어선). */
 	public AdDisclosureJudgeService(BrandPostMetaRepository metaRepo, AdDisclosureExtractor extractor,
-			Executor worker, int llmFailureAbortThreshold, int backfillMaxPerRun) {
-		this(metaRepo, extractor, worker, DEFAULT_BACKFILL_BATCH_SIZE, llmFailureAbortThreshold,
-				backfillMaxPerRun);
+			Executor worker, int llmFailureAbortThreshold) {
+		this(metaRepo, extractor, worker, DEFAULT_BACKFILL_BATCH_SIZE, llmFailureAbortThreshold);
 	}
 
-	/** 배치 크기를 주입하는 테스트 전용 생성자 — 다중 배치 루프를 큰 픽스처 없이 검증하기 위함. */
+	/** 배치 크기·서킷브레이커 임계를 함께 주입하는 테스트 전용 생성자 — 다중 배치 루프·방어선을 큰
+	 * 픽스처 없이 검증하기 위함. */
 	AdDisclosureJudgeService(BrandPostMetaRepository metaRepo, AdDisclosureExtractor extractor, Executor worker,
-			int batchSize) {
-		this(metaRepo, extractor, worker, batchSize, DEFAULT_LLM_FAILURE_ABORT_THRESHOLD,
-				DEFAULT_BACKFILL_MAX_PER_RUN);
-	}
-
-	/** 방어선 파라미터까지 전부 주입하는 테스트 전용 생성자. */
-	AdDisclosureJudgeService(BrandPostMetaRepository metaRepo, AdDisclosureExtractor extractor, Executor worker,
-			int batchSize, int llmFailureAbortThreshold, int backfillMaxPerRun) {
+			int batchSize, int llmFailureAbortThreshold) {
 		this.metaRepo = metaRepo;
 		this.extractor = extractor;
 		this.worker = worker;
 		this.batchSize = batchSize;
 		this.llmFailureAbortThreshold = llmFailureAbortThreshold;
-		this.backfillMaxPerRun = backfillMaxPerRun;
 	}
 
 	public void judgePosts(List<PostInfo> posts) {
@@ -194,11 +185,6 @@ public class AdDisclosureJudgeService {
 			Set<String> attempted = new HashSet<>();
 			int processed = 0;
 			while (true) {
-				if (backfillMaxPerRun > 0 && processed >= backfillMaxPerRun) {
-					int remaining = metaRepo.countUnjudged();
-					log.info("광고 판정 백필 — 1회 실행 상한({}건) 도달, 잔여 {}건은 다음 주기", backfillMaxPerRun, remaining);
-					break;
-				}
 				List<BrandPostMetaRepository.UnjudgedPost> batch = metaRepo.findUnjudged(batchSize);
 				List<BrandPostMetaRepository.UnjudgedPost> fresh =
 						batch.stream().filter(m -> attempted.add(m.shortCode())).toList();
@@ -206,9 +192,6 @@ public class AdDisclosureJudgeService {
 					// 배치 전부가 이번 호출에서 이미 한 번 시도했는데도 여전히 NULL(영구 실패) —
 					// 같은 배치가 무한히 재조회되는 것을 막고, 재시도는 다음 호출로 넘긴다.
 					break;
-				}
-				if (backfillMaxPerRun > 0 && processed + fresh.size() > backfillMaxPerRun) {
-					fresh = fresh.subList(0, backfillMaxPerRun - processed);
 				}
 				List<CompletableFuture<Void>> tasks = new ArrayList<>();
 				for (BrandPostMetaRepository.UnjudgedPost meta : fresh) {

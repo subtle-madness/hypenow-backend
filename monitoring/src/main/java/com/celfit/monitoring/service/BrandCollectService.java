@@ -168,7 +168,7 @@ public class BrandCollectService {
 	 * <p>열거 중단은 <b>5종</b>이다(2026-08-19 수집 개수 상한 신설로 4종에서 늘었다) —
 	 * ①페이지 전체가 깊이 컷(수집 창/14일) 이전 ②커서 소진(nextPageId null·빈 페이지)
 	 * ③커서 미전진(신규 code 0건) ④안전 상한(maxPostsPerSweep) 도달 ⑤수집 개수 상한
-	 * (collectionPostLimit, <b>0 이하면 무제한</b> — backfill-max-per-run 관용 일치) 도달.
+	 * (collectionPostLimit, <b>0 이하면 무제한</b>) 도달.
 	 * ①②⑤는 coveredCutoff=true → touchCrawledDepth로 깊이를 touch하고, ③④는 미커버라
 	 * touch하지 않는다(다음 스윕이 같은 깊이를 다시 연다). 단 ⑤의 touch 깊이는 ①②와 달리
 	 * <b>실제 커버 깊이가 아니라 목표 컷 전체</b>다 — 컷 밖 게시물의 지표를 마지막 수집 시점으로
@@ -242,8 +242,8 @@ public class BrandCollectService {
 			// due의 last_crawled_at이 실크롤 없이 갱신돼 ①매 스윕이 그 깊이를 다시 여는 낭비 루프가
 			// 차단되고 ②그 게시물들은 마지막 수집 시점 지표로 동결된 채 계속 서빙된다(was 목록
 			// 상한 2,000과 정합). 판정이 커서 소진 뒤인 이유는 밸브와 동일 — 마지막 페이지에서 정확히
-			// 상한에 닿는 건 자연 종료다. 0 이하면 무제한이다(backfill-max-per-run 관용 일치) —
-			// 0을 "1페이지 후 목표 컷 전체 동결"로 읽으면 브랜드가 티어 주기 동안 조용히 얼어붙는다.
+			// 상한에 닿는 건 자연 종료다. 0 이하면 무제한이다 — 0을 "1페이지 후 목표 컷 전체 동결"로
+			// 읽으면 브랜드가 티어 주기 동안 조용히 얼어붙는다.
 			if (collectionPostLimit > 0 && seen.size() >= collectionPostLimit) {
 				log.info("브랜드 태그 수집 개수 상한({}) 도달 — {} 의도된 자연 종료"
 								+ " (열거 {}건, 목표 컷 {}, 실제 커버 깊이 {})",
