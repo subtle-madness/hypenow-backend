@@ -366,8 +366,12 @@ public class BrandPostAssembler {
 				.toList();
 	}
 
-	/** campaignIds 배치 조회(설계 §결정 3) — shortcode당 다건일 수 있어(N:M) 그룹핑한다. */
-	private Map<String, List<String>> campaignIdsByCode(long brandId, Set<String> codes) {
+	/**
+	 * campaignIds 배치 조회(설계 §결정 3) — shortcode당 다건일 수 있어(N:M) 그룹핑한다.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 판정을 공유한다 — 판정 함수 이원화 금지.
+	 */
+	public Map<String, List<String>> campaignIdsByCode(long brandId, Set<String> codes) {
 		Map<String, List<String>> byCode = new LinkedHashMap<>();
 		for (BrandPostCampaignRepository.Link link : postCampaignRepository.findByBrandAndShortCodes(brandId, codes)) {
 			byCode.computeIfAbsent(link.shortCode(), k -> new ArrayList<>()).add(String.valueOf(link.campaignId()));
@@ -416,24 +420,38 @@ public class BrandPostAssembler {
 	}
 
 	/**
+	 * 게시자 해석 입력 키 — 산지(풀 행·성과 대시보드 인덱스 행)가 달라도 해석에 필요한 값은 이 셋뿐이다.
+	 */
+	public record AuthorKey(String shortCode, String igUserId, String username) {
+	}
+
+	/** 풀 행용 어댑터 — 해석 로직은 {@link #resolveAuthorsByKeys}가 단일 산지다. */
+	private Map<String, AuthorRow> resolveAuthors(List<BrandTaggedPostRow> posts) {
+		return resolveAuthorsByKeys(posts.stream()
+				.map(p -> new AuthorKey(p.shortCode(), p.authorIgUserId(), p.authorUsername())).toList());
+	}
+
+	/**
 	 * 게시자 프로필 해석 — 기본은 ig_user_id, 못 찾은 건만 username으로 한 번 더 찾는다(2차 SQL은
 	 * 전부 해석되면 아예 돌지 않는다). 열거 셰이프에 따라 author_ig_user_id가 비는 행이 있어
 	 * 폴백 경로가 필요하다({@code findAuthorsByUsername}은 계정당 최신 1행만 준다).
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 판정을 공유한다 — 판정 함수 이원화 금지.
 	 */
-	private Map<String, AuthorRow> resolveAuthors(List<BrandTaggedPostRow> posts) {
-		Set<String> igUserIds = posts.stream().map(BrandTaggedPostRow::authorIgUserId)
+	public Map<String, AuthorRow> resolveAuthorsByKeys(List<AuthorKey> keys) {
+		Set<String> igUserIds = keys.stream().map(AuthorKey::igUserId)
 				.filter(Objects::nonNull).collect(Collectors.toCollection(LinkedHashSet::new));
 		Map<String, AuthorRow> byIgUserId = brandReadRepository.findAuthors(igUserIds).stream()
 				.collect(Collectors.toMap(AuthorRow::igUserId, Function.identity(), (a, b) -> a));
 
 		Map<String, AuthorRow> byPost = new LinkedHashMap<>();
 		Set<String> pendingUsernames = new LinkedHashSet<>();
-		for (BrandTaggedPostRow post : posts) {
-			AuthorRow row = post.authorIgUserId() == null ? null : byIgUserId.get(post.authorIgUserId());
+		for (AuthorKey key : keys) {
+			AuthorRow row = key.igUserId() == null ? null : byIgUserId.get(key.igUserId());
 			if (row != null) {
-				byPost.put(post.shortCode(), row);
-			} else if (post.authorUsername() != null) {
-				pendingUsernames.add(post.authorUsername());
+				byPost.put(key.shortCode(), row);
+			} else if (key.username() != null) {
+				pendingUsernames.add(key.username());
 			}
 		}
 		if (pendingUsernames.isEmpty()) {
@@ -442,11 +460,11 @@ public class BrandPostAssembler {
 
 		Map<String, AuthorRow> byUsername = brandReadRepository.findAuthorsByUsername(pendingUsernames).stream()
 				.collect(Collectors.toMap(AuthorRow::username, Function.identity(), (a, b) -> a));
-		for (BrandTaggedPostRow post : posts) {
-			if (!byPost.containsKey(post.shortCode()) && post.authorUsername() != null) {
-				AuthorRow row = byUsername.get(post.authorUsername());
+		for (AuthorKey key : keys) {
+			if (!byPost.containsKey(key.shortCode()) && key.username() != null) {
+				AuthorRow row = byUsername.get(key.username());
 				if (row != null) {
-					byPost.put(post.shortCode(), row);
+					byPost.put(key.shortCode(), row);
 				}
 			}
 		}
@@ -563,8 +581,12 @@ public class BrandPostAssembler {
 		return resolveSource(post.tagDetectedAt(), post.directRegisteredAt(), registeredByUser);
 	}
 
-	/** 판정 코어 — 풀 행({@code BrandTaggedPostRow})과 인덱스 행이 같은 파생 규칙을 공유한다. */
-	private static String resolveSource(OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
+	/**
+	 * 판정 코어 — 풀 행({@code BrandTaggedPostRow})과 인덱스 행이 같은 파생 규칙을 공유한다.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 판정을 공유한다 — 판정 함수 이원화 금지.
+	 */
+	public static String resolveSource(OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
 			boolean registeredByUser) {
 		if (directRegisteredAt == null) {
 			return SOURCE_TAGGED;
