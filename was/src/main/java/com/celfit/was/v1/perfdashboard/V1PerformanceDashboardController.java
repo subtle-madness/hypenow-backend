@@ -8,8 +8,10 @@ import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.monitoring.ItemStatus;
 import com.celfit.was.v1.perfdashboard.DashboardQueries.PageParams;
 import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler.DashboardRef;
+import com.celfit.was.v1.perfdashboard.PerformanceGrowthAggregator.Granularity;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -66,6 +68,32 @@ public class V1PerformanceDashboardController {
 	/** 스냅샷 모드(2026-08-27 §3) — 기본은 전체 이력(full), latest는 최신 1개로 줄인 옵트인이다. */
 	private static final String SNAPSHOT_MODE_FULL = "full";
 	private static final String SNAPSHOT_MODE_LATEST = "latest";
+
+	/**
+	 * growth <b>Point 총량</b> 상한 — 응답 Point 수는 {@code 버킷 수 × (1 + 계정 축 크기)}다(총계 축 1개
+	 * + 계정 시리즈).
+	 *
+	 * <p>캘리브레이션(2026-08-28): 축을 곱에 넣으면 종전 750은 <b>정상 사용을 막는다</b> — FE 개요 탭의
+	 * 계정 성장 차트가 쓰는 일 입자 × 1년 × 계정 4개만으로 365 × 5 = 1,825다. 그래서 <b>4,000</b>이다:
+	 * 일 입자 1년 × 연결 7계정(365 × 8 = 2,920)은 통과하고, 일 입자 2년 × 7계정(5,840)은 400이라
+	 * granularity 상향으로 빠져나가게 된다. 막으려는 것은 수백만 Point(OOM·직렬화 붕괴) 시나리오라
+	 * 여기서 세 자릿수 배 거리가 남는다.
+	 */
+	private static final int MAX_GROWTH_POINTS = 4000;
+
+	/** growth 버킷 단위 값 공간 — 기본값은 {@code month}(개요 탭 초기 화면). */
+	private static final String GRANULARITY_DAY = "day";
+	private static final String GRANULARITY_WEEK = "week";
+	private static final String GRANULARITY_MONTH = "month";
+
+	/**
+	 * 계정 축 정렬(growth) — 브랜드 id는 숫자 문자열이라 숫자 오름차순이 자연스럽다. 숫자가 아닌 id가
+	 * 섞여도 죽지 않게 파싱 실패는 뒤로 보내고 문자열 순으로 이어 붙인다(전순서 보장).
+	 */
+	private static final Comparator<String> ACCOUNT_ID_ORDER = Comparator
+			.comparing(V1PerformanceDashboardController::accountIdOrder,
+					Comparator.nullsLast(Comparator.naturalOrder()))
+			.thenComparing(Comparator.naturalOrder());
 
 	/**
 	 * statusCounts 키 순서(FE 탭 순서) — 레거시 {@link ItemStatus} 어휘 그대로다. 브랜드 풀 합성
@@ -313,6 +341,132 @@ public class V1PerformanceDashboardController {
 		return ApiResponse.ok(data, meta);
 	}
 
+	/**
+	 * 성장 시계열 집계(스펙 2026-08-28 §5) — 목록과 같은 인덱스 ref를 업로드일 버킷으로 접는다. DB
+	 * 신규 쿼리는 없다(집계기는 순수 함수, {@link PerformanceGrowthAggregator}).
+	 *
+	 * <p><b>페이지·정렬 파라미터가 없다</b> — 응답이 시계열 축 하나라 자를 지점도, 줄 세울 행도 없다.
+	 * 그래서 {@code meta}도 없이 {@code data} 하나만 내린다(FE 제안 셰이프).
+	 *
+	 * <p>필터는 목록과 같은 분류 축(sponsorship·accountIds·campaignId·accountType)이고 전부 집계
+	 * 모수에 적용된다. {@code from}·{@code to}는 ref 필터(업로드일 미상 제외)와 버킷 범위 양쪽에
+	 * 걸린다 — 지정하면 그 구간의 버킷이 빈 버킷 포함 연속 생성되고, 양끝 부분 버킷의 라벨은 구간과의
+	 * 교집합으로 클램프된다({@link PerformanceGrowthResponse.Point} javadoc).
+	 *
+	 * <p><b>계정 축 결정</b>: {@code accountIds}를 지정하면 그 목록 그대로다(순서 유지 — FE 범례 순서가
+	 * 요청 순서와 같아야 한다). 미지정이면 <b>연결 활성 브랜드 전체</b>
+	 * ({@code index.brandsById()})에서 accountType 술어를 통과하는 계정이다 — {@code /comparison}의
+	 * "축은 연결된 계정"과 같은 규칙이라 두 표면의 범례가 어긋나지 않고, 이 기간에 게시물이 0건인
+	 * 계정도 빈 시리즈로 남아 차트에서 계정이 사라지지 않는다. keySet 순회 순서는 조립 경로에 따라
+	 * 흔들릴 수 있어 <b>브랜드 id 숫자 오름차순으로 결정화</b>한다(같은 요청이 같은 축을 준다).
+	 *
+	 * <p><b>Point 총량 상한 {@value #MAX_GROWTH_POINTS}</b> — 응답이 실제로 만드는 점의 수
+	 * ({@code 버킷 수 × (1 + 계정 축 크기)})로 판정한다(넘으면 400). <b>버킷 단독 상한은 우회
+	 * 가능했다</b>(PR ③ 리뷰): 계정 축은 {@code accountIds}로 요청자가 정하는 값이라, 버킷 수가 상한
+	 * 이내여도 {@code accountIds}에 수백 개를 나열하면 Point가 버킷 수의 수백 배로 불어난다.
+	 * 판정은 두 번이다:
+	 * <ol>
+	 *   <li>양쪽을 지정한 요청은 {@code index()} <b>앞에서</b> 먼저 걸러진다(DB를 건드리지 않는 빠른
+	 *       400). 이 시점엔 계정 축이 아직 없어(미지정이면 연결 브랜드에서 나온다) <b>버킷 수만으로
+	 *       보수 판정</b>한다 — 한도는 같은 {@value #MAX_GROWTH_POINTS}라 두 판정이 일관된다(버킷
+	 *       수 자체가 한도를 넘으면 어떤 축에서도 넘는다). 축을 포함한 판정은 아래 재판정이 맡는다.</li>
+	 *   <li>{@code index()} 뒤에서 축과 유효 범위가 확정되면 다시 판정한다. 한쪽이라도 생략한 요청은
+	 *       반대쪽 끝이 <b>데이터 범위</b>(필터된 ref의 최소·최대 업로드일)로 확정돼야 범위를 알 수
+	 *       있어 여기서만 버킷 수가 나온다({@link PerformanceGrowthAggregator#effectiveRange} — 집계기와
+	 *       같은 메서드다). 이 재판정이 없으면 {@code ?granularity=day&to=9999-12-31} 한 방으로 수백만
+	 *       버킷 × (1 + 계정 수)개의 Point가 만들어진다 — 상한을 통째로 우회하는 구멍이었다.</li>
+	 * </ol>
+	 * 양쪽을 생략한 요청도 이 재판정을 받는다 — 수년치 레거시 데이터 + {@code granularity=day}면 막히고,
+	 * 400 메시지가 granularity 상향을 안내하므로 사용자가 스스로 빠져나올 수 있다(의도된 동작).
+	 * 계산은 버킷 시작일 사이의 걸음 수라 루프 없이 정확하다.
+	 */
+	@GetMapping("/growth")
+	public ApiResponse<PerformanceGrowthResponse> growth(
+			@AuthenticationPrincipal AppUserDetails principal,
+			@RequestParam(required = false) String from,
+			@RequestParam(required = false) String to,
+			@RequestParam(required = false) String granularity,
+			@RequestParam(required = false) String sponsorship,
+			@RequestParam(required = false) String accountIds,
+			@RequestParam(required = false) String campaignId,
+			@RequestParam(required = false) String accountType) {
+		String sponsorshipFilter = DashboardQueries.normalizeFilter(sponsorship, "sponsorship",
+				BrandSponsorshipClassifier.SPONSORED, BrandSponsorshipClassifier.ORGANIC,
+				BrandSponsorshipClassifier.UNKNOWN);
+		String campaignFilter = DashboardQueries.normalizeFilter(campaignId);
+		Set<String> accountIdsFilter = DashboardQueries.normalizeAccountIds(accountIds);
+		// 함의 인자는 "브랜드를 콕 집어 물었는가" — 이 표면엔 단수 파라미터가 없어 accountIds뿐이다.
+		String accountTypeFilter = DashboardQueries.normalizeAccountType(accountType, accountIdsFilter != null);
+		Granularity bucket = normalizeGranularity(granularity);
+		LocalDate fromDate = DashboardQueries.parseDate(from, "from");
+		LocalDate toDate = DashboardQueries.parseDate(to, "to");
+		// 값 공간 검증은 전부 인덱스 패스 앞이다 — 400으로 끝날 요청이 DB를 건드리면 안 된다.
+		// Point 예산은 여기서 "양쪽 지정" 요청만, 그것도 축을 뺀 버킷 수로 보수 판정한다(축은 아직
+		// 모른다 — 나머지는 축·유효 범위 확정 후 재판정, 아래).
+		checkPointBudget(bucket, fromDate, toDate, 0);
+
+		PerformanceContentAssembler.DashboardIndex index = assembler.index(principal.getUserId());
+		Set<String> competitorIds = index.competitorBrandAccountIds();
+
+		// 계정 축 — 지정 목록(순서 유지) 아니면 연결 활성 브랜드에서 accountType 통과분(위 javadoc).
+		// 예산 재판정보다 앞이다(축 크기가 Point 총량의 곱셈 인자라서다) — 축 계산엔 필터 결과가
+		// 필요 없다(brandsById·competitorIds뿐). accountIds 축은 "요청한 것"이라, accountType 필터로
+		// 모수에서 빠진 계정도 축에는 남아 빈 시리즈로 내려간다.
+		List<String> accountAxis = accountIdsFilter != null ? List.copyOf(accountIdsFilter)
+				: index.brandsById().keySet().stream()
+						.filter(id -> DashboardQueries.matchesAccountType(id, accountTypeFilter, competitorIds))
+						.sorted(ACCOUNT_ID_ORDER)
+						.toList();
+
+		List<DashboardRef> filtered = index.refs().stream()
+				.filter(r -> (sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
+						&& DashboardQueries.matchesCampaign(r.campaignId(), campaignFilter)
+						// 단수 필터 자리는 항상 null이다(이 표면엔 파라미터가 없다 — 위 javadoc).
+						&& DashboardQueries.matchesBrand(r.brandAccountId(), null, accountIdsFilter)
+						&& DashboardQueries.matchesAccountType(r.brandAccountId(), accountTypeFilter, competitorIds)
+						&& DashboardQueries.withinUploadWindow(r.uploadedOn(), fromDate, toDate))
+				.toList();
+
+		// 예산 재판정 — 축 크기가 확정됐고, 생략한 끝은 데이터 범위로 확정되므로 여기서만 실제 Point
+		// 총량을 알 수 있다. 범위 산출은 집계기와 같은 메서드다(규칙이 갈리면 판정이 어긋난다).
+		PerformanceGrowthAggregator.Range range =
+				PerformanceGrowthAggregator.effectiveRange(filtered, fromDate, toDate);
+		checkPointBudget(bucket, range.from(), range.to(), accountAxis.size());
+
+		return ApiResponse.ok(
+				PerformanceGrowthAggregator.aggregate(filtered, bucket, fromDate, toDate, accountAxis));
+	}
+
+	/**
+	 * Point 총량 예산 판정 — 넘으면 400이다. 예산이 없으면 {@code granularity=day}에 수백 년 구간이
+	 * 오는 것만으로, 또는 {@code accountIds}에 계정을 수백 개 나열하는 것만으로 응답 Point가 수백만
+	 * 개가 된다(집계 자체는 싸지만 직렬화·FE 렌더가 무너진다).
+	 *
+	 * <p>인자는 <b>확정된 유효 범위</b>여야 한다 — 요청 파라미터를 그대로 넘기는 호출(사전 판정)은 양쪽을
+	 * 지정한 요청만 잡고, 나머지는 데이터 범위가 확정된 뒤 다시 불러야 한다(위 {@link #growth} javadoc).
+	 * 범위가 확정되지 않거나(둘 중 하나가 null — 유효 ref 0건) 뒤집힌 구간이면 버킷 자체가 없어
+	 * 판정할 것이 없다.
+	 *
+	 * @param accountCount 계정 축 크기 — Point는 버킷마다 총계 1개 + 계정 수만큼이라 곱셈 인자가
+	 *     {@code 1 + accountCount}다. 축이 아직 확정되지 않은 사전 판정은 0을 넘겨 보수 판정한다.
+	 */
+	private static void checkPointBudget(Granularity granularity, LocalDate from, LocalDate to,
+			int accountCount) {
+		if (from == null || to == null || from.isAfter(to)) {
+			return;
+		}
+		LocalDate first = PerformanceGrowthAggregator.bucketStart(from, granularity);
+		LocalDate last = PerformanceGrowthAggregator.bucketStart(to, granularity);
+		long buckets = switch (granularity) {
+			case DAY -> ChronoUnit.DAYS.between(first, last) + 1;
+			case WEEK -> ChronoUnit.DAYS.between(first, last) / 7 + 1;
+			case MONTH -> ChronoUnit.MONTHS.between(first, last) + 1;
+		};
+		if (buckets * (1L + accountCount) > MAX_GROWTH_POINTS) {
+			throw V1ApiException.validation("조회 구간이 너무 넓어요. 기간을 좁히거나 granularity를 높여 주세요.");
+		}
+	}
+
 	// ---------- meta ----------
 
 	/**
@@ -467,6 +621,32 @@ public class V1PerformanceDashboardController {
 			throw V1ApiException.validation("order 값이 올바르지 않아요.");
 		}
 		return true;
+	}
+
+	/**
+	 * 버킷 단위 — 미지정·빈 값은 기본값 {@code month}, 값 공간 밖은 400. {@link DashboardQueries}가
+	 * 아니라 여기 두는 이유는 값 공간이 이 표면 전용이어서다(목록·인플루언서엔 이 축이 없다).
+	 */
+	private static Granularity normalizeGranularity(String raw) {
+		if (raw == null || raw.isBlank() || GRANULARITY_MONTH.equals(raw)) {
+			return Granularity.MONTH;
+		}
+		if (GRANULARITY_DAY.equals(raw)) {
+			return Granularity.DAY;
+		}
+		if (GRANULARITY_WEEK.equals(raw)) {
+			return Granularity.WEEK;
+		}
+		throw V1ApiException.validation("granularity 값이 올바르지 않아요.");
+	}
+
+	/** 계정 축 정렬 키 — 숫자로 못 읽는 id는 null(뒤로 밀린다, {@link #ACCOUNT_ID_ORDER}). */
+	private static Long accountIdOrder(String brandAccountId) {
+		try {
+			return Long.valueOf(brandAccountId);
+		} catch (NumberFormatException e) {
+			return null;
+		}
 	}
 
 	/** 스냅샷 모드 — 미지정·빈 값·{@code full}은 전체 이력(하위 호환). @return true면 최신 1개만 */
