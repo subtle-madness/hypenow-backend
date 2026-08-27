@@ -50,8 +50,9 @@ applyFnb = 이번 응답에 fnbClass 있음
   낭비하는 것을 차단(08-27 실측: 하루 대기 1,451명). 비뷰티→뷰티 뒤집힘 기회는 계정당
   월 1회로 유지된다.
 - 쿨다운 값은 `app_setting` 키 **`beauty.rejudge-cooldown-days`**(기본 30) —
-  `SettingsService.effective()` 패턴, crawler Flyway 마이그레이션으로 시드
-  (`ON CONFLICT DO NOTHING`, UTC 타임스탬프 채번).
+  `SettingsService.effective()` 패턴. 기본값은 crawler 숫자 설정 관례대로 yml
+  `@ConfigurationProperties`(`BeautyProperties`)에 두고 app_setting은 오버라이드만
+  담당한다(Flyway 시드는 뷰가 직접 읽는 키 전용 패턴이라 여기선 불필요 — 마이그레이션 없음).
 - `findCaptionRejudgeTargets`는 재판정 시 judged_at 갱신으로 조건이 닫히는 자기
   종결형이라 쿨다운을 붙이지 않는다.
 
@@ -70,7 +71,7 @@ beauty 크론(03:03 KST, rejudge=true)은 그대로 둔다. 신규 QUALIFIED 판
 ## 영향 범위
 
 - 변경 파일: `BeautyJob`(적용 가드), `InfluencerRepository.findRejudgeTargets`(쿨다운
-  파라미터), `SettingsService`(+키), Flyway 시드 마이그레이션 1개. 스키마 변경 없음.
+  파라미터), `SettingsService`(+키), `BeautyProperties`(+기본값)·yml. 스키마 변경·마이그레이션 없음.
 - 뷰티 축 판정 로직·MANUAL 보호·대시보드 쿼리 불변.
 - 기대 효과: 대시보드 ③-2 F&B 수치가 정착 후 고정적(306명 업그레이드 재판정분만 등락),
   일일 재판정 LLM 호출 ~1,450명분 → 쿨다운 만료분으로 감소.
