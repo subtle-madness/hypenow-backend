@@ -269,6 +269,22 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
             @Param("statuses") java.util.Collection<InfluencerStatus> statuses,
             @Param("classes") java.util.Collection<CategoryClass> classes, Pageable pageable);
 
+    /** 명단 홈/리빙 필터: 선택한 분류(home_living_class)만. */
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndHomeLivingClassIn(
+            java.util.Collection<InfluencerStatus> statuses,
+            java.util.Collection<CategoryClass> classes, Pageable pageable);
+
+    /** 명단 홈/리빙 필터: 홈/리빙 미판정(백필 잔여)만. */
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndHomeLivingClassIsNull(
+            java.util.Collection<InfluencerStatus> statuses, Pageable pageable);
+
+    /** 명단 홈/리빙 필터: 선택 분류 + 미판정을 함께 체크한 경우. */
+    @Query("select i from Influencer i where i.status in :statuses "
+            + "and (i.homeLivingClass in :classes or i.homeLivingClass is null)")
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndHomeLivingClassInOrNull(
+            @Param("statuses") java.util.Collection<InfluencerStatus> statuses,
+            @Param("classes") java.util.Collection<CategoryClass> classes, Pageable pageable);
+
     /** F&B 판정 5분류 집계 — 대시보드 타일용(COMPANY·SERVICE 등, 뷰티 축 countByStatusAndBeautyClass와 대칭). */
     long countByStatusAndFnbClass(InfluencerStatus status, CategoryClass fnbClass);
 
