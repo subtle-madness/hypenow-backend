@@ -143,10 +143,13 @@ services:
       IMAGE_STORE: ${IMAGE_STORE:-par}
       IMAGE_GCS_BUCKET: ${IMAGE_GCS_BUCKET:-}
       IMAGE_GCS_KEY: ${IMAGE_GCS_KEY:-/run/secrets/gcs-image-archiver.json}
-      JAVA_OPTS: "-Xms256m -Xmx768m"
+      # OOM 자동 힙 덤프(08-27 스펙) — HotSpot은 기존 파일을 덮어쓰지 않아 첫 OOM분 1개만
+      # 남는다(크래시루프에도 디스크 안전). 분석 후 수동 삭제. cgroup OOM kill은 덤프 불가.
+      JAVA_OPTS: "-Xms256m -Xmx768m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/analytics.hprof"
     volumes:
       - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
       - ./secrets/gcs-image-archiver.json:/run/secrets/gcs-image-archiver.json:ro
+      - ./dumps:/dumps
     ports:
       - "127.0.0.1:8082:8082"   # 루프백 전용 — 어드민은 SSH 터널로만
     # 8082 리슨 = Spring 기동 완료 = analysis DB Flyway 마이그레이션 적용 완료 신호.
@@ -198,7 +201,10 @@ services:
       CRAWLER_SCHEDULE_QUALIFY_CRON: "0 0/30 17-18 * * *"
       CRAWLER_SCHEDULE_BEAUTY_CRON: "0 0,30 18 * * *"
       CRAWLER_SCHEDULE_DISCOVER_CRON: "-"
-      JAVA_OPTS: "-Xmx1g"
+      # OOM 자동 힙 덤프 — analytics 주석 참조(첫 OOM분 1개만 보존)
+      JAVA_OPTS: "-Xmx1g -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/crawler.hprof"
+    volumes:
+      - ./dumps:/dumps
     ports:
       - "127.0.0.1:8080:8080"   # 루프백 전용 — 어드민은 SSH 터널로만
     depends_on:
@@ -249,8 +255,11 @@ services:
       MONITORING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/monitoring
       MONITORING_DATASOURCE_USERNAME: was_reader
       MONITORING_DATASOURCE_PASSWORD: ${WAS_READER_PASSWORD:-}
-      # 상주 메모리 확보 — 오라클 무료 계정 유휴 회수(메모리 10% 미만 조건) 방어 겸 여유
-      JAVA_OPTS: "-Xms2g -Xmx2g -XX:+AlwaysPreTouch"
+      # 상주 메모리 확보 — 오라클 무료 계정 유휴 회수(메모리 10% 미만 조건) 방어 겸 여유.
+      # OOM 자동 힙 덤프 — analytics 주석 참조(첫 OOM분 1개만 보존, 덤프 크기 ~2g)
+      JAVA_OPTS: "-Xms2g -Xmx2g -XX:+AlwaysPreTouch -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/was.hprof"
+    volumes:
+      - ./dumps:/dumps
     # 롤링 배포(scripts/rollout.sh)의 전환 판정 — 8081 리슨 = Spring 기동 완료(app Flyway 포함).
     # 이미지에 curl이 없어 bash /dev/tcp(analytics와 동일 관용구). start_period는 2g pre-touch 여유.
     healthcheck:
@@ -328,13 +337,15 @@ services:
       # 힙 512m(08-12 OOM 후속): 백필 core 2병렬 대비 — 힙 예산은 동시 콜 13 × ~10MB + 상주분
       # (08-13 보강 워커 6→10 상향 반영: 워커 10 + 스윕 core 1 + 등록 core 2가 최악값).
       # ExitOnOOM: OOM 후 반쯤 죽은 채 버티지 않고 즉시 종료 → restart 정책으로 깨끗하게 복귀.
-      JAVA_OPTS: "-Xms128m -Xmx512m -XX:+ExitOnOutOfMemoryError"
+      # OOM 자동 힙 덤프 — analytics 주석 참조. ExitOnOOM과 공존(덤프를 먼저 쓰고 종료).
+      JAVA_OPTS: "-Xms128m -Xmx512m -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/monitoring.hprof"
       # 액추에이터 관리 포트 분리(스펙 2026-08-22) — prod 네트워크 내부(prometheus 스크레이프) 전용.
       # was의 9081(application-prod.yml)과 같은 의도인데 monitoring은 prod 프로필 없이 env 주입이 관용구.
       MANAGEMENT_SERVER_PORT: "9083"
     volumes:
       - ./secrets/gcs-image-archiver.json:/run/secrets/gcs-image-archiver.json:ro
       - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
+      - ./dumps:/dumps
     # 8083 리슨 = Spring 기동 완료 = monitoring DB Flyway 마이그레이션 적용 완료 신호.
     # 이미지에 curl이 없어 bash /dev/tcp로 확인(analytics와 동일 관용구).
     healthcheck:
