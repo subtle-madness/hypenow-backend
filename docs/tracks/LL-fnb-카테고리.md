@@ -1,6 +1,6 @@
 # LL — F&B 카테고리 추가(판정 2축화)
 
-- **소속 트랙군**: crawler 판정 트랙 — 설계: [specs/2026-08-23-fnb-category-design.md](../superpowers/specs/2026-08-23-fnb-category-design.md)
+- **소속 트랙군**: crawler 판정 트랙 — 설계: [specs/2026-08-23-fnb-category-design.md](../superpowers/specs/archive/2026-08-23-fnb-category-design.md)
 - **의존**: 트랙 P(뷰티 판정 v3 한국어 필터)·CC(FOREIGN_INFLUENCER 재판정)의 판정 잡 구조 위에서 동작
 - **상태**: ✅ 구현 완료(2026-08-24, 한 PR) — 수집 토글 on은 백필 완료 후 별도 결정(⬜)
 
@@ -63,5 +63,5 @@
 
 ## 관련 문서
 
-- [specs/2026-08-23-fnb-category-design.md](../superpowers/specs/2026-08-23-fnb-category-design.md) — 설계 전문.
+- [specs/2026-08-23-fnb-category-design.md](../superpowers/specs/archive/2026-08-23-fnb-category-design.md) — 설계 전문.
 - [plans/archive/2026-08-24-fnb-category.md](../superpowers/plans/archive/2026-08-24-fnb-category.md) — 구현 계획(실행 완료).

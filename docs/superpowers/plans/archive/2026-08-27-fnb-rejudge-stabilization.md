@@ -9,7 +9,7 @@
 
 **Tech Stack:** Java 21, Spring Boot 4.1, Spring Data JPA(JPQL), Mockito 단위 테스트 + Testcontainers 통합 테스트.
 
-**스펙:** [docs/superpowers/specs/2026-08-27-fnb-rejudge-stabilization-design.md](../specs/2026-08-27-fnb-rejudge-stabilization-design.md)
+**스펙:** [docs/superpowers/specs/2026-08-27-fnb-rejudge-stabilization-design.md](../specs/archive/2026-08-27-fnb-rejudge-stabilization-design.md)
 
 ## Global Constraints
 

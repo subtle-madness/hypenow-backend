@@ -1,7 +1,7 @@
 # 브랜드 초기 수집 완결 배치 서빙 구현 계획
 
 > 상태: ✅ 실행됨(2026-08-13, 커밋 `2d0d9b60`~`43b8a6a7`) · 설계:
-> [2026-08-13-brand-initial-batch-serving-design.md](../../specs/2026-08-13-brand-initial-batch-serving-design.md)
+> [2026-08-13-brand-initial-batch-serving-design.md](../../specs/archive/2026-08-13-brand-initial-batch-serving-design.md)
 >
 > **실행 중 계획이 세 번 수정됐다** — 정본은 스펙의 `[정정]` 표시 절(§2·§3·§5)이다.
 > Task 6이 지시한 `sweepCore(brand, page -> enrich(...))`와 §5의 "조회 한 곳에 게이트"는
@@ -15,7 +15,7 @@
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · Gradle 멀티모듈(monitoring/was) · Flyway · JdbcTemplate(monitoring) / JdbcClient(was) · JUnit 5 + AssertJ · Testcontainers PostgreSQL
 
-**설계 정본:** [specs/2026-08-13-brand-initial-batch-serving-design.md](../specs/2026-08-13-brand-initial-batch-serving-design.md)
+**설계 정본:** [specs/2026-08-13-brand-initial-batch-serving-design.md](../specs/archive/2026-08-13-brand-initial-batch-serving-design.md)
 
 ## Global Constraints
 

@@ -1,7 +1,7 @@
 # 브랜드 태그 수집 개수 상한(collection-post-limit) — 의도된 자연 종료 정식 기능화
 
 > 상태: 🟢 활성 (2026-08-19 — marynmay_global 등록 백필 1만 건 운영 실측 대응.
-> [08-12 상한 개정 스펙](2026-08-12-brand-sweep-cap-revision-design.md)의 안전 밸브(10,000·ERROR)는
+> [08-12 상한 개정 스펙](archive/2026-08-12-brand-sweep-cap-revision-design.md)의 안전 밸브(10,000·ERROR)는
 > 그대로 두고, 그 **안쪽에 비용 목적의 의도된 컷**을 새로 놓는다 — 티어 정책·수집 경로·저장 골격 불변)
 
 ## 0. 한 줄 요약
