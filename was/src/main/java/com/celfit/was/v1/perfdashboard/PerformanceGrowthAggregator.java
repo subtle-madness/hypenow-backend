@@ -180,13 +180,11 @@ public final class PerformanceGrowthAggregator {
 	 * 라벨은 요청 구간과의 교집합으로 클램프한다(클래스 javadoc) — 빈 버킷·계정 시리즈도 같은 경로라
 	 * 총계와 계정 축의 라벨이 언제나 같다.
 	 *
-	 * <p><b>likes 게이트가 {@code /comparison}과 갈리는 유일한 케이스</b>(PR ③ 리뷰): 여기서는
-	 * {@code latestLikesHidden}이면 값이 있어도 합산에서 빼고 {@code likesHiddenCount}로만 남기는데,
-	 * {@code /comparison}은 숨김 여부와 무관하게 값을 더한다(카운트는 따로 센다). 두 표면이 실제로
-	 * 갈리는 입력은 {@code likes != null && likesHidden == true} 조합뿐이고, 그건 산지가 둘인 콘텐츠의
-	 * 스냅샷 병합({@code PerformanceContentAssembler.mergeOne})에서만 나온다 — 한 산지는 값을 주고
-	 * 다른 산지는 숨김을 관측했을 때 값은 채택되고 hidden은 OR로 남는다. 방향은 <b>growth가 보수적</b>
-	 * (숨김 관측이 하나라도 있으면 값을 안 쓴다). mergeOne 정합은 이 PR 범위 밖이다.
+	 * <p>likes는 숨김이면 합산에서 빼고 {@code likesHiddenCount}로만 남긴다 — {@code /comparison}
+	 * ({@code PerformanceComparisonAssembler.aggregate})은 게이트 없이 더하지만 결과는 같다:
+	 * 숨김 ref의 likes는 항상 null이라 더할 값 자체가 없다. 이 불변식(숨김이면 값 null)은 단일
+	 * 산지 계약이고, 산지가 둘인 콘텐츠의 스냅샷 병합({@code PerformanceContentAssembler.mergeOne},
+	 * 2026-08-28 정합)도 숨김 관측이 있으면 값을 접어 유지한다.
 	 */
 	private static Point foldOne(LocalDate start, List<DashboardRef> bucket, Granularity granularity,
 			LocalDate from, LocalDate to) {
