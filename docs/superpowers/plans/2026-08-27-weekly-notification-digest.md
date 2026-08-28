@@ -3347,7 +3347,7 @@
 
 **Steps:**
 
-- [ ] 실패하는 테스트 작성 — 이 태스크는 **삭제가 본체**라 새 동작을 추가하지 않는다. 대신 남길 계약을 못박도록 `monitoring/src/test/java/com/celfit/monitoring/alarm/AlarmRecorderTest.java`의 레인 테스트 2개를 하나로 합친다. 기존 테스트 `수집_시작_즉시_레인은_발송_시각이_발생_시각과_같다`(84~95행)와 `자동_전환은_아침_레인이라_발송_시각이_발생_시각과_다르다`(97~104행)를 **둘 다 지우고** 그 자리에 아래 하나를 넣는다.
+- [x] 실패하는 테스트 작성 — 이 태스크는 **삭제가 본체**라 새 동작을 추가하지 않는다. 대신 남길 계약을 못박도록 `monitoring/src/test/java/com/celfit/monitoring/alarm/AlarmRecorderTest.java`의 레인 테스트 2개를 하나로 합친다. 기존 테스트 `수집_시작_즉시_레인은_발송_시각이_발생_시각과_같다`(84~95행)와 `자동_전환은_아침_레인이라_발송_시각이_발생_시각과_다르다`(97~104행)를 **둘 다 지우고** 그 자리에 아래 하나를 넣는다.
   ```java
   	/**
   	 * 즉시 레인 폐지(2026-08-27 주간 개편 §2) — 직접 등록발이든 스윕 자동 전환이든 진입점이
@@ -3374,13 +3374,13 @@
 
   `import java.sql.Timestamp;`가 없으면 추가한다.
 
-- [ ] 실행해 실패 확인
+- [x] 실행해 실패 확인
   ```
   ./gradlew :monitoring:test --tests "com.celfit.monitoring.alarm.AlarmRecorderTest"
   ```
   기대 출력: 컴파일 실패 — `cannot find symbol: method collectionStarted(long,Long,String,String)`.
 
-- [ ] 최소 구현 — `monitoring/src/main/java/com/celfit/monitoring/alarm/AlarmRecorder.java`의 50~62행(`collectionStartedImmediate`·`collectionStartedScheduled` 두 메서드)을 아래 하나로 교체한다.
+- [x] 최소 구현 — `monitoring/src/main/java/com/celfit/monitoring/alarm/AlarmRecorder.java`의 50~62행(`collectionStartedImmediate`·`collectionStartedScheduled` 두 메서드)을 아래 하나로 교체한다.
   ```java
   	/**
   	 * 수집 시작 적재 — 직접 등록발이든 스윕 첫 감지 자동 전환이든 같은 아침 레인이다.
@@ -3394,7 +3394,7 @@
   	}
   ```
 
-- [ ] 호출부 정합 — 두 파일을 고친다.
+- [x] 호출부 정합 — 두 파일을 고친다.
   - `monitoring/src/main/java/com/celfit/monitoring/service/RegistrationService.java` 131행:
     `alarms.collectionStartedImmediate(id, cmd.userId(), post.username(), shortCode);`
     → `alarms.collectionStarted(id, cmd.userId(), post.username(), shortCode);`
@@ -3403,7 +3403,7 @@
     `alarms.collectionStartedScheduled(t.id(), t.userId(), t.username(), detected.shortCode());`
     → `alarms.collectionStarted(t.id(), t.userId(), t.username(), detected.shortCode());`
 
-- [ ] 즉시 레인 제거 — `monitoring/src/main/java/com/celfit/monitoring/alarm/DispatchLane.java`를 아래 전문으로 교체하고, `monitoring/src/test/java/com/celfit/monitoring/alarm/DispatchLaneTest.java`에서 `immediate`를 검증하는 테스트(43행 부근)를 삭제한다.
+- [x] 즉시 레인 제거 — `monitoring/src/main/java/com/celfit/monitoring/alarm/DispatchLane.java`를 아래 전문으로 교체하고, `monitoring/src/test/java/com/celfit/monitoring/alarm/DispatchLaneTest.java`에서 `immediate`를 검증하는 테스트(43행 부근)를 삭제한다.
   ```java
   package com.celfit.monitoring.alarm;
 
@@ -3435,7 +3435,7 @@
   }
   ```
 
-- [ ] 발송 스택 삭제
+- [x] 발송 스택 삭제
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign rm \
     monitoring/src/main/java/com/celfit/monitoring/alarm/AlarmDispatchJob.java \
@@ -3450,7 +3450,7 @@
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign rm -r monitoring/src/main/java/com/celfit/monitoring/mail
   ```
 
-- [ ] 저장소 축소 — `monitoring/src/main/java/com/celfit/monitoring/alarm/AlarmEventRepository.java`를 아래 전문으로 교체한다(발송 대상 조회·상태 종결은 소비자가 사라졌다).
+- [x] 저장소 축소 — `monitoring/src/main/java/com/celfit/monitoring/alarm/AlarmEventRepository.java`를 아래 전문으로 교체한다(발송 대상 조회·상태 종결은 소비자가 사라졌다).
   ```java
   package com.celfit.monitoring.alarm;
 
@@ -3493,7 +3493,7 @@
   }
   ```
 
-- [ ] Clock 빈 소비자 확인 후 정리 — 남은 소비자가 없으면 `AlarmConfig`도 지운다.
+- [x] Clock 빈 소비자 확인 후 정리 — 남은 소비자가 없으면 `AlarmConfig`도 지운다.
   ```
   grep -rn "Clock" --include='*.java' monitoring/src/main/java
   ```
@@ -3503,21 +3503,21 @@
   ```
   다른 파일이 매치되면 `AlarmConfig`는 그대로 두고 클래스 Javadoc의 "발송 잡의 디바운스·due 판정" 문장만 "테스트가 시각을 고정하기 위한 공용 Clock"으로 고친다.
 
-- [ ] 설정 정리 — `monitoring/src/main/resources/application.yml`의 `alarm:` 블록(127~136행)과 `mail:` 블록(137~139행)을 통째로 지운다. `monitoring.alarm.*`·`monitoring.mail.*` 키는 남은 코드가 하나도 읽지 않는다.
+- [x] 설정 정리 — `monitoring/src/main/resources/application.yml`의 `alarm:` 블록(127~136행)과 `mail:` 블록(137~139행)을 통째로 지운다. `monitoring.alarm.*`·`monitoring.mail.*` 키는 남은 코드가 하나도 읽지 않는다.
 
-- [ ] 잔여 참조 확인
+- [x] 잔여 참조 확인
   ```
   grep -rn "AlarmDispatch\|AlarmMailComposer\|AlarmRecipientReader\|AlarmEmailStatus\|celfit.monitoring.mail\|collectionStartedImmediate\|collectionStartedScheduled\|DispatchLane.immediate" --include='*.java' --include='*.yml' monitoring/src was/src
   ```
   기대 출력: 매치 없음(exit code 1).
 
-- [ ] 실행해 통과 확인
+- [x] 실행해 통과 확인
   ```
   ./gradlew :monitoring:test
   ```
   기대 출력: `BUILD SUCCESSFUL`. `MigrationTest`는 `alarm_event` DDL을 그대로 검증하므로 영향이 없어야 한다.
 
-- [ ] 커밋
+- [x] 커밋
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add -A monitoring
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign commit -m "$(cat <<'EOF'

@@ -124,19 +124,6 @@ monitoring:
   gemini:
     api-key: ${GEMINI_API_KEY:}
     base-url: https://generativelanguage.googleapis.com
-  alarm:
-    dispatch-cron: "-"   # "-"=비활성. 운영은 5분 틱(0 */5 * * * *)을 env로 주입
-    debounce: 10m        # 즉시 레인 몰아치기 흡수 — 마지막 이벤트가 이 시간 안이면 다음 틱으로 미룬다
-    debounce-cap: 30m    # 디바운스 최대 대기 — 가장 오래된 due가 이 시간을 넘기면 유입 중이어도 발송
-    max-attempts: 5      # 행별 발송 시도 상한. 도달하면 due 조회에서 빠진다(영구 실패 수신자 무한 재시도 차단)
-    allowed-recipients: ${MONITORING_ALARM_ALLOWED_RECIPIENTS:}   # 콤마 목록. 비어있으면(운영 기본) 무제한 — dev/test에서 실사용자 이메일 유출 방지용 안전판
-    reader:              # analysis DB app 스키마 읽기 전용(계약 v2 §6 — 두 객체만 GRANT)
-      url: ${MONITORING_ALARM_READER_URL:}
-      username: ${MONITORING_ALARM_READER_USERNAME:}
-      password: ${MONITORING_ALARM_READER_PASSWORD:}
-  mail:
-    resend-api-key: ${RESEND_API_KEY:}          # 미설정이면 로깅 폴백(실발송 없음)
-    from: hypenow <no-reply@hypenow.io>
   image:
     # 프로필 이미지 아카이브(설계 스펙 §3-1) — 미설정이면 잡이 로그만 남기고 no-op(기동 실패 아님).
     # 운영은 analytics와 같은 버킷·쓰기 PAR을 재사용(compose.yaml MONITORING_IMAGE_PAR_URL 참고).
