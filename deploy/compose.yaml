@@ -244,6 +244,11 @@ services:
       # 이메일 인증 발송(Resend) — 서버 .env에 등록. 미설정 시 로깅 폴백(기동 WARN, 실발송 없음)
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       WEB_BASE_URL: ${WEB_BASE_URL:-https://www.hypenow.io}   # 주간 리포트 메일 딥링크 기준 주소
+      # 주간 다이제스트 생성·발송 크론(README §13-5-3) — 기본 매주 월요일 09:00 KST + 따라잡기
+      # 09:10~23:50 10분 간격. 임시 중단은 둘 다 "-"로 덮어 재기동(README 참조, 하나만 끄면
+      # 따라잡기가 10분 안에 되살린다).
+      MONITORING_DIGEST_WEEKLY_CRON: "${MONITORING_DIGEST_WEEKLY_CRON:-0 0 9 * * MON}"
+      MONITORING_DIGEST_WEEKLY_CATCHUP_CRON: "${MONITORING_DIGEST_WEEKLY_CATCHUP_CRON:-0 10,20,30,40,50 9-23 * * *}"
       # 어드민 가입 코드 일괄 적재(POST /admin/signup-codes) 정적 토큰 — 서버 .env에 등록. 미설정 시 엔드포인트 fail-closed(503)
       CODES_API_KEY: ${CODES_API_KEY:-}
       # 모니터링 v3 조회 개통(was 계약 §1) — 기본 off. 개통은 .env의 MONITORING_ENABLED=true +

@@ -121,6 +121,9 @@ services:
       # 일반 계정 인증코드는 종전대로 docker logs deploy-test-was-1 에서 확인.
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       WEB_BASE_URL: ${DEV_WEB_BASE_URL:-https://dev.hypenow.io}   # 주간 리포트 메일 딥링크 기준 주소(스테이징)
+      # 주간 다이제스트 생성·발송 크론(README §13-5-3) — 운영과 동일 관용구, DEV_* 오버라이드
+      MONITORING_DIGEST_WEEKLY_CRON: "${DEV_MONITORING_DIGEST_WEEKLY_CRON:-0 0 9 * * MON}"
+      MONITORING_DIGEST_WEEKLY_CATCHUP_CRON: "${DEV_MONITORING_DIGEST_WEEKLY_CATCHUP_CRON:-0 10,20,30,40,50 9-23 * * *}"
       WAS_MAIL_ADMIN_ONLY: "true"
       CODES_API_KEY: ${DEV_CODES_API_KEY:-}
       REDIS_HOST: test-redis
