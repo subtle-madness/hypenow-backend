@@ -206,6 +206,25 @@ class TaggedPostHashtagSourceTest {
 	}
 
 	/**
+	 * 삭제·비공개로 확정된(markUnavailable) 행은 기동 백필 모수에서도 제외해야 한다(2026-08-28 리뷰
+	 * 지적) — 이 행은 enriched_at을 영영 못 받으므로(비공개·삭제라 재보강 불가) 이 가드가 없으면
+	 * 재기동마다 같은 404를 Hiker에 재과금하며 재확인한다. tagVerifyCandidates와 달리 여기는 재관측
+	 * 자가 치유(touchCrawled가 unavailable_at을 해제)에 기대지 않는다 — 기동 백필은 자체 재시도
+	 * 주기가 없다.
+	 */
+	@Test
+	void unenrichedUnenumeratedPosts는_unavailable_마킹된_행을_제외한다() {
+		Instant takenAt = NOW.minusSeconds(86400);
+		repo.upsertDirect(brandId, post("GONE", "poster1", takenAt), NOW);
+		repo.upsertDirect(brandId, post("ALIVE", "poster2", takenAt), NOW);
+		repo.markUnavailable(brandId, "GONE", NOW);
+
+		assertThat(repo.unenrichedUnenumeratedPosts(brandId, takenAt.minusSeconds(1)))
+				.extracting(TaggedPostRepository.TrackedPost::shortCode)
+				.containsExactly("ALIVE");
+	}
+
+	/**
 	 * direct 취소({@code deleteIfDirectOnly})가 hashtag 성분이 있는 겹침 행을 삭제하면 안 된다
 	 * (설계 §2-4 — direct 취소는 direct 표식만 해제한다). 컨트롤러는 이 메서드가 false를 돌려주면
 	 * {@link TaggedPostRepository#clearDirect}로 폴백한다.

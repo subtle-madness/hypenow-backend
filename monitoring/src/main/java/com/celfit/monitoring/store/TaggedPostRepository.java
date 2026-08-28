@@ -299,13 +299,20 @@ public class TaggedPostRepository {
 	 *
 	 * <p>정렬은 taken_at DESC뿐이다 — {@link #unenumeratedDuePosts}의 "미보강 우선" 보조 정렬은
 	 * 이미 enriched_at IS NULL로 걸렀으니 전 행이 미보강이라 의미가 없다.
+	 *
+	 * <p><b>unavailable_at IS NULL 가드 필수</b>(2026-08-28 리뷰 지적): 삭제·비공개로 확정된
+	 * 행({@link #markUnavailable})은 enriched_at을 영영 못 받으므로(재보강 불가) 이 가드가 없으면
+	 * 기동 백필이 재기동마다 같은 게시물의 404를 Hiker에 재과금하며 재확인한다. {@link
+	 * #unenumeratedDuePosts}(야간 스윕 2단계 모수)는 이 가드가 없다 — 그쪽은 나이 티어 주기로만
+	 * 재시도해 비용이 유한하고, 재관측 시 {@link #touchCrawled}가 unavailable_at을 자연 해제하는
+	 * 자가 치유 경로가 있다. 기동 백필은 그런 주기적 재시도가 없는 일회성 전량 소진이라 배제해야 한다.
 	 */
 	public List<TrackedPost> unenrichedUnenumeratedPosts(long brandId, Instant minTakenAt) {
 		return db.query("""
 				SELECT short_code, taken_at, last_crawled_at FROM brand_tagged_post
 				WHERE brand_id = ?
 				  AND (direct_registered_at IS NOT NULL OR hashtag_detected_at IS NOT NULL)
-				  AND taken_at >= ? AND enriched_at IS NULL
+				  AND taken_at >= ? AND enriched_at IS NULL AND unavailable_at IS NULL
 				ORDER BY taken_at DESC""",
 				(rs, i) -> {
 					Timestamp last = rs.getTimestamp("last_crawled_at");

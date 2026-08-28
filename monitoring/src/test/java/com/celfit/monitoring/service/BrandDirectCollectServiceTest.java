@@ -494,4 +494,39 @@ class BrandDirectCollectServiceTest {
 		assertThat(tagged.unavailable).containsExactly("Gone");
 		assertThat(tagged.enriched).containsExactly("Alive");
 	}
+
+	// ── unenumeratedBusy 동시 실행 가드(2026-08-28 리뷰 지적) ───────────────────
+
+	/**
+	 * sweepUnenumerated(야간 스윕 2단계)가 처리 중일 때 기동 백필이 같은 게시물을 겹쳐 Hiker에
+	 * 이중 과금하지 않도록, 겹침이면 backfillUnenriched는 즉시 0을 반환하고 콜을 내지 않는다.
+	 * 실제 스레드 경합 대신 package-private 필드로 겹침 상태를 결정적으로 주입한다.
+	 */
+	@Test
+	void 겹침_상태에서는_backfillUnenriched가_콜_없이_0을_반환한다() {
+		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("Busy", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("Busy", postJson("Busy", RECENT, 403));
+		BrandDirectCollectService svc = service();
+		svc.unenumeratedBusy.set(true);   // sweepUnenumerated가 다른 브랜드를 처리 중이라고 가정
+
+		int backfilled = svc.backfillUnenriched(brand);
+
+		assertThat(backfilled).isZero();
+		assertThat(postCalls()).isZero();
+		assertThat(tagged.enriched).isEmpty();
+	}
+
+	/** 겹침이 없으면(플래그 false) 평소대로 동작 — 가드가 정상 경로를 막지 않는다는 회귀 방지. */
+	@Test
+	void 겹침이_없으면_backfillUnenriched는_평소대로_동작한다() {
+		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("Free", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("Free", postJson("Free", RECENT, 404));
+		BrandDirectCollectService svc = service();
+
+		int backfilled = svc.backfillUnenriched(brand);
+
+		assertThat(backfilled).isEqualTo(1);
+		assertThat(tagged.enriched).containsExactly("Free");
+		assertThat(svc.unenumeratedBusy.get()).isFalse();   // 처리 후 해제됨 — 다음 호출을 막지 않는다
+	}
 }
