@@ -309,6 +309,14 @@ class AdDisclosurePatternsTest {
 	}
 
 	@Test
+	void 제공받은_건_아니라는_부정문도_NEGATION에_걸린다() {
+		// "없" 꼬리만 막으면 "아니" 꼬리 부정문이 새 수령형 패턴에 false DISCLOSED 된다
+		// (08-28 운영 실물 0건 — 흔한 표현이라 예방 등재).
+		assertThat(AdDisclosurePatterns.findFirstMatch("제공받은 건 아니고 직접 샀어요")).isNull();
+		assertThat(AdDisclosurePatterns.findFirstMatch("증정받은 것도 아닌데 계속 쓰게 돼요")).isNull();
+	}
+
+	@Test
 	void 부정문_뒤_무관한_위치의_실존_표기는_매칭된다() {
 		// 스팬 겹침 설계 원칙 재확인 — "제공받은 것 없"는 앞쪽에서만 부정하고, 뒤쪽 "#광고"는
 		// 겹치지 않으므로 매칭이 살아야 한다.
