@@ -63,20 +63,22 @@ class V1BrandAccountServiceHashtagTagsTest {
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account()));
 	}
 
-	// ---------- 링크 생성 시딩(2026-08-27 태그 장부 갭 수정 §4) ----------
+	// ---------- 링크 생성 시딩(2026-08-27 태그 장부 갭 수정 §4, 2026-08-28 태그 생성 권한 was 일원화) ----------
 
 	/**
-	 * 신규 브랜드 링크를 만들면 그 사용자의 장부에 monitoring 자동 시드와 같은 계정명 유도 태그가
-	 * 남아야 한다 — 남지 않으면 해시태그 게시물 격리 필터(내 태그 ∩ 매칭 태그)가 이 사용자에게
-	 * 아무것도 통과시키지 못한다(08-27 진단된 갭).
+	 * 신규 브랜드 링크를 만들면 그 사용자의 장부에 계정명 유도 태그가 남고(08-27 갭 수정), <b>같은
+	 * 태그를 monitoring에도 일반 태그 add로 push</b>한다(2026-08-28~) — monitoring이 등록 시점에
+	 * 스스로 {@code brand_hashtag}를 시드하던 것을 대체한다(태그 생성 권한 was 일원화). push는
+	 * 일반 add와 같은 엔드포인트라 tombstone 재활성 의미론까지 그대로 적용된다.
 	 */
 	@Test
-	void 신규_링크_생성은_계정명_유도_태그를_장부에_시딩한다() {
+	void 신규_링크_생성은_유도_태그를_monitoring에_push하고_장부에도_시딩한다() {
 		given(commandClient.registerBrand(USERNAME, null, 12, BrandAccountType.OWN))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(BRAND_ID, USERNAME, 100L, "ACTIVE"));
 
 		service.register(USER_ID, USERNAME, BrandAccountType.OWN, 12);
 
+		then(commandClient).should().addHashtagTags(USERNAME, List.of(USERNAME));
 		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of(USERNAME));
 	}
 
@@ -89,16 +91,18 @@ class V1BrandAccountServiceHashtagTagsTest {
 
 		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
 		then(commandClient).should(never()).registerBrand(anyString(), any(), anyInt(), anyString());
+		then(commandClient).should(never()).addHashtagTags(anyString(), any());
 	}
 
-	/** 계정명이 무효 문자로 시작해 유도 태그가 0개면 원장 호출 자체가 없다(빈 목록 삽입 금지). */
+	/** 계정명이 무효 문자로 시작해 유도 태그가 0개면 push도 원장 호출도 없다(빈 목록 삽입·push 금지). */
 	@Test
-	void 유도_태그가_없으면_시딩을_건너뛴다() {
+	void 유도_태그가_없으면_push도_시딩도_건너뛴다() {
 		given(commandClient.registerBrand(".beauty", null, 12, BrandAccountType.OWN))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(BRAND_ID, ".beauty", 100L, "ACTIVE"));
 
 		service.register(USER_ID, ".beauty", BrandAccountType.OWN, 12);
 
+		then(commandClient).should(never()).addHashtagTags(anyString(), any());
 		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
 	}
 
@@ -118,6 +122,26 @@ class V1BrandAccountServiceHashtagTagsTest {
 
 		assertThat(response).isNotNull();
 		assertThat(response.id()).isEqualTo(String.valueOf(BRAND_ID));
+	}
+
+	/**
+	 * push 실패 격리(2026-08-28) — monitoring push(commandClient.addHashtagTags)가 던져도 등록
+	 * 응답은 그대로 나가고, <b>장부 쓰기는 push 실패와 무관하게 계속 진행</b>된다(push 먼저 시도 →
+	 * 실패해도 장부는 규정대로 채운다). 장부만 채워진 드리프트는 다음 사용자의 등록이나 태그
+	 * 관리 API 수동 추가로 자연히 복구된다.
+	 */
+	@Test
+	void monitoring_push_실패는_등록_응답도_장부_시딩도_깨지_않는다() {
+		given(commandClient.registerBrand(USERNAME, null, 12, BrandAccountType.OWN))
+				.willReturn(new MonitoringCommandClient.BrandRegisterResult(BRAND_ID, USERNAME, 100L, "ACTIVE"));
+		willThrow(new RuntimeException("monitoring push 실패"))
+				.given(commandClient).addHashtagTags(USERNAME, List.of(USERNAME));
+
+		BrandAccountResponse response = service.register(USER_ID, USERNAME, BrandAccountType.OWN, 12);
+
+		assertThat(response).isNotNull();
+		assertThat(response.id()).isEqualTo(String.valueOf(BRAND_ID));
+		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of(USERNAME));   // push 실패와 무관하게 진행
 	}
 
 	// ---------- 조회 ----------

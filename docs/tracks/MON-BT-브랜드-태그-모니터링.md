@@ -409,7 +409,10 @@ collectionMonths 적용. `/posts` 통합 목록에 source=hashtag로 합류 + �
 `UnenrichedBackfillStartupRunner`가 활성 브랜드 전부의 미보강(enriched_at IS NULL) 잔량을 즉시
 전량 보강한다. `AdDisclosureBackfillStartupRunner`와 동형 골격, 킬 스위치
 `monitoring.brand.unenriched-backfill-on-startup`. 야간 스윕의 상한·캐던스는 무변화 — 안전망
-그대로 유지).
+그대로 유지). **08-28 태그 생성 권한 was 일원화**(DECISIONS.md 2026-08-28 행) — monitoring 등록·
+replay의 자가 태그 시드(`seedHashtagsSafely`) 제거, was가 링크 생성 시 유도 태그를 일반 태그
+add로 push(재활성 의미론 포함) + 초기 백필 미완 브랜드는 태그 추가 즉시 스윕 스킵 가드
+(`triggerHashtagSweepIfNonEmpty`, 백필 꼬리가 대신 처리).
 
 ## 잔여 작업
 
