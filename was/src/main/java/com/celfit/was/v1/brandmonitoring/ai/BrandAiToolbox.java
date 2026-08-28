@@ -204,9 +204,11 @@ public class BrandAiToolbox {
 
 		ObjectNode payload = objectMapper.createObjectNode();
 		payload.put("brandId", link.brandId());
-		// since·totalInWindow는 반환된 posts 전원이 실제로 통과한 ② days 필터 기준이다(N1) - direct
-		// 면제가 붙는 ①(링크 창)의 windowStart는 별개 상한이라 여기 싣지 않는다(이미 posts에 반영됨).
+		// since·totalInWindow는 반환된 posts 전원이 실제로 통과한 판정 기준이다 - days가 지정되면 ②
+		// 필터 기준(N1, direct 면제 없음), 미지정이면 ①(링크 창, direct 면제) 시작일이다. window
+		// 필드가 어느 쪽인지 모델에게 명시한다(2026-08-28 기간 기본값 수정).
 		payload.put("since", window.since().toString());
+		payload.put("window", window.windowKind());
 		payload.put("returned", posts.size());
 		payload.put("totalInWindow", window.inWindow().size());
 		ArrayNode postsNode = payload.putArray("posts");
@@ -225,12 +227,24 @@ public class BrandAiToolbox {
 		return AiToolResult.ok(payload.toString(), posts.size(), codes);
 	}
 
+	/** payload의 "window" 필드 값(2026-08-28 기간 기본값 수정) - days 미지정 시 모수가 수집 기간
+	 * 전체(링크 창)라는 것을 모델이 답변에 명시할 수 있도록 판정 기준을 이름으로 노출한다. */
+	private static final String WINDOW_COLLECTION = "collection_window";
+	private static final String WINDOW_DAYS_FILTER = "days_filter";
+
 	/**
-	 * 링크 창(①, direct 면제) → 모델 days 필터(②, 면제 없음) 적용 공통 로직(N5, 2026-08-28 search_posts·
-	 * aggregate_posts 신설) - list_posts의 {@link #listPosts} 본문에서 뽑아냈다. 세 툴 모두 이 두 판정을
-	 * 같은 순서로 공유해야 한다(N1 주석 참조) - 따로 구현하면 창 정의가 갈릴 위험이 있다.
+	 * 링크 창(①, direct 면제) → 모델 days 필터(②, 면제 없음, 지정 시에만) 적용 공통 로직(N5, 2026-08-28
+	 * search_posts·aggregate_posts 신설 / 2026-08-28 기간 기본값 수정) - list_posts의 {@link #listPosts}
+	 * 본문에서 뽑아냈다. 세 툴 모두 이 두 판정을 같은 순서로 공유해야 한다(N1 주석 참조) - 따로 구현하면
+	 * 창 정의가 갈릴 위험이 있다.
+	 *
+	 * <p><b>days 생략 = "수집된 전체"</b>(2026-08-28) - 기간을 말하지 않은 질문의 자연스러운 의미는
+	 * 30일이 아니라 "지금까지 모은 것 전부"다. days가 없거나(missing) 0 이하로 오면 ② 필터를 아예
+	 * 적용하지 않고 ①(링크 창, direct 면제) 결과를 그대로 모수로 쓴다 - since는 이때 링크 창 시작일
+	 * (windowStart)이 된다. days가 1 이상으로 명시되면 기존과 동일하게 ②를 추가 적용한다(면제 없음,
+	 * 1~365 클램프).
 	 */
-	private record BrandWindow(BrandPostIndex index, List<PostRef> inWindow, LocalDate since) {
+	private record BrandWindow(BrandPostIndex index, List<PostRef> inWindow, LocalDate since, String windowKind) {
 	}
 
 	private BrandWindow resolveWindow(ToolSession session, long userId, BrandLinkRow link, BrandAccountRow account,
@@ -241,11 +255,16 @@ public class BrandAiToolbox {
 		LocalDate windowStart = today.minusMonths(link.collectionMonths());
 		List<PostRef> linkWindowRefs = index.refs().stream().filter(r -> withinLinkWindow(r, windowStart)).toList();
 
-		int days = Math.clamp(args.path("days").asInt(DEFAULT_DAYS), 1, MAX_DAYS);
+		int requestedDays = args.path("days").asInt(0);
+		if (requestedDays <= 0) {
+			// days 미지정(또는 0) - 링크 창(①)을 그대로 모수로 쓴다. ② 필터는 적용하지 않는다.
+			return new BrandWindow(index, linkWindowRefs, windowStart, WINDOW_COLLECTION);
+		}
+		int days = Math.clamp(requestedDays, 1, MAX_DAYS);
 		LocalDate since = today.minusDays(days);
 		List<PostRef> inWindow = linkWindowRefs.stream().filter(r -> withinUploadWindow(r.uploadedOn(), since))
 				.toList();
-		return new BrandWindow(index, inWindow, since);
+		return new BrandWindow(index, inWindow, since, WINDOW_DAYS_FILTER);
 	}
 
 	/**
@@ -315,6 +334,7 @@ public class BrandAiToolbox {
 		ObjectNode payload = objectMapper.createObjectNode();
 		payload.put("brandId", link.brandId());
 		payload.put("since", window.since().toString());
+		payload.put("window", window.windowKind());
 		payload.put("totalMatches", matchedRefs.size());
 		payload.put("totalInWindow", window.inWindow().size());
 		ArrayNode matchesNode = payload.putArray("matches");
@@ -429,6 +449,7 @@ public class BrandAiToolbox {
 		ObjectNode payload = objectMapper.createObjectNode();
 		payload.put("brandId", link.brandId());
 		payload.put("since", window.since().toString());
+		payload.put("window", window.windowKind());
 		payload.put("postCount", window.inWindow().size());
 		payload.put("reelsCount", reelsCount);
 		payload.put("feedCount", feedCount);

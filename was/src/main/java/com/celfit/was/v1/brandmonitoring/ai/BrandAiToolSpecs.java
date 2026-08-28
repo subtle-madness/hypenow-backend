@@ -11,6 +11,12 @@ import java.util.List;
  * 한계(해시태그 발견 게시물은 지표·댓글이 없다)를 여기 적어야 모델이 헛도는 호출을 하지 않는다.
  * search_posts·aggregate_posts의 description은 특히 "list_posts로 세지 마라"를 명시한다 - 30건
  * 발췌 목록을 모델이 눈으로 세다 273건 중 85건을 0건으로 답한 실측 오답이 이 신설의 배경이다.
+ *
+ * <p><b>2026-08-28 기간 기본값 수정</b> - list_posts·search_posts·aggregate_posts의 days는 더 이상
+ * 생략 시 30일로 채워지지 않는다({@link BrandAiToolbox#resolveWindow} 참조). 기간을 말하지 않은
+ * 질문의 자연스러운 의미는 "수집된 전체"라, 세 툴 모두 description에 "days 생략 시 수집 기간 전체를
+ * 대상으로 한다. 사용자가 기간을 명시했을 때만 days를 넘겨라"를 명시해 모델이 먼저 나서서 30일을
+ * 채워 넣지 않게 한다.
  */
 public final class BrandAiToolSpecs {
 
@@ -32,11 +38,12 @@ public final class BrandAiToolSpecs {
 					"브랜드에 태그된 게시물 목록을 최근 순 또는 성과 순으로 최대 30건 돌려준다. "
 							+ "각 항목은 shortCode·업로드일·유료협찬 표기 여부·캡션 앞부분·좋아요/댓글수/조회수를 담는다. "
 							+ "피드 게시물의 조회수는 항상 null이다. 최근 흐름을 훑어보거나 톱N을 뽑을 때 쓰고, "
-							+ "캡션에서 제품명·키워드 언급을 세거나 찾을 때는 절대 이 툴로 세지 말고 search_posts를 쓴다.",
+							+ "캡션에서 제품명·키워드 언급을 세거나 찾을 때는 절대 이 툴로 세지 말고 search_posts를 쓴다. "
+							+ "days 생략 시 수집 기간 전체를 대상으로 한다. 사용자가 기간을 명시했을 때만 days를 넘겨라.",
 					"""
 					{"type":"object","properties":{
 					  "brandId":{"type":"integer","description":"list_brands가 돌려준 브랜드 id"},
-					  "days":{"type":"integer","description":"오늘부터 며칠 전까지 볼지. 생략하면 30일, 최대 365일"},
+					  "days":{"type":"integer","description":"오늘부터 며칠 전까지 볼지. 생략하면 수집된 기간 전체, 최대 365일"},
 					  "sort":{"type":"string","enum":["uploaded_desc","performance_desc"],
 					          "description":"uploaded_desc는 최신순, performance_desc는 조회수 높은 순. 생략하면 최신순"}
 					},"required":["brandId"]}
@@ -46,23 +53,25 @@ public final class BrandAiToolSpecs {
 							+ "지정한 기간(창) 안 전체 게시물을 대상으로 정확한 총 매칭 건수(totalMatches)를 상한 없이 돌려준다. "
 							+ "캡션에서 특정 단어를 몇 번 언급했는지 세거나 찾는 질문에는 반드시 이 툴을 쓴다 - "
 							+ "list_posts로 세면 30건을 넘는 언급을 놓친다. 상세(캡션 발췌·게시자·최신 좋아요/조회수)는 "
-							+ "매칭 상위 20건만 담기지만 totalMatches 숫자는 그대로 인용한다. 검색어의 공백 유무는 흡수한다.",
+							+ "매칭 상위 20건만 담기지만 totalMatches 숫자는 그대로 인용한다. 검색어의 공백 유무는 흡수한다. "
+							+ "days 생략 시 수집 기간 전체를 대상으로 한다. 사용자가 기간을 명시했을 때만 days를 넘겨라.",
 					"""
 					{"type":"object","properties":{
 					  "brandId":{"type":"integer","description":"list_brands가 돌려준 브랜드 id"},
 					  "query":{"type":"string","description":"캡션에서 찾을 제품명·키워드"},
-					  "days":{"type":"integer","description":"오늘부터 며칠 전까지 볼지. 생략하면 30일, 최대 365일"}
+					  "days":{"type":"integer","description":"오늘부터 며칠 전까지 볼지. 생략하면 수집된 기간 전체, 최대 365일"}
 					},"required":["brandId","query"]}
 					"""),
 			new AiToolSpec(AGGREGATE_POSTS,
 					"브랜드 게시물의 게시물 수·좋아요/댓글/조회수 합계·평균을 지정한 기간(창) 안 전체를 대상으로 집계한다. "
 							+ "게시물 수·합계·평균·규모를 묻는 질문에는 list_posts 30건 표본이 아니라 이 툴을 쓴다. "
 							+ "조회수는 릴스 게시물만 집계한다(피드 게시물은 조회수가 항상 없다) - 좋아요·댓글은 "
-							+ "수집된 게시물만 대상이며 표본 수가 함께 온다.",
+							+ "수집된 게시물만 대상이며 표본 수가 함께 온다. "
+							+ "days 생략 시 수집 기간 전체를 대상으로 한다. 사용자가 기간을 명시했을 때만 days를 넘겨라.",
 					"""
 					{"type":"object","properties":{
 					  "brandId":{"type":"integer","description":"list_brands가 돌려준 브랜드 id"},
-					  "days":{"type":"integer","description":"오늘부터 며칠 전까지 볼지. 생략하면 30일, 최대 365일"}
+					  "days":{"type":"integer","description":"오늘부터 며칠 전까지 볼지. 생략하면 수집된 기간 전체, 최대 365일"}
 					},"required":["brandId"]}
 					"""),
 			new AiToolSpec(GET_POST,

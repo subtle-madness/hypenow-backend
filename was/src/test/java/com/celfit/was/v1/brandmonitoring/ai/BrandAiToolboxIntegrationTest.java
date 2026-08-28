@@ -530,4 +530,71 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 		assertThat(result.failed()).isTrue();
 		assertThat(result.payloadJson()).contains("접근 권한");
 	}
+
+	// ---------- days 미지정 = 수집 기간 전체(2026-08-28 기간 기본값 수정) ----------
+
+	/**
+	 * days를 넘기지 않은 질문의 자연스러운 의미는 "수집된 전체"다(설계 배경 - 기간 미지정 질문에
+	 * 모델이 기본 30일로 답한 실측 오답). 60일 전 게시물은 옛 기본값(30일) 밖이라 이전 동작이면
+	 * 매칭에서 빠졌을 것이다 - days 생략 시에도 매칭돼야 한다.
+	 */
+	@Test
+	void search_posts는_days_미지정이면_30일_밖_게시물도_매칭한다() {
+		long brandId = insertBrand(monitoringJdbc, "nodaysbrand");
+		linkRepository.insertLink(userId, brandId, "nodaysbrand", BrandAccountType.OWN, 12);
+		insertSearchablePost(brandId, "OLD60", "author1", NOW.minusSeconds(60L * 86400), "신상 세럼 후기");
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.SEARCH_POSTS,
+				args().put("brandId", brandId).put("query", "세럼"));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.payloadJson()).contains("\"totalMatches\":1").contains("\"window\":\"collection_window\"")
+				.contains("OLD60");
+	}
+
+	/** days=7을 명시하면 기존과 동일하게 7일 밖 매칭은 빠진다(기존 케이스 유지 확인). */
+	@Test
+	void search_posts는_days_지정_시_그_기간_밖_매칭은_제외한다() {
+		long brandId = insertBrand(monitoringJdbc, "dayssevenbrand");
+		linkRepository.insertLink(userId, brandId, "dayssevenbrand", BrandAccountType.OWN, 12);
+		insertSearchablePost(brandId, "RECENT1", "author1", NOW.minusSeconds(3600), "신상 세럼 후기");
+		insertSearchablePost(brandId, "OLD60", "author2", NOW.minusSeconds(60L * 86400), "신상 세럼 후기");
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.SEARCH_POSTS,
+				args().put("brandId", brandId).put("query", "세럼").put("days", 7));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.payloadJson()).contains("\"totalMatches\":1").contains("\"window\":\"days_filter\"")
+				.contains("RECENT1").doesNotContain("OLD60");
+	}
+
+	/** aggregate_posts의 postCount도 days 미지정이면 창 전체(link window) 건수와 일치해야 한다. */
+	@Test
+	void aggregate_posts는_days_미지정이면_postCount가_창_전체_건수와_일치한다() {
+		long brandId = insertBrand(monitoringJdbc, "nodaysaggbrand");
+		linkRepository.insertLink(userId, brandId, "nodaysaggbrand", BrandAccountType.OWN, 12);
+		insertMetricPost(brandId, "RECENT1", "author1", NOW.minusSeconds(3600), "최근 릴스", "REELS", 10, 2, 1000L);
+		insertMetricPost(brandId, "OLD60", "author2", NOW.minusSeconds(60L * 86400), "옛날 릴스", "REELS", 5, 1, 500L);
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.payloadJson()).contains("\"postCount\":2").contains("\"window\":\"collection_window\"");
+		assertThat(result.rowCount()).isEqualTo(2);
+	}
+
+	/** list_posts도 같은 공통 창 로직(resolveWindow)을 타므로 days 미지정 시 30일 밖 게시물이 보여야 한다. */
+	@Test
+	void list_posts는_days_미지정이면_30일_밖_게시물도_돌려준다() {
+		long brandId = insertBrand(monitoringJdbc, "nodayslistbrand");
+		linkRepository.insertLink(userId, brandId, "nodayslistbrand", BrandAccountType.OWN, 12);
+		insertTaggedPost(monitoringJdbc, brandId, "OLD60LIST", "author1", NOW.minusSeconds(60L * 86400));
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.LIST_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).contains("OLD60LIST");
+		assertThat(result.payloadJson()).contains("\"window\":\"collection_window\"");
+	}
 }
