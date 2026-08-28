@@ -76,6 +76,10 @@ public class WeeklyDigestMailComposer {
 	/**
 	 * 섹션 합산 한 줄. 조회수는 릴스만 집계되므로 그 주에 릴스가 없으면 views가 null이고,
 	 * 그때는 그 숫자를 아예 빼고 렌더링한다(설계 §3). 셋 다 없으면 줄 자체를 만들지 않는다.
+	 *
+	 * <p>숫자 표기는 {@link WeeklyDigestAssembler#formatCount}를 그대로 쓴다(품질 리뷰
+	 * Important #4) — 자체 콤마 포맷을 따로 두면 같은 메일 안에서 하이라이트 줄("12.3만")과
+	 * 합산 줄("123,456")의 표기 규칙이 갈려 인앱과도, 메일 안에서도 어긋난다.
 	 */
 	private static String metricsLine(DigestItem.Metrics metrics) {
 		if (metrics == null) {
@@ -83,18 +87,14 @@ public class WeeklyDigestMailComposer {
 		}
 		List<String> parts = new ArrayList<>();
 		if (metrics.views() != null) {
-			parts.add("조회수(릴스) " + number(metrics.views()));
+			parts.add("조회수(릴스) " + WeeklyDigestAssembler.formatCount(metrics.views()));
 		}
 		if (metrics.likes() != null) {
-			parts.add("좋아요 " + number(metrics.likes()));
+			parts.add("좋아요 " + WeeklyDigestAssembler.formatCount(metrics.likes()));
 		}
 		if (metrics.comments() != null) {
-			parts.add("댓글 " + number(metrics.comments()));
+			parts.add("댓글 " + WeeklyDigestAssembler.formatCount(metrics.comments()));
 		}
 		return parts.isEmpty() ? null : String.join(" · ", parts);
-	}
-
-	private static String number(long value) {
-		return String.format(Locale.KOREA, "%,d", value);
 	}
 }

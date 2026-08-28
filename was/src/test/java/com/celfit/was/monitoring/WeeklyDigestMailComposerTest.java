@@ -47,7 +47,7 @@ class WeeklyDigestMailComposerTest {
 				new DigestItem("brand", "brand_new_posts", "브랜드를 언급한 새 게시물을 찾았어요", 12,
 						new DigestItem.Metrics(123456L, 7890L, 123L))));
 
-		assertThat(mail.text()).contains("  조회수(릴스) 123,456 · 좋아요 7,890 · 댓글 123");
+		assertThat(mail.text()).contains("  조회수(릴스) 12.3만 · 좋아요 7,890 · 댓글 123");
 	}
 
 	@Test
