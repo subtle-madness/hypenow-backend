@@ -5,6 +5,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
@@ -12,7 +14,10 @@ import com.celfit.was.monitoring.BrandReadRepository.MatchedTagRow;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -128,7 +133,92 @@ class BrandHashtagPostAssemblerTest {
 
 		assertThat(assembler.assembleForBrand(7L, account(), BrandAccountType.OWN,
 				LocalDate.of(2025, 8, 8))).isEmpty();
-		org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
-				.findMatchedTags(org.mockito.ArgumentMatchers.anyLong(), any());
+		verify(repository, never()).findMatchedTags(any(Long.class), any());
+	}
+
+	// ---------- count 전용 경로(P2, 2026-08-27 develop 도입 → 해시태그 직접 수집 전환 이후 재구현) ----------
+	//
+	// countForBrand는 이제 {@link BrandPostAssembler#indexForBrand}의 경량 산지를 직접 탄다(하이드레이트
+	// 없음) — assembleForBrand(전량 조립)와 판정 산지가 다르므로, 아래 테스트는 그 둘이 같은 시드에서
+	// 같은 값을 내는지(등가 계약)까지 함께 고정한다.
+
+	@Test
+	void count는_source_hashtag만_센다() {
+		var brandPostAssembler = mock(BrandPostAssembler.class);
+		var repository = mock(BrandReadRepository.class);
+		given(brandPostAssembler.indexForBrand(eq(7L), any(), eq(false))).willReturn(index(
+				ref("TAG1", BrandPostAssembler.SOURCE_TAGGED, LocalDate.of(2026, 8, 6)),
+				ref("HHH", BrandPostAssembler.SOURCE_HASHTAG, LocalDate.of(2026, 8, 6))));
+
+		var assembler = new BrandHashtagPostAssembler(brandPostAssembler, repository);
+
+		assertThat(assembler.countForBrand(7L, account(), LocalDate.of(2025, 8, 8))).isEqualTo(1);
+	}
+
+	/** 링크 창 밖 게시물은 목록(withinWindow)과 같은 규칙으로 제외한다 — 두 화면이 어긋나면 안 된다. */
+	@Test
+	void count는_링크_창_밖_게시물을_제외한다() {
+		var brandPostAssembler = mock(BrandPostAssembler.class);
+		var repository = mock(BrandReadRepository.class);
+		given(brandPostAssembler.indexForBrand(eq(7L), any(), eq(false))).willReturn(index(
+				ref("HHH", BrandPostAssembler.SOURCE_HASHTAG, LocalDate.of(2026, 8, 6))));
+
+		var assembler = new BrandHashtagPostAssembler(brandPostAssembler, repository);
+
+		// 창 시작이 게시물 업로드일(08-06)보다 뒤
+		assertThat(assembler.countForBrand(7L, account(), LocalDate.of(2026, 8, 7))).isZero();
+	}
+
+	/** 인덱스가 비어 있으면(브랜드 풀에 판정 통과 행이 하나도 없음) count는 0이다. */
+	@Test
+	void 인덱스가_비어있으면_count는_0이다() {
+		var brandPostAssembler = mock(BrandPostAssembler.class);
+		var repository = mock(BrandReadRepository.class);
+		given(brandPostAssembler.indexForBrand(eq(7L), any(), eq(false))).willReturn(index());
+
+		var assembler = new BrandHashtagPostAssembler(brandPostAssembler, repository);
+
+		assertThat(assembler.countForBrand(7L, account(), LocalDate.of(2025, 8, 8))).isZero();
+	}
+
+	/**
+	 * count는 목록과 <b>같은 판정 산지</b>(indexForBrand의 isVisible·resolveSource — 등록자 전용 노출·
+	 * 해시태그 격리 전부 그 안에서 끝난다)를 슬림 경로 위에서 태운 값이다 — 판정을 복제하면 뱃지 숫자와
+	 * 목록 길이가 조용히 갈라진다.
+	 */
+	@Test
+	void count는_목록과_같은_값이다() {
+		var brandPostAssembler = mock(BrandPostAssembler.class);
+		var repository = mock(BrandReadRepository.class);
+		LocalDate windowStart = LocalDate.of(2025, 8, 8);
+		given(brandPostAssembler.assembleBrandPosts(eq(7L), any(), eq(false),
+				eq(BrandPostAssembler.BrandPostScope.ENRICHED_ONLY), eq(false), eq(BrandAccountType.OWN)))
+				.willReturn(List.of(post("TAG1", "tagged", 10L, 2L), post("HHH", "hashtag", 20L, 3L)));
+		given(repository.findMatchedTags(eq(100L), any()))
+				.willReturn(List.of(new MatchedTagRow("HHH", "끌리메")));
+		given(brandPostAssembler.indexForBrand(eq(7L), any(), eq(false))).willReturn(index(
+				ref("TAG1", BrandPostAssembler.SOURCE_TAGGED, LocalDate.of(2026, 8, 6)),
+				ref("HHH", BrandPostAssembler.SOURCE_HASHTAG, LocalDate.of(2026, 8, 6))));
+
+		var assembler = new BrandHashtagPostAssembler(brandPostAssembler, repository);
+
+		assertThat(assembler.countForBrand(7L, account(), windowStart))
+				.isEqualTo(assembler.assembleForBrand(7L, account(), BrandAccountType.OWN, windowStart).size());
+	}
+
+	// ---------- 픽스처 ----------
+
+	private static BrandPostAssembler.PostRef ref(String code, String source, LocalDate uploadedOn) {
+		return new BrandPostAssembler.PostRef(code, source, "unknown", uploadedOn, null, "reels", null,
+				"hashtag_influencer", "해시태그 인플루언서", "https://cdn/author.jpg", 1000L,
+				"2026-08-06T10:00:00+09:00");
+	}
+
+	private static BrandPostAssembler.BrandPostIndex index(BrandPostAssembler.PostRef... refs) {
+		Set<String> poolCodes = new LinkedHashSet<>();
+		for (BrandPostAssembler.PostRef ref : refs) {
+			poolCodes.add(ref.shortcode());
+		}
+		return new BrandPostAssembler.BrandPostIndex(List.of(refs), poolCodes, Map.of(), Set.of());
 	}
 }

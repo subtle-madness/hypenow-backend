@@ -22,7 +22,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>구현은 {@link BrandPostAssembler#assembleBrandPosts} 결과의 {@code source=hashtag} 부분집합을
  * 구 셰이프로 옮기는 것뿐이다 — 사용자 격리·정산 게이트·정렬을 사본으로 다시 구현하지 않으므로
- * 본 목록과 이 탭이 갈릴 수 없다(구 구조는 그 판정을 각자 갖고 있어 실제로 갈렸다).
+ * 본 목록과 이 탭이 갈릴 수 없다(구 구조는 그 판정을 각자 갖고 있어 실제로 갈렸다). 개수만 필요한
+ * 호출({@link #countForBrand}, P2 — 2026-08-27 develop 도입)은 같은 이유로 전량 하이드레이트를
+ * 태우지 않는 경량 인덱스 산지({@link BrandPostAssembler#indexForBrand})를 공유한다.
  *
  * <p><b>구 규칙과의 차이(의도됨)</b>:
  * <ul>
@@ -82,6 +84,29 @@ public class BrandHashtagPostAssembler {
 		return hashtagPosts.stream()
 				.map(p -> toResponse(p, matchedTagByCode.get(p.shortcode())))
 				.toList();
+	}
+
+	/**
+	 * 해시태그 발견 게시물 개수만(P2, 2026-08-27 develop 도입 → <b>해시태그 직접 수집 전환 이후
+	 * 재구현</b>) — FE 탭 뱃지처럼 목록 본문이 필요 없는 호출용이다(전량 하이드레이트·전송을 태우지
+	 * 않는 슬림 경로). {@link #assembleForBrand}와 <b>같은 판정 산지</b>를 탄다: 노출 필터(등록자 전용
+	 * 노출 + 해시태그 격리)는 {@link BrandPostAssembler#indexForBrand}가 이미 끝낸
+	 * {@link BrandPostAssembler.PostRef} 목록 위에서 source=hashtag·링크 창만 걸러 센다 — 판정을
+	 * 복제하면 뱃지 숫자와 목록 길이가 조용히 갈라진다.
+	 *
+	 * <p>인덱스는 스냅샷·표시 메타·게시자 배치 조회가 전혀 없는 경량 패스라(리포지토리 주석 참조),
+	 * 목록 조회처럼 매번 풀 카드를 조립하지 않는다 — 배지(brandPostId) 파생도 셀 때는 쓸 데가 없어
+	 * 등록자 원장을 따로 조회하지 않는다({@code indexForBrand}가 이미 노출 필터에 쓴 값을 재사용한다).
+	 *
+	 * @param windowStart {@link #assembleForBrand}와 같은 링크 표시 창 하한 — 어긋나면 뱃지 숫자와
+	 *                    탭 목록 길이가 갈라진다.
+	 */
+	public long countForBrand(long userId, BrandAccountRow account, LocalDate windowStart) {
+		BrandPostAssembler.BrandPostIndex index = brandPostAssembler.indexForBrand(userId, account, false);
+		return index.refs().stream()
+				.filter(ref -> BrandPostAssembler.SOURCE_HASHTAG.equals(ref.source()))
+				.filter(ref -> BrandPostWindows.withinLinkWindow(ref, windowStart))
+				.count();
 	}
 
 	/** 업로드일 기준 창 판정 — 본 목록의 {@code withinUploadWindow}와 같은 규칙(업로드일 미상은 제외). */
