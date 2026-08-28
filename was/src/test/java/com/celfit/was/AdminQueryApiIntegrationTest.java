@@ -42,8 +42,8 @@ import org.springframework.test.web.servlet.MvcResult;
  * (MonitoringEnabledConfigTest와 동일 관용구 — 같은 POSTGRES 컨테이너를 monitoring DB로도 재사용).
  */
 @AutoConfigureMockMvc
-@TestPropertySource(properties = {"monitoring.enabled=true", "monitoring.digest.cron=-",
-		"monitoring.digest.catchup-cron=-", "monitoring.recover.cron=-",
+@TestPropertySource(properties = {"monitoring.enabled=true", "monitoring.digest.weekly-cron=-",
+		"monitoring.digest.weekly-catchup-cron=-", "monitoring.recover.cron=-",
 		// @BeforeEach마다 adminSession을 새로 로그인해 얻는다 — 테스트 메서드 수가 늘수록 같은
 		// (email|ip) 키가 분당 기본 상한(10, RateLimiter)에 부딪힌다(08-02, 12번째 테스트 추가 후
 		// 429 실측). 실제 레이트리밋 동작 자체는 RateLimiterTest가 별도로 커버하므로 여기선 상한만

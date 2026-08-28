@@ -2,8 +2,8 @@ package com.celfit.was;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.celfit.was.monitoring.DigestJob;
 import com.celfit.was.monitoring.MonitoringConfig;
+import com.celfit.was.monitoring.WeeklyDigestJob;
 import com.celfit.was.v1.account.AccountDeletionService;
 import com.celfit.was.v1.brandmonitoring.V1BrandAccountService;
 import com.celfit.was.v1.brandmonitoring.V1BrandAccountsController;
@@ -57,9 +57,9 @@ class MonitoringDisabledTest extends IntegrationTest {
 
 	@Test
 	void 비활성이면_다이제스트_크론과_복구_크론이_없다() {
-		// 둘 다 monitoring.enabled 조건부(DigestJob은 monitoring DB 조회, 복구 크론은 실 등록 실행기
-		// 필요) — 비활성에서 빈이 남아 있으면 존재하지 않는 monitoring 배선을 참조해 부팅이 깨진다.
-		assertThat(context.getBeanNamesForType(DigestJob.class)).isEmpty();
+		// 둘 다 monitoring.enabled 조건부(WeeklyDigestJob은 monitoring DB 조회, 복구 크론은 실 등록
+		// 실행기 필요) — 비활성에서 빈이 남아 있으면 존재하지 않는 monitoring 배선을 참조해 부팅이 깨진다.
+		assertThat(context.getBeanNamesForType(WeeklyDigestJob.class)).isEmpty();
 		assertThat(context.getBeanNamesForType(RecoverStalePendingScheduler.class)).isEmpty();
 	}
 }

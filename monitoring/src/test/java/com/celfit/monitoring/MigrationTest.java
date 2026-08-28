@@ -3,7 +3,6 @@ package com.celfit.monitoring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.celfit.monitoring.alarm.AlarmEmailStatus;
 import com.celfit.monitoring.alarm.AlarmEventType;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.util.stream.Collectors;
@@ -237,20 +236,25 @@ class MigrationTest {
 				.isInstanceOf(DataIntegrityViolationException.class);
 	}
 
-	/** 위와 같은 이유 — email_status CHECK ↔ {@link AlarmEmailStatus} 어휘 일치. */
+	/**
+	 * 위와 같은 이유 — email_status CHECK ↔ 어휘 일치. AlarmEmailStatus enum은 2026-08-27 주간
+	 * 개편에서 폐지됐지만(Task 11 — 발송 소비자가 사라졌다) email_status 컬럼·CHECK 제약은
+	 * expand-contract상 남아 있다(컬럼 정리는 별도 릴리스) — 그 어휘를 문자열로 직접 못박는다.
+	 */
 	@Test
-	void alarm_email_status_체크_제약은_enum_전체와_일치한다() {
+	void alarm_email_status_체크_제약은_기존_어휘_전체와_일치한다() {
 		var ds = TestDb.dataSource(TestDb.container());
 		var db = new JdbcTemplate(ds);
 		TestDb.resetAndMigrate(db, ds);
 
-		for (AlarmEmailStatus status : AlarmEmailStatus.values()) {
+		String[] statuses = { "PENDING", "SENT", "SKIPPED_OPTOUT", "SKIPPED_NO_RECIPIENT", "FAILED" };
+		for (String status : statuses) {
 			db.update("""
 					INSERT INTO alarm_event (target_id, user_id, event_type, payload, dispatch_after, email_status)
-					VALUES (1, 1, 'COLLECTION_STARTED', '{}'::jsonb, now(), ?)""", status.name());
+					VALUES (1, 1, 'COLLECTION_STARTED', '{}'::jsonb, now(), ?)""", status);
 		}
 		assertThat(db.queryForObject("SELECT count(*) FROM alarm_event", Long.class))
-				.isEqualTo((long) AlarmEmailStatus.values().length);
+				.isEqualTo((long) statuses.length);
 
 		assertThatThrownBy(() -> db.update("""
 				INSERT INTO alarm_event (target_id, user_id, event_type, payload, dispatch_after, email_status)

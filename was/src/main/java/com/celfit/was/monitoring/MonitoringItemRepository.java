@@ -196,6 +196,29 @@ public class MonitoringItemRepository {
 				.list();
 	}
 
+	/**
+	 * monitoring target id 묶음이 속한 캠페인 이름(2026-08-27 주간 다이제스트 §3 "캠페인 이름 문맥").
+	 * 유저 스코프를 WHERE에 박아 남의 추적 행에 붙은 캠페인 이름이 새지 않게 한다 — target id는
+	 * monitoring 전역 키라 유저 스코프 없이 조회하면 남의 캠페인 이름이 문안에 섞인다.
+	 * 캠페인 미배정 행(campaign_id NULL)은 조인에서 자연히 빠진다.
+	 */
+	public List<String> findCampaignNamesByTargetIds(long userId, Collection<Long> targetIds) {
+		if (targetIds.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbcClient.sql("""
+				SELECT DISTINCT c.name
+				FROM app.monitoring_items i
+				JOIN app.monitoring_campaigns c ON c.id = i.campaign_id
+				WHERE i.user_id = :userId AND i.target_id IN (:targetIds)
+				ORDER BY c.name
+				""")
+				.param("userId", userId)
+				.param("targetIds", targetIds)
+				.query(String.class)
+				.list();
+	}
+
 	/** pending(target 미확정) 상태로 age 이상 방치된 행 — 크래시 복구 배치 후보. */
 	public List<MonitoringItemRow> findPendingOlderThan(Duration age) {
 		return jdbcClient.sql("""

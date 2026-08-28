@@ -390,9 +390,12 @@ class RegistrationApiTest {
 				.isEqualTo(1);
 	}
 
-	/** 게시물 직접 등록은 그 자리에서 수집이 시작된다 — 사용자가 방금 누른 행동이라 즉시 레인이다. */
+	/**
+	 * 게시물 직접 등록은 그 자리에서 수집이 시작된다 — alarm_event 원장에는 아침 레인으로 적재된다
+	 * (즉시 레인은 2026-08-27 주간 개편에서 폐지됐다, 설계 §2 — 소비가 주간 다이제스트 하나뿐).
+	 */
 	@Test
-	void 게시물_등록은_즉시_레인_수집_시작_알람을_남긴다() throws Exception {
+	void 게시물_등록은_수집_시작_알람을_아침_레인으로_남긴다() throws Exception {
 		mvc.perform(post("/api/targets")
 				.contentType(MediaType.APPLICATION_JSON).content(POST_BODY))
 				.andExpect(status().isCreated());
@@ -400,7 +403,7 @@ class RegistrationApiTest {
 		assertThat(db.queryForObject("""
 				SELECT event_type FROM alarm_event""", String.class)).isEqualTo("COLLECTION_STARTED");
 		assertThat(db.queryForObject("""
-				SELECT dispatch_after = occurred_at FROM alarm_event""", Boolean.class)).isTrue();
+				SELECT dispatch_after <> occurred_at FROM alarm_event""", Boolean.class)).isTrue();
 		assertThat(db.queryForObject("SELECT user_id FROM alarm_event", Long.class)).isEqualTo(7L);
 	}
 

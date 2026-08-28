@@ -335,6 +335,92 @@ public class BrandReadRepository {
 	}
 
 	/**
+	 * 지난주 <b>태그 열거로 새로 발견된</b> 게시물 + 최신 스냅샷 지표(설계 §4 브랜드 새 게시물).
+	 * direct 등록분은 제외한다 — 사용자가 스스로 넣은 게시물은 "발견 소식"이 아니다.
+	 * 스냅샷이 아직 없는 발견분도 모수에 남도록 LEFT JOIN이며, 그때 지표는 전부 null이다.
+	 *
+	 * <p>2026-08-28 품질 리뷰 I3: 잡이 유저마다 호출하던 것을 전 유저 브랜드id를 한데 모아 <b>1회</b>
+	 * 호출하는 방식으로 바뀌었다 — brandIds가 이제 여러 유저의 브랜드를 함께 담을 수 있어, DISTINCT ON을
+	 * short_code 단독이 아니라 (brand_id, short_code)로 건다. short_code 단독으로 접으면 브랜드 A·B가
+	 * 각각 발견한 동일 shortCode 중 하나가 사라져 그 브랜드를 보는 유저가 소식을 못 받는다 — 유저별
+	 * 최종 dedup(같은 유저가 여러 브랜드를 걸고 있어 겹치는 경우)은 호출부({@code WeeklyDigestJob})가
+	 * brandId로 되짚은 뒤 shortCode 기준으로 한다.
+	 */
+	public List<WeeklyPostMetrics> findTaggedPostsDiscoveredBetween(Collection<Long> brandIds,
+			OffsetDateTime from, OffsetDateTime toExclusive) {
+		if (brandIds.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT DISTINCT ON (t.brand_id, t.short_code) t.brand_id, t.short_code, t.author_username,
+				       s.content_type, s.views, s.likes, s.comments
+				FROM brand_tagged_post t
+				LEFT JOIN brand_post_snapshot s ON s.short_code = t.short_code
+				WHERE t.brand_id IN (:brandIds)
+				  AND t.direct_registered_at IS NULL
+				  AND t.tag_detected_at >= :from AND t.tag_detected_at < :toExclusive
+				ORDER BY t.brand_id, t.short_code, s.captured_on DESC NULLS LAST
+				""")
+				.param("brandIds", brandIds)
+				.param("from", from)
+				.param("toExclusive", toExclusive)
+				.query(WeeklyPostMetrics.class)
+				.list();
+	}
+
+	/**
+	 * 지난주 <b>해시태그 스윕이 새로 발견한</b> 관련 게시물(설계 §4). 이 표면은 스냅샷·보강이
+	 * 없어(스펙 2026-08-11 §5 보류) 지표가 열거 관측값 그대로고 조회수 자체가 없다 — views는
+	 * 항상 null로 내려 합산 규칙(릴스만 조회수)과 자연히 정합한다.
+	 *
+	 * <p>2026-08-28 품질 리뷰 I3: {@link #findTaggedPostsDiscoveredBetween}와 같은 이유로
+	 * DISTINCT ON을 (brand_id, short_code)로 건다 — brandIds가 이제 전 유저 배치 호출의 합집합이다.
+	 */
+	public List<WeeklyPostMetrics> findHashtagPostsDiscoveredBetween(Collection<Long> brandIds,
+			OffsetDateTime from, OffsetDateTime toExclusive) {
+		if (brandIds.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT DISTINCT ON (brand_id, short_code) brand_id, short_code, author_username, content_type,
+				       NULL::bigint AS views, likes, comments
+				FROM brand_hashtag_post
+				WHERE brand_id IN (:brandIds) AND verdict = 'RELEVANT'
+				  AND first_seen_at >= :from AND first_seen_at < :toExclusive
+				ORDER BY brand_id, short_code, first_seen_at DESC
+				""")
+				.param("brandIds", brandIds)
+				.param("from", from)
+				.param("toExclusive", toExclusive)
+				.query(WeeklyPostMetrics.class)
+				.list();
+	}
+
+	/**
+	 * 지난주 <b>광고 미표기</b>로 판정된 shortcode 전체(설계 §4 광고 미표기, 2026-08-28 재리뷰
+	 * nit로 술어 역전) — brand_post_meta 전체에서 창 하나로만 걸러 읽는다. 등록 원장(app
+	 * 스키마의 그 유저가 등록한 게시물)과의 교집합은 <b>호출부(was 코드)가 자바에서</b> 계산한다 —
+	 * monitoring DB와 app 스키마를 SQL로 조인하지 않는다는 시스템 경계는 그대로다.
+	 *
+	 * <p>이전에는 반대로 shortcode 후보 목록을 {@code IN (:shortCodes)}로 통째로 바인드했는데,
+	 * 유저 수만큼 왕복하지 않는 배치 조회(품질 리뷰 I3)로 바뀌면서 그 목록이 "전 유저의 등록
+	 * shortcode 합집합"이 돼 바인드 파라미터 상한에 걸릴 수 있었다. ad_verdict·창 조건만으로
+	 * 걸러 읽는 편이 원본 SQL 파라미터 없이 인덱스를 태우기도 더 쉽다. 판정 컬럼의 실제 위치는
+	 * brand_post_meta다(V20260817160000).
+	 */
+	public List<String> findNotDisclosedJudgedBetween(OffsetDateTime from, OffsetDateTime toExclusive) {
+		return jdbc.sql("""
+				SELECT short_code FROM brand_post_meta
+				WHERE ad_verdict = 'NOT_DISCLOSED' AND ad_judged_at >= :from AND ad_judged_at < :toExclusive
+				ORDER BY short_code
+				""")
+				.param("from", from)
+				.param("toExclusive", toExclusive)
+				.query(String.class)
+				.list();
+	}
+
+	/**
 	 * 해시태그 발견 게시물의 shortcode만(2026-08-27 서버 필터·패싯 설계) — counts와 tagged 풀과의
 	 * 교차 중복 제거처럼 <b>코드만</b>이면 되는 경로용. {@link #findHashtagPosts}와 WHERE·ORDER·LIMIT가
 	 * 동형이어야 한다(어긋나면 counts가 목록 모수와 갈라진다) — 캡션·썸네일 등 표시 컬럼 전송만 뺀 것이
