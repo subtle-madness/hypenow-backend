@@ -19,7 +19,7 @@ CREATE TABLE app.ai_chat_logs (
     prompt_tokens integer     NOT NULL DEFAULT 0,
     output_tokens integer     NOT NULL DEFAULT 0,
     elapsed_ms    integer     NOT NULL DEFAULT 0,
-    -- ok | tool_cap | llm_failed. 값 공간은 AiChatLogEntry의 OUTCOME_* 상수가 정본.
+    -- ok | tool_cap | llm_call_cap | llm_failed | blocked. 값 공간은 AiChatLogEntry의 OUTCOME_* 상수가 정본.
     outcome       text        NOT NULL,
     created_at    timestamptz NOT NULL DEFAULT now()
 );

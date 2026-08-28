@@ -20,9 +20,11 @@ import tools.jackson.databind.node.ObjectNode;
  * 토큰 {@value #PROMPT_TOKEN_BUDGET}(댓글 본문 무절단×매 턴 전체 재전송의 O(k²) 폭발 방지, I6),
  * 벽시계 예산 {@value #TIME_BUDGET_MILLIS}ms(1 LLM 호출 최악 92초까지 걸릴 수 있어 안전망 12회를
  * 다 채우면 수십 분이 걸리는 것을 막는다) 중 하나라도 걸리면 다음 턴을 툴 호출 불가로 보내 답변을
- * 강제하고, 그래도 안 끝나는 병리적 경우를 위해 LLM 호출 자체를 {@value #MAX_LLM_CALLS}회로 막는다
- * (M2 - 이 경로는 OUTCOME_LLM_CALL_CAP으로 앞의 강제 답변 상한과 구분해 기록하고, 도달하면 안 되는
- * 안전망이라 도달 시 warn을 남긴다).
+ * 강제한다. <b>강제 답변 턴은 1회로 제한한다(C2 잔여, 2026-08-28 재리뷰)</b> - mode=NONE인데도 모델이
+ * functionCall만 돌려주면(관측된 병리 사례) 즉시 루프를 끊고 그 시점 결과로 FALLBACK_ANSWER를
+ * 돌려준다 - 재시도하며 MAX_LLM_CALLS까지 계속 돌면 호출 1회가 최악 92초라 스레드가 십수 분씩
+ * 잔류한다. 이 경로는 OUTCOME_LLM_CALL_CAP으로 기록하고(안전망 도달과 같은 병리이므로 같은 outcome을
+ * 쓴다) warn을 남긴다.
  *
  * <p>강제 답변 턴에서도 tools 선언 자체는 유지하고 {@code toolConfig} mode만 NONE으로 막는다(I8) -
  * tools를 통째로 빼면 이전 턴의 functionCall/functionResponse 파트가 남은 히스토리와 조합돼 Vertex
@@ -40,7 +42,8 @@ public class BrandAiAgent {
 
 	/** 턴당 툴 호출 상한(설계 §7). */
 	static final int MAX_TOOL_CALLS = 8;
-	/** LLM 호출 안전망 - 강제 답변 턴까지 감안한 여유값. */
+	/** LLM 호출 안전망(M2) - 강제 답변 턴 1회 제한(C2 잔여)이 정상적으로는 항상 먼저 걸리므로 여기
+	 * 도달은 이제 이론상으로만 남은 최후 방어선이다. */
 	static final int MAX_LLM_CALLS = 12;
 	/** 누적 프롬프트 토큰 예산(I6) - 댓글 본문 무절단 × 매 턴 전체 재전송이면 O(k²)로 토큰이
 	 * 터진다. 절단(BrandAiToolbox)과 별개로 루프 차원의 두 번째 방어선이다. */
@@ -85,6 +88,9 @@ public class BrandAiAgent {
 		List<AiChatLogEntry.ToolCallLog> toolCalls = new ArrayList<>();
 		LinkedHashSet<String> shortCodes = new LinkedHashSet<>();
 		Map<String, Integer> failuresByTool = new HashMap<>();
+		// 요청 스코프 인덱스 캐시(N2) - 이 run() 호출 안에서만 재사용하고 절대 넘어 살지 않는다
+		// (BrandAiToolbox는 싱글턴 빈이라 캐시를 그쪽 인스턴스 필드에 두면 유저 간에 섞인다).
+		BrandAiToolbox.ToolSession toolSession = new BrandAiToolbox.ToolSession();
 		Long brandId = null;
 		int promptTokens = 0;
 		int outputTokens = 0;
@@ -92,12 +98,13 @@ public class BrandAiAgent {
 
 		for (int llmCall = 1; llmCall <= MAX_LLM_CALLS; llmCall++) {
 			// 매 호출 전에 남은 예산을 확인한다(C2) - 부족하면 이번 호출을 마지막으로 삼아 답변을 강제한다.
-			boolean capped = toolCalls.size() >= MAX_TOOL_CALLS
-					|| promptTokens >= PROMPT_TOKEN_BUDGET
-					|| clock.millis() >= deadline;
-			String systemPrompt = capped
-					? BrandAiPrompt.SYSTEM + BrandAiPrompt.TIME_BUDGET_NOTE
-					: BrandAiPrompt.SYSTEM;
+			boolean toolCapped = toolCalls.size() >= MAX_TOOL_CALLS;
+			boolean capped = toolCapped || promptTokens >= PROMPT_TOKEN_BUDGET || clock.millis() >= deadline;
+			// 원인별 문구 분기(N3, 2026-08-28 재리뷰) - 툴 상한은 TOOL_CAP_NOTE, 벽시계·토큰 예산은
+			// TIME_BUDGET_NOTE. 이전에는 원인과 무관하게 항상 TIME_BUDGET_NOTE만 나가 TOOL_CAP_NOTE가
+			// 죽은 코드였다.
+			String systemPrompt = !capped ? BrandAiPrompt.SYSTEM
+					: BrandAiPrompt.SYSTEM + (toolCapped ? BrandAiPrompt.TOOL_CAP_NOTE : BrandAiPrompt.TIME_BUDGET_NOTE);
 			LlmTurn turn = client.generate(systemPrompt, contents, BrandAiToolSpecs.ALL, capped);
 			promptTokens += turn.promptTokens();
 			outputTokens += turn.outputTokens();
@@ -113,6 +120,17 @@ public class BrandAiAgent {
 						capped ? AiChatLogEntry.OUTCOME_TOOL_CAP : AiChatLogEntry.OUTCOME_OK);
 			}
 
+			// 강제 답변 턴을 1회로 제한한다(C2 잔여) - mode=NONE으로 보냈는데도 모델이 functionCall만
+			// 돌려주면, 다음 턴도 capped 상태 그대로라 또 강제 답변 턴을 보내게 되고 이게 병리적으로
+			// MAX_LLM_CALLS까지 반복될 수 있다(호출 1회 최악 92초 × 최대 11회 추가 = 스레드 십수 분
+			// 잔류, 재리뷰 실측). capped 턴에서 텍스트 없이 툴 호출만 돌아오면 재시도하지 않고 그 자리에서
+			// 끊는다 - 이미 MAX_LLM_CALLS 안전망과 같은 병리이므로 같은 outcome으로 기록한다(M2).
+			if (capped) {
+				log.warn("AI 에이전트 강제 답변 턴에서도 툴 호출만 반환 - userId={}, 툴 호출 {}회", userId, toolCalls.size());
+				return new AgentOutcome(FALLBACK_ANSWER, List.copyOf(shortCodes), List.copyOf(toolCalls),
+						promptTokens, outputTokens, brandId, AiChatLogEntry.OUTCOME_LLM_CALL_CAP);
+			}
+
 			contents.add(client.modelToolCallContent(turn.toolCalls()));
 			List<GeminiChatClient.ToolResponse> responses = new ArrayList<>();
 			for (LlmTurn.ToolCall call : turn.toolCalls()) {
@@ -122,7 +140,7 @@ public class BrandAiAgent {
 									.put("retry", false).toString()));
 					continue;
 				}
-				AiToolResult result = toolbox.execute(userId, call.name(), call.args());
+				AiToolResult result = toolbox.execute(toolSession, userId, call.name(), call.args());
 				toolCalls.add(new AiChatLogEntry.ToolCallLog(call.name(), call.args(), result.rowCount()));
 				shortCodes.addAll(result.shortCodes());
 				// 소유 검증 실패 등 failed 결과의 brandId는 신뢰할 수 없다(M1) - 성공한 호출에서만 딴다.

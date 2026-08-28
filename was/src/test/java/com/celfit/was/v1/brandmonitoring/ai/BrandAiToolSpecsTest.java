@@ -40,4 +40,17 @@ class BrandAiToolSpecsTest {
 		assertThat(BrandAiPrompt.SYSTEM).contains("브랜드 모니터링").contains("답할 수 없어요");
 		assertThat(BrandAiPrompt.TOOL_CAP_NOTE).contains("지금까지");
 	}
+
+	/**
+	 * 강제 답변 문구 원인 분기(N3, 2026-08-28 재리뷰) - {@link BrandAiAgent}가 툴 상한 도달이면
+	 * TOOL_CAP_NOTE를, 벽시계·토큰 예산 소진이면 TIME_BUDGET_NOTE를 골라 붙인다(실사용 확인은
+	 * BrandAiAgentTest의 원인별 시나리오). 두 문구는 원인이 다르다는 사실 자체가 전제라 서로 달라야
+	 * 하고, 각자 "추가 조회 없이" 지시를 담아야 한다.
+	 */
+	@Test
+	void 강제_답변_문구_두_종류는_원인별로_다르고_각자_추가_조회_금지를_지시한다() {
+		assertThat(BrandAiPrompt.TOOL_CAP_NOTE).contains("조회 가능 횟수").contains("추가 조회 없이");
+		assertThat(BrandAiPrompt.TIME_BUDGET_NOTE).contains("답변 시간").contains("추가 조회 없이");
+		assertThat(BrandAiPrompt.TOOL_CAP_NOTE).isNotEqualTo(BrandAiPrompt.TIME_BUDGET_NOTE);
+	}
 }

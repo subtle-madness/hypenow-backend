@@ -36,6 +36,13 @@ class BrandAiAgentTest {
 				+ "\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5}}";
 	}
 
+	/** 프롬프트 토큰 예산(N5) 소진을 재현하는 함수 호출 응답 - usageMetadata.promptTokenCount를 직접 지정한다. */
+	private static String functionCallWithPromptTokens(String name, String argsJson, int promptTokenCount) {
+		return "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{"
+				+ "\"name\":\"" + name + "\",\"args\":" + argsJson + "}}]}}],"
+				+ "\"usageMetadata\":{\"promptTokenCount\":" + promptTokenCount + ",\"candidatesTokenCount\":5}}";
+	}
+
 	/** 안전 필터·길이 제한으로 후보 파트가 비어 끝난 응답(I7) - finishReason만 있고 text·functionCall이 없다. */
 	private static String blockedResponse(String finishReason) {
 		return "{\"candidates\":[{\"finishReason\":\"" + finishReason + "\","
@@ -89,7 +96,7 @@ class BrandAiAgentTest {
 	@Test
 	void 툴을_호출하고_결과를_되먹인_뒤_텍스트로_답한다() {
 		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
-		given(toolbox.execute(anyLong(), anyString(), any()))
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
 				.willReturn(AiToolResult.ok("{\"posts\":[]}", 3, List.of("ABC")));
 		List<String> captured = new ArrayList<>();
 		BrandAiAgent agent = agentWith(
@@ -126,7 +133,7 @@ class BrandAiAgentTest {
 	@Test
 	void 툴_실패는_첫_회만_재시도_지시로_되먹인다() {
 		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
-		given(toolbox.execute(anyLong(), anyString(), any()))
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
 				.willReturn(AiToolResult.failure("{\"error\":\"권한 없음\"}"));
 		List<String> captured = new ArrayList<>();
 		BrandAiAgent agent = agentWith(
@@ -146,7 +153,7 @@ class BrandAiAgentTest {
 	@Test
 	void 툴_호출이_8회를_넘으면_툴_없이_답변을_강제한다() {
 		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
-		given(toolbox.execute(anyLong(), anyString(), any()))
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
 				.willReturn(AiToolResult.ok("{}", 0, List.of()));
 		List<String> captured = new ArrayList<>();
 		// 8번은 툴 호출, 그다음(강제 답변 턴)엔 실제 Vertex가 mode=NONE을 지키듯 텍스트로 답한다.
@@ -173,20 +180,22 @@ class BrandAiAgentTest {
 	}
 
 	@Test
-	void 강제_답변_턴에서도_계속_툴만_요청하면_LLM_호출_안전망으로_끝난다() {
+	void 강제_답변_턴에서도_툴만_요청하면_1회_만에_루프를_끊는다() {
 		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
-		given(toolbox.execute(anyLong(), anyString(), any()))
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
 				.willReturn(AiToolResult.ok("{}", 0, List.of()));
 		List<String> captured = new ArrayList<>();
-		// 강제 답변 턴에서도(mode=NONE) 계속 툴만 요청하는 병리적 경우 - 조회 상한과 구분되는
-		// LLM 호출 안전망(12회)이 최종 방어선이다(M2).
+		// 강제 답변 턴에서도(mode=NONE) 계속 툴만 요청하는 병리적 경우(C2 잔여, 2026-08-28 재리뷰) -
+		// 강제 답변 턴을 1회로 제한하므로 툴 상한(8회) 도달 직후 1번 더 부르고는 더 이상 LLM을
+		// 부르지 않고 그 자리에서 끊는다 - MAX_LLM_CALLS(12)까지 도지 않는다.
 		BrandAiAgent agent = agentWith(List.of(functionCall("list_brands", "{}")), captured, toolbox);
 
 		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "알려줘")));
 
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_LLM_CALL_CAP);
 		assertThat(outcome.answer()).contains("정리하지 못했어요");
-		assertThat(captured).hasSize(BrandAiAgent.MAX_LLM_CALLS);
+		// 툴 상한(8회)까지 정상 호출 8번 + 강제 답변 턴 1번 = 9번에서 멈춘다(추가 LLM 호출 없음).
+		assertThat(captured).hasSize(BrandAiAgent.MAX_TOOL_CALLS + 1);
 	}
 
 	@Test
@@ -210,9 +219,30 @@ class BrandAiAgentTest {
 	}
 
 	@Test
+	void 프롬프트_토큰_예산을_넘으면_강제_답변으로_전환하고_TIME_BUDGET_NOTE를_붙인다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.ok("{}", 0, List.of()));
+		List<String> captured = new ArrayList<>();
+		// 1번째 응답만으로 누적 promptTokens가 예산(60,000)을 채운다 - 툴 상한(8회)은 전혀 걸리지
+		// 않았으니(1회) 원인은 토큰 예산이지 툴 횟수가 아니다 - N3 분기상 TIME_BUDGET_NOTE가 나가야 한다.
+		BrandAiAgent agent = agentWith(
+				List.of(functionCallWithPromptTokens("list_brands", "{}", BrandAiAgent.PROMPT_TOKEN_BUDGET),
+						textAnswer("토큰을 많이 써서 이제 답할게요")),
+				captured, toolbox);
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "알려줘")));
+
+		assertThat(outcome.answer()).isEqualTo("토큰을 많이 써서 이제 답할게요");
+		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_TOOL_CAP);
+		assertThat(captured).hasSize(2);
+		assertThat(captured.get(1)).contains("답변 시간이 얼마 남지 않았습니다");
+	}
+
+	@Test
 	void 실패한_툴_결과의_brandId는_따지_않는다() {
 		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
-		given(toolbox.execute(anyLong(), anyString(), any()))
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
 				.willReturn(AiToolResult.failure("{\"error\":\"권한 없음\"}"));
 		List<String> captured = new ArrayList<>();
 		BrandAiAgent agent = agentWith(
