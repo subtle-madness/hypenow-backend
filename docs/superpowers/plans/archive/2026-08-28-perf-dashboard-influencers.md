@@ -8,7 +8,7 @@
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · 기존 mock 기반 테스트 스타일(`@WebMvcTest`·Mockito).
 
-**스펙:** [2026-08-27-perf-dashboard-list-api-optimization-design.md](../specs/2026-08-27-perf-dashboard-list-api-optimization-design.md) §4
+**스펙:** [2026-08-27-perf-dashboard-list-api-optimization-design.md](../../specs/2026-08-27-perf-dashboard-list-api-optimization-design.md) §4
 
 ## Global Constraints
 

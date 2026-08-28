@@ -502,7 +502,7 @@ Expected: 1위가 실조회 기반 계정(설계 시점 시뮬레이션에서는
   운영 시뮬레이션(w∈{3,2,1.5})에서 ×1.5만 실조회 기반 계정을 1위로 올려 채택. 가중은
   `analytics.hype-comment-weight`(기본 1.5, 함수 COALESCE 단일 소스)로 설정화 — 키에 3을 넣으면
   순위 응급 롤백(척도 완전 복원은 뷰 원복 필요). 앵커 4종 재적합 동반, refit 하니스는 단일 체인
-  v2로 개편(미러 점수 대신 신 가중 재계산). [스펙](docs/superpowers/specs/2026-08-17-hype-comment-weight-design.md)
+  v2로 개편(미러 점수 대신 신 가중 재계산). [스펙](../../specs/2026-08-17-hype-comment-weight-design.md)
 ```
 
 - [ ] **Step 2: 스펙 상태 헤더 갱신**
