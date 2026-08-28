@@ -173,6 +173,39 @@ class TaggedPostHashtagSourceTest {
 	}
 
 	/**
+	 * 기동 즉시 백필 모수(2026-08-28 사용자 지시) — direct∪hashtag 중 <b>enriched_at IS NULL</b>인
+	 * 행만, taken_at DESC로 돌려준다. tagged-only 행(TAGONLY)은 애초에 모수 밖(unenumeratedDuePosts와
+	 * 동일 population 가드)이라 제외되고, 이미 보강된 행(direct지만 enriched)도 제외된다.
+	 */
+	@Test
+	void unenrichedUnenumeratedPosts는_미보강_direct_hashtag만_최신순으로_돌려준다() {
+		Instant older = NOW.minusSeconds(172800);
+		Instant newer = NOW.minusSeconds(86400);
+		repo.insert(brandId, post("TAGONLY", "poster1", newer));   // 모수 밖 — tagged 열거가 담당
+		repo.upsertDirect(brandId, post("ENRICHED", "poster2", newer), NOW);
+		repo.markEnriched(brandId, List.of("ENRICHED"), NOW);       // 이미 보강 — 제외
+		repo.upsertDirect(brandId, post("DIRECT", "poster3", older), NOW);
+		repo.upsertHashtag(brandId, post("HASHTAG", "poster4", newer), NOW);
+
+		assertThat(repo.unenrichedUnenumeratedPosts(brandId, older.minusSeconds(1)))
+				.extracting(TaggedPostRepository.TrackedPost::shortCode)
+				.containsExactly("HASHTAG", "DIRECT");
+	}
+
+	/** minTakenAt 컷 밖(브랜드 창 밖)은 미보강이어도 제외된다 — 다른 조회 메서드와 같은 창 규칙. */
+	@Test
+	void unenrichedUnenumeratedPosts는_창_밖_행을_제외한다() {
+		Instant inWindow = NOW.minusSeconds(86400);
+		Instant outOfWindow = NOW.minusSeconds(200L * 86400);
+		repo.upsertDirect(brandId, post("IN", "poster1", inWindow), NOW);
+		repo.upsertDirect(brandId, post("OUT", "poster2", outOfWindow), NOW);
+
+		assertThat(repo.unenrichedUnenumeratedPosts(brandId, inWindow.minusSeconds(1)))
+				.extracting(TaggedPostRepository.TrackedPost::shortCode)
+				.containsExactly("IN");
+	}
+
+	/**
 	 * direct 취소({@code deleteIfDirectOnly})가 hashtag 성분이 있는 겹침 행을 삭제하면 안 된다
 	 * (설계 §2-4 — direct 취소는 direct 표식만 해제한다). 컨트롤러는 이 메서드가 false를 돌려주면
 	 * {@link TaggedPostRepository#clearDirect}로 폴백한다.

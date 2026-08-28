@@ -289,6 +289,33 @@ public class TaggedPostRepository {
 	}
 
 	/**
+	 * 기동 즉시 백필의 모수(2026-08-28 사용자 지시 — 이관분 점진 충전 대신 즉시 전량) —
+	 * {@link #unenumeratedDuePosts}와 같은 population(direct∪hashtag, 브랜드 창 안)에 <b>{@code
+	 * enriched_at IS NULL}</b> 필터만 얹는다. 호출자({@code BrandDirectCollectService#backfillUnenriched})는
+	 * 이 목록 전체를 상한·due 판정 없이 그대로 소진한다 — 상한(2단계 스윕의 {@code
+	 * unenumerated-sweep-limit})과 나이 티어({@link BrandCrawlPolicy#due})는 둘 다 "점진적으로 갚아도
+	 * 되는" 정상 운영 전제이고, 기동 백필의 목적은 그 전제를 깨는 일회성 이관 재고를 즉시 소진하는
+	 * 것이라 여기서는 적용하지 않는다.
+	 *
+	 * <p>정렬은 taken_at DESC뿐이다 — {@link #unenumeratedDuePosts}의 "미보강 우선" 보조 정렬은
+	 * 이미 enriched_at IS NULL로 걸렀으니 전 행이 미보강이라 의미가 없다.
+	 */
+	public List<TrackedPost> unenrichedUnenumeratedPosts(long brandId, Instant minTakenAt) {
+		return db.query("""
+				SELECT short_code, taken_at, last_crawled_at FROM brand_tagged_post
+				WHERE brand_id = ?
+				  AND (direct_registered_at IS NOT NULL OR hashtag_detected_at IS NOT NULL)
+				  AND taken_at >= ? AND enriched_at IS NULL
+				ORDER BY taken_at DESC""",
+				(rs, i) -> {
+					Timestamp last = rs.getTimestamp("last_crawled_at");
+					return new TrackedPost(rs.getString("short_code"),
+							rs.getTimestamp("taken_at").toInstant(),
+							last == null ? null : last.toInstant());
+				}, brandId, Timestamp.from(minTakenAt));
+	}
+
+	/**
 	 * 커버 처리로 끝난 열거가 커버한 깊이 전체를 갱신 — 열거에서 사라진 링크가 깊이 컷을 영구 고정하는
 	 * 것을 막는다. last_crawled_at의 의미는 "이 게시물을 봤다"가 아니라 <b>"이 깊이까지 커버했다"</b>다:
 	 * 삭제·태그 제거·비공개 전환으로 열거에 더 안 실리는 링크는 {@link #touchCrawled}로는 영영

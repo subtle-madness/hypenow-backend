@@ -135,6 +135,38 @@ public class BrandDirectCollectService {
 	}
 
 	/**
+	 * 기동 즉시 백필(2026-08-28 사용자 지시) — 이관된 미보강 재고를 야간 스윕의 점진 소진에 맡기지
+	 * 않고 배포 직후 한 번에 전량 처리한다. {@link #sweepUnenumerated}와 같은 격리 수집·배치 보강
+	 * 골격을 재사용하되 두 가지가 다르다: (1) 모수가 {@link TaggedPostRepository#unenrichedUnenumeratedPosts}
+	 * (엄격히 enriched_at IS NULL)라 이미 보강된 행은 애초에 안 들어온다, (2) {@link BrandCrawlPolicy#due}
+	 * 나이 티어 필터와 {@code sweepLimit} 스윕당 상한을 <b>적용하지 않는다</b> — 이 행들은 이관 직후
+	 * 한 번도 크롤된 적 없는 재고라 "천천히 갚아도 되는" 정상 운영 전제(점진 소진)가 성립하지 않는다.
+	 *
+	 * @return 이번 호출이 시도한 행 수(성공·실패·격리 전부 포함) — 러너가 브랜드 합산 로그에 쓴다.
+	 */
+	public int backfillUnenriched(BrandRow brand) {
+		return callContext.scoped(brand.id(), () -> doBackfillUnenriched(brand));
+	}
+
+	private int doBackfillUnenriched(BrandRow brand) {
+		Instant now = Instant.now();
+		List<TaggedPostRepository.TrackedPost> due = taggedPosts
+				.unenrichedUnenumeratedPosts(brand.id(), now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE));
+		List<PostInfo> batch = new ArrayList<>();
+		for (TaggedPostRepository.TrackedPost t : due) {
+			collectOne(brand, t.shortCode(), now).ifPresent(batch::add);
+			if (batch.size() >= SWEEP_BATCH_SIZE) {
+				collect.enrich(brand, List.copyOf(batch));
+				batch.clear();
+			}
+		}
+		if (!batch.isEmpty()) {
+			collect.enrich(brand, batch);
+		}
+		return due.size();
+	}
+
+	/**
 	 * 게시물 1건 격리 수집 — 삭제·비공개 전환({@link SubjectNotFoundException})에도 행을 지우지
 	 * 않는다. 대신 unavailable_at을 마킹해 was가 hidden으로 노출한다(2026-08-25 설계 — 스펙 §8의
 	 * "상태 전이 없음"에 대한 유일한 예외이며, 성공 재관측이 해제하는 가역 마킹이라 CLOSED 같은

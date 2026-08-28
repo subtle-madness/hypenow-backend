@@ -142,6 +142,7 @@ class BrandDirectCollectServiceTest {
 		final Map<String, Instant> touched = new HashMap<>();
 		final List<String> enriched = java.util.Collections.synchronizedList(new ArrayList<>());
 		final List<TrackedPost> due = new ArrayList<>();
+		final List<TrackedPost> unenrichedDue = new ArrayList<>();
 		final List<String> unavailable = new ArrayList<>();
 
 		InMemoryTagged() {
@@ -182,6 +183,11 @@ class BrandDirectCollectServiceTest {
 		@Override
 		public List<TrackedPost> unenumeratedDuePosts(long brandId, Instant minTakenAt) {
 			return due.stream().filter(t -> !t.takenAt().isBefore(minTakenAt)).toList();
+		}
+
+		@Override
+		public List<TrackedPost> unenrichedUnenumeratedPosts(long brandId, Instant minTakenAt) {
+			return unenrichedDue.stream().filter(t -> !t.takenAt().isBefore(minTakenAt)).toList();
 		}
 	}
 
@@ -425,5 +431,67 @@ class BrandDirectCollectServiceTest {
 
 		assertThat(tagged.touched).containsKey("NoDate");   // 커버 처리 — 즉시-due 창에서 빠진다
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("After");
+	}
+
+	// ── backfillUnenriched — 기동 즉시 백필(2026-08-28 사용자 지시) ─────────────
+
+	/**
+	 * 스윕당 상한(sweepLimit)이 걸려 있어도 기동 백필은 무시하고 전량 소진한다 — 점진 소진은
+	 * 야간 스윕 전용 정책이고, 기동 백필의 목적 자체가 그 점진성을 깨는 것이다.
+	 */
+	@Test
+	void 스윕_상한을_무시하고_미보강_전량을_소진한다() {
+		for (int i = 0; i < 5; i++) {
+			String code = "U" + i;
+			tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost(code, Instant.ofEpochSecond(RECENT), null));
+			postResponses.put(code, postJson(code, RECENT, 300 + i));
+		}
+
+		int backfilled = serviceWithLimit(2).backfillUnenriched(brand);
+
+		assertThat(backfilled).isEqualTo(5);
+		assertThat(postCalls()).isEqualTo(5);
+		assertThat(tagged.enriched).containsExactlyInAnyOrder("U0", "U1", "U2", "U3", "U4");
+	}
+
+	/**
+	 * BrandCrawlPolicy.due 나이 티어를 적용하지 않는다 — last_crawled_at이 방금(0초 전)이라 정상
+	 * sweepUnenumerated였다면 due 아닌 행도 기동 백필은 건너뛰지 않는다.
+	 */
+	@Test
+	void 나이_티어_due_판정과_무관하게_전량_수집한다() {
+		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("JustCrawled", Instant.ofEpochSecond(RECENT),
+				Instant.now()));   // 방금 크롤됨 — sweepUnenumerated였다면 due=false로 걸러졌을 행
+		postResponses.put("JustCrawled", postJson("JustCrawled", RECENT, 401));
+
+		int backfilled = service().backfillUnenriched(brand);
+
+		assertThat(backfilled).isEqualTo(1);
+		assertThat(postCalls()).isEqualTo(1);
+		assertThat(tagged.enriched).containsExactly("JustCrawled");
+	}
+
+	/** 미보강 재고가 없으면 콜 없이 0을 돌려준다 — 러너가 매 기동마다 값싸게 no-op으로 지나가야 한다. */
+	@Test
+	void 미보강_재고가_없으면_콜_없이_0을_돌려준다() {
+		int backfilled = service().backfillUnenriched(brand);
+
+		assertThat(backfilled).isZero();
+		assertThat(postCalls()).isZero();
+	}
+
+	/** 부재 게시물은 격리되고 나머지는 계속 보강된다 — sweepUnenumerated와 같은 실패 격리 규율. */
+	@Test
+	void 백필_중_부재_게시물은_격리되고_나머지는_계속_보강된다() {
+		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("Gone", Instant.ofEpochSecond(RECENT), null));
+		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("Alive", Instant.ofEpochSecond(RECENT), null));
+		notFoundCodes.add("Gone");
+		postResponses.put("Alive", postJson("Alive", RECENT, 402));
+
+		int backfilled = service().backfillUnenriched(brand);
+
+		assertThat(backfilled).isEqualTo(2);   // 시도한 행 수(부재 포함)
+		assertThat(tagged.unavailable).containsExactly("Gone");
+		assertThat(tagged.enriched).containsExactly("Alive");
 	}
 }

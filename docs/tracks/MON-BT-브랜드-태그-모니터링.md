@@ -404,7 +404,12 @@ collectionMonths 적용. `/posts` 통합 목록에 source=hashtag로 합류 + �
 기존 fail-open 폐기). 구 `/hashtag-posts`는 새 풀로 리라우팅 후 FE 전환 확인되면 다음 릴리스
 제거, 구 감지 테이블(`brand_hashtag_post`·`brand_hashtag_post_matched_tags`) DROP도 다음
 릴리스(expand-contract). `HashtagPostThumbnailArchiveJob`은 구 테이블 잔존 행 서빙 전용으로
-의도적으로 얼려두고 테이블과 함께 다음 릴리스 제거.
+의도적으로 얼려두고 테이블과 함께 다음 릴리스 제거. **08-28 기동 즉시 보강 러너 추가**(사용자
+지시 — 이관분을 야간 스윕 2단계 상한(300건/스윕)의 점진 소진에 맡기지 않고, 앱 기동 시
+`UnenrichedBackfillStartupRunner`가 활성 브랜드 전부의 미보강(enriched_at IS NULL) 잔량을 즉시
+전량 보강한다. `AdDisclosureBackfillStartupRunner`와 동형 골격, 킬 스위치
+`monitoring.brand.unenriched-backfill-on-startup`. 야간 스윕의 상한·캐던스는 무변화 — 안전망
+그대로 유지).
 
 ## 잔여 작업
 
