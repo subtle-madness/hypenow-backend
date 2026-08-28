@@ -344,6 +344,31 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 		assertThat(result.payloadJson()).doesNotContain("DISCLOSED");
 	}
 
+	/**
+	 * 링크 창(collectionMonths)과 모델의 days 필터는 별개 판정이다(N1, 2026-08-28 재리뷰) - direct
+	 * 등록은 유저가 명시 등록한 추적 대상이라 표시 창과 무관하게 통과하지만(①), 모델이 "최근 7일"을
+	 * 물었으면 2년 전 등록분은 그 답에 섞이면 안 된다(②, 면제 없음). 상세 접근(get_post)은 ①만 타므로
+	 * 같은 게시물이 거기선 여전히 조회돼야 한다(FE 상세 화면과 동일 계약).
+	 */
+	@Test
+	void 링크_창_안이지만_days_밖인_direct_게시물은_list_posts에서_빠지고_get_post로는_조회된다() {
+		long brandId = insertBrand(monitoringJdbc, "directwindowbrand");
+		linkRepository.insertLink(userId, brandId, "directwindowbrand", BrandAccountType.OWN, 12);
+		insertDirectOnlyPost(userId, brandId, "OLDDIRECT", "old_direct_author",
+				NOW.minusSeconds(730L * 86400));
+
+		AiToolResult list = toolbox.execute(userId, BrandAiToolSpecs.LIST_POSTS,
+				args().put("brandId", brandId).put("days", 7));
+		AiToolResult post = toolbox.execute(userId, BrandAiToolSpecs.GET_POST,
+				args().put("shortCode", "OLDDIRECT"));
+
+		assertThat(list.failed()).isFalse();
+		assertThat(list.shortCodes()).doesNotContain("OLDDIRECT");
+		assertThat(list.payloadJson()).doesNotContain("OLDDIRECT");
+		assertThat(post.failed()).isFalse();
+		assertThat(post.shortCodes()).containsExactly("OLDDIRECT");
+	}
+
 	@Test
 	void B만_등록한_해시태그로_매칭된_게시물은_A의_목록에_안_나온다() {
 		long hashtagBrandId = insertBrand(monitoringJdbc, "hashtagbrand");

@@ -56,7 +56,10 @@ import tools.jackson.databind.ObjectMapper;
 public class BrandPostAssembler {
 
 	static final String SOURCE_TAGGED = "tagged";
-	static final String SOURCE_DIRECT = "direct";
+	/** public(N4, 2026-08-28) - {@code com.celfit.was.v1.brandmonitoring.ai.BrandAiToolbox}가 패키지
+	 * 밖에서 링크 창 판정(direct 면제)에 이 값을 그대로 참조한다. 리터럴을 그쪽에 복제해두면 이 값이
+	 * 바뀌어도 컴파일 에러 없이 조용히 드리프트한다. */
+	public static final String SOURCE_DIRECT = "direct";
 
 	private static final Logger log = LoggerFactory.getLogger(BrandPostAssembler.class);
 

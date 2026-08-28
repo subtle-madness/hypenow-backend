@@ -18,7 +18,9 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -69,9 +71,6 @@ public class BrandAiToolbox {
 	private static final int COMMENT_BODY_LENGTH = 300;
 
 	private static final String SORT_PERFORMANCE_DESC = "performance_desc";
-	/** {@link BrandPostAssembler#SOURCE_DIRECT}의 패키지 밖 사본 - 그쪽 상수는 패키지 전용이라 여기서
-	 * 새로 선언한다({@link PostRef#source()} 값과 리터럴로 비교). */
-	private static final String SOURCE_DIRECT = "direct";
 
 	private final BrandLinkRepository linkRepository;
 	private final BrandReadRepository brandReadRepository;
@@ -91,16 +90,46 @@ public class BrandAiToolbox {
 		this.clock = clock;
 	}
 
+	/**
+	 * 세션 없는 호출 - 매 호출마다 새 {@link ToolSession}을 만들어 위임한다(캐시 미적용, 단발 호출·
+	 * 기존 테스트 호환용). 실제 에이전트 루프는 {@link #execute(ToolSession, long, String, JsonNode)}로
+	 * 요청 스코프 세션을 넘겨 인덱스 패스 중복을 없앤다(N2).
+	 */
 	public AiToolResult execute(long userId, String toolName, JsonNode args) {
+		return execute(new ToolSession(), userId, toolName, args);
+	}
+
+	public AiToolResult execute(ToolSession session, long userId, String toolName, JsonNode args) {
 		return switch (toolName) {
 			case BrandAiToolSpecs.LIST_BRANDS -> listBrands(userId);
-			case BrandAiToolSpecs.LIST_POSTS -> listPosts(userId, args);
-			case BrandAiToolSpecs.GET_POST -> getPost(userId, args);
-			case BrandAiToolSpecs.GET_COMMENTS -> getComments(userId, args);
+			case BrandAiToolSpecs.LIST_POSTS -> listPosts(session, userId, args);
+			case BrandAiToolSpecs.GET_POST -> getPost(session, userId, args);
+			case BrandAiToolSpecs.GET_COMMENTS -> getComments(session, userId, args);
 			case BrandAiToolSpecs.LIST_HASHTAG_POSTS -> listHashtagPosts(userId, args);
 			case BrandAiToolSpecs.GET_AUTHOR -> getAuthor(args);
 			default -> error("알 수 없는 툴입니다: " + toolName);
 		};
+	}
+
+	/**
+	 * 에이전트 실행 1회 스코프의 캐시 컨테이너(N2, 2026-08-28) - {@link BrandPostAssembler#indexForBrand}는
+	 * 유저 전 브랜드 풀을 다시 조립하는 무거운 호출인데, get_post→get_comments 연쇄나
+	 * {@link #hydrateOwnedPost}의 유저 링크 순회에서 같은 (brandId, withViews) 조합을 턴당 최대 8회까지
+	 * 반복 조회할 수 있다. 이 세션이 그 결과를 요청 스코프로만 재사용한다 - 툴박스 자체는 싱글턴 빈이라
+	 * 인스턴스 필드에 캐시를 두면 유저 간 데이터가 섞이므로, 호출자({@link BrandAiAgent#run})가 매 요청
+	 * 새로 만들어 매 execute 호출에 넘긴다.
+	 */
+	public static final class ToolSession {
+		private final Map<IndexCacheKey, BrandPostIndex> indexCache = new HashMap<>();
+	}
+
+	/** 인덱스 캐시 키 - withViews 여부에 따라 latestViews 유무가 달라 브랜드마다 최대 두 변형이 있다. */
+	private record IndexCacheKey(long brandId, boolean withViews) {
+	}
+
+	private BrandPostIndex indexFor(ToolSession session, long userId, BrandAccountRow account, boolean withViews) {
+		return session.indexCache.computeIfAbsent(new IndexCacheKey(account.id(), withViews),
+				key -> postAssembler.indexForBrand(userId, account, withViews));
 	}
 
 	private AiToolResult listBrands(long userId) {
@@ -122,12 +151,21 @@ public class BrandAiToolbox {
 	}
 
 	/**
-	 * 목록(C1/I3/I9) - 컨트롤러 목록과 같은 2단 조립(indexForBrand + hydrate)을 탄다. 인덱스가
-	 * 이미 노출 필터(direct-only 등록자 전용, {@link BrandPostAssembler#indexForBrand} 참조)를 강제해
-	 * 원시 리포지토리 호출로는 새던 겹침 게시물이 여기선 애초에 후보에 없다. ENRICHED_ONLY도
-	 * indexForBrand 고정값이라 별도 스코프 인자가 필요 없다(I3).
+	 * 목록(C1/I3/I9, N1 2026-08-28 재리뷰) - 컨트롤러 목록과 같은 2단 조립(indexForBrand + hydrate)을
+	 * 탄다. 인덱스가 이미 노출 필터(direct-only 등록자 전용, {@link BrandPostAssembler#indexForBrand}
+	 * 참조)를 강제해 원시 리포지토리 호출로는 새던 겹침 게시물이 여기선 애초에 후보에 없다.
+	 * ENRICHED_ONLY도 indexForBrand 고정값이라 별도 스코프 인자가 필요 없다(I3).
+	 *
+	 * <p><b>링크 창과 모델의 days 필터는 서로 다른 판정이다</b>(N1 - {@link
+	 * com.celfit.was.v1.brandmonitoring.V1BrandPostsController#list} 정본과 동형) - {@link
+	 * #withinLinkWindow}는 direct 게시물을 면제하지만(유저가 명시 등록한 추적 대상이라 표시 창과
+	 * 무관), 모델이 요청한 days는 "최근 N일"이라는 명시적 질문이라 direct라고 면제하면 2년 전 direct
+	 * 등록 게시물이 "최근 7일" 답변에 섞이는 오답이 난다. 그래서 두 판정을 하나로 접지 않고 순서대로
+	 * 적용한다: ① 링크 창(collectionMonths, direct 면제) → ② 모델 days(업로드일 기준, 면제 없음 -
+	 * {@link com.celfit.was.v1.brandmonitoring.V1BrandPostsController#withinUploadWindow}와 같은 판정
+	 * 함수를 이 값 하나만으로 호출한 것과 동형).
 	 */
-	private AiToolResult listPosts(long userId, JsonNode args) {
+	private AiToolResult listPosts(ToolSession session, long userId, JsonNode args) {
 		Optional<BrandLinkRow> linkOpt = ownedBrand(userId, args.path("brandId").asLong(0));
 		if (linkOpt.isEmpty()) {
 			return error("그 브랜드는 이 사용자의 모니터링 목록에 없거나 접근 권한이 없습니다. list_brands로 확인하세요.");
@@ -140,10 +178,16 @@ public class BrandAiToolbox {
 		BrandAccountRow account = accountOpt.get();
 
 		boolean performanceSort = SORT_PERFORMANCE_DESC.equals(args.path("sort").asString());
-		BrandPostIndex index = postAssembler.indexForBrand(userId, account, performanceSort);
+		BrandPostIndex index = indexFor(session, userId, account, performanceSort);
 
-		LocalDate cutoff = cutoffDateFor(link, args);
-		List<PostRef> inWindow = index.refs().stream().filter(r -> withinLinkWindow(r, cutoff)).toList();
+		LocalDate today = LocalDate.ofInstant(clock.instant(), KstTimestamps.KST);
+		LocalDate windowStart = today.minusMonths(link.collectionMonths());
+		List<PostRef> linkWindowRefs = index.refs().stream().filter(r -> withinLinkWindow(r, windowStart)).toList();
+
+		int days = Math.clamp(args.path("days").asInt(DEFAULT_DAYS), 1, MAX_DAYS);
+		LocalDate since = today.minusDays(days);
+		List<PostRef> inWindow = linkWindowRefs.stream().filter(r -> withinUploadWindow(r.uploadedOn(), since))
+				.toList();
 
 		Comparator<PostRef> order = performanceSort
 				? Comparator.comparing(PostRef::latestViews, Comparator.nullsLast(Comparator.reverseOrder()))
@@ -158,7 +202,9 @@ public class BrandAiToolbox {
 
 		ObjectNode payload = objectMapper.createObjectNode();
 		payload.put("brandId", link.brandId());
-		payload.put("since", cutoff.toString());
+		// since·totalInWindow는 반환된 posts 전원이 실제로 통과한 ② days 필터 기준이다(N1) - direct
+		// 면제가 붙는 ①(링크 창)의 windowStart는 별개 상한이라 여기 싣지 않는다(이미 posts에 반영됨).
+		payload.put("since", since.toString());
 		payload.put("returned", posts.size());
 		payload.put("totalInWindow", inWindow.size());
 		ArrayNode postsNode = payload.putArray("posts");
@@ -181,11 +227,15 @@ public class BrandAiToolbox {
 	 * 상세(C1/I4) - {@link #hydrateOwnedPost}가 컨트롤러 {@code get()}과 같은 관용구(유저 링크 순회 →
 	 * indexForBrand → 창 검사 → hydrate)로 소유·창을 검증한다. 광고 표기 노출(토글+경쟁사 억제)은
 	 * {@link BrandPostAssembler#brandPost} 게이트를 그대로 물려받는다(I4) - 여기선 값이 있으면 싣기만
-	 * 한다.
+	 * 한다. <b>상세 접근은 링크 창 판정만 탄다(N1)</b> - list_posts의 days 필터와 달리 get_post는 FE
+	 * 상세 화면과 동일하게 표시 창(collectionMonths) 밖이 아니면 열린다.
+	 *
+	 * <p>댓글은 여기서 싣지 않으므로 hydrate는 {@code withComments=false}로 부른다(N2) - 댓글 배치
+	 * 조회는 get_comments 전용이라, get_post 단독 호출에서 불필요한 댓글 조회를 없앤다.
 	 */
-	private AiToolResult getPost(long userId, JsonNode args) {
+	private AiToolResult getPost(ToolSession session, long userId, JsonNode args) {
 		String shortCode = args.path("shortCode").asString();
-		Optional<BrandPostResponse> found = hydrateOwnedPost(userId, shortCode, true);
+		Optional<BrandPostResponse> found = hydrateOwnedPost(session, userId, shortCode, false);
 		if (found.isEmpty()) {
 			return error("그 게시물은 이 사용자의 브랜드 게시물 목록에 없거나 접근 권한이 없습니다. list_posts로 확인하세요.");
 		}
@@ -216,9 +266,9 @@ public class BrandAiToolbox {
 	}
 
 	/** 댓글(C1) - {@link #hydrateOwnedPost}로 같은 소유·창 검증을 거친 뒤 이미 하이드레이트된 댓글만 자른다. */
-	private AiToolResult getComments(long userId, JsonNode args) {
+	private AiToolResult getComments(ToolSession session, long userId, JsonNode args) {
 		String shortCode = args.path("shortCode").asString();
-		Optional<BrandPostResponse> found = hydrateOwnedPost(userId, shortCode, true);
+		Optional<BrandPostResponse> found = hydrateOwnedPost(session, userId, shortCode, true);
 		if (found.isEmpty()) {
 			return error("그 게시물은 이 사용자의 브랜드 게시물 목록에 없거나 접근 권한이 없습니다. list_posts로 확인하세요.");
 		}
@@ -321,7 +371,8 @@ public class BrandAiToolbox {
 	 * 안에 있는지까지 검사한 뒤에만 hydrate한다. 속하지 않거나 창 밖이면 empty - 컨트롤러의 404와
 	 * 같은 취급이다. 브랜드 수는 유저당 최대 9개(own 6 + competitor 3)라 순회 비용이 상한선 안에 있다.
 	 */
-	private Optional<BrandPostResponse> hydrateOwnedPost(long userId, String shortCode, boolean withComments) {
+	private Optional<BrandPostResponse> hydrateOwnedPost(ToolSession session, long userId, String shortCode,
+			boolean withComments) {
 		if (shortCode == null || shortCode.isBlank()) {
 			return Optional.empty();
 		}
@@ -332,7 +383,7 @@ public class BrandAiToolbox {
 				continue;
 			}
 			LocalDate windowStart = today.minusMonths(link.collectionMonths());
-			BrandPostIndex index = postAssembler.indexForBrand(userId, accountOpt.get(), false);
+			BrandPostIndex index = indexFor(session, userId, accountOpt.get(), false);
 			boolean present = index.refs().stream()
 					.anyMatch(r -> r.shortcode().equals(shortCode) && withinLinkWindow(r, windowStart));
 			if (!present) {
@@ -361,11 +412,22 @@ public class BrandAiToolbox {
 
 	/**
 	 * 링크 창 판정(컨트롤러 {@code withinLinkWindow} 동형) - direct는 유저가 명시 등록한 추적 대상이라
-	 * 창과 무관하게 통과한다. 나머지는 업로드일이 컷 이상이어야 한다(업로드일 미상은 제외).
+	 * 창과 무관하게 통과한다. 나머지는 업로드일이 컷 이상이어야 한다(업로드일 미상은 제외). {@link
+	 * BrandPostAssembler#SOURCE_DIRECT}를 직접 참조한다(N4) - 리터럴을 복제하면 값이 갈라져도 컴파일
+	 * 에러 없이 드리프트한다.
 	 */
 	private static boolean withinLinkWindow(PostRef ref, LocalDate cutoff) {
-		return SOURCE_DIRECT.equals(ref.source())
+		return BrandPostAssembler.SOURCE_DIRECT.equals(ref.source())
 				|| (ref.uploadedOn() != null && !ref.uploadedOn().isBefore(cutoff));
+	}
+
+	/**
+	 * 모델의 days 필터 판정(N1, 컨트롤러 {@code withinUploadWindow(uploadedOn, since, null)} 동형) -
+	 * {@link #withinLinkWindow}와 달리 direct 면제가 없다: 모델이 "최근 N일"을 물었으면 direct
+	 * 게시물도 그 기간 안에 올라온 것만 답해야 한다. 업로드일 미상은 판정 불가라 제외한다.
+	 */
+	private static boolean withinUploadWindow(LocalDate uploadedOn, LocalDate since) {
+		return uploadedOn != null && !uploadedOn.isBefore(since);
 	}
 
 	/**
