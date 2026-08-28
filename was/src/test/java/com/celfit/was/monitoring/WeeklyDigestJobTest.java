@@ -449,4 +449,38 @@ class WeeklyDigestJobTest extends IntegrationTest {
 		Map<String, Object> highlight = items.get(1);
 		assertThat(highlight.get("summary")).isEqualTo("@author_e 게시물 · 조회수 500");
 	}
+
+	@Test
+	void 다이제스트_upsert_실패_시_미표기_이력을_남기지_않는다() {
+		// 품질 리뷰 Critical — markNotified가 digests.upsertWeekly보다 먼저 커밋되면, upsert
+		// 실패 시 "알림은 못 갔는데 이력엔 통보됨"으로 찍혀 다음 주 필터(findNotifiedInOtherWeek)에
+		// 걸려 영구 소실된다(Task 8 품질 리뷰 I1이 고쳤던 순서 회귀). upsertWeekly를 던지게 만들고
+		// 이력이 비어 있는지로 순서를 못박는다.
+		long userId = seedUser();
+		long brandId = seedBrand(userId, "boom_brand");
+		seedTagged(brandId, "SC_BOOM", BEFORE_WEEK);
+		seedMeta("SC_BOOM", "NOT_DISCLOSED", IN_WEEK);
+		brandDirectPostRepository.upsertDirect(userId, brandId, "SC_BOOM");
+
+		DigestRepository throwingDigests = new DigestRepository(jdbcClient) {
+			@Override
+			public long upsertWeekly(long userId, LocalDate weekStart, OffsetDateTime windowCloseAt,
+					String itemsJson) {
+				throw new RuntimeException("upsert 실패(테스트)");
+			}
+		};
+		WeeklyDigestMailer mailer = new WeeklyDigestMailer(throwingDigests, weeklyEmailOptOutRepository,
+				userRepository, new WeeklyDigestMailComposer("https://hypenow.io"),
+				(to, subject, text) -> { }, 5, java.time.Duration.ZERO);
+		WeeklyDigestJob throwingJob = new WeeklyDigestJob(monitoringReadRepository, brandReadRepository,
+				brandLinkRepository, brandDirectPostRepository, monitoringItemRepository,
+				adDisclosureNoticeRepository, throwingDigests, new WeeklyDigestAssembler(), mailer,
+				new ObjectMapper(), Clock.fixed(NOW, ZoneOffset.UTC), true);
+
+		throwingJob.run();   // 유저 단위 격리 — 예외를 삼키고 로그만 남긴다(RuntimeException은 밖으로 안 던짐)
+
+		assertThat(adDisclosureNoticeRepository.findNotifiedInOtherWeek(userId, List.of("SC_BOOM"),
+				WEEK_START.plusWeeks(1))).isEmpty();
+		assertThat(digestRepository.countByUser(userId)).isZero();
+	}
 }
