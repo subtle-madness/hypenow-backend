@@ -221,4 +221,100 @@ class AdDisclosurePatternsTest {
 	void 전각_해시_광고도_매칭된다() {
 		assertThat(AdDisclosurePatterns.findFirstMatch("＃광고 오늘의 룩")).isNotNull();
 	}
+
+	// ---------- 오타·변형 해시태그(08-28 운영 위험 판정 실측 8건) ----------
+
+	@Test
+	void 오타_해시태그_제픔제공은_매칭된다() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("#제픔제공 받았어요")).isNotNull();
+	}
+
+	@Test
+	void 오타_해시태그_재품제공은_매칭된다() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("#재품제공 받고 작성했어요")).isNotNull();
+	}
+
+	@Test
+	void 제품증정_해시태그는_매칭된다() {
+		AdDisclosurePatterns.Match m = AdDisclosurePatterns.findFirstMatch("#제품증정 이벤트 당첨돼서 받았어요");
+		assertThat(m).isNotNull();
+		assertThat(m.phrase()).isEqualTo("#제품증정");
+	}
+
+	@Test
+	void 상품증정_해시태그는_매칭된다() {
+		// 제품증정의 대칭 예방 등재 — 08-28 운영 데이터 무관.
+		assertThat(AdDisclosurePatterns.findFirstMatch("#상품증정 받고 후기 남깁니다")).isNotNull();
+	}
+
+	@Test
+	void 제품단순제공_해시태그는_매칭된다() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("#제품단순제공 후기입니다")).isNotNull();
+	}
+
+	@Test
+	void 오타_해시태그도_전각_해시를_인정한다() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("＃제픔제공 받았어요")).isNotNull();
+	}
+
+	@Test
+	void 오타_해시태그도_토큰_경계로_접두_매칭을_차단한다() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("#제품증정이벤트 참여하세요")).isNull();
+	}
+
+	// ---------- 수령 동사 과거형 일반화(08-28 운영 실측 NOT_DISCLOSED 오귀속) ----------
+
+	@Test
+	void 제품_접두_없는_제공받았다는_과거형은_매칭된다() {
+		// 08-28 운영 실측: "수딩젤도 제공받았는데"류가 "제품" 접두를 요구하던 기존 패턴에 안 걸려
+		// NOT_DISCLOSED로 오귀속됐다.
+		assertThat(AdDisclosurePatterns.findFirstMatch("수딩젤도 제공받았는데 잘 맞더라고요")).isNotNull();
+	}
+
+	@Test
+	void 제공받은_과거형도_매칭된다() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("이번에 제공받은 제품 후기입니다")).isNotNull();
+	}
+
+	@Test
+	void 증정받았다는_과거형은_매칭된다() {
+		AdDisclosurePatterns.Match m = AdDisclosurePatterns.findFirstMatch("증정받았어요 오늘의 룩");
+		assertThat(m).isNotNull();
+		assertThat(m.phrase()).isEqualTo("증정받았");
+	}
+
+	@Test
+	void 제공받고_싶다는_모집_문맥은_사전에_없다() {
+		// "협찬받고"(모집·희망) 오탐 방지 원칙과 동일 — 과거형 확정 문구만 고신뢰로 인정한다.
+		assertThat(AdDisclosurePatterns.findFirstMatch("제공받고 싶어요 연락주세요")).isNull();
+	}
+
+	// ---------- 부정문 "제공받은 것 없음"류 NEGATION 방어(08-28 운영 실측 2건) ----------
+
+	@Test
+	void 제공받은_것_없다는_부정문은_false_disclosed로_오탐하지_않는다() {
+		// "제공받은"이 신규 "제공\s*받(았|은)" 패턴과 매칭되지만, 뒤이은 "것 없"과 스팬이 겹쳐
+		// NEGATION에 걸려 제외된다.
+		assertThat(AdDisclosurePatterns.findFirstMatch("제공받은 것 없는 단순 공유입니다")).isNull();
+	}
+
+	@Test
+	void 제공받는_것_없다는_변형도_null() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("수수료 등 제공받는 것 없는 단순 공유입니다")).isNull();
+	}
+
+	@Test
+	void 증정받은_거_없다는_변형도_NEGATION에_걸린다() {
+		assertThat(AdDisclosurePatterns.findFirstMatch("증정받은 거 없이 제 돈 주고 샀어요")).isNull();
+	}
+
+	@Test
+	void 부정문_뒤_무관한_위치의_실존_표기는_매칭된다() {
+		// 스팬 겹침 설계 원칙 재확인 — "제공받은 것 없"는 앞쪽에서만 부정하고, 뒤쪽 "#광고"는
+		// 겹치지 않으므로 매칭이 살아야 한다.
+		AdDisclosurePatterns.Match m =
+				AdDisclosurePatterns.findFirstMatch("제공받은 것 없는 단순 공유예요 #광고 표기합니다");
+		assertThat(m).isNotNull();
+		assertThat(m.phrase()).isEqualTo("#광고");
+	}
 }
