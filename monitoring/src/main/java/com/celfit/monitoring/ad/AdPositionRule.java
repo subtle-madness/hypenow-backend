@@ -29,7 +29,8 @@ public final class AdPositionRule {
 	private static final int VISIBLE_LINE_MAX = 2;
 	private static final int HIDDEN_LINE_MIN = 3;
 
-	private static final Pattern FIRST_HASHTAG = Pattern.compile("#[\\p{L}\\p{N}_]+");
+	// "[#＃]" — 반각(U+0023)·전각(U+FF03) 해시 둘 다 첫 해시태그 인정(08-28 전각 해시 오탐 실측 후 확장).
+	private static final Pattern FIRST_HASHTAG = Pattern.compile("[#＃][\\p{L}\\p{N}_]+");
 
 	public enum Band { VISIBLE, GRAY, HIDDEN, FIRST_HASHTAG }
 

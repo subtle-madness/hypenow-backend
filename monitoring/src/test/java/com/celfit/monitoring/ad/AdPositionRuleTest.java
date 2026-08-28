@@ -114,4 +114,15 @@ class AdPositionRuleTest {
 		assertThat(AdPositionRule.evaluate(caption, start, start + "광고입니다".length()))
 				.isEqualTo(AdPositionRule.Band.VISIBLE);
 	}
+
+	@Test
+	void 전각_해시도_첫_해시태그_오프셋_무관_인정() {
+		// 08-28 dodami_0607 계열("＃협찬 | #아워팜") 전각 해시(U+FF03) 오탐 실측 후 FIRST_HASHTAG도
+		// 전각을 인정하도록 확장 — 반각 "#"과 동일하게 첫 해시태그면 오프셋 무관 인정.
+		String longTail = "룩 소개".repeat(50);
+		String caption = "＃협찬 " + longTail;
+		int start = caption.indexOf("＃협찬");
+		assertThat(AdPositionRule.evaluate(caption, start, start + "＃협찬".length()))
+				.isEqualTo(AdPositionRule.Band.FIRST_HASHTAG);
+	}
 }
