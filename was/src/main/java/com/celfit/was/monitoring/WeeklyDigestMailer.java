@@ -29,7 +29,17 @@ import org.springframework.stereotype.Component;
  * <h2>발송 시각 집중 완화</h2>
  * 월요일 09:00에 전 유저 발송이 몰린다(설계 §8). 발송 사이에 최소 간격을 둬 Resend 호출이
  * 순간적으로 몰리지 않게 한다 — 배치 API를 새로 붙이는 것보다 단순하고, 주간 1회라 총 소요가
- * 유저 수 × 간격으로 예측 가능하다. 테스트는 간격 0으로 조립한다.
+ * 유저 수 × 간격으로 예측 가능하다. <b>실패(429 레이트리밋 등) 응답도 이 간격을 쉰다</b> — 성공
+ * 경로만 쉬면 레이트리밋에 걸린 상황에서 오히려 연속 실패 재시도가 아무 간격 없이 몰아친다
+ * (품질 리뷰 Important #1). 테스트는 간격 0으로 조립한다.
+ *
+ * <h2>주의 — admin-only 메일 게이트와의 상호작용</h2>
+ * {@code WAS_MAIL_ADMIN_ONLY=true}(test 환경 전용, {@link com.celfit.was.mail.RecipientGatedMailSender})
+ * 에서는 비-ADMIN 수신자로 향하는 발송이 예외 없이 {@code LoggingMailSender}로 조용히 전환된다.
+ * 이 클래스 입장에서는 정상 성공(예외 없음)과 구분이 안 되므로 {@link #send}는 그대로
+ * {@code markEmailSent}를 찍어 그 주를 종결한다 — 즉 이 플래그를 <b>운영에서</b> 켜면 실제 메일이
+ * 한 통도 안 나갔는데도 전원 "발송 완료"로 영구 기록되어 재시도 기회 자체가 사라진다(무음 전원
+ * 미발송). 운영에서는 반드시 false여야 한다.
  */
 @Component
 @ConditionalOnProperty(name = "monitoring.enabled", havingValue = "true")
@@ -84,6 +94,7 @@ public class WeeklyDigestMailer {
 		} catch (RuntimeException e) {
 			log.warn("주간 리포트 발송 실패 — user {}: {}", userId, e.toString());
 			digests.markEmailAttempted(digestId);
+			pace();   // 실패도 쉰다 — 레이트리밋 상황에서 실패 재시도가 몰아치지 않게(품질 리뷰 Important #1)
 			return;
 		}
 		digests.markEmailSent(digestId);
