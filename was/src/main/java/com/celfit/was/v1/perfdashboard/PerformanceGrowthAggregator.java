@@ -185,6 +185,13 @@ public final class PerformanceGrowthAggregator {
 	 * 숨김 ref의 likes는 항상 null이라 더할 값 자체가 없다. 이 불변식(숨김이면 값 null)은 단일
 	 * 산지 계약이고, 산지가 둘인 콘텐츠의 스냅샷 병합({@code PerformanceContentAssembler.mergeOne},
 	 * 2026-08-28 정합)도 숨김 관측이 있으면 값을 접어 유지한다.
+	 *
+	 * <p><b>followersSum은 참여율 분모다</b>(FE 요청 2026-08-27 ①) — 좋아요를 아는 게시물
+	 * (스냅샷 있음 + 숨김 아님 + likes 값 있음)의 팔로워만 담는다. 팔로워를 알면 무조건 더하던 구
+	 * 규칙은 분자(likes 합)와 모수가 어긋나 참여율을 과소 표시했다(5월 실측 약 19% 과소).
+	 * {@code followersMissingCount}는 그 게이트와 무관하게 "팔로워 미상 건수" 의미를 유지한다.
+	 * 위 불변식 덕에 게이트의 {@code likes != null} 항은 숨김 배제를 겸한다 — 그래도 두 조건을
+	 * 다 적는 이유는, 분모가 <b>분자에 실린 게시물</b>과 같은 모수임을 코드로 못박기 위해서다.
 	 */
 	private static Point foldOne(LocalDate start, List<DashboardRef> bucket, Granularity granularity,
 			LocalDate from, LocalDate to) {
@@ -197,12 +204,9 @@ public final class PerformanceGrowthAggregator {
 		int followersMissingCount = 0;
 
 		for (DashboardRef ref : bucket) {
-			// 팔로워는 작성자 속성이라 스냅샷 유무와 무관하다(지표 3종과 게이트가 다르다).
+			// 팔로워 미상 카운트는 작성자 속성이라 스냅샷 유무와 무관하다(분모 합산 게이트와 다르다).
 			if (ref.followers() == null) {
 				followersMissingCount++;
-			}
-			else {
-				followersSum = accumulate(followersSum, ref.followers());
 			}
 			// 지표 합산은 스냅샷 있는 게시물만 — 관측 전무는 "0"이 아니라 모수 밖이다.
 			boolean observed = ref.hasSnapshots();
@@ -220,6 +224,12 @@ public final class PerformanceGrowthAggregator {
 			}
 			else {
 				likes = accumulate(likes, ref.latestLikes());
+				// 참여율 분모(FE 요청 2026-08-27 ①) — 분자(likes)에 실리는 게시물의 팔로워만 담는다.
+				// 숨김·미상으로 분자에서 빠진 게시물이 분모에 남으면 참여율이 과소 표시된다.
+				// 인플루언서 집계 ratedFollowers(likesKnown && followers != null)와 같은 게이트다.
+				if (ref.latestLikes() != null && ref.followers() != null) {
+					followersSum = accumulate(followersSum, ref.followers());
+				}
 			}
 			comments = accumulate(comments, ref.latestComments());
 		}

@@ -95,16 +95,19 @@ public class V1BrandPostsController {
 	private final BrandLinkRepository linkRepository;
 	private final BrandReadRepository brandReadRepository;
 	private final BrandPostAssembler assembler;
+	private final BrandIndexCache indexCache;
 	private final V1BrandDirectPostService directPostService;
 	private final BrandHashtagPostAssembler hashtagPostAssembler;
 	private final Clock clock;
 
 	public V1BrandPostsController(BrandLinkRepository linkRepository, BrandReadRepository brandReadRepository,
-			BrandPostAssembler assembler, V1BrandDirectPostService directPostService,
+			BrandPostAssembler assembler, BrandIndexCache indexCache,
+			V1BrandDirectPostService directPostService,
 			BrandHashtagPostAssembler hashtagPostAssembler, Clock clock) {
 		this.linkRepository = linkRepository;
 		this.brandReadRepository = brandReadRepository;
 		this.assembler = assembler;
+		this.indexCache = indexCache;
 		this.directPostService = directPostService;
 		this.hashtagPostAssembler = hashtagPostAssembler;
 		this.clock = clock;
@@ -149,14 +152,27 @@ public class V1BrandPostsController {
 		LocalDate windowStart = BrandPostWindows.linkWindowStart(today(), link.collectionMonths());
 		// 인덱스 패스(경량) — counts·필터·정렬·페이지 슬라이스는 전부 ref 위에서 끝낸다. 최신뷰
 		// 정렬 키는 performance 정렬일 때만 조회한다(그 외 정렬에선 스냅샷을 아예 안 읽는다).
-		BrandPostAssembler.BrandPostIndex index = assembler.indexForBrand(principal.getUserId(), account,
-				SORT_PERFORMANCE_DESC.equals(sortKey));
-		List<BrandPostAssembler.PostRef> all = index.refs().stream()
+		// 버전키 캐시 경유(FE 요청 2026-08-27 ②) — 같은 모수를 페이지마다 다시 만들지 않는다
+		// (2,000건을 100건씩 20회 받아가는 FE 사용 패턴에서 첫 회만 조립한다). 무효화는
+		// BrandIndexCache javadoc 참조.
+		BrandPostAssembler.BrandPostIndex index = indexCache.index(indexCache.version(principal.getUserId()),
+				principal.getUserId(), account, SORT_PERFORMANCE_DESC.equals(sortKey));
+		List<BrandPostAssembler.PostRef> windowed = index.refs().stream()
 				.filter(r -> BrandPostWindows.withinLinkWindow(r, windowStart))
 				.toList();
+		// 수집 상한 모수 선컷(FE 요청 2026-08-27 ③) — 상한을 필터·정렬 뒤에 걸면 total(≤2000)과
+		// counts·facets(상한 없는 전량)가 서로 다른 모수를 말한다(실측: total 2000 vs facets.all 4256 —
+		// 화면 숫자가 조회 가능한 데이터와 어긋난다). 그래서 모수 자체를 <b>최신 업로드순 2000</b>으로
+		// 먼저 자르고, 이후의 모든 계산(counts·facets·influencerCount·필터·정렬·페이지)이 같은 모수를
+		// 본다. 컷 순서가 요청 정렬과 무관하게 최신순인 이유: 이 상한은 "최근 2000개까지 수집"이라는
+		// 수집 정책의 표면이지 정렬별 상위 2000이 아니다. 상한 도달 여부는 meta.collectionCapped로
+		// 내린다 — 전부 2000으로 통일하면 "상한에 걸림"과 "마침 정확히 2000건"을 구분할 수 없어서다.
+		boolean collectionCapped = windowed.size() > POST_LIMIT;
+		List<BrandPostAssembler.PostRef> all = !collectionCapped ? windowed
+				: windowed.stream().sorted(comparator(SORT_UPLOADED_DESC)).limit(POST_LIMIT).toList();
+		// 모수가 이미 ≤2000이라 필터 뒤 상한 컷은 없다(구 .limit(POST_LIMIT) 제거).
 		List<BrandPostAssembler.PostRef> filtered = applyFilters(all, filters, FacetAxis.NONE).stream()
 				.sorted(comparator(sortKey))
-				.limit(POST_LIMIT)
 				.toList();
 		List<BrandPostAssembler.PostRef> pageRefs = page == null ? filtered
 				: filtered.stream().skip(page.offset()).limit(page.limit()).toList();
@@ -164,7 +180,7 @@ public class V1BrandPostsController {
 		// 하이드레이트(무거움)는 응답에 실을 코드만 — 목록은 댓글을 싣지 않는다(FE 요청 1).
 		List<BrandPostResponse> body = assembler.hydrate(principal.getUserId(), account, link.accountType(),
 				index, pageRefs.stream().map(BrandPostAssembler.PostRef::shortcode).toList(), false);
-		return ApiResponse.ok(body, meta(filtered.size(), all, account, page, filters));
+		return ApiResponse.ok(body, meta(filtered.size(), all, account, page, filters, collectionCapped));
 	}
 
 	/**
@@ -232,13 +248,15 @@ public class V1BrandPostsController {
 			@PathVariable String postId) {
 		// 시계는 요청당 한 번만 읽는다 — 브랜드마다 다시 읽으면 자정을 걸친 응답에서 브랜드별로 컷이 다르다.
 		LocalDate today = today();
+		// 버전키도 요청당 한 번만 — 브랜드마다 다시 계산하면 자정 경계에서 브랜드별로 키가 갈린다.
+		String version = indexCache.version(principal.getUserId());
 		for (BrandLinkRow link : linkRepository.findAllActiveByUser(principal.getUserId())) {
 			Optional<BrandAccountRow> account = brandReadRepository.findAccount(link.brandId());
 			if (account.isEmpty()) {
 				continue;
 			}
 			LocalDate windowStart = BrandPostWindows.linkWindowStart(today, link.collectionMonths());
-			BrandPostAssembler.BrandPostIndex index = assembler.indexForBrand(principal.getUserId(),
+			BrandPostAssembler.BrandPostIndex index = indexCache.index(version, principal.getUserId(),
 					account.get(), false);
 			// 창 밖 게시물은 목록에 없다 — 상세만 열리는 불일치를 만들지 않는다(같은 404).
 			boolean present = index.refs().stream()
@@ -306,9 +324,16 @@ public class V1BrandPostsController {
 
 	// ---------- meta ----------
 
-	/** counts·total의 산지는 경량 ref다(2026-08-27) — 판정 함수가 풀 조립과 같아 전량 계산 값과 일치한다. */
+	/**
+	 * counts·total의 산지는 경량 ref다(2026-08-27) — 판정 함수가 풀 조립과 같아 전량 계산 값과 일치한다.
+	 * {@code all}은 수집 상한 모수 선컷(최신순 2000)을 이미 통과한 목록이라 counts·facets·
+	 * influencerCount 전부 서빙 가능한 모수만 말한다(FE 요청 2026-08-27 ③).
+	 *
+	 * @param collectionCapped 상한 도달 여부 — {@code meta.collectionCapped}. FE가 "클로즈 베타는 최대
+	 *     2,000개까지 수집" 안내를 이 값으로 판정한다({@code total == limit} 추정 대신 명시 불리언).
+	 */
 	private static Map<String, Object> meta(int total, List<BrandPostAssembler.PostRef> all,
-			BrandAccountRow account, PageParams page, PostFilters f) {
+			BrandAccountRow account, PageParams page, PostFilters f, boolean collectionCapped) {
 		Map<String, Object> counts = new LinkedHashMap<>();
 		counts.put(FILTER_ALL, all.size());
 		counts.put(BrandPostAssembler.SOURCE_TAGGED, count(all, BrandPostAssembler.PostRef::source,
@@ -331,6 +356,7 @@ public class V1BrandPostsController {
 		Map<String, Object> meta = new LinkedHashMap<>();
 		meta.put("total", total);
 		meta.put("limit", POST_LIMIT);
+		meta.put("collectionCapped", collectionCapped);
 		meta.put("page", pageMeta);
 		meta.put("counts", counts);
 		meta.put("facets", facets(all, f));
