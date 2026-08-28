@@ -111,17 +111,34 @@ public class BrandPostMetaRepository {
 	}
 
 	/**
-	 * {@code idx_brand_post_meta_unjudged} 부분 인덱스가 바깥쪽 {@code ad_verdict IS NULL}을 커버한다 —
-	 * 잔량이 줄수록 공짜에 수렴. has_own_link 필터(2026-08-19 경쟁사 판정 제거 설계 §3)는 EXISTS로 건다
-	 * — 한 게시물이 여러 브랜드에 태그될 수 있어(brand_tagged_post N:1) 단순 JOIN이면 own 연결 브랜드가
-	 * 하나라도 있는 게시물이 행 중복될 수 있다. 활성 own 연결이 하나도 없는 브랜드에만 태그된 게시물만
-	 * 걸러진다 — 경쟁사·own 브랜드 둘 다에 태그된 게시물은 계속 판정 대상이다.
+	 * 대상 조건 {@code ad_verdict IS NULL OR judged_caption_hash IS DISTINCT FROM
+	 * md5(coalesce(caption, ''))}(2026-08-28 드리프트 갭 폐쇄) — 스윕 경유 판정({@link
+	 * com.celfit.monitoring.ad.AdDisclosureJudgeService#judgePosts})은 {@code needsJudgment}가 이미
+	 * 해시 불일치도 재판정 대상으로 잡지만, 백필은 이 쿼리로 별도 조회하면서 그동안 {@code ad_verdict
+	 * IS NULL}만 봐서 (a) 스윕이 캡션을 갱신했는데 180일 추적 창 밖이라 판정이 안 따라간 행, (b) LLM
+	 * 실패로 verdict는 유지되고 해시만 낡은 행이 영구 방치됐다. Postgres {@code md5()}는 Java
+	 * {@link com.celfit.monitoring.ad.AdDisclosureJudgeService}가 {@code MessageDigest}로 계산하는
+	 * 것과 동일한 소문자 32자리 16진 문자열을 반환해 알고리즘이 정합한다. 판정 성공 시
+	 * {@code updateAdVerdict}가 매번 최신 해시로 갱신하므로 이 조건은 수렴한다(무한 재판정 없음) —
+	 * 단, LLM이 매번 실패해 해시가 끝내 안 바뀌는 행은 매 백필 호출마다 다시 잡힌다(서킷브레이커·
+	 * attempted 집합이 한 호출 내 중복만 막을 뿐, 호출 간에는 막지 않는다 — 클래스 상단 참고).
+	 *
+	 * <p>{@code idx_brand_post_meta_unjudged} 부분 인덱스는 {@code ad_verdict IS NULL} 브랜치만
+	 * 커버한다 — 해시 불일치 브랜치(대부분 {@code ad_verdict IS NOT NULL})는 이 인덱스로 못 타므로
+	 * OR로 묶인 이 쿼리는 판정 완료 행 전체를 스캔할 수 있다(테이블 규모가 커지면 별도 인덱스 검토
+	 * 필요 — 08-28 시점은 규모 확인 없이 정합성 우선).
+	 *
+	 * <p>has_own_link 필터(2026-08-19 경쟁사 판정 제거 설계 §3)는 EXISTS로 건다 — 한 게시물이 여러
+	 * 브랜드에 태그될 수 있어(brand_tagged_post N:1) 단순 JOIN이면 own 연결 브랜드가 하나라도 있는
+	 * 게시물이 행 중복될 수 있다. 활성 own 연결이 하나도 없는 브랜드에만 태그된 게시물만 걸러진다 —
+	 * 경쟁사·own 브랜드 둘 다에 태그된 게시물은 계속 판정 대상이다.
 	 */
 	public List<UnjudgedPost> findUnjudged(int limit) {
 		return db.query("""
 				SELECT short_code, caption, content_type, video_url, is_paid_partnership
 				FROM brand_post_meta m
-				WHERE ad_verdict IS NULL
+				WHERE (ad_verdict IS NULL
+				       OR judged_caption_hash IS DISTINCT FROM md5(coalesce(caption, '')))
 				  AND EXISTS (
 				    SELECT 1 FROM brand_tagged_post t
 				    JOIN brand_account b ON b.id = t.brand_id
@@ -137,12 +154,16 @@ public class BrandPostMetaRepository {
 
 	/**
 	 * 백필 완료 로그("잔여 N건 중 M건 처리")의 N — 이번 배치 상한(limit)과 무관한 전체 잔량.
-	 * has_own_link 필터는 {@link #findUnjudged}와 동일(EXISTS 근거도 동일).
+	 * 대상 조건·has_own_link 필터는 {@link #findUnjudged}와 반드시 동일해야 한다 —
+	 * {@code AdDisclosureJudgeService#backfillUnjudged}가 이 카운트로 "처리할 게 있는지" 진입
+	 * 게이트를 걸고 루프 종료도 판단하므로, 조건이 어긋나면 {@link #findUnjudged}가 잡는 행이
+	 * 있어도 카운트가 0을 보고해 백필이 아예 시작·계속되지 않는 채로 남는다.
 	 */
 	public int countUnjudged() {
 		Integer count = db.queryForObject("""
 				SELECT count(*) FROM brand_post_meta m
-				WHERE ad_verdict IS NULL
+				WHERE (ad_verdict IS NULL
+				       OR judged_caption_hash IS DISTINCT FROM md5(coalesce(caption, '')))
 				  AND EXISTS (
 				    SELECT 1 FROM brand_tagged_post t
 				    JOIN brand_account b ON b.id = t.brand_id

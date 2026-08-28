@@ -97,11 +97,13 @@ class BrandPostMetaRepositoryTest {
 	}
 
 	@Test
-	void findUnjudged는_ad_verdict가_NULL인_행만_반환한다() {
+	void findUnjudged는_ad_verdict가_NULL인_행을_반환한다() {
 		repo.upsert("BBB", "poster1", "REELS", LocalDate.of(2026, 8, 2), "다른 캡션", null,
 				"https://video.example/b.mp4", 12.5, true);
 		AdVerdictResult result = new AdVerdictResult("DISCLOSED", "RULE", List.of(), List.of(), List.of());
-		repo.updateAdVerdict("BBB", result, "hashBBB", Instant.parse("2026-08-17T00:00:00Z"));
+		// BBB는 실제 caption의 md5로 기록해 해시가 정합한다(드리프트 없음) — 아래 드리프트
+		// 전용 테스트와 구분하기 위해 "hashBBB" 같은 임의 문자열 대신 진짜 md5를 쓴다.
+		repo.updateAdVerdict("BBB", result, md5("다른 캡션"), Instant.parse("2026-08-17T00:00:00Z"));
 
 		List<BrandPostMetaRepository.UnjudgedPost> unjudged = repo.findUnjudged(10);
 
@@ -111,6 +113,62 @@ class BrandPostMetaRepositoryTest {
 		assertThat(aaa.contentType()).isEqualTo("FEED");
 		assertThat(aaa.videoUrl()).isNull();
 		assertThat(aaa.isPaidPartnership()).isNull();
+	}
+
+	// ---------- 백필 드리프트 갭 폐쇄(2026-08-28) — judged_caption_hash 불일치 행도 대상 ----------
+
+	@Test
+	void findUnjudged는_verdict_있어도_caption_해시가_불일치하면_대상에_포함한다() {
+		// 08-28: ad_verdict IS NULL만 보던 findUnjudged가 (a) 스윕이 캡션을 갱신했지만 180일 추적
+		// 창 밖이라 재판정이 안 걸린 행, (b) LLM 실패로 verdict는 남고 해시만 낡은 행을 영구
+		// 방치했다. AAA를 먼저 판정(당시 캡션 기준 정합 해시)한 뒤 caption만 갱신하면(upsert),
+		// judged_caption_hash가 새 caption과 불일치해 다시 대상이어야 한다.
+		AdVerdictResult result = new AdVerdictResult("NOT_DISCLOSED", "RULE", List.of("NO_DISCLOSURE"), List.of(),
+				List.of());
+		repo.updateAdVerdict("AAA", result, md5("캡션"), Instant.parse("2026-08-17T00:00:00Z"));
+		repo.upsert("AAA", "poster1", "FEED", LocalDate.of(2026, 8, 1), "캡션이 갱신됐습니다", null, null, null, null);
+
+		List<BrandPostMetaRepository.UnjudgedPost> unjudged = repo.findUnjudged(10);
+
+		assertThat(unjudged).extracting(BrandPostMetaRepository.UnjudgedPost::shortCode).containsExactly("AAA");
+		assertThat(unjudged.get(0).caption()).isEqualTo("캡션이 갱신됐습니다");
+	}
+
+	@Test
+	void findUnjudged는_verdict_있고_caption_해시가_일치하면_대상에서_제외한다() {
+		// 판정 이후 캡션이 안 바뀌었으면(해시 정합) 재판정 불필요 — 드리프트 갭 폐쇄가 과포함으로
+		// 번지지 않았는지 확인.
+		AdVerdictResult result = new AdVerdictResult("DISCLOSED", "RULE", List.of(), List.of(), List.of());
+		repo.updateAdVerdict("AAA", result, md5("캡션"), Instant.parse("2026-08-17T00:00:00Z"));
+
+		assertThat(repo.findUnjudged(10)).isEmpty();
+	}
+
+	@Test
+	void countUnjudged는_caption_해시_불일치_행도_카운트한다() {
+		// findUnjudged와 카운트 조건이 어긋나면 AdDisclosureJudgeService.backfillUnjudged가
+		// initialRemaining==0으로 오판해 드리프트 행이 있어도 백필을 아예 시작하지 않는다 —
+		// 두 메서드의 대상 조건이 반드시 동일해야 하는 이유(각 메서드 javadoc 참조).
+		AdVerdictResult result = new AdVerdictResult("NOT_DISCLOSED", "RULE", List.of("NO_DISCLOSURE"), List.of(),
+				List.of());
+		repo.updateAdVerdict("AAA", result, md5("캡션"), Instant.parse("2026-08-17T00:00:00Z"));
+		repo.upsert("AAA", "poster1", "FEED", LocalDate.of(2026, 8, 1), "캡션이 갱신됐습니다", null, null, null, null);
+
+		assertThat(repo.countUnjudged()).isEqualTo(1);
+	}
+
+	private static String md5(String s) {
+		try {
+			byte[] digest = java.security.MessageDigest.getInstance("MD5")
+					.digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+			StringBuilder sb = new StringBuilder();
+			for (byte b : digest) {
+				sb.append(String.format("%02x", b));
+			}
+			return sb.toString();
+		} catch (java.security.NoSuchAlgorithmException e) {
+			throw new IllegalStateException(e);
+		}
 	}
 
 	@Test
@@ -164,7 +222,10 @@ class BrandPostMetaRepositoryTest {
 	void countUnjudged는_ad_verdict_NULL_전체_건수() {
 		repo.upsert("BBB", "poster1", "FEED", LocalDate.of(2026, 8, 2), "캡션2", null, null, null, null);
 		AdVerdictResult result = new AdVerdictResult("DISCLOSED", "RULE", List.of(), List.of(), List.of());
-		repo.updateAdVerdict("BBB", result, "hashBBB", Instant.parse("2026-08-17T00:00:00Z"));
+		// BBB는 실제 caption("캡션2")의 md5로 기록해 해시가 정합한다 — 드리프트 갭 폐쇄(08-28) 이후
+		// countUnjudged가 해시 불일치도 세므로, 임의 문자열("hashBBB")을 쓰면 BBB도 불일치로
+		// 잡혀 이 테스트가 검증하려는 "AAA만 미판정" 전제가 깨진다.
+		repo.updateAdVerdict("BBB", result, md5("캡션2"), Instant.parse("2026-08-17T00:00:00Z"));
 
 		assertThat(repo.countUnjudged()).isEqualTo(1);   // AAA만 미판정
 	}
