@@ -69,14 +69,6 @@ import org.springframework.web.bind.annotation.RestController;
 @ConditionalOnProperty(name = "monitoring.enabled", havingValue = "true")
 public class V1BrandPostsController {
 
-	/**
-	 * 목록 상한(FE 명세 meta.limit) — 수집 개수 상한(monitoring {@code collection-post-limit:2000},
-	 * 2026-08-19 스펙)과 같은 값으로, 수집하는 만큼 보여줄 수 있는 양이다. 구 200은 90일·105건
-	 * 시절의 값이라 정책 v1(365일 윈도우·저장소 상한 폐지) 이후 12개월치가 많은 브랜드(실측
-	 * 463건)를 실제로 잘랐다 — 잘린 것은 정렬 뒤쪽, 즉 새로 백필된 소급분이었다.
-	 */
-	private static final int POST_LIMIT = 2000;
-
 	/** 페이지 크기 상한·기본값(FE 요청 2026-08-27) — 리더보드(6.1 V1ContentQuery)와 같은 캡. */
 	private static final int PAGE_LIMIT_MAX = 100;
 	private static final int PAGE_LIMIT_DEFAULT = 100;
@@ -162,15 +154,14 @@ public class V1BrandPostsController {
 				.toList();
 		// 수집 상한 모수 선컷(FE 요청 2026-08-27 ③) — 상한을 필터·정렬 뒤에 걸면 total(≤2000)과
 		// counts·facets(상한 없는 전량)가 서로 다른 모수를 말한다(실측: total 2000 vs facets.all 4256 —
-		// 화면 숫자가 조회 가능한 데이터와 어긋난다). 그래서 모수 자체를 <b>최신 업로드순 2000</b>으로
-		// 먼저 자르고, 이후의 모든 계산(counts·facets·influencerCount·필터·정렬·페이지)이 같은 모수를
-		// 본다. 컷 순서가 요청 정렬과 무관하게 최신순인 이유: 이 상한은 "최근 2000개까지 수집"이라는
-		// 수집 정책의 표면이지 정렬별 상위 2000이 아니다. 상한 도달 여부는 meta.collectionCapped로
-		// 내린다 — 전부 2000으로 통일하면 "상한에 걸림"과 "마침 정확히 2000건"을 구분할 수 없어서다.
-		boolean collectionCapped = windowed.size() > POST_LIMIT;
-		List<BrandPostAssembler.PostRef> all = !collectionCapped ? windowed
-				: windowed.stream().sorted(comparator(SORT_UPLOADED_DESC)).limit(POST_LIMIT).toList();
+		// 화면 숫자가 조회 가능한 데이터와 어긋난다). 그래서 모수 자체를 먼저 자르고, 이후의 모든
+		// 계산(counts·facets·influencerCount·필터·정렬·페이지)이 같은 모수를 본다. 컷 규칙(상한값·
+		// 순서·호출 위치)은 BrandCollectionCap이 정본이다 — /influencers도 같은 것을 부른다
+		// (FE 요청 2026-08-28 ②: 두 표면이 다른 모수를 말해 "목록 14개 → 상세 10개"가 났다).
+		BrandCollectionCap.Capped capped = BrandCollectionCap.apply(windowed);
+		boolean collectionCapped = capped.capped();
 		// 모수가 이미 ≤2000이라 필터 뒤 상한 컷은 없다(구 .limit(POST_LIMIT) 제거).
+		List<BrandPostAssembler.PostRef> all = capped.refs();
 		List<BrandPostAssembler.PostRef> filtered = applyFilters(all, filters, FacetAxis.NONE).stream()
 				.sorted(comparator(sortKey))
 				.toList();
@@ -355,7 +346,7 @@ public class V1BrandPostsController {
 
 		Map<String, Object> meta = new LinkedHashMap<>();
 		meta.put("total", total);
-		meta.put("limit", POST_LIMIT);
+		meta.put("limit", BrandCollectionCap.POST_LIMIT);
 		meta.put("collectionCapped", collectionCapped);
 		meta.put("page", pageMeta);
 		meta.put("counts", counts);
@@ -547,15 +538,13 @@ public class V1BrandPostsController {
 	 * 타이브레이크까지 전순서라 페이지 간 중복·누락이 없다.
 	 */
 	private static Comparator<BrandPostAssembler.PostRef> comparator(String sortKey) {
-		Comparator<BrandPostAssembler.PostRef> uploadedDesc = Comparator
-				.comparing(BrandPostAssembler.PostRef::uploadedOn,
-						Comparator.nullsLast(Comparator.reverseOrder()))
-				.thenComparing(BrandPostAssembler.PostRef::shortcode);
+		// 기본 정렬은 수집 상한 컷과 같은 순서다 — 정의를 BrandCollectionCap에 두고 둘이 공유한다.
 		if (!SORT_PERFORMANCE_DESC.equals(sortKey)) {
-			return uploadedDesc;
+			return BrandCollectionCap.UPLOADED_DESC;
 		}
 		return Comparator.comparing(BrandPostAssembler.PostRef::latestViews,
-				Comparator.nullsLast(Comparator.reverseOrder())).thenComparing(uploadedDesc);
+				Comparator.nullsLast(Comparator.reverseOrder()))
+				.thenComparing(BrandCollectionCap.UPLOADED_DESC);
 	}
 
 	/** 미지정·{@code all}은 필터 없음(null), 그 외 값은 허용 목록 밖이면 400. */

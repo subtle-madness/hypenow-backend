@@ -1060,6 +1060,28 @@ class V1PerformanceDashboardControllerTest {
 	}
 
 	@Test
+	void growth_ratedComments는_좋아요_숨김_게시물의_댓글을_뺀다() throws Exception {
+		// FE 요청 2026-08-28 ① — comments는 종전 의미(관측 전량)를 그대로 유지하고, 참여율 분자로
+		// 쓸 값이 별도 키로 온다. 두 값이 한 버킷에서 다른 것이 정상이다.
+		givenIndexedRefs(Set.of(), List.of("12"),
+				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L),
+				likesHidden(influencerRef("2", "beautylover", "2026-08-20", "organic", "12",
+						500L, 100L, 40L, 3L)));
+
+		mockMvc.perform(get(GROWTH).with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.points[0].contentCount").value(2))
+				.andExpect(jsonPath("$.data.points[0].comments").value(10))        // 7+3 — 숨김 포함
+				.andExpect(jsonPath("$.data.points[0].ratedComments").value(7))    // likes와 같은 모수
+				.andExpect(jsonPath("$.data.points[0].likes").value(20))
+				.andExpect(jsonPath("$.data.points[0].followersSum").value(1000))
+				.andExpect(jsonPath("$.data.points[0].likesHiddenCount").value(1))
+				// 계정 시리즈도 같은 게이트를 탄다(총계만 맞고 축이 어긋나면 차트가 갈린다).
+				.andExpect(jsonPath("$.data.accounts[0].points[0].comments").value(10))
+				.andExpect(jsonPath("$.data.accounts[0].points[0].ratedComments").value(7));
+	}
+
+	@Test
 	void growth_필터는_집계_모수에_적용된다() throws Exception {
 		givenIndexedRefs(Set.of(), List.of("12"),
 				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L),
@@ -1326,6 +1348,17 @@ class V1PerformanceDashboardControllerTest {
 				uploadedOn == null ? null : LocalDate.parse(uploadedOn), brandAccountId, null,
 				handle, "표시:" + handle, "https://cdn/" + handle + ".jpg", followers,
 				views, likes, false, comments, true);
+	}
+
+	/**
+	 * 좋아요 숨김으로 접은 ref 사본 — 어셈블러 계약대로 likes도 함께 null이다(2026-08-28 mergeOne
+	 * 정합: 숨김이면 값을 접는다). 댓글은 숨김이어도 남는다는 점이 이 픽스처의 요점이다.
+	 */
+	private static DashboardRef likesHidden(DashboardRef ref) {
+		return new DashboardRef(ref.contentKey(), ref.shortcode(), ref.source(), ref.sponsorship(), ref.status(),
+				ref.uploadedOn(), ref.brandAccountId(), ref.campaignId(), ref.handle(), ref.displayName(),
+				ref.profileImageUrl(), ref.followers(), ref.latestViews(), null,
+				true, ref.latestComments(), ref.hasSnapshots());
 	}
 
 	/** 캠페인만 바꾼 ref 사본 — 파라미터를 하나 더 늘리는 대신 필요한 케이스에서만 감싼다. */

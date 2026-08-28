@@ -40,7 +40,11 @@ import org.springframework.web.bind.annotation.RestController;
  * {@link BrandInfluencerAggregator}가 정본이고(같은 화면에서 두 벌의 수가 생기지 않게), 이 컨트롤러는
  * 모수 구성(소유권·계정별 창·기간)과 파라미터 계약만 책임진다.
  *
- * <p>모수는 게시물 목록과 <b>같은</b> 인덱스 기계를 탄다({@link BrandPostAssembler#indexForBrand}) —
+ * <p>모수는 게시물 목록과 <b>같은</b> 인덱스 기계를 타고({@link BrandPostAssembler#indexForBrand}),
+ * <b>같은 수집 상한 컷</b>을 통과한다({@link BrandCollectionCap} — FE 요청 2026-08-28 ②). 인덱스만
+ * 공유하고 컷은 목록에만 있던 08-28 이전에는, 목록이 "게시물 14개"로 센 작성자를 눌러 들어가면
+ * 상세에 10개만 나왔다(실측 marynmay 관련 인원 2,800 vs 1,607). 두 표면이 같은 화면의 앞뒤라
+ * 모수가 갈리면 화면 숫자끼리 모순된다.
  * 경량 ref에 게시자·협찬·업로드일이 이미 실려 있어 카드 하이드레이트가 전혀 필요 없다. 지표는
  * 게시물별 최신 스냅샷 1행 프로젝션({@link BrandReadRepository#findLatestSnapshotsForBrand})만 읽는다
  * (시계열 전량은 게시물당 최대 365행이라 집계 경로에 싣지 않는다).
@@ -79,10 +83,14 @@ public class V1BrandInfluencersController {
 	}
 
 	/**
-	 * 작성자 단위 집계 목록 — {@code meta {total, offset, limit}}는 flat이다(게시물 목록의 중첩
-	 * {@code meta.page}와 다른 이유: 이 표면엔 "수집 상한" 의미의 {@code limit}이 없어 이름 충돌이
-	 * 없다). {@code total}은 <b>필터 적용 후</b> 개수고, {@code limit}은 전량 응답이면 null이다
-	 * (키는 유지 — 계약 무결성 규칙 #1).
+	 * 작성자 단위 집계 목록 — {@code meta {total, offset, limit, collectionCapped}}는 flat이다
+	 * (게시물 목록의 중첩 {@code meta.page}와 다른 이유: 이 표면엔 "수집 상한" 의미의 {@code limit}이
+	 * 없어 이름 충돌이 없다). {@code total}은 <b>필터 적용 후</b> 개수고, {@code limit}은 전량
+	 * 응답이면 null이다(키는 유지 — 계약 무결성 규칙 #1).
+	 *
+	 * <p>{@code collectionCapped}는 게시물 목록의 동명 키와 같은 의미다(FE 요청 2026-08-28 ②) —
+	 * 요청 계정 중 하나라도 수집 상한에 걸렸으면 true다. 상한값 자체({@code meta.limit} = 2000)는
+	 * 이 표면이 내리지 않는다: 여기서 {@code limit}은 이미 페이지 크기다.
 	 */
 	@GetMapping("/influencers")
 	public ApiResponse<List<BrandInfluencerResponse>> list(
@@ -122,6 +130,10 @@ public class V1BrandInfluencersController {
 		// 버전키도 요청당 한 번만 — 계정마다 다시 계산하면 자정 경계에서 계정별 모수가 갈린다.
 		String version = indexCache.version(userId);
 		List<BrandInfluencerAggregator.InfluencerPost> posts = new ArrayList<>();
+		// 수집 상한 도달은 계정별 판정의 OR다 — 하나라도 잘렸으면 이 응답의 인원·게시물 수가
+		// 상한 밖 게시물을 못 본 값이라는 뜻이라, 계정 단위로 쪼개 내리지 않는다(게시물 목록의
+		// meta.collectionCapped와 같은 키·같은 의미).
+		boolean collectionCapped = false;
 		for (Long brandId : brandIds) {
 			BrandLinkRow link = linksByBrandId.get(brandId);
 			Optional<BrandAccountRow> account = brandReadRepository.findAccount(brandId);
@@ -131,7 +143,9 @@ public class V1BrandInfluencersController {
 				log.warn("브랜드 연결의 monitoring 계정 행 부재 — 인플루언서 집계 생략 brandId={}", brandId);
 				continue;
 			}
-			posts.addAll(accountPosts(version, userId, account.get(), link, today, from, to));
+			AccountPosts accountPosts = accountPosts(version, userId, account.get(), link, today, from, to);
+			posts.addAll(accountPosts.posts());
+			collectionCapped |= accountPosts.capped();
 		}
 
 		List<BrandInfluencerResponse> rows = BrandInfluencerAggregator.summarize(
@@ -148,7 +162,14 @@ public class V1BrandInfluencersController {
 		meta.put("total", sorted.size());
 		meta.put("offset", page == null ? 0 : page.offset());
 		meta.put("limit", page == null ? null : page.limit());
+		meta.put("collectionCapped", collectionCapped);
 		return ApiResponse.ok(body, meta);
+	}
+
+	/** 계정 1개의 집계 입력 + 그 계정이 수집 상한에 걸렸는지. */
+	private record AccountPosts(List<BrandInfluencerAggregator.InfluencerPost> posts, boolean capped) {
+
+		static final AccountPosts EMPTY = new AccountPosts(List.of(), false);
 	}
 
 	/**
@@ -156,19 +177,31 @@ public class V1BrandInfluencersController {
 	 * {@link BrandInfluencerAggregator.InfluencerPost}로 접는다. 인덱스는 정렬 키가 필요 없어
 	 * {@code withViews=false}로 부른다(집계 조회수는 최신 지표 프로젝션에서 온다 — 같은 산지를
 	 * 두 번 읽지 않는다).
+	 *
+	 * <p><b>수집 상한 컷의 자리가 계약이다</b>(FE 요청 2026-08-28 ②) — 링크 창 뒤, 업로드 기간
+	 * 필터 앞이다. 게시물 목록({@code V1BrandPostsController.list})이 정확히 같은 자리에서
+	 * {@link BrandCollectionCap}을 부르므로 두 표면의 모수가 같아진다. 08-28까지는 이 표면만
+	 * 컷이 없어, 목록이 "게시물 14개"로 센 작성자를 눌러 들어가면 10개만 나왔다.
+	 *
+	 * <p>컷이 기간 필터보다 <b>앞</b>이라 기간을 좁혀도 상한 밖 게시물은 되살아나지 않는다.
+	 * 계정 단위로 자른 뒤 교차 중복 제거(shortcode)는 호출부에서 한다 — 상한이 브랜드 계정별
+	 * 수집 정책이라 계정을 합친 뒤 자르면 계정 수에 따라 계정별 모수가 달라진다.
 	 */
-	private List<BrandInfluencerAggregator.InfluencerPost> accountPosts(String version, long userId,
+	private AccountPosts accountPosts(String version, long userId,
 			BrandAccountRow account, BrandLinkRow link, LocalDate today, LocalDate from, LocalDate to) {
 		LocalDate windowStart = BrandPostWindows.linkWindowStart(today, link.collectionMonths());
 		// 인덱스·최신 지표 둘 다 버전키 캐시 경유(FE 요청 2026-08-27 ②) — 이 표면의 고정비 2.4~2.6초가
 		// 사실상 이 두 조회다(실측 인덱스 2.16초 + 스냅샷 0.54초/4계정).
 		BrandPostAssembler.BrandPostIndex index = indexCache.index(version, userId, account, false);
-		List<BrandPostAssembler.PostRef> refs = index.refs().stream()
+		BrandCollectionCap.Capped capped = BrandCollectionCap.apply(index.refs().stream()
 				.filter(r -> BrandPostWindows.withinLinkWindow(r, windowStart))
+				.toList());
+		List<BrandPostAssembler.PostRef> refs = capped.refs().stream()
 				.filter(r -> BrandPostWindows.withinUploadWindow(r.uploadedOn(), from, to))
 				.toList();
 		if (refs.isEmpty()) {
-			return List.of();
+			// 상한 신호는 유지한다 — 기간 필터로 0건이 됐어도 모수가 잘린 사실은 그대로다.
+			return capped.capped() ? new AccountPosts(List.of(), true) : AccountPosts.EMPTY;
 		}
 		Map<String, BrandReadRepository.LatestSnapshotRow> metricsByCode =
 				indexCache.latestSnapshots(version, account.id(), true).stream()
@@ -185,7 +218,7 @@ public class V1BrandInfluencersController {
 			out.add(toInfluencerPost(ref, metricsByCode.get(ref.shortcode()),
 					index.legacyByCode().get(ref.shortcode())));
 		}
-		return out;
+		return new AccountPosts(out, capped.capped());
 	}
 
 	/**

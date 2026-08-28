@@ -30,6 +30,11 @@ public record PerformanceGrowthResponse(
 	 * @param start 버킷 시작일(YYYY-MM-DD) — 요청 {@code from}으로 클램프될 수 있다.
 	 * @param end 버킷 종료일(YYYY-MM-DD, 양끝 포함) — 요청 {@code to}로 클램프될 수 있다.
 	 * @param contentCount 버킷 내 게시물 수(스냅샷 유무 무관 — 차트 지표 중 하나).
+	 * @param comments 댓글 합 — 관측 있는 게시물 전량이라 <b>좋아요 숨김 게시물도 포함</b>한다
+	 *     (08-06 계약 그대로). 참여율 분자로 쓰면 안 된다 — 그 자리는 {@code ratedComments}다.
+	 * @param ratedComments 참여율 분자용 댓글 합 — {@code likes}와 <b>같은 모수</b>(스냅샷 있음 +
+	 *     좋아요 숨김 아님)의 댓글만 담는다(FE 요청 2026-08-28 ①). 숨김 게시물의 댓글이 분자에
+	 *     남으면 참여율이 과대 표시된다(8/22~28 249건 실측 — comments 2,738 vs 2,317, 421건 차이).
 	 * @param followersSum 참여율 분모 — 좋아요를 아는 게시물(숨김 아님 + likes 있음)의 작성자 팔로워
 	 *     합이다(FE 요청 2026-08-27 ① — 분자에 실리는 게시물만 분모에 담는다). 게시물마다 1회.
 	 * @param viewsMissingCount 조회수 미상(피드 null·스냅샷 없음) 수.
@@ -39,7 +44,7 @@ public record PerformanceGrowthResponse(
 	public record Point(
 			String start, String end,
 			int contentCount,
-			Long views, Long likes, Long comments,
+			Long views, Long likes, Long comments, Long ratedComments,
 			Long followersSum,
 			int viewsMissingCount,
 			int likesHiddenCount,
