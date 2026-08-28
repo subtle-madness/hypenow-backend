@@ -173,7 +173,7 @@ class PerformanceGrowthAggregatorTest {
 		assertThat(point.likes()).isEqualTo(30L);                   // 10+20 (숨김·스냅샷 없음 제외)
 		assertThat(point.likesHiddenCount()).isEqualTo(1);          // 스냅샷 있는 숨김만
 		assertThat(point.comments()).isEqualTo(7L);                 // 1+2+4
-		assertThat(point.followersSum()).isEqualTo(6000L);          // 스냅샷 무관 — 1000+2000+3000
+		assertThat(point.followersSum()).isEqualTo(3000L);          // likes 아는 1·2행만 — 1000+2000
 		assertThat(point.followersMissingCount()).isEqualTo(3);
 	}
 
@@ -198,12 +198,31 @@ class PerformanceGrowthAggregatorTest {
 	void followersSum은_게시물별_작성자_팔로워_합이다() {
 		// 같은 작성자 2건이면 2회 더한다(참여율 분모 정의 — 게시물당 1회).
 		var res = PerformanceGrowthAggregator.aggregate(List.of(
-				ref("2026-08-26", null, true, null, null, false, null, 1000L),
-				ref("2026-08-26", null, true, null, null, false, null, 1000L)),
+				ref("2026-08-26", null, true, null, 10L, false, null, 1000L),
+				ref("2026-08-26", null, true, null, 20L, false, null, 1000L)),
 				DAY, null, null, List.of());
 
 		assertThat(res.points().get(0).followersSum()).isEqualTo(2000L);
 		assertThat(res.points().get(0).followersMissingCount()).isZero();
+	}
+
+	@Test
+	void followersSum은_좋아요를_아는_게시물만_담는다() {
+		// 참여율 분모 규칙(FE 요청 2026-08-27 ①) — 분자(likes)가 숨김·미상으로 빠지는 게시물의
+		// 팔로워가 분모에 남으면 분자·분모 모수가 어긋나 참여율이 과소 표시된다. 인플루언서 집계의
+		// ratedFollowers(숨김 아님 + likes 있음 + 팔로워 있음)와 같은 게이트다.
+		var res = PerformanceGrowthAggregator.aggregate(List.of(
+				ref("2026-08-26", null, true, null, 10L, false, 1L, 1000L),      // likes 앎 → 포함
+				ref("2026-08-26", null, true, null, 40L, true, 1L, 2000L),       // 숨김 → 제외
+				ref("2026-08-26", null, true, null, null, false, 1L, 4000L),     // likes 미상 → 제외
+				ref("2026-08-26", null, false, null, null, false, null, 8000L)), // 스냅샷 없음 → 제외
+				DAY, null, null, List.of());
+
+		var point = res.points().get(0);
+		assertThat(point.followersSum()).isEqualTo(1000L);
+		// followersMissingCount의 의미(팔로워 미상 건수)는 불변이다 — 4건 모두 팔로워를 안다.
+		assertThat(point.followersMissingCount()).isZero();
+		assertThat(point.likesHiddenCount()).isEqualTo(1);
 	}
 
 	@Test
