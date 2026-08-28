@@ -26,7 +26,8 @@ import org.springframework.stereotype.Component;
  * 304 조기 반환의 근거가 된다. 조기 반환이 조립·직렬화·전송을 통째로 건너뛰는 것이 이 설계의 이득이고,
  * 그래서 응답 본문을 만든 뒤 해싱하는 방식({@code ShallowEtagHeaderFilter})은 쓰지 않는다(설계 §3).
  *
- * <p><b>입력 다섯 종</b>(설계 §2-1) — 하나라도 놓치면 실패가 아니라 <b>낡은 데이터의 조용한 서빙</b>이다:
+ * <p><b>입력 여섯 종</b>(설계 §2-1, 2026-08-28 해시태그 장부 지문 추가로 5→6) — 하나라도 놓치면 실패가
+ * 아니라 <b>낡은 데이터의 조용한 서빙</b>이다:
  * <ol>
  *   <li>레거시 스윕 워터마크 — {@link MonitoringReadRepository#lastSuccessfulSweepAt()}</li>
  *   <li>브랜드 스윕 워터마크 — 내 연결 브랜드의 {@code brand_account} 행에서 응답에 영향을 주는
@@ -34,7 +35,12 @@ import org.springframework.stereotype.Component;
  *       <b>스윕 밖</b>에서 그 행을 바꾸는 경로가 있고, 브랜드는 유저 간 공유 자산이라 <b>남의</b>
  *       등록·확장이 내 응답을 바꾼다. 다만 스윕 워터마크가 <b>스윕이 쓰는 모든 데이터를</b> 덮는
  *       것은 아니다 — 아래 "수용된 지연" 참조.</li>
- *   <li>유저 자신의 쓰기 — {@link DashboardVersionRepository}의 행 지문 5종</li>
+ *   <li>유저 자신의 쓰기 — {@link DashboardVersionRepository}의 행 지문 6종(해시태그 장부 포함,
+ *       {@link DashboardVersionRepository#hashtagTagsFingerprint} 참조 — {@code
+ *       app.brand_hashtag_tags} 추가·삭제가 {@code BrandIndexCache}가 캐시하는 인덱스의 해시태그
+ *       격리 판정을 바꾸는데, 이 지문이 없으면 태그를 고쳐도 캐시가 최대 하루 옛 판정을 서빙한다 —
+ *       이 표면의 계약은 "장부 변경이 다음 GET에 즉시 반영"이라 그 지연이 <b>수용 가능한 지연이
+ *       아니다</b>, 아래 "수용된 지연" 3건과는 다른 급이라 별도 지문으로 막는다)</li>
  *   <li>KST 날짜 — 데이터가 하나도 안 바뀌어도 자정을 넘기면 상태 유도와 365일 창이 달라진다</li>
  *   <li>배포 세대({@code cacheEpoch}) — 응답 스키마가 바뀐 배포에서 옛 ETag가 맞으면 새 필드가 영영
  *       안 나간다(설계 §2-6)</li>
@@ -69,7 +75,7 @@ public class DashboardVersion {
 	 * ({@code cacheEpoch})가 이미 모든 배포에서 키를 무효화하므로 안전망이지만, 빌드 시각을 못 읽는
 	 * 환경({@code "dev"} 폴백)에서 구성만 바뀐 경우의 유일한 방어선이다.
 	 */
-	private static final String LAYOUT = "pdv2";
+	private static final String LAYOUT = "pdv3";
 
 	/** 값이 없는 자리의 표식 — 빈 문자열을 쓰면 인접 필드와 구분이 흐려진다. */
 	private static final String ABSENT = "-";
@@ -119,7 +125,8 @@ public class DashboardVersion {
 				repository.brandLinksFingerprint(userId),
 				repository.directPostsFingerprint(userId),
 				repository.campaignsFingerprint(userId),
-				repository.postCampaignLinksFingerprint(userId));
+				repository.postCampaignLinksFingerprint(userId),
+				repository.hashtagTagsFingerprint(userId));
 		return md5Hex(raw);
 	}
 
