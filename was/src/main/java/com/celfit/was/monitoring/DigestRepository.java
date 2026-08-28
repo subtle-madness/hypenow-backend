@@ -71,17 +71,25 @@ public class DigestRepository {
 	}
 
 	/**
-	 * (user, date) 행 삭제(2026-08-28 품질 리뷰 I4) — 이번 실행의 조립 결과가 비면(킬 스위치
-	 * off·브랜드 연결 해제 등) 이전 실행이 만들어 둔 행을 걷어낸다. 행이 없으면 no-op.
+	 * (user, date) 행의 items만 비운다(2026-08-28 재리뷰 Important — I4가 도입했던 delete를
+	 * 대체). delete는 행 자체를 지워 email_sent_at·email_attempts까지 함께 날아갔다 — "메일
+	 * 발송됨 → 킬 스위치 off·브랜드 연결 해제로 행 삭제 → 복구 → 같은 주 재생성" 경로에서 발송
+	 * 여부를 잊어버려 같은 주 메일이 중복 발송되고 read_at도 부활했다. clearItems는 행·read_at·
+	 * created_at·email_sent_at·email_attempts를 그대로 두고 items만 {@code '[]'}로 비운다 — FE
+	 * 노출은 {@link #findVisibleRecentByUser}·{@link #countVisibleByUser}가 이 상태의 행을
+	 * 걸러 자연히 사라진다. 행이 없으면 no-op(update 0건).
 	 */
-	public void delete(long userId, LocalDate digestDate) {
-		jdbcClient.sql("DELETE FROM app.monitoring_digests WHERE user_id = :userId AND digest_date = :digestDate")
+	public void clearItems(long userId, LocalDate digestDate) {
+		jdbcClient.sql("""
+				UPDATE app.monitoring_digests SET items = '[]'::jsonb
+				WHERE user_id = :userId AND digest_date = :digestDate
+				""")
 				.param("userId", userId)
 				.param("digestDate", digestDate)
 				.update();
 	}
 
-	/** 최근 다이제스트 — digest_date DESC(id DESC tie-break). limit은 컨트롤러가 넘기는 상한(6.32는 30건). */
+	/** 최근 다이제스트 전체(items 비운 행 포함) — digest_date DESC(id DESC tie-break). */
 	public List<DigestRow> findRecentByUser(long userId, int limit) {
 		return jdbcClient.sql("""
 				SELECT id, user_id, digest_date, items::text AS items_json, created_at, read_at
@@ -96,8 +104,38 @@ public class DigestRepository {
 				.list();
 	}
 
+	/** 전체 행 수(items 비운 행 포함) — 내부 계측·테스트용. FE 노출 총건수는 {@link #countVisibleByUser}. */
 	public long countByUser(long userId) {
 		return jdbcClient.sql("SELECT count(*) FROM app.monitoring_digests WHERE user_id = :userId")
+				.param("userId", userId)
+				.query(Long.class)
+				.single();
+	}
+
+	/**
+	 * FE 노출용 최근 다이제스트(2026-08-28 재리뷰 Important) — {@link #clearItems}로 비워진
+	 * (items = {@code '[]'}) 행은 제외한다. GET /v1/notifications 전용 — limit은 컨트롤러가
+	 * 넘기는 상한(6.32는 30건).
+	 */
+	public List<DigestRow> findVisibleRecentByUser(long userId, int limit) {
+		return jdbcClient.sql("""
+				SELECT id, user_id, digest_date, items::text AS items_json, created_at, read_at
+				FROM app.monitoring_digests
+				WHERE user_id = :userId AND items <> '[]'::jsonb
+				ORDER BY digest_date DESC, id DESC
+				LIMIT :limit
+				""")
+				.param("userId", userId)
+				.param("limit", limit)
+				.query(DigestRow.class)
+				.list();
+	}
+
+	/** {@link #findVisibleRecentByUser}와 짝인 전체 건수 — GET /v1/notifications의 meta.total. */
+	public long countVisibleByUser(long userId) {
+		return jdbcClient.sql("""
+				SELECT count(*) FROM app.monitoring_digests WHERE user_id = :userId AND items <> '[]'::jsonb
+				""")
 				.param("userId", userId)
 				.query(Long.class)
 				.single();

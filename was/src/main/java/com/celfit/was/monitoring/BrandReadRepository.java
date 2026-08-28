@@ -364,23 +364,23 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 후보 shortcode 중 지난주에 <b>광고 미표기</b>로 판정된 것(설계 §4 광고 미표기).
-	 * 후보(= 그 유저가 등록한 게시물)는 app 스키마 원장에서 오고 여기 파라미터로 들어온다 —
-	 * monitoring DB와 app 스키마를 SQL로 조인하지 않는다(시스템 경계, 조합은 was 코드).
-	 * 판정 컬럼의 실제 위치는 brand_post_meta다(V20260817160000).
+	 * 지난주 <b>광고 미표기</b>로 판정된 shortcode 전체(설계 §4 광고 미표기, 2026-08-28 재리뷰
+	 * nit로 술어 역전) — brand_post_meta 전체에서 창 하나로만 걸러 읽는다. 등록 원장(app
+	 * 스키마의 그 유저가 등록한 게시물)과의 교집합은 <b>호출부(was 코드)가 자바에서</b> 계산한다 —
+	 * monitoring DB와 app 스키마를 SQL로 조인하지 않는다는 시스템 경계는 그대로다.
+	 *
+	 * <p>이전에는 반대로 shortcode 후보 목록을 {@code IN (:shortCodes)}로 통째로 바인드했는데,
+	 * 유저 수만큼 왕복하지 않는 배치 조회(품질 리뷰 I3)로 바뀌면서 그 목록이 "전 유저의 등록
+	 * shortcode 합집합"이 돼 바인드 파라미터 상한에 걸릴 수 있었다. ad_verdict·창 조건만으로
+	 * 걸러 읽는 편이 원본 SQL 파라미터 없이 인덱스를 태우기도 더 쉽다. 판정 컬럼의 실제 위치는
+	 * brand_post_meta다(V20260817160000).
 	 */
-	public List<String> findNotDisclosedJudgedBetween(Collection<String> shortCodes,
-			OffsetDateTime from, OffsetDateTime toExclusive) {
-		if (shortCodes.isEmpty()) {
-			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
-		}
+	public List<String> findNotDisclosedJudgedBetween(OffsetDateTime from, OffsetDateTime toExclusive) {
 		return jdbc.sql("""
 				SELECT short_code FROM brand_post_meta
-				WHERE short_code IN (:shortCodes) AND ad_verdict = 'NOT_DISCLOSED'
-				  AND ad_judged_at >= :from AND ad_judged_at < :toExclusive
+				WHERE ad_verdict = 'NOT_DISCLOSED' AND ad_judged_at >= :from AND ad_judged_at < :toExclusive
 				ORDER BY short_code
 				""")
-				.param("shortCodes", shortCodes)
 				.param("from", from)
 				.param("toExclusive", toExclusive)
 				.query(String.class)

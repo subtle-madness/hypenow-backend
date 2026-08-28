@@ -180,15 +180,59 @@ class DigestRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void delete는_행을_없애고_없는_행에는_no_op이다() {
+	void clearItems는_행_read_at_email_sent_at을_보존하되_노출_조회에서만_뺀다() {
+		// 품질 리뷰 재리뷰 Important — delete는 email_sent_at·email_attempts까지 지워 "발송됨 →
+		// 삭제 → 복구 → 재생성" 경로에서 중복 발송을 유발했다. clearItems는 items만 비운다.
 		LocalDate date = LocalDate.of(2026, 7, 29);
-		repository.upsert(userId, date, "[]");
+		long digestId = repository.upsert(userId, date,
+				"[{\"category\":\"content\",\"type\":\"collection_started\",\"summary\":\"s\",\"count\":1}]");
+		repository.markRead(userId, List.of(digestId));
+		jdbcClient.sql("UPDATE app.monitoring_digests SET email_sent_at = now(), email_attempts = 2 WHERE id = :id")
+				.param("id", digestId)
+				.update();
+
+		repository.clearItems(userId, date);
+
+		// 행 자체·read_at·email_sent_at·email_attempts는 그대로.
 		assertThat(repository.countByUser(userId)).isEqualTo(1);
+		DigestRow row = repository.findRecentByUser(userId, 1).get(0);
+		assertThat(row.id()).isEqualTo(digestId);
+		assertThat(row.readAt()).isNotNull();
+		assertThat(row.itemsJson()).isEqualTo("[]");
+		Object[] sentState = jdbcClient.sql(
+				"SELECT email_sent_at, email_attempts FROM app.monitoring_digests WHERE id = :id")
+				.param("id", digestId)
+				.query((rs, rowNum) -> new Object[] {rs.getTimestamp("email_sent_at"), rs.getInt("email_attempts")})
+				.single();
+		assertThat(sentState[0]).isNotNull();
+		assertThat(sentState[1]).isEqualTo(2);
 
-		repository.delete(userId, date);
+		// 노출 조회(findVisibleRecentByUser·countVisibleByUser)에서는 빠진다.
+		assertThat(repository.countVisibleByUser(userId)).isZero();
+		assertThat(repository.findVisibleRecentByUser(userId, 10)).isEmpty();
+	}
+
+	@Test
+	void clearItems는_행이_없으면_no_op이다() {
+		LocalDate date = LocalDate.of(2026, 7, 29);
+
+		repository.clearItems(userId, date);   // 예외 없이 통과
 
 		assertThat(repository.countByUser(userId)).isZero();
-		repository.delete(userId, date);   // 이미 없는 행 — 예외 없이 no-op
-		assertThat(repository.countByUser(userId)).isZero();
+	}
+
+	@Test
+	void findVisibleRecentByUser_countVisibleByUser는_비운_행을_제외한다() {
+		// 품질 리뷰 재리뷰 Important ③ — 빈 items 행이 목록·total에서 일관되게 제외돼야 한다.
+		long visibleId = repository.upsert(userId, LocalDate.of(2026, 7, 29),
+				"[{\"category\":\"content\",\"type\":\"collection_started\",\"summary\":\"s\",\"count\":1}]");
+		long clearedId = repository.upsert(userId, LocalDate.of(2026, 7, 28), "[]");
+
+		assertThat(repository.countByUser(userId)).isEqualTo(2);          // 전체(내부용)는 둘 다 센다
+		assertThat(repository.countVisibleByUser(userId)).isEqualTo(1);   // 노출용은 하나만
+		assertThat(repository.findVisibleRecentByUser(userId, 10))
+				.extracting(DigestRow::id)
+				.containsExactly(visibleId)
+				.doesNotContain(clearedId);
 	}
 }

@@ -65,8 +65,8 @@ class V1NotificationsControllerTest {
 				""";
 		DigestRow digest = row(1L, LocalDate.of(2026, 7, 29), OffsetDateTime.parse("2026-07-29T00:00:00Z"),
 				null, itemsJson);
-		given(repository.findRecentByUser(eq(7L), eq(30))).willReturn(List.of(digest));
-		given(repository.countByUser(7L)).willReturn(1L);
+		given(repository.findVisibleRecentByUser(eq(7L), eq(30))).willReturn(List.of(digest));
+		given(repository.countVisibleByUser(7L)).willReturn(1L);
 
 		mockMvc.perform(get("/v1/notifications").with(user(principal())))
 				.andExpect(status().isOk())
@@ -85,8 +85,8 @@ class V1NotificationsControllerTest {
 	void createdAt은_KST_오프셋_09_00_문자열이다() throws Exception {
 		DigestRow digest = row(1L, LocalDate.of(2026, 7, 29), OffsetDateTime.parse("2026-07-29T00:00:00Z"),
 				null, "[]");
-		given(repository.findRecentByUser(eq(7L), eq(30))).willReturn(List.of(digest));
-		given(repository.countByUser(7L)).willReturn(1L);
+		given(repository.findVisibleRecentByUser(eq(7L), eq(30))).willReturn(List.of(digest));
+		given(repository.countVisibleByUser(7L)).willReturn(1L);
 
 		// UTC 2026-07-29T00:00:00Z → KST(+9h) 2026-07-29T09:00:00+09:00
 		mockMvc.perform(get("/v1/notifications").with(user(principal())))
@@ -98,8 +98,8 @@ class V1NotificationsControllerTest {
 	void readAt_키는_안읽음이면_명시적_null이다() throws Exception {
 		DigestRow digest = row(1L, LocalDate.of(2026, 7, 29), OffsetDateTime.parse("2026-07-29T00:00:00Z"),
 				null, "[]");
-		given(repository.findRecentByUser(eq(7L), eq(30))).willReturn(List.of(digest));
-		given(repository.countByUser(7L)).willReturn(1L);
+		given(repository.findVisibleRecentByUser(eq(7L), eq(30))).willReturn(List.of(digest));
+		given(repository.countVisibleByUser(7L)).willReturn(1L);
 
 		mockMvc.perform(get("/v1/notifications").with(user(principal())))
 				.andExpect(status().isOk())
@@ -111,8 +111,8 @@ class V1NotificationsControllerTest {
 	void readAt이_값이면_KST_오프셋으로_직렬화된다() throws Exception {
 		DigestRow digest = row(1L, LocalDate.of(2026, 7, 29), OffsetDateTime.parse("2026-07-29T00:00:00Z"),
 				OffsetDateTime.parse("2026-07-29T01:00:00Z"), "[]");
-		given(repository.findRecentByUser(eq(7L), eq(30))).willReturn(List.of(digest));
-		given(repository.countByUser(7L)).willReturn(1L);
+		given(repository.findVisibleRecentByUser(eq(7L), eq(30))).willReturn(List.of(digest));
+		given(repository.countVisibleByUser(7L)).willReturn(1L);
 
 		mockMvc.perform(get("/v1/notifications").with(user(principal())))
 				.andExpect(status().isOk())
@@ -125,8 +125,8 @@ class V1NotificationsControllerTest {
 				.mapToObj(i -> row(i, LocalDate.of(2026, 1, 1).plusDays(i), OffsetDateTime.parse("2026-07-29T00:00:00Z"),
 						null, "[]"))
 				.toList();
-		given(repository.findRecentByUser(eq(7L), eq(30))).willReturn(thirtyRows);
-		given(repository.countByUser(7L)).willReturn(45L);
+		given(repository.findVisibleRecentByUser(eq(7L), eq(30))).willReturn(thirtyRows);
+		given(repository.countVisibleByUser(7L)).willReturn(45L);
 
 		mockMvc.perform(get("/v1/notifications").with(user(principal())))
 				.andExpect(status().isOk())
@@ -220,9 +220,9 @@ class V1NotificationsControllerTest {
 		String itemsJson = """
 				[{"category":"brand","type":"brand_new_posts","summary":"브랜드를 언급한 새 게시물을 찾았어요",\
 				"count":12,"metrics":{"views":123456,"likes":7890,"comments":123}}]""";
-		given(repository.findRecentByUser(eq(7L), eq(30))).willReturn(List.of(
+		given(repository.findVisibleRecentByUser(eq(7L), eq(30))).willReturn(List.of(
 				row(1L, LocalDate.of(2026, 8, 17), OffsetDateTime.parse("2026-08-24T00:00:00Z"), null, itemsJson)));
-		given(repository.countByUser(7L)).willReturn(1L);
+		given(repository.countVisibleByUser(7L)).willReturn(1L);
 
 		mockMvc.perform(get("/v1/notifications").with(user(principal())))
 				.andExpect(status().isOk())
@@ -241,9 +241,9 @@ class V1NotificationsControllerTest {
 		// 응답 조립이 깨지면 안 된다.
 		String itemsJson = """
 				[{"category":"content","type":"collection_started","summary":"새로 수집을 시작한 콘텐츠가 있어요","count":2}]""";
-		given(repository.findRecentByUser(eq(7L), eq(30))).willReturn(List.of(
+		given(repository.findVisibleRecentByUser(eq(7L), eq(30))).willReturn(List.of(
 				row(1L, LocalDate.of(2026, 7, 30), OffsetDateTime.parse("2026-07-30T00:00:00Z"), null, itemsJson)));
-		given(repository.countByUser(7L)).willReturn(1L);
+		given(repository.countVisibleByUser(7L)).willReturn(1L);
 
 		mockMvc.perform(get("/v1/notifications").with(user(principal())))
 				.andExpect(status().isOk())
@@ -257,9 +257,9 @@ class V1NotificationsControllerTest {
 		String itemsJson = """
 				[{"category":"brand","type":"brand_new_posts","summary":"브랜드를 언급한 새 게시물을 찾았어요",\
 				"count":3,"metrics":{"views":null,"likes":30,"comments":3}}]""";
-		given(repository.findRecentByUser(eq(7L), eq(30))).willReturn(List.of(
+		given(repository.findVisibleRecentByUser(eq(7L), eq(30))).willReturn(List.of(
 				row(1L, LocalDate.of(2026, 8, 17), OffsetDateTime.parse("2026-08-24T00:00:00Z"), null, itemsJson)));
-		given(repository.countByUser(7L)).willReturn(1L);
+		given(repository.countVisibleByUser(7L)).willReturn(1L);
 
 		mockMvc.perform(get("/v1/notifications").with(user(principal())))
 				.andExpect(status().isOk())

@@ -52,11 +52,16 @@ import tools.jackson.databind.ObjectMapper;
  * 있다(digest_date 컬럼을 "달력일"과 "주 시작일" 둘 다로 썼던 값 공간이 겹친다). {@link
  * DigestRepository#upsertWeekly}가 이 충돌을 감지해 리셋한다 — 조건은 그 메서드 참조.
  *
- * <h2>이벤트 0건이면 삭제(2026-08-28 품질 리뷰 I4)</h2>
- * 조립 결과가 빈 목록이면 upsert 대신 그 (user, 주 시작일) 행을 <b>삭제</b>한다(행이 없으면
- * no-op). 킬 스위치를 끄거나 브랜드 연결을 해제한 뒤 재실행하면, 이전 실행이 만들어 둔 행이 낡은
- * 채로 남지 않고 실제로 걷힌다 — 예전의 "스킵"은 upsert를 안 할 뿐 이미 있는 행은 그대로 둬서
- * 이 시나리오를 놓쳤다.
+ * <h2>이벤트 0건이면 items만 비운다(2026-08-28 품질 리뷰 I4, 재리뷰로 delete→clearItems 교체)</h2>
+ * 조립 결과가 빈 목록이면 upsert 대신 그 (user, 주 시작일) 행의 {@code items}만
+ * {@link DigestRepository#clearItems}로 비운다(행이 없으면 no-op) — <b>행 자체·read_at·
+ * email_sent_at·email_attempts는 보존</b>한다. 최초 구현은 행을 통째로 delete했는데, 그러면
+ * "메일 발송됨 → 킬 스위치 off·브랜드 연결 해제로 행 삭제 → 복구 → 같은 주 재생성" 경로에서
+ * email_sent_at까지 함께 사라져 같은 주 메일이 중복 발송되고 read_at도 부활한다. clearItems는
+ * items만 비우므로 FE 노출은 {@link DigestRepository#findVisibleRecentByUser}·
+ * {@link DigestRepository#countVisibleByUser}가 {@code items='[]'} 행을 걸러 자연히 사라지고,
+ * 같은 주에 다시 채워지면(같은 행이 창 마감 이후에 만들어졌으므로 upsertWeekly의 리셋 조건이
+ * 발동하지 않아) read_at·email_sent_at이 그대로 보존된 채 노출만 되살아난다.
  *
  * <h2>배치 조회로 N+1 해소(2026-08-28 품질 리뷰 I3)</h2>
  * 브랜드 발견분·미표기 판정은 유저 수만큼 왕복하지 않는다 — {@link #runFor}가 대상 유저 전체의
@@ -129,6 +134,14 @@ public class WeeklyDigestJob {
 	/**
 	 * 창을 명시적으로 받는 본체. 대상 유저는 "지난주 알람 이벤트가 있는 유저" ∪ "활성 브랜드 연결이
 	 * 있는 유저"다 — 전자만 보면 브랜드 소식·미표기만 있는 유저가 통째로 빠진다.
+	 *
+	 * <p><b>계약(2026-08-28 재리뷰 nit)</b>: 반드시 <b>이미 닫힌</b> 창만 넘길 것 — 이번 주(진행
+	 * 중인, 아직 끝나지 않은 창)를 넘기면 {@link DigestRepository#upsertWeekly}의 리셋 조건
+	 * (기존 행 created_at < windowCloseAt)이 오발동해 정당한 행의 read_at·created_at까지 리셋될
+	 * 수 있다 — 그 조건은 "정상적인 주간 행은 창이 닫힌 뒤에만 생성된다"는 전제 위에 서 있다.
+	 * {@link #run()}·{@link #catchUp()} 둘 다 {@link WeekWindow#previousWeekOf}로 항상 직전
+	 * (이미 닫힌) 주를 계산해 넘기므로 스케줄 진입점은 이 계약을 자동으로 지킨다 — 명시적 창을
+	 * 받는 이 메서드를 직접 호출할 때만(운영 재처리 등) 주의가 필요하다.
 	 */
 	public void runFor(WeekWindow window) {
 		Map<Long, List<AlarmEventRow>> eventsByUser = monitoringRead
@@ -188,8 +201,9 @@ public class WeeklyDigestJob {
 				campaignNamesFor(userId, userEvents, COLLECTION_STARTED),
 				campaignNamesFor(userId, userEvents, COLLECTION_ENDED)));
 		if (items.isEmpty()) {
-			// 품질 리뷰 I4 — 스킵이 아니라 삭제. 이전 실행이 만들어 둔 행이 낡은 채로 남지 않게 한다.
-			digests.delete(userId, window.startDate());
+			// 품질 리뷰 I4(재리뷰로 delete→clearItems 교체) — 행은 보존하고 items만 비운다.
+			// email_sent_at·email_attempts·read_at을 지키기 위해서다(클래스 Javadoc 참조).
+			digests.clearItems(userId, window.startDate());
 			return false;
 		}
 		digests.upsertWeekly(userId, window.startDate(), window.toExclusive(),
@@ -273,6 +287,11 @@ public class WeeklyDigestJob {
 	 * app.brand_direct_posts다. 킬 스위치가 꺼져 있으면 아예 조회하지 않는다 — FE 미노출 정보가
 	 * 알림으로 새는 사고 방지(설계 §8).
 	 *
+	 * <p>{@link BrandReadRepository#findNotDisclosedJudgedBetween}은 2026-08-28 재리뷰 nit로
+	 * shortcode 바인드를 받지 않고 창만으로 걸러 읽는다 — 등록 원장과의 교집합은 여기서(자바)
+	 * {@code allRegistered}로 먼저 한 번 걸러낸다(전 유저 무관 후보 배제), 그 다음 유저별
+	 * {@code registered}로 다시 좁힌다.
+	 *
 	 * <p>{@code findNotifiedInOtherWeek}(유저별 통지 이력 확인)는 배치할 수 없다 — 유저마다 자기
 	 * 이력만 봐야 하는 스칼라 userId 파라미터라서다. 다만 judged 후보가 있는 유저에게만 호출하므로
 	 * 브랜드 연결만 있고 등록·판정이 없는 대다수 유저는 이 호출 자체가 생기지 않는다.
@@ -292,9 +311,11 @@ public class WeeklyDigestJob {
 		Set<String> allRegistered = registrations.stream()
 				.map(BrandDirectPostRepository.UserShortCodeRow::shortCode)
 				.collect(Collectors.toCollection(LinkedHashSet::new));
-		List<String> judgedAll = brandRead.findNotDisclosedJudgedBetween(
-				allRegistered, window.from(), window.toExclusive());
-		if (judgedAll.isEmpty()) {
+		List<String> judgedRegistered = brandRead.findNotDisclosedJudgedBetween(window.from(), window.toExclusive())
+				.stream()
+				.filter(allRegistered::contains)
+				.toList();
+		if (judgedRegistered.isEmpty()) {
 			return Map.of();
 		}
 
@@ -304,7 +325,7 @@ public class WeeklyDigestJob {
 			if (registered.isEmpty()) {
 				continue;
 			}
-			List<String> judgedForUser = judgedAll.stream().filter(registered::contains).toList();
+			List<String> judgedForUser = judgedRegistered.stream().filter(registered::contains).toList();
 			if (judgedForUser.isEmpty()) {
 				continue;
 			}

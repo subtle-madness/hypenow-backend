@@ -145,8 +145,6 @@ class BrandWeeklyReadRepositoryTest extends IntegrationTest {
 				.isEmpty();
 		assertThat(repository.findHashtagPostsDiscoveredBetween(List.of(), WEEK.from(), WEEK.toExclusive()))
 				.isEmpty();
-		assertThat(repository.findNotDisclosedJudgedBetween(List.of(), WEEK.from(), WEEK.toExclusive()))
-				.isEmpty();
 	}
 
 	@Test
@@ -175,13 +173,14 @@ class BrandWeeklyReadRepositoryTest extends IntegrationTest {
 
 	@Test
 	void 미표기_판정은_NOT_DISCLOSED와_창_안_ad_judged_at만_돌려준다() {
+		// 2026-08-28 재리뷰 nit — shortcode 후보 바인드가 사라지고 창만으로 걸러 읽는다(등록 원장
+		// 교집합은 이제 호출부 WeeklyDigestJob이 자바에서 계산).
 		seedMeta("SC_ND", "NOT_DISCLOSED", IN_WEEK);
 		seedMeta("SC_OK", "DISCLOSED", IN_WEEK);
 		seedMeta("SC_OLD", "NOT_DISCLOSED", BEFORE_WEEK);
 		seedMeta("SC_UNJUDGED", null, null);
 
-		List<String> found = repository.findNotDisclosedJudgedBetween(
-				List.of("SC_ND", "SC_OK", "SC_OLD", "SC_UNJUDGED"), WEEK.from(), WEEK.toExclusive());
+		List<String> found = repository.findNotDisclosedJudgedBetween(WEEK.from(), WEEK.toExclusive());
 
 		assertThat(found).containsExactly("SC_ND");
 	}
