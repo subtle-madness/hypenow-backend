@@ -394,7 +394,7 @@ tagged `taken_at` 프록시)은 코드리뷰로 기각·폐기** — 자연 완�
 포함(covered 판정과 동일 규칙). DECISIONS.md 2026-08-20 두 항목 참조.
 
 해시태그 직접 수집 전환(2026-08-27 설계 확정 → **08-28 구현 완료, 브랜치
-`feat/hashtag-direct-collection`, PR 대기** — [설계](../superpowers/specs/2026-08-27-hashtag-direct-collection-design.md)):
+`feat/hashtag-direct-collection`, PR 대기** — [설계](../superpowers/specs/archive/2026-08-27-hashtag-direct-collection-design.md)):
 위 "해시태그 감지 확장"(08-11) 구조를 전면 폐기하고 `brand_tagged_post` 풀에 직접 편입한다.
 LLM 관련성 판정(`BrandMentionJudge`)·구 감지 테이블(`brand_hashtag_post`) 쓰기 중단, 신규
 `hashtag_detected_at` 성분 컬럼(tag_detected_at·direct_registered_at과 병존) + 매칭 태그 원장
