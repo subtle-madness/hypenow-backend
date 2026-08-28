@@ -191,7 +191,6 @@ services:
       # 브랜드 태그 스윕도 동일 원칙 — test는 크론 off, 검증은 임시 근접 시각 1회 후 제거.
       # MONITORING_BRAND_SCHEDULE_SWEEP_CRON: "0 <mm> <HH> * * *"
       # 알람 메일 발송은 2026-08-27 주간 개편으로 was(주간 리포트)로 이관됐다 - monitoring은 alarm_event 적재만 한다.
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
       # ExitOnOOM은 운영과 동일 관용구(08-12) — test는 데이터가 작아 힙 상향은 미적용.
       # OOM 자동 힙 덤프 — 운영 analytics 주석 참조. ExitOnOOM과 공존(덤프를 먼저 쓰고 종료).
       JAVA_OPTS: "-Xms128m -Xmx256m -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/test-monitoring.hprof"

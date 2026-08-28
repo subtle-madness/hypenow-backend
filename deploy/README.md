@@ -688,9 +688,13 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
         크론은 was env `MONITORING_DIGEST_WEEKLY_CRON`·`MONITORING_DIGEST_WEEKLY_CATCHUP_CRON`로 덮을 수 있다.
       - 발송 계정: was의 `RESEND_API_KEY`(이미 배선돼 있다). test 환경의 실사용자 오발송 방지는
         기존 `WAS_MAIL_ADMIN_ONLY=true`(ADMIN 수신자만 실발송)가 그대로 담당한다.
-      - 딥링크 기준 주소: `WEB_BASE_URL`(운영 https://hypenow.io, 스테이징 `DEV_WEB_BASE_URL`).
-      - 임시 중단: `MONITORING_DIGEST_WEEKLY_CRON`을 `"-"`로 두고 재기동한다. 인앱 다이제스트까지
-        함께 멈추므로(생성과 발송이 같은 잡이다) 재개하면 그 주 창을 다시 집계해 만들어 낸다.
+      - 딥링크 기준 주소: `WEB_BASE_URL`(운영 https://www.hypenow.io, 스테이징 `DEV_WEB_BASE_URL`).
+      - 임시 중단: **`MONITORING_DIGEST_WEEKLY_CRON`·`MONITORING_DIGEST_WEEKLY_CATCHUP_CRON`
+        둘 다** `"-"`로 두고 재기동한다 — 주간 크론만 끄면 `weekly-catchup-cron`(매일
+        09~23시대 10분 간격, 요일 제한 없음)이 10분 안에 생성·발송을 다시 살린다. 인앱
+        다이제스트까지 함께 멈추므로(생성과 발송이 같은 잡이다) 재개하면 그 주 창을 다시
+        집계해 만들어 낸다. 더 큰 스위치로 `MONITORING_ENABLED=false`(monitoring 서브시스템
+        전체 차단 — v3 조회·광고표기 노출도 함께 꺼지므로 과격한 수단)가 있다.
       - 수신 해지: 사용자가 `PATCH /v1/notification-settings {"weeklyEmail": false}`로 끈다
         (구 4종 매트릭스는 폐지, 기존 옵트아웃은 하나라도 꺼져 있으면 off로 이관됐다).
 6. **was v3 조회 개통 (was V16 배포 후, was 서비스 environment의 `MONITORING_*` 4키 배선과 짝)**
@@ -729,9 +733,13 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
     크론은 was env `MONITORING_DIGEST_WEEKLY_CRON`·`MONITORING_DIGEST_WEEKLY_CATCHUP_CRON`로 덮을 수 있다.
   - 발송 계정: was의 `RESEND_API_KEY`(이미 배선돼 있다). test 환경의 실사용자 오발송 방지는
     기존 `WAS_MAIL_ADMIN_ONLY=true`(ADMIN 수신자만 실발송)가 그대로 담당한다.
-  - 딥링크 기준 주소: `WEB_BASE_URL`(운영 https://hypenow.io, 스테이징 `DEV_WEB_BASE_URL`).
-  - 임시 중단: `MONITORING_DIGEST_WEEKLY_CRON`을 `"-"`로 두고 재기동한다. 인앱 다이제스트까지
-    함께 멈추므로(생성과 발송이 같은 잡이다) 재개하면 그 주 창을 다시 집계해 만들어 낸다.
+  - 딥링크 기준 주소: `WEB_BASE_URL`(운영 https://www.hypenow.io, 스테이징 `DEV_WEB_BASE_URL`).
+  - 임시 중단: **`MONITORING_DIGEST_WEEKLY_CRON`·`MONITORING_DIGEST_WEEKLY_CATCHUP_CRON` 둘 다**
+    `"-"`로 두고 재기동한다 — 주간 크론만 끄면 `weekly-catchup-cron`(매일 09~23시대 10분 간격,
+    요일 제한 없음)이 10분 안에 생성·발송을 다시 살린다. 인앱 다이제스트까지 함께 멈추므로
+    (생성과 발송이 같은 잡이다) 재개하면 그 주 창을 다시 집계해 만들어 낸다. 더 큰 스위치로
+    `MONITORING_ENABLED=false`(monitoring 서브시스템 전체 차단 — v3 조회·광고표기 노출도 함께
+    꺼지므로 과격한 수단)가 있다.
   - 수신 해지: 사용자가 `PATCH /v1/notification-settings {"weeklyEmail": false}`로 끈다
     (구 4종 매트릭스는 폐지, 기존 옵트아웃은 하나라도 꺼져 있으면 off로 이관됐다).
 - 백업: `backup.sh`가 analysis와 같은 관용구로 매일 덤프 —
