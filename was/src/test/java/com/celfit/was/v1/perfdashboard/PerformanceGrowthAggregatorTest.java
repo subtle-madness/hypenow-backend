@@ -35,6 +35,7 @@ class PerformanceGrowthAggregatorTest {
 		assertThat(res.points().get(1).views()).isNull();
 		assertThat(res.points().get(1).likes()).isNull();
 		assertThat(res.points().get(1).comments()).isNull();
+		assertThat(res.points().get(1).ratedComments()).isNull();
 		assertThat(res.points().get(1).followersSum()).isNull();
 		assertThat(res.points().get(1).viewsMissingCount()).isZero();
 		assertThat(res.points().get(1).likesHiddenCount()).isZero();
@@ -172,7 +173,8 @@ class PerformanceGrowthAggregatorTest {
 		assertThat(point.viewsMissingCount()).isEqualTo(4);         // 피드·스냅샷 없음 2건·전부 미상
 		assertThat(point.likes()).isEqualTo(30L);                   // 10+20 (숨김·스냅샷 없음 제외)
 		assertThat(point.likesHiddenCount()).isEqualTo(1);          // 스냅샷 있는 숨김만
-		assertThat(point.comments()).isEqualTo(7L);                 // 1+2+4
+		assertThat(point.comments()).isEqualTo(7L);                 // 1+2+4 — 숨김(4행) 포함, 08-06 계약
+		assertThat(point.ratedComments()).isEqualTo(3L);            // 1+2 — likes와 같은 모수(숨김 제외)
 		assertThat(point.followersSum()).isEqualTo(3000L);          // likes 아는 1·2행만 — 1000+2000
 		assertThat(point.followersMissingCount()).isEqualTo(3);
 	}
@@ -189,9 +191,44 @@ class PerformanceGrowthAggregatorTest {
 		assertThat(point.views()).isNull();
 		assertThat(point.likes()).isNull();
 		assertThat(point.comments()).isNull();
+		assertThat(point.ratedComments()).isNull();
 		assertThat(point.followersSum()).isNull();
 		assertThat(point.viewsMissingCount()).isEqualTo(2);
 		assertThat(point.followersMissingCount()).isEqualTo(2);
+	}
+
+	@Test
+	void ratedComments는_likes와_같은_모수의_댓글만_담는다() {
+		// 참여율 분자 규칙(FE 요청 2026-08-28 ①) — 좋아요 숨김 게시물의 댓글이 분자에 남으면
+		// 분모(followersSum)와 모수가 어긋나 참여율이 과대 표시된다. 기존 comments는 관측 전량
+		// 의미를 그대로 유지하므로 두 값이 같은 버킷에서 다르게 나오는 것이 정상이다.
+		var res = PerformanceGrowthAggregator.aggregate(List.of(
+				ref("2026-08-26", null, true, null, 10L, false, 3L, 1000L),      // 숨김 아님 → 둘 다
+				ref("2026-08-26", null, true, null, null, true, 5L, 2000L),      // 숨김 → comments만
+				ref("2026-08-26", null, false, null, null, false, 9L, 4000L)),   // 스냅샷 없음 → 둘 다 제외
+				DAY, null, null, List.of());
+
+		var point = res.points().get(0);
+		assertThat(point.comments()).isEqualTo(8L);        // 3+5 — 숨김 포함(스냅샷 없는 9는 제외)
+		assertThat(point.ratedComments()).isEqualTo(3L);   // 3만 — likes(10L)와 같은 게시물
+		assertThat(point.likes()).isEqualTo(10L);
+		assertThat(point.followersSum()).isEqualTo(1000L);
+		assertThat(point.likesHiddenCount()).isEqualTo(1);
+	}
+
+	@Test
+	void 숨김만_있는_버킷은_ratedComments가_null이고_comments는_남는다() {
+		// null과 0을 가르는 FE 규칙 ③이 신설 필드에도 적용된다 — "분자에 실린 게시물이 없음"은
+		// 참여율 0이 아니라 계산 불가다.
+		var res = PerformanceGrowthAggregator.aggregate(List.of(
+				ref("2026-08-26", null, true, null, null, true, 5L, 1000L)),
+				DAY, null, null, List.of());
+
+		var point = res.points().get(0);
+		assertThat(point.comments()).isEqualTo(5L);
+		assertThat(point.ratedComments()).isNull();
+		assertThat(point.likes()).isNull();
+		assertThat(point.followersSum()).isNull();
 	}
 
 	@Test
