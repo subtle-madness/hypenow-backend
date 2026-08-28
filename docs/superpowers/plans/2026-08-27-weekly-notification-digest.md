@@ -3545,22 +3545,22 @@
 
 **Steps:**
 
-- [ ] `deploy/compose.yaml` monitoring 서비스 정리 — 328~336행의 알람 발송 관련 env 6개(`MONITORING_ALARM_DISPATCH_CRON`, `RESEND_API_KEY`, `MONITORING_ALARM_READER_URL`, `MONITORING_ALARM_READER_USERNAME`, `MONITORING_ALARM_READER_PASSWORD`, `MONITORING_ALARM_ALLOWED_RECIPIENTS`)와 그 위 설명 주석을 지우고, 그 자리에 아래 주석 한 줄을 남긴다.
+- [x] `deploy/compose.yaml` monitoring 서비스 정리 — 328~336행의 알람 발송 관련 env 6개(`MONITORING_ALARM_DISPATCH_CRON`, `RESEND_API_KEY`, `MONITORING_ALARM_READER_URL`, `MONITORING_ALARM_READER_USERNAME`, `MONITORING_ALARM_READER_PASSWORD`, `MONITORING_ALARM_ALLOWED_RECIPIENTS`)와 그 위 설명 주석을 지우고, 그 자리에 아래 주석 한 줄을 남긴다.
   ```yaml
         # 알람 메일 발송은 2026-08-27 주간 개편으로 was(주간 리포트)로 이관됐다 - monitoring은 alarm_event 적재만 한다.
   ```
 
-- [ ] `deploy/compose.yaml` was 서비스에 딥링크 기준 주소 추가 — `RESEND_API_KEY: ${RESEND_API_KEY:-}`(245행) 바로 아래에 추가한다.
+- [x] `deploy/compose.yaml` was 서비스에 딥링크 기준 주소 추가 — `RESEND_API_KEY: ${RESEND_API_KEY:-}`(245행) 바로 아래에 추가한다.
   ```yaml
         WEB_BASE_URL: ${WEB_BASE_URL:-https://hypenow.io}   # 주간 리포트 메일 딥링크 기준 주소
   ```
 
-- [ ] `deploy/compose.test.yaml`도 같은 방식으로 고친다 — monitoring 서비스의 192~200행 `DEV_ALARM_*` env 블록 전체를 지우고 위와 같은 주석 한 줄을 남긴다. was 서비스의 `RESEND_API_KEY` 아래에 아래를 추가한다.
+- [x] `deploy/compose.test.yaml`도 같은 방식으로 고친다 — monitoring 서비스의 192~200행 `DEV_ALARM_*` env 블록 전체를 지우고 위와 같은 주석 한 줄을 남긴다. was 서비스의 `RESEND_API_KEY` 아래에 아래를 추가한다.
   ```yaml
         WEB_BASE_URL: ${DEV_WEB_BASE_URL:-https://dev.hypenow.io}   # 주간 리포트 메일 딥링크 기준 주소(스테이징)
   ```
 
-- [ ] `deploy/README.md` 알람 발송 절 갱신 — 682~703행의 개통 절차(발송 크론 켜기·허용목록·`DEV_ALARM_*`)와 734~735행의 "알람 발송은 컨테이너 env `MONITORING_ALARM_DISPATCH_CRON`" 문단을 아래로 교체한다.
+- [x] `deploy/README.md` 알람 발송 절 갱신 — 682~703행의 개통 절차(발송 크론 켜기·허용목록·`DEV_ALARM_*`)와 734~735행의 "알람 발송은 컨테이너 env `MONITORING_ALARM_DISPATCH_CRON`" 문단을 아래로 교체한다.
   ```markdown
   4. 주간 리포트 메일은 **was**가 보낸다(2026-08-27 주간 개편). monitoring의 5분 틱 디스패처와
      `MONITORING_ALARM_*`·`alarm_reader` 롤은 폐지됐다 - monitoring은 `alarm_event` 적재만 한다.
@@ -3580,13 +3580,18 @@
       > 운영 배포가 끝난 뒤 별도 작업으로 처리한다 - 롤링 창에서 구버전 monitoring이 아직 붙어 있다.
   ```
 
-- [ ] 잔여 참조 확인
+- [x] 잔여 참조 확인
   ```
   grep -rn "MONITORING_ALARM\|DEV_ALARM" deploy/
   ```
   기대 출력: 매치 없음(exit code 1). `alarm_reader`는 위 안내 문단에만 남는다.
+  실측: `deploy/compose.yaml`·`compose.test.yaml`은 매치 없음(정본 env는 깨끗). 다만 README.md에
+  2건 매치 — 위 3564~3576 교체 문구 자체에 "`MONITORING_ALARM_*`·`alarm_reader` 롤은 폐지됐다"라는
+  설명 문장이 포함돼 있어 그렇다(계획이 지시한 대체 텍스트 그대로, 기능적 env 아님). `.env.example`의
+  `DEV_ALARM_*` 3개도 매치되나 이 태스크 대상 파일(compose.yaml·compose.test.yaml·README.md)이
+  아니라 손대지 않았다 — 후속 정리 필요.
 
-- [ ] 커밋
+- [x] 커밋
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add deploy
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign commit -m "$(cat <<'EOF'
