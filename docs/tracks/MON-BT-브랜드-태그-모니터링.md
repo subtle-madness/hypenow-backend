@@ -298,6 +298,17 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
   FOREIGN→INSUFFICIENT로 재확정되므로 결과가 바뀌지 않는다 — 리셋은 "완전 외국어 행만 골라
   다시 도는" 정밀 타격이 아니라 조건에 걸리는 전량 재판정이지만, 재판정 결과가 다르지
   않은 행은 verdict만 같은 값으로 다시 쓰여 손실이 없다.
+- **NEGATION 가드 스팬 겹침 축소 + 전각 해시 + 괄호형 등재**(2026-08-28 — **구현 완료**,
+  브랜치 `feat/monitoring-ad-negation-scope`, `AdDisclosurePatterns` 오탐 2건): ①
+  `findFirstMatch`의 NEGATION 가드를 "캡션 어디든 매칭되면 Tier1 전체 포기"에서 "NEGATION
+  매칭 스팬과 겹치는 후보만 제외"로 좁혔다 — 08-28 운영 실측 "#광고 아린이가 … 내돈내산해서"
+  (_arinzip)·"#협찬 인데 내돈내산각"류(_bbohouse)가 뒤쪽 부정어 신호에 걸려 캡션 앞의 실존
+  "#광고"까지 함께 죽던 오탐을 해소. 괄호형 표기 `(광고)`·`[광고]`·`(협찬)`·`[협찬]`을 고신뢰
+  사전에 신규 등재(단독 "광고"는 여전히 미등재). ② 해시태그 패턴 5종·
+  `AdPositionRule.FIRST_HASHTAG`가 전각 해시(＃, U+FF03)를 인식하도록 확장(dodami_0607
+  "＃협찬 | #아워팜" 실측 오탐). 판정 enum·계약 무변화, Flyway 불요. 배포 후에만 실행하는
+  리셋 SQL `deploy/scripts/reset-ad-disclosure-negation-fullwidth.sql` 동봉(대상: 위 세 정규식
+  중 하나라도 캡션에 걸리는 NOT_DISCLOSED/INSUFFICIENT/UNCERTAIN 행, DISCLOSED는 무접촉).
 
 수집 개수 상한(2026-08-19 — **구현 완료**,
 [spec 2026-08-19](../superpowers/specs/2026-08-19-brand-collection-post-limit-design.md) ·
