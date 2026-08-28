@@ -1,6 +1,6 @@
 # 해시태그 직접 수집 전환 Implementation Plan
 
-> 상태: 🟢 활성 · 2026-08-27 작성, 실행 전
+> 상태: ✅ 구현됨 · 2026-08-28 실행 완료(feat/hashtag-direct-collection) — 실행 중 추가: 인덱스 경로 격리(Task 8b), 이관분 기동 즉시 보강 러너, 태그 생성 권한 was 일원화(DECISIONS 참조)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

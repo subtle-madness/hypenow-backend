@@ -101,6 +101,62 @@ public class TaggedPostRepository {
 				Timestamp.from(Instant.ofEpochSecond(post.takenAt())), Timestamp.from(registeredAt));
 	}
 
+	/**
+	 * 해시태그 편입 upsert(2026-08-27 해시태그 직접 수집 설계 §2-3) — 해시태그 recent 열거로 얻은
+	 * 게시물을 hashtag 표식과 함께 통합 풀에 링크한다. {@link #upsertDirect}와 같은 규칙이다:
+	 * tag_detected_at은 명시적 NULL로 둬 DEFAULT now()를 무력화하고(이 행이 태그 열거 산지가
+	 * 아니라는 표시 — 나중에 태그 열거가 만나면 {@link #insert}가 COALESCE로 채운다), 이미 있던
+	 * 행(tagged·direct)에는 hashtag_detected_at만 얹는다. COALESCE라 재발견·재수집으로 최초 편입
+	 * 시각이 밀리지 않는다.
+	 */
+	public void upsertHashtag(long brandId, PostInfo post, Instant detectedAt) {
+		db.update("""
+				INSERT INTO brand_tagged_post
+				    (brand_id, short_code, author_username, author_ig_user_id, taken_at,
+				     tag_detected_at, hashtag_detected_at)
+				VALUES (?, ?, ?, ?, ?, NULL, ?)
+				ON CONFLICT (brand_id, short_code) DO UPDATE SET
+				    hashtag_detected_at = COALESCE(brand_tagged_post.hashtag_detected_at, EXCLUDED.hashtag_detected_at),
+				    author_ig_user_id   = COALESCE(brand_tagged_post.author_ig_user_id, EXCLUDED.author_ig_user_id)""",
+				brandId, post.shortCode(), post.username(), post.ownerUserId(),
+				Timestamp.from(Instant.ofEpochSecond(post.takenAt())), Timestamp.from(detectedAt));
+	}
+
+	/**
+	 * 이 브랜드에서 hashtag 성분이 이미 있는 코드 전체 — 해시태그 스윕의 dedup·조기 종료 판정과
+	 * 편입 상한 잔량 계산(크기)의 공용 입력이다(구 {@code BrandHashtagRepository.existingCodes}의
+	 * 통합 풀판). 스윕 1회당 1번만 읽고 페이지마다 메모리로 교차한다 — 페이지당 IN 쿼리보다 싸다.
+	 *
+	 * <p>기준이 "브랜드 풀에 있는 코드"가 아니라 "hashtag 성분이 있는 코드"인 것이 핵심이다:
+	 * 전자로 하면 tagged 열거가 이미 확보한 게시물이 전부 조기 종료 신호가 돼, 해시태그 스트림
+	 * 깊은 곳의 hashtag-only 게시물에 영영 도달하지 못한다.
+	 */
+	public Set<String> hashtagCodes(long brandId) {
+		return new HashSet<>(db.queryForList(
+				"SELECT short_code FROM brand_tagged_post WHERE brand_id = ? AND hashtag_detected_at IS NOT NULL",
+				String.class, brandId));
+	}
+
+	/**
+	 * 매칭 태그 기록(2026-08-27 설계 §1) — "이 (brand, shortcode)가 이 태그의 열거 스트림에도
+	 * 나타났다". FK가 brand_tagged_post를 향하므로 호출부는 편입 직후(또는 이미 있는 행)에만
+	 * 부른다. 멱등(ON CONFLICT DO NOTHING).
+	 */
+	public void recordMatchedTag(long brandId, String shortCode, String tag) {
+		db.update("""
+				INSERT INTO brand_post_matched_tag (brand_id, short_code, tag)
+				VALUES (?, ?, ?)
+				ON CONFLICT DO NOTHING""",
+				brandId, shortCode, tag);
+	}
+
+	/** {@link #recordMatchedTag} 배치판 — 페이지 내 "이미 hashtag 성분이 있는" 코드 묶음 전용. */
+	public void recordMatchedTags(long brandId, Collection<String> shortCodes, String tag) {
+		for (String shortCode : shortCodes) {
+			recordMatchedTag(brandId, shortCode, tag);
+		}
+	}
+
 	/** 취소(겹침 행) — direct 표식만 해제, tagged 행은 그대로 남는다(설계 §2-4). 행이 없어도 무해. */
 	public void clearDirect(long brandId, String shortCode) {
 		db.update("UPDATE brand_tagged_post SET direct_registered_at = NULL WHERE brand_id = ? AND short_code = ?",
@@ -109,11 +165,14 @@ public class TaggedPostRepository {
 
 	/**
 	 * 취소(순수 direct 행) — tag_detected_at이 없는(=태그 열거가 한 번도 만난 적 없는) 행만 지운다.
-	 * 겹침 행을 잘못 지우면 태그 발견 사실이 사라진다. @return 실제로 지웠으면 true.
+	 * tagged나 hashtag 성분이 있으면 삭제하지 않는다(2026-08-27 해시태그 직접 수집 설계 §2-4) —
+	 * 겹침 행을 잘못 지우면 태그·해시태그 발견 사실은 물론 {@code brand_post_matched_tag} 매칭 태그
+	 * 행까지 CASCADE로 함께 사라진다. @return 실제로 지웠으면 true.
 	 */
 	public boolean deleteIfDirectOnly(long brandId, String shortCode) {
 		return db.update(
-				"DELETE FROM brand_tagged_post WHERE brand_id = ? AND short_code = ? AND tag_detected_at IS NULL",
+				"DELETE FROM brand_tagged_post WHERE brand_id = ? AND short_code = ?"
+						+ " AND tag_detected_at IS NULL AND hashtag_detected_at IS NULL",
 				brandId, shortCode) > 0;
 	}
 
@@ -177,14 +236,15 @@ public class TaggedPostRepository {
 	 * 확장): direct 등록 게시물은 상한 밖이라 {@link #touchCrawledDepth}의 커버 간주 touch를 받지
 	 * 않는다. 그래서 컷 밖 겹침 행(태그·direct 둘 다인 행)의 due는 1단계 열거가 도달하지 못하는
 	 * 한 잔존하는데, 그걸 여기 남겨 두면 매 스윕이 도달 불가 깊이까지 열거를 벌린다. 이 행들의
-	 * 갱신은 열거 깊이가 아니라 {@link #directDuePosts} 2단계 단건 콜이 책임진다 — 추가 비용은
+	 * 갱신은 열거 깊이가 아니라 {@link #unenumeratedDuePosts} 2단계 단건 콜이 책임진다 — 추가 비용은
 	 * "컷 밖 direct 게시물 수 × 티어 주기당 1콜"로 유한하다.
 	 */
 	public List<TrackedPost> trackedPosts(long brandId, Instant minTakenAt) {
 		return db.query("""
 				SELECT short_code, taken_at, last_crawled_at FROM brand_tagged_post
 				WHERE brand_id = ? AND taken_at >= ?
-				  AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL""",
+				  AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL
+				  AND hashtag_detected_at IS NULL""",
 				(rs, i) -> {
 					Timestamp last = rs.getTimestamp("last_crawled_at");
 					return new TrackedPost(rs.getString("short_code"),
@@ -194,23 +254,66 @@ public class TaggedPostRepository {
 	}
 
 	/**
-	 * direct 2단계 스윕의 모수 — <b>브랜드 창 안의 direct 등록 행 전부</b>다(2026-08-19 수집 상한 v2
-	 * §7-3). 겹침 행(태그·direct 둘 다)도 포함한다: direct 게시물은 2,000 상한 밖이라, 1단계 열거가
-	 * 상한에 걸려 도달하지 못한 겹침 행은 여기서 단건 콜로 살려야 사용자가 직접 등록한 게시물이
+	 * 2단계 스윕의 모수 — <b>브랜드 창 안에서 tagged 열거가 커버하지 못하는 행 전부</b>다
+	 * (2026-08-19 수집 상한 v2 §7-3 + <b>2026-08-27 해시태그 직접 수집 설계 §2-5 일반화</b>):
+	 * direct 등록 행과 hashtag 편입 행. 겹침 행(태그와 함께 있는 행)도 포함한다: 이 둘은 태그
+	 * 열거의 2,000 상한 밖이라, 1단계가 상한에 걸려 도달하지 못한 겹침 행은 여기서 단건 콜로 살려야
 	 * 동결되지 않는다. 구 필터({@code tag_detected_at IS NULL})는 그 구제 경로를 막았다.
+	 *
+	 * <p><b>정렬은 미보강(enriched_at IS NULL) 우선</b>(설계 §5) — 구 감지 데이터 이관분은 게시자·
+	 * 댓글·스냅샷이 통째로 비어 있고 was 표시 게이트가 정산분만 서빙하므로, 나이 기반 due 순서에
+	 * 맡기면 오래된 이관분의 첫 보강이 한없이 밀린다. 호출부가 스윕당 건수 상한으로 자르므로
+	 * 이 정렬이 곧 "누구부터 충전하나"의 정본이다.
 	 *
 	 * <p><b>중복 콜 방지는 필터가 아니라 구조로 유지된다</b>: 1단계 열거가 실제로 만난 겹침 행은
 	 * {@link #touchCrawled}로 last_crawled_at이 갱신돼 호출자의 {@link BrandCrawlPolicy#due}
 	 * 판정에서 빠진다. 즉 컷 안이라 방금 수집된 겹침 행은 2단계가 건너뛰고, 컷 밖이라 못 만난
 	 * 겹침 행만 단건 수집된다. (예외는 0~14일 티어 — {@code due}가 last_crawled_at과 무관하게 항상
 	 * true라 그 나이대 겹침 행은 스윕당 1콜이 겹친다. direct 등록은 수동 소수라 유한한 비용이다.)
-	 * 커버 간주 touch({@link #touchCrawledDepth})는 direct 행을 건드리지 않으므로 이 due는 실수집
-	 * 없이 사라지지 않는다.
+	 * 커버 간주 touch({@link #touchCrawledDepth})는 direct·hashtag 행을 건드리지 않으므로 이 due는
+	 * 실수집 없이 사라지지 않는다.
 	 */
-	public List<TrackedPost> directDuePosts(long brandId, Instant minTakenAt) {
+	public List<TrackedPost> unenumeratedDuePosts(long brandId, Instant minTakenAt) {
 		return db.query("""
 				SELECT short_code, taken_at, last_crawled_at FROM brand_tagged_post
-				WHERE brand_id = ? AND direct_registered_at IS NOT NULL AND taken_at >= ?""",
+				WHERE brand_id = ?
+				  AND (direct_registered_at IS NOT NULL OR hashtag_detected_at IS NOT NULL)
+				  AND taken_at >= ?
+				ORDER BY (enriched_at IS NULL) DESC, taken_at DESC""",
+				(rs, i) -> {
+					Timestamp last = rs.getTimestamp("last_crawled_at");
+					return new TrackedPost(rs.getString("short_code"),
+							rs.getTimestamp("taken_at").toInstant(),
+							last == null ? null : last.toInstant());
+				}, brandId, Timestamp.from(minTakenAt));
+	}
+
+	/**
+	 * 기동 즉시 백필의 모수(2026-08-28 사용자 지시 — 이관분 점진 충전 대신 즉시 전량) —
+	 * {@link #unenumeratedDuePosts}와 같은 population(direct∪hashtag, 브랜드 창 안)에 <b>{@code
+	 * enriched_at IS NULL}</b> 필터만 얹는다. 호출자({@code BrandDirectCollectService#backfillUnenriched})는
+	 * 이 목록 전체를 상한·due 판정 없이 그대로 소진한다 — 상한(2단계 스윕의 {@code
+	 * unenumerated-sweep-limit})과 나이 티어({@link BrandCrawlPolicy#due})는 둘 다 "점진적으로 갚아도
+	 * 되는" 정상 운영 전제이고, 기동 백필의 목적은 그 전제를 깨는 일회성 이관 재고를 즉시 소진하는
+	 * 것이라 여기서는 적용하지 않는다.
+	 *
+	 * <p>정렬은 taken_at DESC뿐이다 — {@link #unenumeratedDuePosts}의 "미보강 우선" 보조 정렬은
+	 * 이미 enriched_at IS NULL로 걸렀으니 전 행이 미보강이라 의미가 없다.
+	 *
+	 * <p><b>unavailable_at IS NULL 가드 필수</b>(2026-08-28 리뷰 지적): 삭제·비공개로 확정된
+	 * 행({@link #markUnavailable})은 enriched_at을 영영 못 받으므로(재보강 불가) 이 가드가 없으면
+	 * 기동 백필이 재기동마다 같은 게시물의 404를 Hiker에 재과금하며 재확인한다. {@link
+	 * #unenumeratedDuePosts}(야간 스윕 2단계 모수)는 이 가드가 없다 — 그쪽은 나이 티어 주기로만
+	 * 재시도해 비용이 유한하고, 재관측 시 {@link #touchCrawled}가 unavailable_at을 자연 해제하는
+	 * 자가 치유 경로가 있다. 기동 백필은 그런 주기적 재시도가 없는 일회성 전량 소진이라 배제해야 한다.
+	 */
+	public List<TrackedPost> unenrichedUnenumeratedPosts(long brandId, Instant minTakenAt) {
+		return db.query("""
+				SELECT short_code, taken_at, last_crawled_at FROM brand_tagged_post
+				WHERE brand_id = ?
+				  AND (direct_registered_at IS NOT NULL OR hashtag_detected_at IS NOT NULL)
+				  AND taken_at >= ? AND enriched_at IS NULL AND unavailable_at IS NULL
+				ORDER BY taken_at DESC""",
 				(rs, i) -> {
 					Timestamp last = rs.getTimestamp("last_crawled_at");
 					return new TrackedPost(rs.getString("short_code"),
@@ -237,14 +340,15 @@ public class TaggedPostRepository {
 	 * <p><b>direct_registered_at IS NULL 가드도 필수</b>(2026-08-19 수집 상한 v2 §7-3): 위 동결은
 	 * 태그 열거 산지 게시물에만 적용되는 비용 정책이고, direct 등록 게시물은 상한 밖이다. 겹침 행
 	 * (태그·direct 둘 다)까지 touch하면 컷 밖 direct 게시물의 due가 실크롤 없이 꺼져 {@link
-	 * #directDuePosts} 2단계 구제 경로가 무력화된다 — 사용자가 직접 등록한 게시물이 조용히
+	 * #unenumeratedDuePosts} 2단계 구제 경로가 무력화된다 — 사용자가 직접 등록한 게시물이 조용히
 	 * 얼어붙는다. direct 행의 last_crawled_at은 실수집({@link #touchCrawled})으로만 전진한다.
 	 */
 	public void touchCrawledDepth(long brandId, Instant minTakenAt, Instant at) {
 		db.update("""
 				UPDATE brand_tagged_post SET last_crawled_at = ?
 				WHERE brand_id = ? AND taken_at >= ?
-				  AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL""",
+				  AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL
+				  AND hashtag_detected_at IS NULL""",
 				Timestamp.from(at), brandId, Timestamp.from(minTakenAt));
 	}
 
@@ -292,6 +396,7 @@ public class TaggedPostRepository {
 		return db.queryForList("""
 				SELECT short_code FROM brand_tagged_post
 				WHERE brand_id = ? AND tag_detected_at IS NOT NULL AND direct_registered_at IS NULL
+				  AND hashtag_detected_at IS NULL
 				  AND taken_at >= ? AND unavailable_at IS NULL
 				  AND (absence_checked_at IS NULL OR absence_checked_at < ?)
 				ORDER BY taken_at DESC""",

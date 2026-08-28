@@ -393,6 +393,27 @@ tagged `taken_at` 프록시)은 코드리뷰로 기각·폐기** — 자연 완�
 파라미터(성과만 true, 목록·존재/중복 판정은 false), direct 등록 행 면제(§7-3)·경계일
 포함(covered 판정과 동일 규칙). DECISIONS.md 2026-08-20 두 항목 참조.
 
+해시태그 직접 수집 전환(2026-08-27 설계 확정 → **08-28 구현 완료, 브랜치
+`feat/hashtag-direct-collection`, PR 대기** — [설계](../superpowers/specs/archive/2026-08-27-hashtag-direct-collection-design.md)):
+위 "해시태그 감지 확장"(08-11) 구조를 전면 폐기하고 `brand_tagged_post` 풀에 직접 편입한다.
+LLM 관련성 판정(`BrandMentionJudge`)·구 감지 테이블(`brand_hashtag_post`) 쓰기 중단, 신규
+`hashtag_detected_at` 성분 컬럼(tag_detected_at·direct_registered_at과 병존) + 매칭 태그 원장
+`brand_post_matched_tag` 신설. 판정 없이 전부 편입하되 브랜드 본인 계정 게시물은 규칙 기반
+제외, 브랜드당 1000 상한(tagged 2000과 별도 카운터), 수집 기간은 고정 90일 폐기하고 브랜드
+collectionMonths 적용. `/posts` 통합 목록에 source=hashtag로 합류 + 사용자 격리(장부∩매칭,
+기존 fail-open 폐기). 구 `/hashtag-posts`는 새 풀로 리라우팅 후 FE 전환 확인되면 다음 릴리스
+제거, 구 감지 테이블(`brand_hashtag_post`·`brand_hashtag_post_matched_tags`) DROP도 다음
+릴리스(expand-contract). `HashtagPostThumbnailArchiveJob`은 구 테이블 잔존 행 서빙 전용으로
+의도적으로 얼려두고 테이블과 함께 다음 릴리스 제거. **08-28 기동 즉시 보강 러너 추가**(사용자
+지시 — 이관분을 야간 스윕 2단계 상한(300건/스윕)의 점진 소진에 맡기지 않고, 앱 기동 시
+`UnenrichedBackfillStartupRunner`가 활성 브랜드 전부의 미보강(enriched_at IS NULL) 잔량을 즉시
+전량 보강한다. `AdDisclosureBackfillStartupRunner`와 동형 골격, 킬 스위치
+`monitoring.brand.unenriched-backfill-on-startup`. 야간 스윕의 상한·캐던스는 무변화 — 안전망
+그대로 유지). **08-28 태그 생성 권한 was 일원화**(DECISIONS.md 2026-08-28 행) — monitoring 등록·
+replay의 자가 태그 시드(`seedHashtagsSafely`) 제거, was가 링크 생성 시 유도 태그를 일반 태그
+add로 push(재활성 의미론 포함) + 초기 백필 미완 브랜드는 태그 추가 즉시 스윕 스킵 가드
+(`triggerHashtagSweepIfNonEmpty`, 백필 꼬리가 대신 처리).
+
 게시물 목록 서버 필터·패싯 + 인플루언서 집계 API(2026-08-27 — DECISIONS 08-27 행,
 [spec 2026-08-27](../superpowers/specs/2026-08-27-post-list-server-filter-facets-design.md)):
 FE 변경요청 2건을 한 브랜치(`feature/post-list-server-filter-facets-04b967`)로 처리 —

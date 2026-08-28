@@ -27,8 +27,9 @@ import org.springframework.boot.info.BuildProperties;
 
 /**
  * 버전키 계산기 단위 테스트(08-13 설계 §6 "단위" 층) — 입력이 <b>각각 단독으로</b> 키를 바꾸는지가
- * 이 테스트의 전부다. 테이블 주도 케이스는 <b>10항목</b>이다(설계 §2-1의 입력 종류를 실제로 흔들 수
- * 있는 단위까지 편 것 — ① 레거시 스윕 1 + ② 브랜드 계정 행 필드 4 + ④ 유저 쓰기 지문 5).
+ * 이 테스트의 전부다. 테이블 주도 케이스는 <b>11항목</b>이다(설계 §2-1의 입력 종류를 실제로 흔들 수
+ * 있는 단위까지 편 것 — ① 레거시 스윕 1 + ② 브랜드 계정 행 필드 4 + ④ 유저 쓰기 지문 6, 2026-08-28
+ * 해시태그 장부 지문 추가로 5→6).
  * ⑤ KST 날짜와 ⑥ 배포 세대는 시계·{@code BuildProperties}를 갈아야 해 각자 별도 테스트다. ETag가 입력 하나를 놓치면 그건 실패가 아니라 <b>낡은 데이터의 조용한 서빙</b>이라
  * 여기서 고정한다(설계 §2-1).
  *
@@ -58,12 +59,13 @@ class DashboardVersionTest {
 		// 필드 산지다. 브랜드가 유저 간 공유 자산이라 남의 등록·확장이 내 응답을 바꾼다.
 		OffsetDateTime brandBackfillCompletedAt = odt("2026-07-05T00:00:00Z");
 		int brandCollectionMonths = 12;
-		// ④ 유저 쓰기 지문 5종
+		// ④ 유저 쓰기 지문 6종(2026-08-28 해시태그 장부 지문 추가)
 		String itemsFingerprint = "0000000000000000000000000000aaaa";
 		String linksFingerprint = "0000000000000000000000000000bbbb";
 		String directFingerprint = "0000000000000000000000000000cccc";
 		String campaignsFingerprint = "0000000000000000000000000000dddd";
 		String postCampaignsFingerprint = "0000000000000000000000000000eeee";
+		String hashtagTagsFingerprint = "0000000000000000000000000000ffff";
 		// ⑤ KST 날짜
 		Instant now = Instant.parse("2026-08-28T05:00:00Z");   // KST 2026-08-28 14:00
 		boolean monitoringEnabled = true;
@@ -78,6 +80,7 @@ class DashboardVersionTest {
 		given(repository.directPostsFingerprint(USER_ID)).willReturn(in.directFingerprint);
 		given(repository.campaignsFingerprint(USER_ID)).willReturn(in.campaignsFingerprint);
 		given(repository.postCampaignLinksFingerprint(USER_ID)).willReturn(in.postCampaignsFingerprint);
+		given(repository.hashtagTagsFingerprint(USER_ID)).willReturn(in.hashtagTagsFingerprint);
 
 		BrandLinkRepository linkRepository = mock(BrandLinkRepository.class);
 		Optional<MonitoringReadRepository> monitoringReadRepository;
@@ -135,6 +138,10 @@ class DashboardVersionTest {
 		mutations.put("④ direct 지문", in -> in.directFingerprint = "0000000000000000000000000000c0c0");
 		mutations.put("④ 캠페인 지문", in -> in.campaignsFingerprint = "0000000000000000000000000000d0d0");
 		mutations.put("④ 부착 지문", in -> in.postCampaignsFingerprint = "0000000000000000000000000000e0e0");
+		// 2026-08-28 추가 — app.brand_hashtag_tags 추가·삭제가 BrandIndexCache가 캐시하는 인덱스의
+		// 해시태그 격리 판정을 바꾸므로, 이 지문이 없으면 캐시가 최대 하루 옛 판정을 서빙한다("장부
+		// 변경 즉시 다음 GET에서 반영" 계약 — DashboardVersion 클래스 javadoc).
+		mutations.put("④ 해시태그 장부 지문", in -> in.hashtagTagsFingerprint = "0000000000000000000000000000f0f0");
 
 		String baseline = computeBaseline();
 		Map<String, String> keys = new LinkedHashMap<>();
@@ -144,7 +151,7 @@ class DashboardVersionTest {
 					.isNotEqualTo(baseline);
 			keys.put(entry.getKey(), key);
 		}
-		// 서로 다른 입력이 같은 자리에 접혀 구분이 사라지지 않는지 — 8종의 키가 전부 달라야 한다.
+		// 서로 다른 입력이 같은 자리에 접혀 구분이 사라지지 않는지 — 9종의 키가 전부 달라야 한다.
 		assertThat(new ArrayList<>(keys.values())).doesNotHaveDuplicates();
 	}
 
@@ -162,6 +169,8 @@ class DashboardVersionTest {
 				.willReturn(in.campaignsFingerprint);
 		given(repository.postCampaignLinksFingerprint(org.mockito.ArgumentMatchers.anyLong()))
 				.willReturn(in.postCampaignsFingerprint);
+		given(repository.hashtagTagsFingerprint(org.mockito.ArgumentMatchers.anyLong()))
+				.willReturn(in.hashtagTagsFingerprint);
 		BrandLinkRepository linkRepository = mock(BrandLinkRepository.class);
 		given(linkRepository.findAllActiveByUser(org.mockito.ArgumentMatchers.anyLong())).willReturn(List.of());
 

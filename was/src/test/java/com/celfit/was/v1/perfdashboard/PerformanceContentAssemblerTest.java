@@ -1022,14 +1022,14 @@ class PerformanceContentAssemblerTest {
 	/** 태그 감지 행(전원 노출) — 캡션·유료협찬 관측은 브랜드 풀 픽스처와 같은 값(협찬 unknown). */
 	private static BrandPostIndexRow taggedRow(String shortCode, String takenAt) {
 		return new BrandPostIndexRow(shortCode, OffsetDateTime.parse(takenAt),
-				OffsetDateTime.parse("2026-08-06T09:30:00+09:00"), null, null, "creator", "ig-1",
+				OffsetDateTime.parse("2026-08-06T09:30:00+09:00"), null, null, null, "creator", "ig-1",
 				null, false, null, null, null, null, null, null, null);
 	}
 
 	/** 삭제·비공개 감지 + 유료협찬 관측 행 — status(hidden)·sponsorship(sponsored) 파생 판별용. */
 	private static BrandPostIndexRow hiddenSponsoredRow(String shortCode, String takenAt) {
 		return new BrandPostIndexRow(shortCode, OffsetDateTime.parse(takenAt),
-				OffsetDateTime.parse("2026-08-04T09:30:00+09:00"), null,
+				OffsetDateTime.parse("2026-08-04T09:30:00+09:00"), null, null,
 				OffsetDateTime.parse("2026-08-07T01:00:00+09:00"), "creator", "ig-1",
 				true, false, null, null, null, null, null, null, null);
 	}
@@ -1037,7 +1037,7 @@ class PerformanceContentAssemblerTest {
 	/** 직접 등록 전용 행(tag_detected_at 없음) — 등록자에게만 보이고 커버리지 클램프 면제 대상이다. */
 	private static BrandPostIndexRow directRow(String shortCode, String takenAt) {
 		return new BrandPostIndexRow(shortCode, OffsetDateTime.parse(takenAt), null,
-				OffsetDateTime.parse("2026-08-06T09:30:00+09:00"), null, "creator", "ig-1",
+				OffsetDateTime.parse("2026-08-06T09:30:00+09:00"), null, null, "creator", "ig-1",
 				null, false, null, null, null, null, null, null, null);
 	}
 
