@@ -2306,7 +2306,7 @@
 
 **Steps:**
 
-- [ ] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/v1/monitoring/NotificationSettingsServiceTest.java`를 아래 전문으로 교체한다.
+- [x] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/v1/monitoring/NotificationSettingsServiceTest.java`를 아래 전문으로 교체한다.
   ```java
   package com.celfit.was.v1.monitoring;
 
@@ -2393,7 +2393,7 @@
   }
   ```
 
-- [ ] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/v1/monitoring/V1NotificationSettingsControllerTest.java`를 아래 전문으로 교체한다.
+- [x] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/v1/monitoring/V1NotificationSettingsControllerTest.java`를 아래 전문으로 교체한다.
   ```java
   package com.celfit.was.v1.monitoring;
 
@@ -2526,19 +2526,28 @@
   }
   ```
 
-- [ ] 실행해 실패 확인
+- [x] 실행해 실패 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.v1.monitoring.NotificationSettingsServiceTest" --tests "com.celfit.was.v1.monitoring.V1NotificationSettingsControllerTest"
   ```
   기대 출력: 컴파일 실패 — `cannot find symbol: method weeklyEmail()`(응답 DTO가 아직 4종 매트릭스), `cannot find symbol: class WeeklyEmailOptOutRepository`가 서비스 생성자와 맞지 않음.
 
-- [ ] 구 옵트아웃 저장소 제거와 호출부 정합
+  (08-28 실측: 예상대로 컴파일 실패 6건, 전부 `cannot find symbol: method weeklyEmail()`.)
+
+- [x] 구 옵트아웃 저장소 제거와 호출부 정합
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign rm was/src/main/java/com/celfit/was/monitoring/EmailOptOutRepository.java was/src/test/java/com/celfit/was/monitoring/EmailOptOutRepositoryTest.java
   ```
   이어서 `was/src/test/java/com/celfit/was/auth/UserRepositoryTest.java`를 고친다: 9행 import를 `import com.celfit.was.monitoring.WeeklyEmailOptOutRepository;`로, 43~44행 필드를 `@Autowired\n\tWeeklyEmailOptOutRepository weeklyEmailOptOutRepository;`로, 401행 호출을 `weeklyEmailOptOutRepository.optOut(userId);`로 바꾼다.
 
-- [ ] 어휘 유틸 정리 — `was/src/main/java/com/celfit/was/monitoring/MonitoringEventTypes.java`를 아래 전문으로 교체한다(`EVENT_TYPES`·`toStorage`는 소비자가 사라졌다).
+- [x] 어휘 유틸 정리 — `was/src/main/java/com/celfit/was/monitoring/MonitoringEventTypes.java`를 아래 전문으로 교체한다(`EVENT_TYPES`·`toStorage`는 소비자가 사라졌다).
+
+  (08-28 실측: 계획 스냅샷과 다르게 적용 — `toFront`는 계획대로 미지 값에 예외를 던지지 않고,
+  Task 8 리뷰 반영으로 이미 확립된 "경고 로그 후 null 반환"을 그대로 유지했다. `WeeklyDigestJob`의
+  `upsertWeekly`(193~197행)가 이 null-safe 계약에 명시적으로 의존하고 있어(`.filter(Objects::nonNull)`
+  주석에 "toFront의 null 반환은 미지 유형에만 발생"이라고 불변식까지 적어둠), 계획대로 예외로
+  되돌리면 알람 유형이 하나 늘 때마다 주간 다이제스트 잡 전체가 죽는 회귀가 생긴다. `EVENT_TYPES`·
+  `toStorage`만 제거하고 `toFront` 시그니처·동작은 그대로 뒀다.)
   ```java
   package com.celfit.was.monitoring;
 
@@ -2576,7 +2585,7 @@
   }
   ```
 
-- [ ] 알림 설정 서비스를 주간 토글로 교체 — `was/src/main/java/com/celfit/was/v1/monitoring/NotificationSettingsService.java`를 아래 전문으로 교체한다(계약 축소의 본체).
+- [x] 알림 설정 서비스를 주간 토글로 교체 — `was/src/main/java/com/celfit/was/v1/monitoring/NotificationSettingsService.java`를 아래 전문으로 교체한다(계약 축소의 본체).
   ```java
   package com.celfit.was.v1.monitoring;
 
@@ -2636,7 +2645,7 @@
   }
   ```
 
-- [ ] 응답 DTO 교체 — `was/src/main/java/com/celfit/was/v1/monitoring/NotificationSettingsResponse.java`를 아래 전문으로 교체한다(서비스가 이 형태를 반환한다).
+- [x] 응답 DTO 교체 — `was/src/main/java/com/celfit/was/v1/monitoring/NotificationSettingsResponse.java`를 아래 전문으로 교체한다(서비스가 이 형태를 반환한다).
   ```java
   package com.celfit.was.v1.monitoring;
 
@@ -2648,7 +2657,7 @@
   }
   ```
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/v1/monitoring/NotificationSettingsPatchDoc.java`를 아래 전문으로 교체한다.
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/v1/monitoring/NotificationSettingsPatchDoc.java`를 아래 전문으로 교체한다.
   ```java
   package com.celfit.was.v1.monitoring;
 
@@ -2679,20 +2688,28 @@
   }
   ```
 
-- [ ] 실행해 통과 확인
+- [x] 실행해 통과 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.v1.monitoring.NotificationSettingsServiceTest" --tests "com.celfit.was.v1.monitoring.V1NotificationSettingsControllerTest" --tests "com.celfit.was.auth.UserRepositoryTest"
   ```
   기대 출력: `BUILD SUCCESSFUL`, 서비스 7개 + 컨트롤러 7개 + 탈퇴 이관 테스트 통과.
 
-- [ ] 커밋
+  (08-28 실측: 서비스 7 / 컨트롤러 7 / UserRepositoryTest 20, 전부 통과. 이어서 `./gradlew :was:test`
+  전체를 돌려 `OpenApiDocsIntegrationTest`의 `POST_PATCH_5개_엔드포인트의_requestBody_스키마에_필드가_노출된다`가
+  구 계약(`NotificationSettingsPatchRequest.properties.content`)을 단언하던 게 깨지는 것을 발견 —
+  계획 파일 목록에 없던 누락분이라, `was/src/test/java/com/celfit/was/OpenApiDocsIntegrationTest.java`의
+  해당 단언을 `weeklyEmail` 필드 존재 확인으로 고쳤다(`content` → `weeklyEmail`, 참조 스키마명은 동일).
+  재실행: 1575 tests, 0 failures.)
+
+- [x] 커밋
   ```
-  git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add -A was/src/main/java/com/celfit/was/v1/monitoring was/src/test/java/com/celfit/was/v1/monitoring was/src/main/java/com/celfit/was/monitoring was/src/test/java/com/celfit/was/monitoring was/src/test/java/com/celfit/was/auth/UserRepositoryTest.java
+  git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add -A was/src/main/java/com/celfit/was/v1/monitoring was/src/test/java/com/celfit/was/v1/monitoring was/src/main/java/com/celfit/was/monitoring was/src/test/java/com/celfit/was/monitoring was/src/test/java/com/celfit/was/auth/UserRepositoryTest.java was/src/test/java/com/celfit/was/OpenApiDocsIntegrationTest.java
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign commit -m "$(cat <<'EOF'
   feat(was): 알림 설정 API를 주간 이메일 토글 1개로 축소
 
   이벤트 종류별 4토글 매트릭스를 폐지하고 weeklyEmail boolean 하나로 바꿨다.
   Swagger 스키마와 서비스·컨트롤러 테스트를 새 계약에 맞췄다(설계 §5). FE 통지 필요.
+  OpenApiDocsIntegrationTest의 구 content 필드 단언도 weeklyEmail로 갱신.
 
   Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
   EOF

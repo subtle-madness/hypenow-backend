@@ -1,103 +1,56 @@
 package com.celfit.was.v1.monitoring;
 
-import com.celfit.was.monitoring.EmailOptOutRepository;
-import com.celfit.was.monitoring.MonitoringEventTypes;
+import com.celfit.was.monitoring.WeeklyEmailOptOutRepository;
 import com.celfit.was.v1.common.V1ApiException;
-import com.celfit.was.v1.monitoring.NotificationSettingsResponse.EventSetting;
-import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 알림 설정 매트릭스(스펙 6.33) — 저장은 EmailOptOutRepository의 옵트아웃 행(행 없음=on)이고,
- * 이 서비스가 그 위에 "이벤트 4종 완전체" 계약을 얹는다. lazy 생성 전(옵트아웃 행이 아예 없는 유저)도
- * get()이 기본값(전부 true)으로 채운 완전체를 내린다 — 별도 유저 행 생성은 하지 않는다(행 없음 자체가
- * on 상태를 뜻하므로 옵트아웃하기 전까지는 저장할 것이 없다).
+ * 알림 설정(2026-08-27 주간 개편 §5) - 이벤트 종류별 4토글 매트릭스를 <b>주간 이메일 수신
+ * 토글 1개</b>로 축소했다. 저장은 옵트아웃 행(행 없음 = 수신)이고 이 서비스가 그 위에
+ * `weeklyEmail` boolean 계약을 얹는다. 옵트아웃 행이 없는 유저도 get()이 기본값(true)을 내린다 -
+ * 별도 유저 행 생성은 하지 않는다(행 없음 자체가 수신 상태를 뜻하므로 저장할 것이 없다).
  */
 @Service
 public class NotificationSettingsService {
 
-	private static final String CONTENT_KEY = "content";
-	private static final String EMAIL_KEY = "email";
+	private static final String WEEKLY_EMAIL_KEY = "weeklyEmail";
 	private static final String VALIDATION_MESSAGE = "올바른 형식이 아니에요.";
 
-	private final EmailOptOutRepository repository;
+	private final WeeklyEmailOptOutRepository repository;
 
-	public NotificationSettingsService(EmailOptOutRepository repository) {
+	public NotificationSettingsService(WeeklyEmailOptOutRepository repository) {
 		this.repository = repository;
 	}
 
-	/** 4종 키 완전체 — 옵트아웃 행이 있는 유형만 email=false. */
 	public NotificationSettingsResponse get(long userId) {
-		Set<String> optOuts = repository.findOptOuts(userId);
-		Map<String, EventSetting> content = new LinkedHashMap<>();
-		for (String eventType : MonitoringEventTypes.EVENT_TYPES) {
-			content.put(eventType, new EventSetting(!optOuts.contains(eventType)));
-		}
-		return new NotificationSettingsResponse(content);
+		return new NotificationSettingsResponse(!repository.isOptedOut(userId));
 	}
 
 	/**
-	 * PATCH — body는 `{"content": {"<event>": {"email": <bool>}}}` 형태의 부분 객체.
-	 * content 밖 키·미지 이벤트 키·email 아닌 채널 키·boolean 아닌 값은 전부 400 VALIDATION_FAILED.
-	 * 검증을 먼저 전부 끝낸 뒤(all-or-nothing) 옵트아웃 행을 갱신한다 — 다중 이벤트 변경 중 하나가
-	 * DB 예외로 실패해도 부분 반영이 남지 않도록 @Transactional이 트랜잭션 경계로 보장한다
-	 * (SignupService.register와 동일 관례). 반환은 get()과 동일한 전체 설정.
+	 * PATCH — body는 `{"weeklyEmail": <bool>}`. 그 밖의 최상위 키·boolean 아닌 값은 400
+	 * VALIDATION_FAILED. 빈 바디는 아무것도 바꾸지 않고 현재 상태를 돌려준다.
+	 * 검증을 먼저 끝낸 뒤 옵트아웃 행을 갱신한다(SignupService.register와 동일 관례).
 	 */
 	@Transactional
 	public NotificationSettingsResponse patch(long userId, Map<String, Object> body) {
 		Map<String, Object> safeBody = body == null ? Map.of() : body;
 		for (String key : safeBody.keySet()) {
-			if (!CONTENT_KEY.equals(key)) {
+			if (!WEEKLY_EMAIL_KEY.equals(key)) {
 				throw V1ApiException.validation(VALIDATION_MESSAGE);
 			}
 		}
-
-		Map<String, Boolean> changes = new LinkedHashMap<>();
-		if (safeBody.containsKey(CONTENT_KEY)) {
-			Object rawContent = safeBody.get(CONTENT_KEY);
-			if (!(rawContent instanceof Map<?, ?> contentMap)) {
+		if (safeBody.containsKey(WEEKLY_EMAIL_KEY)) {
+			if (!(safeBody.get(WEEKLY_EMAIL_KEY) instanceof Boolean weeklyEmail)) {
 				throw V1ApiException.validation(VALIDATION_MESSAGE);
 			}
-			for (Map.Entry<?, ?> entry : contentMap.entrySet()) {
-				String eventType = validateEventType(entry.getKey());
-				boolean email = validateEmailSetting(entry.getValue());
-				changes.put(eventType, email);
-			}
-		}
-
-		changes.forEach((eventType, email) -> {
-			if (email) {
-				repository.optIn(userId, eventType);
+			if (weeklyEmail) {
+				repository.optIn(userId);
 			} else {
-				repository.optOut(userId, eventType);
+				repository.optOut(userId);
 			}
-		});
-
+		}
 		return get(userId);
-	}
-
-	private static String validateEventType(Object rawKey) {
-		if (rawKey instanceof String eventType && MonitoringEventTypes.EVENT_TYPES.contains(eventType)) {
-			return eventType;
-		}
-		throw V1ApiException.validation(VALIDATION_MESSAGE);
-	}
-
-	private static boolean validateEmailSetting(Object rawSetting) {
-		if (!(rawSetting instanceof Map<?, ?> settingMap)) {
-			throw V1ApiException.validation(VALIDATION_MESSAGE);
-		}
-		for (Object channelKey : settingMap.keySet()) {
-			if (!EMAIL_KEY.equals(channelKey)) {
-				throw V1ApiException.validation(VALIDATION_MESSAGE);
-			}
-		}
-		if (settingMap.get(EMAIL_KEY) instanceof Boolean email) {
-			return email;
-		}
-		throw V1ApiException.validation(VALIDATION_MESSAGE);
 	}
 }
