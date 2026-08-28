@@ -1,6 +1,6 @@
 # Plan 3: LLM 파이프라인 1 — 댓글 분석 Implementation Plan
 
-> 상태: 🟢 활성 — 태스크 F·B2 참고 자료. 단 enrichment 모듈 소속·미러 방식은 ARCHITECTURE §4가 우선
+> 상태: 🗄 폐기 (2026-08-28 — grep 검증 결과 기술된 산출물 미구현, 후속 설계로 대체된 미실행 계획. 사용자 지시로 폐기)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 게시물별 댓글(최대 50개)을 한 번의 structured-output LLM 호출로 감성 4분류(POSITIVE/NEUTRAL/NEGATIVE/IRRELEVANT)·구매의도·반응 키워드로 분류해 crawler DB에 저장하고, analytics 뷰로 집계해 드로어 `commentAnalysis` 블록을 was 응답에 additive하게 붙인다.
