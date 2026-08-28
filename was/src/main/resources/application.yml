@@ -76,6 +76,8 @@ was:
     resend-api-key: ${RESEND_API_KEY:}    # 빈 값 → LoggingMailSender(발송 대신 로그 — 로컬·테스트)
     from: "hypenow <no-reply@hypenow.io>" # Resend 도메인 인증(hypenow.io SPF/DKIM) 필요 — 운영 체크리스트
     admin-only: ${WAS_MAIL_ADMIN_ONLY:false}  # true면 ADMIN role 수신자만 실발송(test 전용 — 실사용자 오발송 방지)
+  web:
+    base-url: ${WEB_BASE_URL:https://hypenow.io}   # 메일 딥링크 기준 주소
   cors:
     allowed-origins: http://localhost:3000,https://celfit-front.vercel.app
   profile-image:
@@ -102,6 +104,9 @@ monitoring:
     weekly-catchup-cron: "0 10,20,30,40,50 9-23 * * *"   # 같은 창 재계산 따라잡기(요일 제한 없음 — 08-28
                        # 품질 리뷰 C1: was가 월요일 내내 죽어 있다가 다른 요일에 되살아나도 지난주를
                        # 복구해야 한다. 멱등 upsert라 매일 재계산해도 안전) + 메일 재시도 창
+    email:
+      max-attempts: 5              # 주간 리포트 발송 시도 상한 - 닿으면 그 주는 포기한다
+      send-interval: PT0.2S        # 발송 사이 최소 간격 - 월요일 09:00 호출 집중 완화(설계 §8)
   brand:
     ad-disclosure:
       expose: ${AD_DISCLOSURE_EXPOSE:false}   # 광고 표기 판정 was 노출 토글(스펙 §10-3) — true 전환이

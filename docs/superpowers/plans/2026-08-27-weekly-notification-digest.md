@@ -2734,7 +2734,7 @@
 
 **Steps:**
 
-- [ ] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/WeeklyDigestMailComposerTest.java`에 아래 전문을 쓴다.
+- [x] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/WeeklyDigestMailComposerTest.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -2834,13 +2834,13 @@
   }
   ```
 
-- [ ] 실행해 실패 확인
+- [x] 실행해 실패 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.WeeklyDigestMailComposerTest"
   ```
   기대 출력: 컴파일 실패 — `cannot find symbol: class WeeklyDigestMailComposer`.
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyDigestMailComposer.java`에 아래 전문을 쓴다.
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyDigestMailComposer.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -2944,13 +2944,13 @@
   }
   ```
 
-- [ ] 실행해 통과 확인
+- [x] 실행해 통과 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.WeeklyDigestMailComposerTest"
   ```
   기대 출력: `BUILD SUCCESSFUL`, 8개 테스트 통과.
 
-- [ ] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/WeeklyDigestMailerTest.java`에 아래 전문을 쓴다.
+- [x] 실패하는 테스트 작성 — `was/src/test/java/com/celfit/was/monitoring/WeeklyDigestMailerTest.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -3095,13 +3095,13 @@
   }
   ```
 
-- [ ] 실행해 실패 확인
+- [x] 실행해 실패 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.WeeklyDigestMailerTest"
   ```
   기대 출력: 컴파일 실패 — `cannot find symbol: class WeeklyDigestMailer`, `cannot find symbol: method isEmailPending(long,int)`.
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/DigestRepository.java`의 `upsert` 메서드 뒤에 아래 3개 메서드를 삽입한다.
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/DigestRepository.java`의 `upsert` 메서드 뒤에 아래 3개 메서드를 삽입한다.
   ```java
   	/**
   	 * 주간 리포트 메일 발송 대상 여부(2026-08-27 §6) — 아직 안 보냈고 시도 상한 미달인 행.
@@ -3142,7 +3142,7 @@
   	}
   ```
 
-- [ ] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyDigestMailer.java`에 아래 전문을 쓴다.
+- [x] 최소 구현 — `was/src/main/java/com/celfit/was/monitoring/WeeklyDigestMailer.java`에 아래 전문을 쓴다.
   ```java
   package com.celfit.was.monitoring;
 
@@ -3249,7 +3249,7 @@
   }
   ```
 
-- [ ] 설정 추가 — `was/src/main/resources/application.yml`을 두 군데 고친다.
+- [x] 설정 추가 — `was/src/main/resources/application.yml`을 두 군데 고친다.
   1. `was:` 블록의 `cors:` 앞에 아래 2줄을 추가한다(들여쓰기 2칸).
      ```yaml
        web:
@@ -3262,13 +3262,13 @@
          send-interval: PT0.2S        # 발송 사이 최소 간격 - 월요일 09:00 호출 집중 완화(설계 §8)
      ```
 
-- [ ] 실행해 통과 확인
+- [x] 실행해 통과 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.WeeklyDigestMailerTest"
   ```
   기대 출력: `BUILD SUCCESSFUL`, 6개 테스트 통과.
 
-- [ ] 잡에 발송 배선 — `was/src/main/java/com/celfit/was/monitoring/WeeklyDigestJob.java`를 3군데 고친다.
+- [x] 잡에 발송 배선 — `was/src/main/java/com/celfit/was/monitoring/WeeklyDigestJob.java`를 3군데 고친다.
   1. 필드에 `private final WeeklyDigestMailer mailer;`를 `assembler` 아래에 추가한다.
   2. 생성자 파라미터에 `WeeklyDigestAssembler assembler` 다음으로 `WeeklyDigestMailer mailer`를 넣고 `this.mailer = mailer;`를 대입 목록에 추가한다.
   3. `upsertWeekly`의 마지막 3줄을 아래로 교체한다.
@@ -3281,7 +3281,7 @@
      		return true;
      ```
 
-- [ ] 잡 테스트 생성자 정합 — `was/src/test/java/com/celfit/was/monitoring/WeeklyDigestJobTest.java`의 `newJob`을 아래로 교체하고, 필드·`setUp`에 메일러 조립을 더한다.
+- [x] 잡 테스트 생성자 정합 — `was/src/test/java/com/celfit/was/monitoring/WeeklyDigestJobTest.java`의 `newJob`을 아래로 교체하고, 필드·`setUp`에 메일러 조립을 더한다.
   ```java
   	@Autowired
   	WeeklyEmailOptOutRepository weeklyEmailOptOutRepository;
@@ -3299,13 +3299,13 @@
   	}
   ```
 
-- [ ] 실행해 통과 확인
+- [x] 실행해 통과 확인
   ```
   ./gradlew :was:test --tests "com.celfit.was.monitoring.WeeklyDigestJobTest" --tests "com.celfit.was.monitoring.WeeklyDigestMailerTest" --tests "com.celfit.was.monitoring.WeeklyDigestMailComposerTest"
   ```
   기대 출력: `BUILD SUCCESSFUL`, 24개 테스트 통과.
 
-- [ ] 커밋
+- [x] 커밋
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add -A was/src/main/java/com/celfit/was/monitoring was/src/test/java/com/celfit/was/monitoring was/src/main/resources/application.yml
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign commit -m "$(cat <<'EOF'

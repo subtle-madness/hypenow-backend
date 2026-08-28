@@ -52,6 +52,10 @@ class WeeklyDigestJobTest extends IntegrationTest {
 	AdDisclosureNoticeRepository adDisclosureNoticeRepository;
 	@Autowired
 	JdbcClient jdbcClient;
+	@Autowired
+	WeeklyEmailOptOutRepository weeklyEmailOptOutRepository;
+	@Autowired
+	com.celfit.was.auth.UserRepository userRepository;
 
 	JdbcClient monitoringJdbc;
 	MonitoringReadRepository monitoringReadRepository;
@@ -80,9 +84,12 @@ class WeeklyDigestJobTest extends IntegrationTest {
 	}
 
 	private WeeklyDigestJob newJobAt(boolean exposeAdDisclosure, Instant now) {
+		WeeklyDigestMailer mailer = new WeeklyDigestMailer(digestRepository, weeklyEmailOptOutRepository,
+				userRepository, new WeeklyDigestMailComposer("https://hypenow.io"),
+				(to, subject, text) -> { }, 5, java.time.Duration.ZERO);
 		return new WeeklyDigestJob(monitoringReadRepository, brandReadRepository, brandLinkRepository,
 				brandDirectPostRepository, monitoringItemRepository, adDisclosureNoticeRepository,
-				digestRepository, new WeeklyDigestAssembler(), new ObjectMapper(),
+				digestRepository, new WeeklyDigestAssembler(), mailer, new ObjectMapper(),
 				Clock.fixed(now, ZoneOffset.UTC), exposeAdDisclosure);
 	}
 

@@ -86,6 +86,7 @@ public class WeeklyDigestJob {
 	private final AdDisclosureNoticeRepository adNotices;
 	private final DigestRepository digests;
 	private final WeeklyDigestAssembler assembler;
+	private final WeeklyDigestMailer mailer;
 	private final ObjectMapper objectMapper;
 	private final Clock clock;
 	/** 광고 표기 판정 노출 킬 스위치 — FE와 같은 키를 본다(설계 §8 "킬 스위치 정합"). */
@@ -94,7 +95,8 @@ public class WeeklyDigestJob {
 	public WeeklyDigestJob(MonitoringReadRepository monitoringRead, BrandReadRepository brandRead,
 			BrandLinkRepository brandLinks, BrandDirectPostRepository brandDirectPosts,
 			MonitoringItemRepository monitoringItems, AdDisclosureNoticeRepository adNotices,
-			DigestRepository digests, WeeklyDigestAssembler assembler, ObjectMapper objectMapper, Clock clock,
+			DigestRepository digests, WeeklyDigestAssembler assembler, WeeklyDigestMailer mailer,
+			ObjectMapper objectMapper, Clock clock,
 			@Value("${monitoring.brand.ad-disclosure.expose:false}") boolean exposeAdDisclosure) {
 		this.monitoringRead = monitoringRead;
 		this.brandRead = brandRead;
@@ -104,6 +106,7 @@ public class WeeklyDigestJob {
 		this.adNotices = adNotices;
 		this.digests = digests;
 		this.assembler = assembler;
+		this.mailer = mailer;
 		this.objectMapper = objectMapper;
 		this.clock = clock;
 		this.exposeAdDisclosure = exposeAdDisclosure;
@@ -206,12 +209,12 @@ public class WeeklyDigestJob {
 			digests.clearItems(userId, window.startDate());
 			return false;
 		}
-		digests.upsertWeekly(userId, window.startDate(), window.toExclusive(),
-				objectMapper.writeValueAsString(items));
-		// 품질 리뷰 I1 — upsert가 실제로 성공한 뒤에만 이력을 남긴다. 순서를 뒤집으면(이력 먼저)
-		// upsert 실패 시 "알림은 못 갔는데 이력엔 통보됨으로 찍힌" 무음 유실이 생긴다 — 이 순서면
-		// 실패 방향이 "다음 주 중복 통지"(자가 복구, 성가시지만 안전)로 뒤집힌다.
+		// 이력은 실제로 알림에 실릴 때만 남긴다 — 조립 결과가 비면(도달 불가하지만 방어) 다음 주에 다시 기회를 준다.
 		adNotices.markNotified(userId, adShortCodes, window.startDate());
+		long digestId = digests.upsertWeekly(userId, window.startDate(), window.toExclusive(),
+				objectMapper.writeValueAsString(items));
+		// 발송은 같은 try 블록(유저 단위 격리) 안이다 — 한 유저의 메일 실패가 다음 유저의 다이제스트를 막지 않는다.
+		mailer.send(userId, digestId, window, items);
 		return true;
 	}
 

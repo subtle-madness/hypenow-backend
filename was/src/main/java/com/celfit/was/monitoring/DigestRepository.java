@@ -41,6 +41,44 @@ public class DigestRepository {
 	}
 
 	/**
+	 * 주간 리포트 메일 발송 대상 여부(2026-08-27 §6) — 아직 안 보냈고 시도 상한 미달인 행.
+	 * 상한을 조건에 두는 이유는 별도 "포기" 상태 전이를 만들지 않기 위해서다(monitoring
+	 * AlarmEventRepository.findDue와 같은 관용구): 상한에 닿은 행은 조회에서 자연히 빠진다.
+	 */
+	public boolean isEmailPending(long digestId, int maxAttempts) {
+		return Boolean.TRUE.equals(jdbcClient.sql("""
+				SELECT EXISTS (
+				    SELECT 1 FROM app.monitoring_digests
+				    WHERE id = :id AND email_sent_at IS NULL AND email_attempts < :maxAttempts
+				)
+				""")
+				.param("id", digestId)
+				.param("maxAttempts", maxAttempts)
+				.query(Boolean.class)
+				.single());
+	}
+
+	/** 발송 성공(또는 보낼 곳 없음) 종결 — 시도 횟수도 함께 올린다. 이미 찍혀 있으면 시각을 보존한다. */
+	public void markEmailSent(long digestId) {
+		jdbcClient.sql("""
+				UPDATE app.monitoring_digests
+				SET email_sent_at = now(), email_attempts = email_attempts + 1
+				WHERE id = :id AND email_sent_at IS NULL
+				""")
+				.param("id", digestId)
+				.update();
+	}
+
+	/** 발송 실패 — 시도만 올린다. 다음 따라잡기 틱이 이 행만 다시 집는다(at-least-once). */
+	public void markEmailAttempted(long digestId) {
+		jdbcClient.sql("""
+				UPDATE app.monitoring_digests SET email_attempts = email_attempts + 1 WHERE id = :id
+				""")
+				.param("id", digestId)
+				.update();
+	}
+
+	/**
 	 * 주간 전용 (user, 주 시작일) upsert(2026-08-28 품질 리뷰 C2) — 구 일일 DigestJob이 같은
 	 * digest_date(달력일)에 만들어 둔 행과의 충돌을 리셋한다.
 	 *
