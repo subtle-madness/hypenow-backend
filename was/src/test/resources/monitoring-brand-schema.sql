@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS brand_tagged_post (
     unavailable_at           timestamptz,
     -- 태그 부재 검증 스로틀(V20260825061133) — monitoring 전용(was 미조회), 미러 정합만 유지.
     absence_checked_at       timestamptz,
-    -- 해시태그 직접 수집 3성분 통합(V20260827110223) — 해시태그 열거가 이 행을 처음 편입한 시각.
+    -- 해시태그 직접 수집 3성분 통합(V20260828075916) — 해시태그 열거가 이 행을 처음 편입한 시각.
     hashtag_detected_at      timestamptz,
     PRIMARY KEY (brand_id, short_code)
 );
@@ -169,7 +169,7 @@ CREATE TABLE IF NOT EXISTS brand_hashtag_post_matched_tags (
     FOREIGN KEY (brand_id, short_code) REFERENCES brand_hashtag_post (brand_id, short_code) ON DELETE CASCADE
 );
 
--- 정본은 monitoring/src/main/resources/db/migration/V20260827110223__brand_tagged_post_hashtag_source.sql
+-- 정본은 monitoring/src/main/resources/db/migration/V20260828075916__brand_tagged_post_hashtag_source.sql
 -- (2026-08-27 해시태그 직접 수집 설계 §1) — 구 brand_hashtag_post_matched_tags와 같은 모양이지만
 -- FK 대상이 통합 풀(brand_tagged_post)로 바뀌었다. was는 findMatchedTags에서 이 테이블만 읽는다.
 CREATE TABLE IF NOT EXISTS brand_post_matched_tag (
