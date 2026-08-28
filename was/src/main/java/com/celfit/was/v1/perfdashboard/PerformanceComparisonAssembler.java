@@ -156,10 +156,11 @@ public class PerformanceComparisonAssembler {
 	 * 합은 non-null만 더하고 non-null이 하나도 없으면(0건 포함) null: 합 0(전부 관측됐는데 0)과
 	 * null(전부 미제공)을 FE가 다르게 그린다(규칙 ③ — 피드는 views 항상 null).
 	 *
-	 * <p><b>likes는 숨김 게이트 없이 더한다</b> — {@code likesHidden}은 카운트로만 남긴다. 병합 산지
-	 * (한쪽은 값, 다른 쪽은 숨김 관측)에서 나오는 {@code likes != null && likesHidden == true} 조합만
-	 * {@code /growth}({@code PerformanceGrowthAggregator.foldOne} — 숨김이면 값 제외)와 결과가 갈린다.
-	 * 두 표면의 정합은 병합 규칙({@code PerformanceContentAssembler.mergeOne}) 쪽 후속 과제다.
+	 * <p><b>likes는 숨김 게이트 없이 더한다</b> — {@code likesHidden}은 카운트로만 남긴다.
+	 * {@code /growth}({@code PerformanceGrowthAggregator.foldOne} — 숨김이면 값 제외)와 결과는 같다:
+	 * 숨김 ref의 likes는 항상 null이라 더할 값 자체가 없다. 이 불변식(숨김이면 값 null)은 단일 산지
+	 * 계약이고, 병합 산지({@code PerformanceContentAssembler.mergeOne}, 2026-08-28 정합)도 숨김
+	 * 관측이 있으면 값을 접어 유지한다.
 	 */
 	private static PerformanceComparisonResponse.Bucket aggregate(BucketRange range, boolean covered,
 			List<DashboardRef> refs) {

@@ -30,7 +30,8 @@ public record PerformanceGrowthResponse(
 	 * @param start 버킷 시작일(YYYY-MM-DD) — 요청 {@code from}으로 클램프될 수 있다.
 	 * @param end 버킷 종료일(YYYY-MM-DD, 양끝 포함) — 요청 {@code to}로 클램프될 수 있다.
 	 * @param contentCount 버킷 내 게시물 수(스냅샷 유무 무관 — 차트 지표 중 하나).
-	 * @param followersSum 게시물별 작성자 팔로워 합(참여율 분모) — 아는 것만.
+	 * @param followersSum 참여율 분모 — 좋아요를 아는 게시물(숨김 아님 + likes 있음)의 작성자 팔로워
+	 *     합이다(FE 요청 2026-08-27 ① — 분자에 실리는 게시물만 분모에 담는다). 게시물마다 1회.
 	 * @param viewsMissingCount 조회수 미상(피드 null·스냅샷 없음) 수.
 	 * @param likesHiddenCount 좋아요 숨김 관측 수.
 	 * @param followersMissingCount 작성자 팔로워 미확인 수.

@@ -2,6 +2,7 @@ package com.celfit.was.v1.brandmonitoring;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -48,7 +49,7 @@ import org.springframework.test.web.servlet.MockMvc;
  */
 @WebMvcTest(controllers = V1BrandInfluencersController.class,
 		properties = {"was.cors.allowed-origins=http://localhost:3000", "monitoring.enabled=true"})
-@Import({BrandPostAssembler.class, V1ExceptionAdvice.class, SecurityConfig.class})
+@Import({BrandPostAssembler.class, BrandIndexCache.class, V1ExceptionAdvice.class, SecurityConfig.class})
 class V1BrandInfluencersControllerTest {
 
 	private static final String URL = "/v1/brand-monitoring/influencers";
@@ -72,13 +73,24 @@ class V1BrandInfluencersControllerTest {
 	MonitoringItemRepository monitoringItemRepository;
 	@MockitoBean
 	Clock clock;
+	/** 인덱스 캐시({@link BrandIndexCache})의 무효화 키 산지 — 캐시 자체는 실 빈으로 붙인다. */
+	@MockitoBean
+	com.celfit.was.v1.perfdashboard.DashboardVersion dashboardVersion;
 
 	@BeforeEach
 	void fixedClock() {
 		// 링크 창 컷의 기준 시각 고정 — 고정하지 않으면 2026-08-xx 시드가 시간이 지나며 창 밖으로
 		// 밀려 테스트가 시한부가 된다. KST 2026-08-08 21:00.
 		given(clock.instant()).willReturn(Instant.parse("2026-08-08T12:00:00Z"));
+		// 버전키는 호출마다 고유값 — Spring 테스트 컨텍스트가 클래스 전체에서 재사용돼 캐시 빈도
+		// 공유되므로, 고정 키를 쓰면 앞 테스트의 모수가 뒤 테스트로 샌다. 캐시 적중 계약 자체는
+		// BrandIndexCacheTest가 본다.
+		given(dashboardVersion.compute(anyLong()))
+				.willAnswer(inv -> "v" + VERSION_SEQ.incrementAndGet());
 	}
+
+	private static final java.util.concurrent.atomic.AtomicLong VERSION_SEQ =
+			new java.util.concurrent.atomic.AtomicLong();
 
 	// ---------- 병합·집계 ----------
 

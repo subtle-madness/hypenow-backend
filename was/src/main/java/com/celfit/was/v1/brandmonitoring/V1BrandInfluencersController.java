@@ -67,14 +67,14 @@ public class V1BrandInfluencersController {
 
 	private final BrandLinkRepository linkRepository;
 	private final BrandReadRepository brandReadRepository;
-	private final BrandPostAssembler assembler;
+	private final BrandIndexCache indexCache;
 	private final Clock clock;
 
 	public V1BrandInfluencersController(BrandLinkRepository linkRepository,
-			BrandReadRepository brandReadRepository, BrandPostAssembler assembler, Clock clock) {
+			BrandReadRepository brandReadRepository, BrandIndexCache indexCache, Clock clock) {
 		this.linkRepository = linkRepository;
 		this.brandReadRepository = brandReadRepository;
-		this.assembler = assembler;
+		this.indexCache = indexCache;
 		this.clock = clock;
 	}
 
@@ -119,6 +119,8 @@ public class V1BrandInfluencersController {
 
 		// 시계는 요청당 한 번만 읽는다 — 계정마다 다시 읽으면 자정을 걸친 응답에서 계정별로 컷이 다르다.
 		LocalDate today = LocalDate.ofInstant(clock.instant(), KstTimestamps.KST);
+		// 버전키도 요청당 한 번만 — 계정마다 다시 계산하면 자정 경계에서 계정별 모수가 갈린다.
+		String version = indexCache.version(userId);
 		List<BrandInfluencerAggregator.InfluencerPost> posts = new ArrayList<>();
 		for (Long brandId : brandIds) {
 			BrandLinkRow link = linksByBrandId.get(brandId);
@@ -129,7 +131,7 @@ public class V1BrandInfluencersController {
 				log.warn("브랜드 연결의 monitoring 계정 행 부재 — 인플루언서 집계 생략 brandId={}", brandId);
 				continue;
 			}
-			posts.addAll(accountPosts(userId, account.get(), link, today, from, to));
+			posts.addAll(accountPosts(version, userId, account.get(), link, today, from, to));
 		}
 
 		List<BrandInfluencerResponse> rows = BrandInfluencerAggregator.summarize(
@@ -155,10 +157,12 @@ public class V1BrandInfluencersController {
 	 * {@code withViews=false}로 부른다(집계 조회수는 최신 지표 프로젝션에서 온다 — 같은 산지를
 	 * 두 번 읽지 않는다).
 	 */
-	private List<BrandInfluencerAggregator.InfluencerPost> accountPosts(long userId, BrandAccountRow account,
-			BrandLinkRow link, LocalDate today, LocalDate from, LocalDate to) {
+	private List<BrandInfluencerAggregator.InfluencerPost> accountPosts(String version, long userId,
+			BrandAccountRow account, BrandLinkRow link, LocalDate today, LocalDate from, LocalDate to) {
 		LocalDate windowStart = BrandPostWindows.linkWindowStart(today, link.collectionMonths());
-		BrandPostAssembler.BrandPostIndex index = assembler.indexForBrand(userId, account, false);
+		// 인덱스·최신 지표 둘 다 버전키 캐시 경유(FE 요청 2026-08-27 ②) — 이 표면의 고정비 2.4~2.6초가
+		// 사실상 이 두 조회다(실측 인덱스 2.16초 + 스냅샷 0.54초/4계정).
+		BrandPostAssembler.BrandPostIndex index = indexCache.index(version, userId, account, false);
 		List<BrandPostAssembler.PostRef> refs = index.refs().stream()
 				.filter(r -> BrandPostWindows.withinLinkWindow(r, windowStart))
 				.filter(r -> BrandPostWindows.withinUploadWindow(r.uploadedOn(), from, to))
@@ -167,8 +171,7 @@ public class V1BrandInfluencersController {
 			return List.of();
 		}
 		Map<String, BrandReadRepository.LatestSnapshotRow> metricsByCode =
-				brandReadRepository.findLatestSnapshotsForBrand(account.id(), BrandPostAssembler.windowCutoff(), true)
-						.stream()
+				indexCache.latestSnapshots(version, account.id(), true).stream()
 						.collect(Collectors.toMap(BrandReadRepository.LatestSnapshotRow::shortCode,
 								Function.identity(), (a, b) -> a, LinkedHashMap::new));
 

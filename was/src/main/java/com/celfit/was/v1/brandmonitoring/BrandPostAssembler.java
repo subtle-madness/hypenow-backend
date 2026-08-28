@@ -233,7 +233,11 @@ public class BrandPostAssembler {
 					legacy.authorUsername(), legacy.authorFullName(), legacy.authorProfilePicUrl(),
 					legacy.authorFollowers(), legacy.takenAt()));
 		}
-		return new BrandPostIndex(List.copyOf(refs), poolByCode.keySet(), legacyByCode, ownedShortCodes);
+		// poolCodes는 keySet() 뷰가 아니라 복사본이다(2026-08-28 힙 실측) — 뷰를 넘기면 원시 행 맵
+		// (BrandPostIndexRow 전량)이 인덱스에 딸려 살아남는다. 인덱스가 요청마다 버려지던 시절엔
+		// 무해했지만 BrandIndexCache가 장기 보관하면서 그 원시 행까지 장기 상주가 됐다.
+		return new BrandPostIndex(List.copyOf(refs), Set.copyOf(poolByCode.keySet()), legacyByCode,
+				ownedShortCodes);
 	}
 
 	/**
