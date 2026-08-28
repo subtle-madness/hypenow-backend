@@ -1,6 +1,7 @@
 package com.celfit.was.v1.brandmonitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyCollection;
@@ -86,6 +87,31 @@ class BrandPostAssemblerTest {
 		assertThat(stripped.snapshots()).isEqualTo(full.snapshots());
 		assertThat(stripped.sponsorship()).isEqualTo(full.sponsorship());
 		assertThat(stripped.campaignIds()).isEqualTo(full.campaignIds());
+	}
+
+	/**
+	 * 인덱스는 <b>조립 입력을 붙잡지 않는다</b>(2026-08-28 힙 실측) — {@code poolCodes}가
+	 * {@code LinkedHashMap.keySet()} 뷰면 원시 행 맵({@code BrandPostIndexRow} 전량)이 통째로 함께
+	 * 살아남는다. 요청마다 버려지던 시절엔 무해했지만 {@link BrandIndexCache}가 인덱스를 장기 보관하면서
+	 * 그 원시 행까지 장기 상주로 승격됐다(로컬 풀GC 후 히스토그램에서 11,438개 잔존 확인).
+	 *
+	 * <p>불변 복사본인지를 단정하는 것은 "맵 뷰가 아니다"의 관측 가능한 대리 지표다 — 힙 유지를
+	 * 단위 테스트로 직접 재긴 어렵고, 회귀 시 되살아나는 형태가 정확히 {@code keySet()} 반환이다.
+	 */
+	@Test
+	void 인덱스의_poolCodes는_맵_뷰가_아니라_복사본이다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true), any())).willReturn(List.of(
+				indexRow("TAG1", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, "일상")));
+
+		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class),
+				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
+				mock(MonitoringItemRepository.class), false);
+		var index = assembler.indexForBrand(7L, accountRow(), false);
+
+		assertThat(index.poolCodes()).containsExactly("TAG1");
+		assertThatThrownBy(() -> index.poolCodes().remove("TAG1"))
+				.isInstanceOf(UnsupportedOperationException.class);
 	}
 
 	/** 인덱스 패스는 counts·정렬·페이지 계산 전용이라 무거운 배치 조회(스냅샷·댓글·게시자·표시 메타)가 없어야 한다. */

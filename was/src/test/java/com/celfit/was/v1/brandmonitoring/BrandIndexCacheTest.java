@@ -100,6 +100,46 @@ class BrandIndexCacheTest {
 				.findLatestSnapshotsForBrand(eq(100L), org.mockito.ArgumentMatchers.any(), eq(true));
 	}
 
+	/**
+	 * LRU 상한 — 엔트리 하나가 운영 최대 브랜드 기준 약 10MB라 무한히 쌓이면 안 된다
+	 * ({@link BrandIndexCache#MAX_ENTRIES} javadoc의 힙 실측). 상한을 넘기면 가장 오래
+	 * 안 쓴 엔트리가 빠지고, 그 키로 다시 오면 재조립한다.
+	 */
+	@Test
+	void 상한을_넘으면_가장_오래된_엔트리가_축출된다() {
+		// 브랜드 id만 바꿔 MAX_ENTRIES + 1개를 채운다 — 첫 브랜드가 꼬리로 밀려 빠진다.
+		for (int i = 0; i <= BrandIndexCache.MAX_ENTRIES; i++) {
+			BrandAccountRow account = accountWithId(100L + i);
+			given(assembler.indexForBrand(7L, account, false)).willReturn(index("A" + i));
+			cache.index("v1", 7L, account, false);
+		}
+
+		cache.index("v1", 7L, accountWithId(100L), false);   // 축출된 첫 엔트리 재요청
+
+		then(assembler).should(times(2)).indexForBrand(7L, accountWithId(100L), false);
+	}
+
+	@Test
+	void 상한_안에서는_축출되지_않는다() {
+		for (int i = 0; i < BrandIndexCache.MAX_ENTRIES; i++) {
+			BrandAccountRow account = accountWithId(100L + i);
+			given(assembler.indexForBrand(7L, account, false)).willReturn(index("A" + i));
+			cache.index("v1", 7L, account, false);
+		}
+
+		cache.index("v1", 7L, accountWithId(100L), false);   // 가장 먼저 담은 것도 아직 살아 있다
+
+		then(assembler).should(times(1)).indexForBrand(7L, accountWithId(100L), false);
+	}
+
+	/** 브랜드 id만 다른 계정 행 — 캐시 키의 brandId 축만 varying(나머지 필드는 동등성에 무관하게 고정). */
+	private static BrandAccountRow accountWithId(long id) {
+		return new BrandAccountRow(id, "brand", null,
+				OffsetDateTime.parse("2026-08-07T18:00:00Z"), OffsetDateTime.parse("2026-08-01T00:00:00Z"),
+				null, null, 1000L, 10L, 100L, null, "브랜드", null, true, null, "ACTIVE", null,
+				12, null, false, null);
+	}
+
 	@Test
 	void version은_DashboardVersion_계산을_그대로_쓴다() {
 		given(dashboardVersion.compute(7L)).willReturn("dv-7");

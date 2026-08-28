@@ -43,10 +43,14 @@ import org.springframework.stereotype.Component;
 public class BrandIndexCache {
 
 	/**
-	 * LRU 상한 — 엔트리 하나가 브랜드 모수 전체(계정 119 기준 5,111 ref, 수 MB)라 크게 잡지 않는다.
-	 * 한 유저의 브라우징이 동시에 건드리는 조합은 (브랜드 수 × withViews 2종) 정도다.
+	 * LRU 상한 — 엔트리 하나가 브랜드 모수 전체다. <b>힙 실측(2026-08-28)</b>: ref당 약 975바이트
+	 * (로컬 실데이터 11,438 ref에 풀GC 전후 +11.1MB)라, 운영 최대 브랜드(계정 120·창 안 10,489행)
+	 * 기준 엔트리 하나가 <b>약 10MB</b>다. 운영 was는 힙 2GB에 Old Gen p99가 798MB·최대 887MB이고
+	 * 힙 합계가 최대 2,038MB까지 올라간 적이 있어(Prometheus 7일) 한가한 힙이 아니다 — 그래서 최악
+	 * 상주를 <b>약 80MB</b>로 묶는다. 클로즈 베타 규모에서 동시 사용 유저가 이보다 많지 않아 적중률
+	 * 손해는 사실상 없다(엔트리는 유저 × 브랜드 × 종류로 갈린다).
 	 */
-	static final int MAX_ENTRIES = 16;
+	static final int MAX_ENTRIES = 8;
 
 	private final DashboardVersion dashboardVersion;
 	private final BrandPostAssembler assembler;
