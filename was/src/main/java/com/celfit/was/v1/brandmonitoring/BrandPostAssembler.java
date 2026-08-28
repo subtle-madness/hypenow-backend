@@ -17,6 +17,7 @@ import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -71,6 +72,12 @@ public class BrandPostAssembler {
 	/** 댓글 서빙 상한 — monitoring 수집 상한(3페이지 45건)과 같은 수로 맞춘다(레거시 COMMENT_LIMIT 동형). */
 	private static final int COMMENT_LIMIT = 45;
 
+	/**
+	 * 협찬 마커 Postgres 정규식 — 마커 상수에서 파생된 불변값이라 요청마다 다시 빌드하지 않는다
+	 * (슬림 인덱스 쿼리 파라미터, 2026-08-27 P0).
+	 */
+	private static final String MARKER_REGEX = BrandSponsorshipClassifier.postgresMarkerRegex();
+
 	private static final String CONTENT_TYPE_REELS = "REELS";
 	private static final String REELS = "reels";
 	private static final String FEED = "feed";
@@ -113,11 +120,29 @@ public class BrandPostAssembler {
 	 * 판정 산지는 풀 조립과 동일 함수({@code resolveSource}·{@code BrandSponsorshipClassifier.classify}·
 	 * KST 달력일)라 ref 기반 counts는 전량 풀 조립 counts와 정의상 일치한다.
 	 *
+	 * <p>2026-08-27 서버 필터·패싯 설계로 매체·광고 판정·게시자 표시값이 얹혔다 — 필터·패싯이 카드
+	 * 조립을 거치지 않고 ref만으로 판정하기 위한 것이라, 값은 전부 카드와 같은 산지 규칙을 태운 뒤
+	 * 실린다({@code contentTypeOf} 폴드·{@code resolveImageUrl} 아카이브 우선·KST ISO 문자열).
+	 *
 	 * @param latestViews performance 정렬 키(피드는 null — {@link #snapshotOf} 서빙 규칙 동형).
 	 *                    {@code withViews=false} 인덱스에서는 항상 null이다.
+	 * @param contentType "reels"/"feed" — 불명은 피드로 접는다(카드 {@code contentType}과 동형).
+	 * @param adVerdict 광고 표기 판정 원값(노출 게이트 미적용 — 게이트는 {@link #adDisclosureExposed}가
+	 *                  호출부에서 적용한다). 과도기 폴백(레거시 direct)은 산지가 없어 항상 null.
+	 * @param takenAtKst 카드 {@code takenAt}과 같은 KST ISO 문자열(미상이면 null).
 	 */
 	public record PostRef(String shortcode, String source, String sponsorship, LocalDate uploadedOn,
-			Long latestViews) {
+			Long latestViews, String contentType, String adVerdict, String authorUsername,
+			String authorFullName, String authorProfilePicUrl, Long authorFollowers, String takenAtKst) {
+	}
+
+	/**
+	 * 광고 표기 판정 노출 게이트(스펙 §10-2 토글 + 2026-08-19 경쟁사 제외) — {@link #brandPost}가 쓰는
+	 * 것과 <b>같은</b> 판정이다. 서버 필터·패싯이 이 값을 보고 광고 판정 필터를 적용할지 결정한다:
+	 * 비노출 조회자에게 화면에 없는 값으로 필터가 걸리면 "빈 목록"이 정답처럼 보인다.
+	 */
+	public boolean adDisclosureExposed(String viewerAccountType) {
+		return exposeAdDisclosure && !BrandAccountType.COMPETITOR.equals(viewerAccountType);
 	}
 
 	/**
@@ -132,7 +157,7 @@ public class BrandPostAssembler {
 	}
 
 	/**
-	 * 인덱스 패스(경량) — 브랜드 풀의 판정 입력 6컬럼 <b>단일 조인 쿼리</b>({@link
+	 * 인덱스 패스(경량) — 브랜드 풀의 판정 입력 슬림 컬럼 <b>단일 조인 쿼리</b>({@link
 	 * BrandReadRepository#findBrandPostIndex}) + (withViews면) 최신 스냅샷 1행 프로젝션만 읽어
 	 * {@link PostRef}를 만든다. 스냅샷 시계열·댓글·게시자·표시 메타 배치 조회가 전혀 없고, 무거운
 	 * 조립은 {@link #hydrate}가 페이지 코드에만 수행한다. 표시 표면 전용이라 scope는 항상
@@ -147,7 +172,7 @@ public class BrandPostAssembler {
 	 */
 	public BrandPostIndex indexForBrand(long userId, BrandAccountRow account, boolean withViews) {
 		List<BrandReadRepository.BrandPostIndexRow> allRows = brandReadRepository.findBrandPostIndex(
-				account.id(), windowCutoff(), true);
+				account.id(), windowCutoff(), true, MARKER_REGEX);
 		boolean hasDirectRegistration = allRows.stream().anyMatch(r -> r.directRegisteredAt() != null);
 		Set<String> ownedShortCodes = hasDirectRegistration ? directPostRepository.shortCodesByUser(userId)
 				: Set.of();
@@ -164,12 +189,16 @@ public class BrandPostAssembler {
 		// null 값(피드)을 담기 위해서다(Collectors.toMap은 null 값에서 NPE).
 		Map<String, Long> viewsByCode = new LinkedHashMap<>();
 		if (withViews && !poolByCode.isEmpty()) {
-			for (BrandReadRepository.LatestViewsRow row : brandReadRepository.findLatestViewsForBrand(
+			for (BrandReadRepository.LatestSnapshotRow row : brandReadRepository.findLatestSnapshotsForBrand(
 					account.id(), windowCutoff(), true)) {
 				viewsByCode.put(row.shortCode(),
 						CONTENT_TYPE_REELS.equalsIgnoreCase(row.contentType()) ? row.views() : null);
 			}
 		}
+
+		// 게시자 조인 미스(author_ig_user_id 부재)만 모아 username으로 한 번 더 찾는다 — 풀 조립
+		// resolveAuthors의 2차 SQL 관용구와 같다(미해결이 없으면 조회 자체를 생략).
+		Map<String, AuthorRow> fallbackAuthors = resolveIndexAuthorFallback(poolByCode.values());
 
 		Map<String, BrandPostResponse> legacyByCode = new LinkedHashMap<>();
 		for (BrandPostResponse legacy : assembleLegacyPending(userId, account.id())) {
@@ -180,19 +209,75 @@ public class BrandPostAssembler {
 
 		List<PostRef> refs = new ArrayList<>(poolByCode.size() + legacyByCode.size());
 		for (BrandReadRepository.BrandPostIndexRow row : poolByCode.values()) {
+			IndexAuthor author = indexAuthor(row, fallbackAuthors);
 			refs.add(new PostRef(row.shortCode(),
 					resolveSource(row.tagDetectedAt(), row.directRegisteredAt(),
 							ownedShortCodes.contains(row.shortCode())),
-					BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.caption()),
+					BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.captionMarker()),
 					KstTimestamps.toKstDate(row.takenAt()),
-					viewsByCode.get(row.shortCode())));
+					viewsByCode.get(row.shortCode()),
+					contentTypeOf(row.contentType()),
+					row.adVerdict(),
+					author.username(), author.fullName(),
+					resolveImageUrl(author.imageObjectPath(), author.profilePicUrl()),
+					author.followers(),
+					KstTimestamps.toKstIso(row.takenAt())));
 		}
 		for (BrandPostResponse legacy : legacyByCode.values()) {
 			TrackingItemResponse.SnapshotResponse latest = legacy.latestSnapshot();
+			// 레거시 ref의 산지는 이미 조립된 카드다 — 같은 값을 두 번 파생시키지 않는다(카드와 ref가
+			// 어긋나면 서버 필터가 레거시 카드만 조용히 떨군다). 광고 판정은 direct 산지에 없어 null.
 			refs.add(new PostRef(legacy.shortcode(), legacy.source(), legacy.sponsorship(), uploadedOn(legacy),
-					latest == null ? null : latest.views()));
+					latest == null ? null : latest.views(),
+					contentTypeOf(legacy.contentType()), null,
+					legacy.authorUsername(), legacy.authorFullName(), legacy.authorProfilePicUrl(),
+					legacy.authorFollowers(), legacy.takenAt()));
 		}
-		return new BrandPostIndex(List.copyOf(refs), poolByCode.keySet(), legacyByCode, ownedShortCodes);
+		// poolCodes는 keySet() 뷰가 아니라 복사본이다(2026-08-28 힙 실측) — 뷰를 넘기면 원시 행 맵
+		// (BrandPostIndexRow 전량)이 인덱스에 딸려 살아남는다. 인덱스가 요청마다 버려지던 시절엔
+		// 무해했지만 BrandIndexCache가 장기 보관하면서 그 원시 행까지 장기 상주가 됐다.
+		return new BrandPostIndex(List.copyOf(refs), Set.copyOf(poolByCode.keySet()), legacyByCode,
+				ownedShortCodes);
+	}
+
+	/**
+	 * 인덱스 행의 게시자 표시값 — 조인 해결값이 있으면 그대로, 없으면 원시 관측 username으로 찾은
+	 * 폴백 프로필, 그것도 없으면 username만(나머지 null — 거짓 표시를 만들지 않는다). 풀 조립의
+	 * {@code resolveAuthors} + {@link #brandPost} 폴백 규칙과 같은 방향이다.
+	 */
+	private record IndexAuthor(String username, String fullName, String profilePicUrl, String imageObjectPath,
+			Long followers) {
+	}
+
+	private static IndexAuthor indexAuthor(BrandReadRepository.BrandPostIndexRow row,
+			Map<String, AuthorRow> fallbackAuthors) {
+		if (row.authorUsername() != null) {
+			return new IndexAuthor(row.authorUsername(), row.authorFullName(), row.authorProfilePicUrl(),
+					row.authorImageObjectPath(), row.authorFollowers());
+		}
+		AuthorRow fallback = row.rawAuthorUsername() == null ? null
+				: fallbackAuthors.get(row.rawAuthorUsername());
+		if (fallback != null) {
+			return new IndexAuthor(fallback.username(), fallback.fullName(), fallback.profilePicUrl(),
+					fallback.imageObjectPath(), fallback.followers());
+		}
+		return new IndexAuthor(row.rawAuthorUsername(), null, null, null, null);
+	}
+
+	/** 조인 미스 행의 username → 프로필 1회 배치. 미해결 username이 없으면 조회 자체를 생략한다. */
+	private Map<String, AuthorRow> resolveIndexAuthorFallback(
+			Collection<BrandReadRepository.BrandPostIndexRow> rows) {
+		Set<String> pendingUsernames = new LinkedHashSet<>();
+		for (BrandReadRepository.BrandPostIndexRow row : rows) {
+			if (row.authorUsername() == null && row.rawAuthorUsername() != null) {
+				pendingUsernames.add(row.rawAuthorUsername());
+			}
+		}
+		if (pendingUsernames.isEmpty()) {
+			return Map.of();
+		}
+		return brandReadRepository.findAuthorsByUsername(pendingUsernames).stream()
+				.collect(Collectors.toMap(AuthorRow::username, Function.identity(), (a, b) -> a));
 	}
 
 	/**
@@ -252,8 +337,13 @@ public class BrandPostAssembler {
 
 	// ---------- 브랜드 풀 ----------
 
-	/** 컷은 KST 달력일 기준이다 — 인스턴트에서 365일을 빼면 요청 시각에 따라 경계일이 들쭉날쭉해진다. */
-	static OffsetDateTime windowCutoff() {
+	/**
+	 * 컷은 KST 달력일 기준이다 — 인스턴트에서 365일을 빼면 요청 시각에 따라 경계일이 들쭉날쭉해진다.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 창을 봐야 한다 — 패키지 밖에서 식을
+	 * 재계산하면 창 정책이 이원화된다(진단 하니스의 복사본도 이 정본 호출로 정리했다).
+	 */
+	public static OffsetDateTime windowCutoff() {
 		return LocalDate.now(KstTimestamps.KST).minusDays(WINDOW_DAYS)
 				.atStartOfDay(KstTimestamps.KST).toOffsetDateTime();
 	}
@@ -272,9 +362,19 @@ public class BrandPostAssembler {
 
 	/**
 	 * 브랜드 풀(tagged ∪ direct) 조립 — {@code brand_tagged_post} 한 산지에서 통째로 읽는다(설계
-	 * §결정 1). 공개 이유: 성과 대시보드는 레거시 전량을 이미 자기가 조립해 두고 브랜드 풀만 얹으면
-	 * 되므로 과도기 폴백이 붙는 경로를 태우면 유저 전량 배치 조회가 통째로 중복된다. 브랜드 화면의
-	 * 진입점은 {@link #indexForBrand} + {@link #hydrate}다(2026-08-27 2단 조립).
+	 * §결정 1).
+	 *
+	 * <p><b>공개 이유(2026-08-27 갱신)</b>: 더 이상 성과 대시보드가 아니다. 대시보드는 2단 조립
+	 * (인덱스+하이드레이트)으로 전환돼 프로덕션에서 이 메서드를 타지 않고, 브랜드 화면의 진입점도
+	 * {@link #indexForBrand} + {@link #hydrate}다. 지금 남은 사용처는 둘뿐이다:
+	 * <ol>
+	 *   <li><b>프로덕션</b> — {@code V2CampaignContentService}의 캠페인 태그 <b>존재 판정</b>
+	 *       (userId 스코프·scope=ALL·클램프 off). 유저의 전 브랜드를 한 번에 훑어야 해서 브랜드
+	 *       단위 2단 조립이 맞지 않는다.</li>
+	 *   <li><b>테스트 전용</b> — {@code PerformanceContentAssembler.assembleSlim}(구 전량 조립)이
+	 *       2단 조립의 <b>동치성 기준선</b>으로 남아 이 메서드를 경유한다. 기준선이 은퇴해도 위 1번이
+	 *       남으므로 이 메서드 자체는 그때도 삭제 대상이 아니다.</li>
+	 * </ol>
 	 *
 	 * <p>{@code withComments=false}면 댓글 배치 조회를 아예 돌리지 않는다(08-12 성과 대시보드 고정
 	 * 지연 대응). 08-12 운영 덤프 실측에서 브랜드 1계정 조립 415ms 중 237ms(57%)가 댓글 윈도우 쿼리 +
@@ -366,8 +466,12 @@ public class BrandPostAssembler {
 				.toList();
 	}
 
-	/** campaignIds 배치 조회(설계 §결정 3) — shortcode당 다건일 수 있어(N:M) 그룹핑한다. */
-	private Map<String, List<String>> campaignIdsByCode(long brandId, Set<String> codes) {
+	/**
+	 * campaignIds 배치 조회(설계 §결정 3) — shortcode당 다건일 수 있어(N:M) 그룹핑한다.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 판정을 공유한다 — 판정 함수 이원화 금지.
+	 */
+	public Map<String, List<String>> campaignIdsByCode(long brandId, Set<String> codes) {
 		Map<String, List<String>> byCode = new LinkedHashMap<>();
 		for (BrandPostCampaignRepository.Link link : postCampaignRepository.findByBrandAndShortCodes(brandId, codes)) {
 			byCode.computeIfAbsent(link.shortCode(), k -> new ArrayList<>()).add(String.valueOf(link.campaignId()));
@@ -416,24 +520,52 @@ public class BrandPostAssembler {
 	}
 
 	/**
+	 * 이 유저가 직접 등록한 게시물 원장(노출 필터·source 파생 입력) — {@code app.brand_direct_posts}.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 원장을 봐야 한다. 리포지토리를 그쪽에
+	 * 직접 주입하는 대신 이 경유로 노출한다 — 원장의 해석(무엇이 "내 등록인가")은 브랜드 조립의
+	 * 책임이고, 대시보드는 그 판정을 빌려 쓸 뿐이다.
+	 *
+	 * <p>호출 관용구도 그대로 승계한다: direct 등록 행이 하나도 없으면 <b>호출하지 않는다</b>
+	 * (불필요한 조회 방지 — {@link #assembleBrandPosts}·{@link #indexForBrand}와 동형).
+	 */
+	public Set<String> directRegisteredShortCodes(long userId) {
+		return directPostRepository.shortCodesByUser(userId);
+	}
+
+	/**
+	 * 게시자 해석 입력 키 — 산지(풀 행·성과 대시보드 인덱스 행)가 달라도 해석에 필요한 값은 이 셋뿐이다.
+	 */
+	public record AuthorKey(String shortCode, String igUserId, String username) {
+	}
+
+	/** 풀 행용 어댑터 — 해석 로직은 {@link #resolveAuthorsByKeys}가 단일 산지다. */
+	private Map<String, AuthorRow> resolveAuthors(List<BrandTaggedPostRow> posts) {
+		return resolveAuthorsByKeys(posts.stream()
+				.map(p -> new AuthorKey(p.shortCode(), p.authorIgUserId(), p.authorUsername())).toList());
+	}
+
+	/**
 	 * 게시자 프로필 해석 — 기본은 ig_user_id, 못 찾은 건만 username으로 한 번 더 찾는다(2차 SQL은
 	 * 전부 해석되면 아예 돌지 않는다). 열거 셰이프에 따라 author_ig_user_id가 비는 행이 있어
 	 * 폴백 경로가 필요하다({@code findAuthorsByUsername}은 계정당 최신 1행만 준다).
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 판정을 공유한다 — 판정 함수 이원화 금지.
 	 */
-	private Map<String, AuthorRow> resolveAuthors(List<BrandTaggedPostRow> posts) {
-		Set<String> igUserIds = posts.stream().map(BrandTaggedPostRow::authorIgUserId)
+	public Map<String, AuthorRow> resolveAuthorsByKeys(List<AuthorKey> keys) {
+		Set<String> igUserIds = keys.stream().map(AuthorKey::igUserId)
 				.filter(Objects::nonNull).collect(Collectors.toCollection(LinkedHashSet::new));
 		Map<String, AuthorRow> byIgUserId = brandReadRepository.findAuthors(igUserIds).stream()
 				.collect(Collectors.toMap(AuthorRow::igUserId, Function.identity(), (a, b) -> a));
 
 		Map<String, AuthorRow> byPost = new LinkedHashMap<>();
 		Set<String> pendingUsernames = new LinkedHashSet<>();
-		for (BrandTaggedPostRow post : posts) {
-			AuthorRow row = post.authorIgUserId() == null ? null : byIgUserId.get(post.authorIgUserId());
+		for (AuthorKey key : keys) {
+			AuthorRow row = key.igUserId() == null ? null : byIgUserId.get(key.igUserId());
 			if (row != null) {
-				byPost.put(post.shortCode(), row);
-			} else if (post.authorUsername() != null) {
-				pendingUsernames.add(post.authorUsername());
+				byPost.put(key.shortCode(), row);
+			} else if (key.username() != null) {
+				pendingUsernames.add(key.username());
 			}
 		}
 		if (pendingUsernames.isEmpty()) {
@@ -442,11 +574,11 @@ public class BrandPostAssembler {
 
 		Map<String, AuthorRow> byUsername = brandReadRepository.findAuthorsByUsername(pendingUsernames).stream()
 				.collect(Collectors.toMap(AuthorRow::username, Function.identity(), (a, b) -> a));
-		for (BrandTaggedPostRow post : posts) {
-			if (!byPost.containsKey(post.shortCode()) && post.authorUsername() != null) {
-				AuthorRow row = byUsername.get(post.authorUsername());
+		for (AuthorKey key : keys) {
+			if (!byPost.containsKey(key.shortCode()) && key.username() != null) {
+				AuthorRow row = byUsername.get(key.username());
 				if (row != null) {
-					byPost.put(post.shortCode(), row);
+					byPost.put(key.shortCode(), row);
 				}
 			}
 		}
@@ -484,7 +616,8 @@ public class BrandPostAssembler {
 				snapshotRows.stream().map(BrandPostAssembler::snapshotOf).toList();
 		List<TrackingItemResponse.PostCommentResponse> comments = commentRows.stream()
 				.map(BrandPostAssembler::commentOf).filter(Objects::nonNull).toList();
-		String username = author != null ? author.username() : post.authorUsername();
+		// author 행이 있어도 username이 비어 있으면 열거 관측으로 폴백한다(동치 계약 — refOfPoolRow와 같은 폴백).
+		String username = author != null && author.username() != null ? author.username() : post.authorUsername();
 		String source = resolveSource(post, registeredByUser);
 		OffsetDateTime trackingStarted = post.directRegisteredAt() != null ? post.directRegisteredAt()
 				: post.firstSeenAt();
@@ -563,8 +696,12 @@ public class BrandPostAssembler {
 		return resolveSource(post.tagDetectedAt(), post.directRegisteredAt(), registeredByUser);
 	}
 
-	/** 판정 코어 — 풀 행({@code BrandTaggedPostRow})과 인덱스 행이 같은 파생 규칙을 공유한다. */
-	private static String resolveSource(OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
+	/**
+	 * 판정 코어 — 풀 행({@code BrandTaggedPostRow})과 인덱스 행이 같은 파생 규칙을 공유한다.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 판정을 공유한다 — 판정 함수 이원화 금지.
+	 */
+	public static String resolveSource(OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
 			boolean registeredByUser) {
 		if (directRegisteredAt == null) {
 			return SOURCE_TAGGED;
@@ -819,8 +956,12 @@ public class BrandPostAssembler {
 	 * 폴백한다(sanitizeImageUrl 가드는 폴백 경로에 그대로 유지). 원본은 인스타 서명 URL이라 며칠~2주면
 	 * 만료된다 — 아카이브 사본이 서빙 정본이다. {@code /img/}는 was 엔드포인트가 아니라 celfit-front의
 	 * Vercel rewrite({@code /img/:path*} 글롭)라서 프론트 변경이 필요 없다.
+	 *
+	 * <p>공개 이유: 성과 대시보드의 경량 ref({@code PerformanceContentAssembler.refOfPoolRow})가 카드를
+	 * 조립하지 않고도 같은 아카이브 우선 규칙을 공유해야 한다 — 판정 함수를 이원화하면 ref와 카드의
+	 * 프로필 이미지가 갈린다.
 	 */
-	static String resolveImageUrl(String imageObjectPath, String originalUrl) {
+	public static String resolveImageUrl(String imageObjectPath, String originalUrl) {
 		if (imageObjectPath != null) {
 			return "/img/" + imageObjectPath;
 		}

@@ -74,7 +74,7 @@ public class SimilarJob {
      */
     public Summary run(TriggerType trigger) {
         List<Influencer> seeds = influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                InfluencerStatus.QUALIFIED, settings.fnbPipelineEnabled(),
+                InfluencerStatus.QUALIFIED, settings.fnbPipelineEnabled(), settings.homeLivingPipelineEnabled(),
                 PageRequest.of(0, settings.similarBatchLimit(), Sort.by("id")));
         int processed = 0, newInf = 0, known = 0, ineligible = 0, failed = 0;
         int total = seeds.size(), i = 0;
