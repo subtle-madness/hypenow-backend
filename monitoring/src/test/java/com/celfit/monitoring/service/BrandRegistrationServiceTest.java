@@ -8,7 +8,6 @@ import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.store.BrandCallCountRepository;
-import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.TaggedPostRepository;
@@ -18,10 +17,8 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -248,24 +245,6 @@ class BrandRegistrationServiceTest {
 		}
 	}
 
-	/** insertTags는 ON CONFLICT DO NOTHING이라 재현은 LinkedHashSet 유니온으로 — 재등록 순서 검증용. */
-	private static final class StubHashtags extends BrandHashtagRepository {
-		final Map<Long, LinkedHashSet<String>> tags = new HashMap<>();
-		boolean failing;
-
-		StubHashtags() {
-			super(null);
-		}
-
-		@Override
-		public void insertTags(long brandId, Collection<String> newTags) {
-			if (failing) {
-				throw new IllegalStateException("해시태그 시드 실패 주입");
-			}
-			tags.computeIfAbsent(brandId, k -> new LinkedHashSet<>()).addAll(newTags);
-		}
-	}
-
 	private static final class StubHashtagCollect extends BrandHashtagCollectService {
 		final List<String> swept = new CopyOnWriteArrayList<>();
 		boolean failing;
@@ -325,7 +304,6 @@ class BrandRegistrationServiceTest {
 	private final StubCollect collect = new StubCollect();
 	private final InMemoryBrands brands = new InMemoryBrands(() -> collect.enrichedCodes());
 	private final RecordingCallCounts callCounts = new RecordingCallCounts();
-	private final StubHashtags hashtags = new StubHashtags();
 	private final StubHashtagCollect hashtagCollect = new StubHashtagCollect();
 	private final StubTaggedPosts taggedPosts = new StubTaggedPosts();
 	/** 실 기본값(application.yml)과 같은 상한 — 개별 테스트가 필요하면 바꾼다. */
@@ -414,7 +392,7 @@ class BrandRegistrationServiceTest {
 			return PROFILE_JSON;
 		});
 		return new BrandRegistrationService(hiker, brands, collect, callCounts,
-				hashtags, hashtagCollect, taggedPosts, collectionPostLimit,
+				hashtagCollect, taggedPosts, collectionPostLimit,
 				Runnable::run, enrich, hashtagSweep);
 	}
 
@@ -742,26 +720,37 @@ class BrandRegistrationServiceTest {
 	}
 
 	/**
-	 * 2026-08-17 축소 — 제외 문자열 폐기와 함께 자동 시드가 3종에서 계정명 태그 1종으로 줄었다.
-	 * brandName을 전달해도(하위 호환) 더 이상 시드에 반영되지 않는다.
+	 * 2026-08-28 태그 생성 권한 was 일원화 — monitoring은 더 이상 brand_hashtag에 아무것도 심지
+	 * 않는다(구 계정명 태그 1종 자동 시드 제거). 유도 태그 push는 was가 링크 생성 시 일반 태그
+	 * add로 담당한다({@code V1BrandAccountService#seedLedgerTagsSafely} 참조) — 여기서 검증할
+	 * 수 있는 건 등록이 성공하고(brandId·followers 정상) 여전히 즉시 스윕 트리거는 유지된다는
+	 * 사실뿐이다(스윕 자체가 태그 시드에 의존하지 않는다는 방증).
 	 */
 	@Test
-	void 등록은_계정명_태그_1종만_시드한다() {
+	void 등록은_태그를_시드하지_않는다() {
 		var result = service().register("cclime_official", "끌리메");
+		awaitEnrich();
+		awaitHashtagSweep();
 
-		assertThat(hashtags.tags.get(result.brandId())).containsExactly("cclime_official");
+		assertThat(result.replayed()).isFalse();
+		// 태그 시드 경로 자체가 없다 — hashtagCollect.sweep은 (여기선 태그 0건이라도) 백필 꼬리로 여전히 돈다.
+		assertThat(hashtagCollect.swept).containsExactly("cclime_official");
 	}
 
 	@Test
-	void 활성_replay_재등록도_태그_시드를_재시도한다_멱등() {
+	void 활성_replay_재등록도_태그를_시드하지_않는다() {
 		var service = service();
 		var first = service.register("cclime_official");
-		assertThat(hashtags.tags.get(first.brandId())).containsExactly("cclime_official");
+		awaitEnrich();
+		awaitHashtagSweep();
+		hashtagCollect.swept.clear();
 
-		var replayed = service.register("cclime_official");   // replay — insertTags는 ON CONFLICT DO NOTHING
+		var replayed = service.register("cclime_official");   // replay — 시드 없이 스윕만 트리거
+		awaitHashtagSweep();
 
 		assertThat(replayed.replayed()).isTrue();
-		assertThat(hashtags.tags.get(first.brandId())).containsExactly("cclime_official");
+		assertThat(replayed.brandId()).isEqualTo(first.brandId());
+		assertThat(hashtagCollect.swept).containsExactly("cclime_official");
 	}
 
 	/**
@@ -782,13 +771,15 @@ class BrandRegistrationServiceTest {
 		assertThat(hashtagCollect.swept).containsExactly("brandx");
 	}
 
+	/** 백필 완주(lastSweptOn 있음) 브랜드는 태그 추가 즉시 스윕이 정상 트리거된다. */
 	@Test
-	void 태그가_있으면_즉시_스윕을_트리거한다() {
+	void 태그가_있고_백필이_완주된_브랜드는_즉시_스윕을_트리거한다() {
 		var result = service().register("brandx");
 		awaitEnrich();
 		awaitHashtagSweep();
 		hashtagCollect.swept.clear();
 
+		assertThat(brands.rows.get("brandx").lastSweptOn()).isNotNull();   // 전제 — 완주 상태
 		service().triggerHashtagSweepIfNonEmpty(brands.rows.get("brandx"), List.of("cclime"));
 		awaitHashtagSweep();
 
@@ -806,6 +797,23 @@ class BrandRegistrationServiceTest {
 		awaitHashtagSweep();
 
 		assertThat(hashtagCollect.swept).isEmpty();
+	}
+
+	/**
+	 * 초기 백필 미완(lastSweptOn null) 브랜드는 태그 추가 즉시 스윕을 스킵한다(2026-08-28) — was의
+	 * 신규 등록 태그 push가 백필과 동시에 도착해도 전역 콜 예산을 더 경합하지 않는다. 백필 꼬리의
+	 * triggerHashtagSweep이 곧 이 태그까지 커버한다({@link BrandRegistrationService
+	 * #triggerHashtagSweepIfNonEmpty} 참조).
+	 */
+	@Test
+	void 초기_백필_미완_브랜드는_태그가_있어도_즉시_스윕을_스킵한다() {
+		brands.rows.put("brandx", new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12, true));
+
+		service().triggerHashtagSweepIfNonEmpty(brands.rows.get("brandx"), List.of("cclime"));
+		awaitHashtagSweep();
+
+		assertThat(hashtagCollect.swept).isEmpty();
+		assertThat(hashtagSweepSubmissions).isEmpty();   // executor에 아예 제출되지 않는다
 	}
 
 	@Test
@@ -834,18 +842,6 @@ class BrandRegistrationServiceTest {
 		assertThat(brands.touched).containsExactly(result.brandId());
 		assertThat(brands.backfillErrors).doesNotContainKey(result.brandId());   // core는 이미 성공
 		assertThat(collect.enriched).containsExactly("brandx");   // 보강은 정상 실행됨
-	}
-
-	@Test
-	void 해시태그_시드_실패는_등록과_백필_예약을_깨지_않는다() {
-		hashtags.failing = true;
-
-		var result = service().register("brandx");   // seedHashtagsSafely가 던져도 여기서 새면 안 된다
-
-		assertThat(result.replayed()).isFalse();                  // 등록 자체는 성공
-		assertThat(collect.coreSwept).containsExactly("brandx");   // backfill.execute가 정상 호출·실행됨
-		assertThat(brands.touched).containsExactly(result.brandId());
-		assertThat(hashtags.tags).doesNotContainKey(result.brandId());   // 시드 자체는 실패해 미기록
 	}
 
 	@Test

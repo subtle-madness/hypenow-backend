@@ -5,7 +5,6 @@ import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.store.BrandCallCountRepository;
-import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.TaggedPostRepository;
@@ -75,7 +74,6 @@ public class BrandRegistrationService {
 	private final BrandRepository brands;
 	private final BrandCollectService collect;
 	private final BrandCallCountRepository callCounts;
-	private final BrandHashtagRepository hashtags;
 	private final BrandHashtagCollectService hashtagCollect;
 	private final TaggedPostRepository taggedPosts;
 	/** 수집 개수 상한 — BrandCollectService와 같은 키. 0 이하는 무제한(= 확장 스킵 비활성). */
@@ -86,7 +84,7 @@ public class BrandRegistrationService {
 
 	public BrandRegistrationService(HikerClient hiker, BrandRepository brands,
 			BrandCollectService collect, BrandCallCountRepository callCounts,
-			BrandHashtagRepository hashtags, BrandHashtagCollectService hashtagCollect,
+			BrandHashtagCollectService hashtagCollect,
 			TaggedPostRepository taggedPosts,
 			@Value("${monitoring.brand.collection-post-limit:2000}") int collectionPostLimit,
 			@Qualifier("brandBackfillExecutor") Executor backfill,
@@ -96,7 +94,6 @@ public class BrandRegistrationService {
 		this.brands = brands;
 		this.collect = collect;
 		this.callCounts = callCounts;
-		this.hashtags = hashtags;
 		this.hashtagCollect = hashtagCollect;
 		this.taggedPosts = taggedPosts;
 		this.collectionPostLimit = collectionPostLimit;
@@ -109,10 +106,10 @@ public class BrandRegistrationService {
 	private static final String ACCOUNT_TYPE_COMPETITOR = "competitor";
 
 	/**
-	 * 기존 단일 인자 호출부용 위임 — brandName은 더 이상 시드에 쓰이지 않으므로(계정명 태그
-	 * 1종만 유도, {@link #seedHashtagsSafely} 참조) 결과는 register(username, brandName)과
-	 * 같다. collectionMonths 미상은 기본 12개월로 접는다. accountType 미상은 own(2026-08-19
-	 * 경쟁사 판정 제거 설계 — {@link #register(String, String, Integer, String)} 참조).
+	 * 기존 단일 인자 호출부용 위임 — brandName은 더 이상 시드에 쓰이지 않는다(2026-08-28부터 태그
+	 * 시드 자체가 monitoring 책임이 아니다 — was가 링크 생성 시 유도 태그를 일반 태그 add로
+	 * push한다, {@link #register(String, String, Integer, String)} 참조). collectionMonths 미상은
+	 * 기본 12개월로 접는다. accountType 미상은 own(2026-08-19 경쟁사 판정 제거 설계).
 	 */
 	public Result register(String username) {
 		return register(username, null, null, null);
@@ -133,11 +130,12 @@ public class BrandRegistrationService {
 	 * 프로필 콜이 계정 부재·비공개를 던지면 brand_account 행을 아예 만들지 않는다
 	 * (RegistrationService "수집이 먼저다" 관용구 — 예외는 ApiExceptionHandler가 매핑).
 	 *
-	 * <p>replay 경로에도 해시태그를 시드한다(스펙 §2, insertTags는 ON CONFLICT DO NOTHING이라
-	 * 멱등) — 그리고 2026-08-17부터는 시드 직후 즉시 스윕도 트리거한다. replay는 신규 등록과
-	 * 달리 백필이 돌지 않아(hiker 콜 0이 replay의 존재 이유) 예전엔 재등록 시점의 즉시 조회가
-	 * 없었다 — "해시태그를 등록한 당시에 조회해서 당일 게시물을 즉시 추가한다"는 합의된 동작을
-	 * replay 경로에도 채운다({@link #triggerHashtagSweep} 참조).
+	 * <p>replay 경로에서도 즉시 스윕을 트리거한다(2026-08-17). replay는 신규 등록과 달리 백필이
+	 * 돌지 않아(hiker 콜 0이 replay의 존재 이유) 예전엔 재등록 시점의 즉시 조회가 없었다 —
+	 * "해시태그를 등록한 당시에 조회해서 당일 게시물을 즉시 추가한다"는 합의된 동작을 replay
+	 * 경로에도 채운다({@link #triggerHashtagSweep} 참조). <b>태그 시드 자체는 2026-08-28부터
+	 * monitoring이 하지 않는다</b> — 태그 생성 권한이 was로 일원화돼(was가 링크 생성 시 유도
+	 * 태그를 일반 태그 add로 push), 여기서는 이미 존재하는 태그로 스윕만 돌린다.
 	 *
 	 * <p>replay 경로에서 요청 collectionMonths가 기존 창보다 크면 기간 확장(expandIfRequested)까지
 	 * 수행한다 — 재등록이 창 상향의 유일한 입구다(별도 API 없음).
@@ -161,7 +159,6 @@ public class BrandRegistrationService {
 		String normalized = username.strip();
 		var existing = brands.findByUsername(normalized);
 		if (existing.isPresent() && existing.get().status() == BrandStatus.ACTIVE) {
-			seedHashtagsSafely(existing.get().id(), normalized, brandName);
 			triggerHashtagSweep(existing.get());
 			expandIfRequested(existing.get(), months);
 			if (ownRequest && !existing.get().hasOwnLink()) {
@@ -176,7 +173,6 @@ public class BrandRegistrationService {
 		// 등록 실패(계정 부재·비공개) 콜은 귀속할 브랜드가 없어 미집계다(어드민 크롤링 비용 설계).
 		callCounts.add(id, LocalDate.now(KST), 1);
 		BrandRow row = brands.findByUsername(normalized).orElseThrow();
-		seedHashtagsSafely(id, normalized, brandName);
 		backfill.execute(() -> runBackfillSafely(row));
 		logRegistered(normalized, startNanos, false);
 		return new Result(id, normalized, profile.followers(), false);
@@ -230,25 +226,6 @@ public class BrandRegistrationService {
 		}
 		BrandRow row = brands.findByUsername(existing.username()).orElseThrow();
 		backfill.execute(() -> runBackfillSafely(row));
-	}
-
-	/**
-	 * 계정명 태그 1종 시드(2026-08-17 축소 — 제외 문자열 폐기와 함께 자동 시드가 3종에서 1종으로
-	 * 줄었다) — 멱등 삽입. brandName은 하위 호환을 위해 계속 받지만 더 이상 시드에 쓰지 않는다
-	 * (과거엔 브랜드명 태그·제외 문자열 기본값 재료였으나 둘 다 폐지돼 파라미터만 남았다 — 시그니처를
-	 * 지우면 register(username, brandName[, months]) 기존 호출부가 전부 깨진다).
-	 *
-	 * <p>insertOrReactivate(이미 커밋됨)와 backfill.execute 사이 지점이라 실패를 격리한다 — 여기서
-	 * 던지면 백필이 영구 미예약되는데, 재시도는 replay 분기를 타서 복구할 수 없다(신규 등록
-	 * 자체는 이미 끝난 상태). 시드 실패의 실피해는 "해시태그 스윕이 태그 없음으로 조용히
-	 * 스킵"뿐이고 다음 replay 재등록이 재시드하므로, 등록·백필을 막지 않는 warn 격리가 맞다.
-	 */
-	private void seedHashtagsSafely(long brandId, String username, String brandName) {
-		try {
-			hashtags.insertTags(brandId, BrandHashtagTags.derive(username));
-		} catch (RuntimeException e) {
-			log.warn("브랜드 해시태그 시드 실패(격리) — {} 다음 재등록이 재시드: {}", username, e.toString());
-		}
 	}
 
 	/**
@@ -338,11 +315,25 @@ public class BrandRegistrationService {
 	 * 빠른 Hiker 콜 위주인 보강 워커(2스레드)를 분 단위로 점유해 뒤 계정 백필을 지연시킨 운영 사고
 	 * 후속으로 전용 executor로 분리했다({@link com.celfit.monitoring.config.BrandBackfillConfig}
 	 * 참조).
+	 *
+	 * <p><b>초기 백필 미완 브랜드는 스킵한다</b>(2026-08-28 태그 생성 권한 was 일원화 후속) — 신규
+	 * 등록 직후 was가 시드 태그를 push하는데, 초기 백필과 해시태그 스윕이 동시에 돌면 전역 콜
+	 * 예산(14)을 경합한다. row.lastSweptOn()이 null이면 아직 backfill 꼬리({@link #runBackfillSafely}
+	 * 끝의 {@link #triggerHashtagSweep})가 돌지 않은 상태이고, 그 꼬리가 곧 이 태그까지 쓸어주므로
+	 * 여기서 또 스윕을 얹을 필요가 없다. 경합 없음: was의 push가 touchSwept <b>뒤</b>에 도착하면
+	 * 이 가드를 통과해 정상 트리거되고, touchSwept <b>전</b>에 도착하면 뒤이은 백필 꼬리
+	 * triggerHashtagSweep이 그 태그를 커버한다 — 순서 무관 안전.
 	 */
 	public void triggerHashtagSweepIfNonEmpty(BrandRow row, List<String> tags) {
-		if (!tags.isEmpty()) {
-			triggerHashtagSweep(row);
+		if (tags.isEmpty()) {
+			return;
 		}
+		if (row.lastSweptOn() == null) {
+			log.info("초기 백필 미완 — 태그 추가 즉시 스윕 스킵(백필 꼬리가 대신 처리) brandId={}, username={}",
+					row.id(), row.username());
+			return;
+		}
+		triggerHashtagSweep(row);
 	}
 
 	private void triggerHashtagSweep(BrandRow row) {
