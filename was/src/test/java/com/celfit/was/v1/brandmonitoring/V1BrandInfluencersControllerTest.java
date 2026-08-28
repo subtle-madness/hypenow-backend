@@ -22,6 +22,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPostIndexRow;
 import com.celfit.was.monitoring.BrandReadRepository.LatestSnapshotRow;
 import com.celfit.was.monitoring.MonitoringItemRepository;
+import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import java.time.Clock;
@@ -397,6 +398,65 @@ class V1BrandInfluencersControllerTest {
 				.andExpect(jsonPath("$.meta.limit").value(1));
 	}
 
+	// ---------- 수집 상한 모수 ----------
+
+	@Test
+	void 수집_상한을_넘는_계정은_최신순_2000으로_잘리고_collectionCapped가_true다() throws Exception {
+		// FE 요청 2026-08-28 ② — 게시물 목록은 이 컷을 08-27부터 걸었는데 이 표면만 안 걸어,
+		// 목록이 "게시물 14개"로 센 작성자를 눌러 들어가면 10개만 나왔다(실측 인원 2,800 vs 1,607).
+		givenLinks(link(100L, 12));
+		givenAccount(100L);
+		givenIndex(100L, cappedSeed(2100));
+		givenMetrics(100L);
+
+		mockMvc.perform(get(URL).param("accountIds", "100").with(user(principal())))
+				.andExpect(status().isOk())
+				// 게시물 1건당 작성자 1명 시드라 통과 인원이 곧 통과 게시물 수다.
+				.andExpect(jsonPath("$.meta.total").value(2000))
+				.andExpect(jsonPath("$.meta.collectionCapped").value(true));
+
+		// 상한 안쪽 경계는 남고, 바깥은 어떤 필터로도 나오지 않는다.
+		mockMvc.perform(get(URL).param("accountIds", "100").param("keyword", "u1999")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1));
+		mockMvc.perform(get(URL).param("accountIds", "100").param("keyword", "u2099")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(0));
+	}
+
+	@Test
+	void 상한_컷이_업로드_기간_필터보다_앞이라_잘린_게시물은_되살아나지_않는다() throws Exception {
+		// 컷을 기간 필터 뒤에 걸면 기간을 좁힐 때마다 상한 밖 게시물이 되살아나, 같은 계정의
+		// 모수가 필터에 따라 달라진다. 게시물 목록과 같은 순서(링크 창 → 컷 → 기간)를 고정한다.
+		givenLinks(link(100L, 12));
+		givenAccount(100L);
+		givenIndex(100L, cappedSeed(2100));
+		givenMetrics(100L);
+		// 가장 오래된 시드의 업로드일 — 상한 밖(인덱스 2000~2099) 게시물만 있는 날이다.
+		String cutDate = KstTimestamps.toKstDate(CAP_SEED_NEWEST.minusHours(2099)).toString();
+
+		mockMvc.perform(get(URL).param("accountIds", "100")
+						.param("uploadedFrom", cutDate).param("uploadedTo", cutDate)
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(0))
+				.andExpect(jsonPath("$.meta.total").value(0))
+				// 기간 필터로 0건이 됐어도 모수가 잘린 사실은 남는다(FE가 "왜 적나"를 알 수 있게).
+				.andExpect(jsonPath("$.meta.collectionCapped").value(true));
+	}
+
+	@Test
+	void 상한_이하면_collectionCapped가_false다() throws Exception {
+		givenThreeInfluencers();
+
+		mockMvc.perform(get(URL).param("accountIds", "100").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.meta.total").value(3))
+				.andExpect(jsonPath("$.meta.collectionCapped").value(false));
+	}
+
 	// ---------- 시드 ----------
 
 	/** 팔로워·협찬·업로드일이 전부 갈리는 3인 시드 — 필터·정렬 단언이 실값으로 갈리게 한다. */
@@ -408,6 +468,23 @@ class V1BrandInfluencersControllerTest {
 				indexRow("B", "2026-08-04T00:00:00Z", "beautykim", "뷰티킴", 5_000L, false),
 				indexRow("C", "2026-08-03T00:00:00Z", "skinlog", "스킨로그", 60_000L, false));
 		givenMetrics(100L, metrics("A", 100L, 10L), metrics("B", 200L, 20L), metrics("C", 300L, 30L));
+	}
+
+	/** 수집 상한 시드의 최신 업로드 시각 — 링크 창(12개월) 안이고 고정 시계(08-08)보다 과거다. */
+	private static final OffsetDateTime CAP_SEED_NEWEST = OffsetDateTime.parse("2026-08-06T00:00:00Z");
+
+	/**
+	 * 상한 컷 검증용 시드 — 인덱스가 커질수록 1시간씩 과거이고 작성자가 전부 다르다(게시물 1건 =
+	 * 작성자 1명이라 통과 인원으로 통과 게시물 수를 읽을 수 있다). 2,100건이면 상한 밖 100건이
+	 * 4일치라, 가장 오래된 날은 잘린 게시물만 있는 날이 된다(기간 필터 순서 검증에 쓴다).
+	 */
+	private static BrandPostIndexRow[] cappedSeed(int count) {
+		BrandPostIndexRow[] rows = new BrandPostIndexRow[count];
+		for (int i = 0; i < count; i++) {
+			rows[i] = indexRow("P" + i, CAP_SEED_NEWEST.minusHours(i).toString(),
+					"u" + i, "작성자" + i, 1_000L, false);
+		}
+		return rows;
 	}
 
 	private void givenLinks(BrandLinkRow... links) {

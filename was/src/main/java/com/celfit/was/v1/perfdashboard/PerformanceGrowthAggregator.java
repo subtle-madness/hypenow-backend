@@ -181,10 +181,20 @@ public final class PerformanceGrowthAggregator {
 	 * 총계와 계정 축의 라벨이 언제나 같다.
 	 *
 	 * <p>likes는 숨김이면 합산에서 빼고 {@code likesHiddenCount}로만 남긴다 — {@code /comparison}
-	 * ({@code PerformanceComparisonAssembler.aggregate})은 게이트 없이 더하지만 결과는 같다:
-	 * 숨김 ref의 likes는 항상 null이라 더할 값 자체가 없다. 이 불변식(숨김이면 값 null)은 단일
-	 * 산지 계약이고, 산지가 둘인 콘텐츠의 스냅샷 병합({@code PerformanceContentAssembler.mergeOne},
-	 * 2026-08-28 정합)도 숨김 관측이 있으면 값을 접어 유지한다.
+	 * ({@code PerformanceComparisonAssembler.aggregate})은 게이트 없이 더하지만 <b>likes에 한해</b>
+	 * 결과는 같다: 숨김 ref의 likes는 항상 null이라 더할 값 자체가 없다. 이 불변식(숨김이면 값 null)은
+	 * 단일 산지 계약이고, 산지가 둘인 콘텐츠의 스냅샷 병합({@code PerformanceContentAssembler.mergeOne},
+	 * 2026-08-28 정합)도 숨김 관측이 있으면 값을 접어 유지한다. <b>이 동치는 댓글·팔로워로 확장되지
+	 * 않는다</b> — 둘 다 숨김이어도 값이 남으므로, 게이트를 두는 쪽과 안 두는 쪽의 결과가 갈린다
+	 * (아래 {@code ratedComments}·{@code followersSum}. {@code /comparison}은 팔로워를 무조건
+	 * 더하는 구 규칙이라 그 표면의 분모는 아직 08-27 ① 수정 전이다).
+	 *
+	 * <p><b>댓글은 두 벌이다</b>(FE 요청 2026-08-28 ①) — {@code comments}는 08-06 계약대로 관측
+	 * 전량(숨김 포함)이고, 참여율 분자로 쓸 값은 {@code ratedComments}(likes와 같은 게이트)다.
+	 * 기존 필드의 의미를 바꾸지 않고 더한 이유는 {@code comments}를 쓰는 소비자를 깨지 않기
+	 * 위해서다. 두 값을 <b>같은 else 블록 안</b>에서 더하는 게 이 설계의 요점이다 — 분자의 두 항이
+	 * 떨어진 자리에서 더해지면 모수가 갈렸는지를 코드를 읽어서 알 수 없다(이번 결함이 정확히 그
+	 * 형태였다: {@code comments}만 게이트 밖에 있었다).
 	 *
 	 * <p><b>followersSum은 참여율 분모다</b>(FE 요청 2026-08-27 ①) — 좋아요를 아는 게시물
 	 * (스냅샷 있음 + 숨김 아님 + likes 값 있음)의 팔로워만 담는다. 팔로워를 알면 무조건 더하던 구
@@ -198,6 +208,7 @@ public final class PerformanceGrowthAggregator {
 		Long views = null;
 		Long likes = null;
 		Long comments = null;
+		Long ratedComments = null;
 		Long followersSum = null;
 		int viewsMissingCount = 0;
 		int likesHiddenCount = 0;
@@ -224,6 +235,9 @@ public final class PerformanceGrowthAggregator {
 			}
 			else {
 				likes = accumulate(likes, ref.latestLikes());
+				// 참여율 분자의 댓글 쪽(FE 요청 2026-08-28 ①) — likes와 같은 게이트 안에 두는 것이
+				// 이 한 줄의 전부다. 두 값이 다른 위치에서 더해지면 모수가 갈렸는지 읽어서 알 수 없다.
+				ratedComments = accumulate(ratedComments, ref.latestComments());
 				// 참여율 분모(FE 요청 2026-08-27 ①) — 분자(likes)에 실리는 게시물의 팔로워만 담는다.
 				// 숨김·미상으로 분자에서 빠진 게시물이 분모에 남으면 참여율이 과소 표시된다.
 				// 인플루언서 집계 ratedFollowers(likesKnown && followers != null)와 같은 게이트다.
@@ -236,7 +250,7 @@ public final class PerformanceGrowthAggregator {
 
 		return new Point(clampStart(start, from).toString(),
 				clampEnd(bucketEnd(start, granularity), to).toString(), bucket.size(),
-				views, likes, comments, followersSum,
+				views, likes, comments, ratedComments, followersSum,
 				viewsMissingCount, likesHiddenCount, followersMissingCount);
 	}
 
