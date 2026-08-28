@@ -35,11 +35,4 @@ class DispatchLaneTest {
 		assertThat(DispatchLane.morning(justAfterMidnightKst))
 				.isEqualTo(Instant.parse("2026-07-30T00:00:00Z"));
 	}
-
-	@Test
-	void 즉시_레인은_발생_시각_그대로다() {
-		Instant now = Instant.parse("2026-07-30T05:00:00Z");
-
-		assertThat(DispatchLane.immediate(now)).isEqualTo(now);
-	}
 }

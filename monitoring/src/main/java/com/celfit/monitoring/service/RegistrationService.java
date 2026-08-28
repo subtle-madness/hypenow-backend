@@ -125,10 +125,10 @@ public class RegistrationService {
 				TargetStatus.TRACKING, shortCode, cmd.registrationKey(), cmd.expiresAt());
 		targets.touchFetched(id);
 		// 게시물 직접 등록은 등록 = 수집 시작이다. replay 경로는 여기 오지 않으므로 재시도로 중복되지 않는다.
-		// alarms.collectionStartedImmediate는 AlarmRecorder 정책상 예외를 던지지 않는다 — 적재가
+		// alarms.collectionStarted는 AlarmRecorder 정책상 예외를 던지지 않는다 — 적재가
 		// 실패해도 등록 자체는 계속 201로 성공하고, 그 알람 이벤트는 재시도 없이 유실된다(로그로만 관측).
 		// replay는 target 중복 방지(멱등)만 보장할 뿐 이 알람 유실을 복구하지 않는다.
-		alarms.collectionStartedImmediate(id, cmd.userId(), post.username(), shortCode);
+		alarms.collectionStarted(id, cmd.userId(), post.username(), shortCode);
 		scheduleMetricsBackfill(cmd.userId(), post);
 		var snapshot = new PostSnapshot(new PostSnapshot.Post(post.shortCode(), post.contentType(),
 				post.likes(), post.comments(), post.views(), post.saves(), post.shares(), post.reposts()));

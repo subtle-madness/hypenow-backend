@@ -426,7 +426,7 @@ public class DailySweepJob {
 			if (detected != null) {
 				// 승인 단계 없이 바로 추적으로 넘어간다(스펙 §2-2).
 				targets.markTracking(t.id(), detected.shortCode(), t.keywordRule().matchedTerms(detected.caption()));
-				alarms.collectionStartedScheduled(t.id(), t.userId(), t.username(), detected.shortCode());
+				alarms.collectionStarted(t.id(), t.userId(), t.username(), detected.shortCode());
 				log.info("첫 감지 자동 전환 — target {} → TRACKING {}", t.id(), detected.shortCode());
 				// 감지 당일도 추적 게시물 규칙(아래)과 동일하게 단건 정본 수집 — 열거 스냅샷만 남기면
 				// 캠페인 첫날부터 공유수가 세션 복불복에 걸린다(1번 결정, 08-04).

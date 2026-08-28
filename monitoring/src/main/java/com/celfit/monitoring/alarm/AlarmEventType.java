@@ -8,7 +8,7 @@ import java.util.Optional;
  */
 public enum AlarmEventType {
 
-	/** 게시물 수집 시작 — 직접 등록(즉시 레인) 또는 스윕 첫 감지 자동 전환(아침 레인). */
+	/** 게시물 수집 시작 — 직접 등록 또는 스윕 첫 감지 자동 전환(둘 다 아침 레인 — 즉시 레인은 주간 개편에서 폐지). */
 	COLLECTION_STARTED,
 	/** 게시물 수집 종료 — 기간 만료(EXPIRED 전이). */
 	COLLECTION_ENDED,

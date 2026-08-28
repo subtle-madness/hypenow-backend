@@ -171,6 +171,25 @@ public class BrandDirectPostRepository {
 				.list());
 	}
 
+	/** (user, shortcode) 쌍 전체 — 유저별 등록 매핑 1행({@link #shortCodesByUser}의 전 유저 배치 버전). */
+	public record UserShortCodeRow(long userId, String shortCode) {
+	}
+
+	/**
+	 * 등록 원장 전체({@code app.brand_direct_posts})를 유저 스코프 없이 한 번에 읽는다(2026-08-28
+	 * 품질 리뷰 I3) — 주간 다이제스트 잡이 대상 유저 수만큼 {@link #shortCodesByUser}를 반복 호출하던
+	 * N+1을 없앤다. 호출부가 결과를 userId로 그룹핑해 쓴다(BrandLinkRepository#findAllActive와 같은
+	 * "전 유저 배치 변형" 패턴). 테이블 규모가 작아(유저당 등록 게시물 소수) 전량 조회 부담이 없다.
+	 */
+	public List<UserShortCodeRow> findAllUserShortCodes() {
+		return jdbcClient.sql("""
+				SELECT user_id, short_code FROM app.brand_direct_posts
+				ORDER BY user_id, short_code ASC
+				""")
+				.query(UserShortCodeRow.class)
+				.list();
+	}
+
 	/** 취소 대상 매핑 단건 조회(2026-08-17 취소 API) — PK(user_id, short_code)로 직접 찾는다. */
 	public Optional<Row> findByUserAndShortCode(long userId, String shortCode) {
 		return jdbcClient.sql("""

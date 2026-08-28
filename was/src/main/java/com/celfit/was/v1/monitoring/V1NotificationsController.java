@@ -36,15 +36,20 @@ public class V1NotificationsController {
 		this.assembler = assembler;
 	}
 
-	/** 최근 다이제스트 — date DESC 최대 30건(상수, 1.4의 두 예외 중 하나), meta.total은 창과 무관한 전체 건수. */
+	/**
+	 * 최근 다이제스트 — date DESC 최대 30건(상수, 1.4의 두 예외 중 하나), meta.total은 창과 무관한
+	 * 전체 건수. items가 비워진(클리어된) 행은 findVisibleRecentByUser/countVisibleByUser가
+	 * 걸러내 노출되지 않는다(2026-08-28 재리뷰 Important — WeeklyDigestJob이 킬 스위치 off·브랜드
+	 * 연결 해제 등으로 조립 결과가 비면 행을 지우지 않고 items만 비워 email_sent_at을 보존한다).
+	 */
 	@GetMapping("/v1/notifications")
 	public ApiResponse<List<DigestResponse>> list(@AuthenticationPrincipal AppUserDetails principal) {
 		long userId = principal.getUserId();
-		List<DigestResponse> items = repository.findRecentByUser(userId, RECENT_LIMIT).stream()
+		List<DigestResponse> items = repository.findVisibleRecentByUser(userId, RECENT_LIMIT).stream()
 				.map(assembler::toResponse)
 				.toList();
 		Map<String, Object> meta = new LinkedHashMap<>();
-		meta.put("total", repository.countByUser(userId));
+		meta.put("total", repository.countVisibleByUser(userId));
 		return ApiResponse.ok(items, meta);
 	}
 

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.was.IntegrationTest;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -184,6 +185,40 @@ class BrandLinkRepositoryTest extends IntegrationTest {
 
 		assertThat(repository.countActiveByBrand(brandA)).isEqualTo(1);
 		assertThat(repository.countActiveByBrand(brandB)).isZero();
+	}
+
+	@Test
+	void findAllActive는_해제된_연결을_빼고_전_유저를_돌려준다() {
+		long other = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
+				.param("email", "brand-link-" + UUID.randomUUID() + "@test.io")
+				.query(Long.class).single();
+		repository.insertLink(userId, brandA, "lizda_official", "own", 12);
+		repository.insertLink(other, brandB, "other_brand", "own", 12);
+		repository.softDeleteLink(other, brandB);
+
+		List<BrandLinkRow> active = repository.findAllActive();
+
+		assertThat(active).extracting(BrandLinkRow::userId).contains(userId).doesNotContain(other);
+		assertThat(active).allSatisfy(row -> assertThat(row.deletedAt()).isNull());
+	}
+
+	@Test
+	void findAllActive는_유저_생성순_id순으로_정렬된다() {
+		long other = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
+				.param("email", "brand-link-" + UUID.randomUUID() + "@test.io")
+				.query(Long.class).single();
+		long lowerUser = Math.min(userId, other);
+		long higherUser = Math.max(userId, other);
+		long lowerBrand = lowerUser == userId ? brandA : brandB;
+		long higherBrand = higherUser == userId ? brandA : brandB;
+		repository.insertLink(higherUser, higherBrand, "second_brand", "own", 12);
+		repository.insertLink(lowerUser, lowerBrand, "first_brand", "own", 12);
+
+		List<BrandLinkRow> active = repository.findAllActive().stream()
+				.filter(row -> row.userId() == userId || row.userId() == other)
+				.toList();
+
+		assertThat(active).extracting(BrandLinkRow::userId).containsExactly(lowerUser, higherUser);
 	}
 
 	@Test

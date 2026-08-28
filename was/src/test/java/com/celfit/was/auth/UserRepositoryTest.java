@@ -6,9 +6,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.celfit.was.IntegrationTest;
 import com.celfit.was.monitoring.CampaignRepository;
 import com.celfit.was.monitoring.DigestRepository;
-import com.celfit.was.monitoring.EmailOptOutRepository;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.monitoring.RegistrationRepository;
+import com.celfit.was.monitoring.WeeklyEmailOptOutRepository;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +41,7 @@ class UserRepositoryTest extends IntegrationTest {
 	DigestRepository digestRepository;
 
 	@Autowired
-	EmailOptOutRepository emailOptOutRepository;
+	WeeklyEmailOptOutRepository weeklyEmailOptOutRepository;
 
 	private NewUser newUser(String email, boolean agreedMarketing) {
 		return new NewUser(email, "김우민", "우민", "brand", "portal_search",
@@ -398,7 +398,7 @@ class UserRepositoryTest extends IntegrationTest {
 		registrationRepository.insertEntry(registrationId, 1, "order-handle", "account", "success",
 				null, null, null, null);
 		digestRepository.upsert(userId, LocalDate.now(), "[]");
-		emailOptOutRepository.optOut(userId, "collection_started");
+		weeklyEmailOptOutRepository.optOut(userId);
 		jdbcClient.sql("INSERT INTO app.notice_seen (user_id, last_seen_at) VALUES (:id, now())")
 				.param("id", userId)
 				.update();

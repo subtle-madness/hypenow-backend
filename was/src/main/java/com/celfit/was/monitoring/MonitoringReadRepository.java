@@ -258,11 +258,12 @@ public class MonitoringReadRepository {
 	}
 
 	/**
-	 * KST 날짜 구간([fromKstDate, toKstDateInclusive])의 알람 이벤트(갭 문서 A-1-2, 다이제스트
-	 * 크론의 유일한 입력) — 회고 창 재계산(DigestJob 클래스 Javadoc "자정 넘김 유실 해소" 절
-	 * 참조). 워터마크 없이 구간 전체를 매번 다시 읽으므로 몇 번을 재실행해도 안전하다.
-	 * 하한은 fromKstDate의 KST 자정(포함), 상한은 toKstDateInclusive **다음 날**의 KST 자정
-	 * (배타) — 고정 Clock 테스트에서 미래 날짜 이벤트가 섞이지 않도록 KST 날짜 경계 배제
+	 * KST 날짜 구간([fromKstDate, toKstDateInclusive])의 알람 이벤트(갭 문서 A-1-2) — 주간
+	 * 다이제스트 크론({@link com.celfit.was.monitoring.WeeklyDigestJob})의 유일한 alarm_event
+	 * 입력이다. 워터마크 없이 구간 전체를 매번 다시 읽으므로 몇 번을 재실행해도 안전하다(호출부가
+	 * 같은 주간 창을 넘기는 한 같은 결과를 재현 — WeeklyDigestJob 클래스 Javadoc "명시적 창" 절
+	 * 참조). 하한은 fromKstDate의 KST 자정(포함), 상한은 toKstDateInclusive **다음 날**의 KST
+	 * 자정(배타) — 고정 Clock 테스트에서 미래 날짜 이벤트가 섞이지 않도록 KST 날짜 경계 배제
 	 * 시맨틱을 그대로 보존한다.
 	 */
 	public List<AlarmEventRow> findAlarmEventsBetween(LocalDate fromKstDate, LocalDate toKstDateInclusive) {
