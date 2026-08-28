@@ -33,6 +33,14 @@ spring:
     multipart:
       max-file-size: 2MB                # 컨테이너 컷은 여유 — 1MB 정본 검증은 ProfileImageStore(스펙 6.13)
       max-request-size: 3MB
+  task:
+    scheduling:
+      pool:
+        # 기본 1은 @Scheduled 전용 단일 스레드 풀이다 — 주간 발송 루프(WeeklyDigestMailer.pace)가
+        # 성공·실패 각 건마다 sleep해 그 스레드를 길게 점유하면 다른 스케줄 잡이 굶는다. 2로 늘려도
+        # WeeklyDigestJob 자체에 중첩 실행 가드(AtomicBoolean)가 있어 run·catchUp이 겹쳐 도는
+        # 위험은 없다(품질 리뷰 Important #2).
+        size: 2
 # 요청 ID 출력(RequestIdFilter → MDC requestId, 2026-08-23 요청 단위 로그 묶기) — Boot 기본
 # 콘솔 패턴의 correlation 슬롯([스레드명] 뒤·로거명 앞)에 끼워 넣으므로 타임스탬프(1번 토큰)·
 # 레벨(2번 토큰) 위치가 변하지 않는다. 운영 Alloy(deploy/alloy/config.alloy)가 이 위치로 level

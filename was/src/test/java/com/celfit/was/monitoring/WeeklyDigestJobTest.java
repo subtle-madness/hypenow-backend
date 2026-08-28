@@ -12,6 +12,9 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -482,5 +485,46 @@ class WeeklyDigestJobTest extends IntegrationTest {
 		assertThat(adDisclosureNoticeRepository.findNotifiedInOtherWeek(userId, List.of("SC_BOOM"),
 				WEEK_START.plusWeeks(1))).isEmpty();
 		assertThat(digestRepository.countByUser(userId)).isZero();
+	}
+
+	@Test
+	void 이미_실행_중이면_중첩_호출을_건너뛴다() throws InterruptedException {
+		// 품질 리뷰 Important #2 — 발송 루프의 pace()가 스케줄러 스레드를 오래 쥘 수 있어 run·
+		// catchUp이 겹치면 같은 창을 두 스레드가 동시에 처리하는 경합이 생긴다. AtomicBoolean 가드가
+		// 이미 도는 중인 두 번째 호출을 findAlarmEventsBetween에도 닿지 않게 즉시 되돌리는지 검증한다.
+		CountDownLatch started = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		AtomicInteger callCount = new AtomicInteger();
+		MonitoringReadRepository blockingRead = new MonitoringReadRepository(monitoringJdbc) {
+			@Override
+			public List<AlarmEventRow> findAlarmEventsBetween(LocalDate fromKstDate, LocalDate toKstDateInclusive) {
+				callCount.incrementAndGet();
+				started.countDown();
+				try {
+					release.await(5, TimeUnit.SECONDS);
+				} catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
+				}
+				return List.of();
+			}
+		};
+		WeeklyDigestMailer mailer = new WeeklyDigestMailer(digestRepository, weeklyEmailOptOutRepository,
+				userRepository, new WeeklyDigestMailComposer("https://hypenow.io"),
+				(to, subject, text) -> { }, 5, java.time.Duration.ZERO);
+		WeeklyDigestJob blockingJob = new WeeklyDigestJob(blockingRead, brandReadRepository, brandLinkRepository,
+				brandDirectPostRepository, monitoringItemRepository, adDisclosureNoticeRepository,
+				digestRepository, new WeeklyDigestAssembler(), mailer, new ObjectMapper(),
+				Clock.fixed(NOW, ZoneOffset.UTC), true);
+
+		Thread first = new Thread(() -> blockingJob.runFor(new WeekWindow(WEEK_START)));
+		first.start();
+		assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+
+		blockingJob.runFor(new WeekWindow(WEEK_START));   // 가드에 걸려 즉시 반환해야 한다
+
+		assertThat(callCount.get()).isEqualTo(1);   // 두 번째 호출은 findAlarmEventsBetween에 닿지 않았다
+
+		release.countDown();
+		first.join(5000);
 	}
 }

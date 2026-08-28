@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -91,6 +92,13 @@ public class WeeklyDigestJob {
 	private final Clock clock;
 	/** 광고 표기 판정 노출 킬 스위치 — FE와 같은 키를 본다(설계 §8 "킬 스위치 정합"). */
 	private final boolean exposeAdDisclosure;
+	/**
+	 * 중첩 실행 가드(품질 리뷰 Important #2) — 발송 루프의 {@code Thread.sleep}(pace)이
+	 * was 기본 스케줄러 스레드를 분 단위로 점유할 수 있어, run·catchUp이 겹쳐 들어오면 같은
+	 * 유저 집합을 두 스레드가 동시에 upsertWeekly하는 경합이 생긴다. 실행 중에 새 트리거가
+	 * 들어오면 스킵하고 경고만 남긴다 — 다음 따라잡기 틱(10분 뒤)이 다시 시도하므로 유실이 아니다.
+	 */
+	private final AtomicBoolean running = new AtomicBoolean(false);
 
 	public WeeklyDigestJob(MonitoringReadRepository monitoringRead, BrandReadRepository brandRead,
 			BrandLinkRepository brandLinks, BrandDirectPostRepository brandDirectPosts,
@@ -147,38 +155,50 @@ public class WeeklyDigestJob {
 	 * 받는 이 메서드를 직접 호출할 때만(운영 재처리 등) 주의가 필요하다.
 	 */
 	public void runFor(WeekWindow window) {
-		Map<Long, List<AlarmEventRow>> eventsByUser = monitoringRead
-				.findAlarmEventsBetween(window.startDate(), window.endDateInclusive()).stream()
-				.collect(Collectors.groupingBy(AlarmEventRow::userId, LinkedHashMap::new, Collectors.toList()));
-		List<BrandLinkRow> activeLinks = brandLinks.findAllActive();
-		Map<Long, List<Long>> brandIdsByUser = activeLinks.stream()
-				.collect(Collectors.groupingBy(BrandLinkRow::userId, LinkedHashMap::new,
-						Collectors.mapping(BrandLinkRow::brandId, Collectors.toList())));
-		Map<Long, List<Long>> userIdsByBrand = activeLinks.stream()
-				.collect(Collectors.groupingBy(BrandLinkRow::brandId, LinkedHashMap::new,
-						Collectors.mapping(BrandLinkRow::userId, Collectors.toList())));
-		Set<Long> userIds = new LinkedHashSet<>(eventsByUser.keySet());
-		userIds.addAll(brandIdsByUser.keySet());
-
-		// 품질 리뷰 I3 — 유저 수만큼 왕복하지 않고 전 유저분을 한 번에 모아 조회한 뒤 그룹핑한다.
-		Map<Long, List<WeeklyPostMetrics>> brandNewPostsByUser = brandNewPostsByUser(userIdsByBrand, window);
-		Map<Long, List<String>> adNotDisclosedByUser = adNotDisclosedByUser(userIds, window);
-
-		int upserted = 0;
-		for (long userId : userIds) {
-			try {
-				if (upsertWeekly(userId, window, eventsByUser.getOrDefault(userId, List.of()),
-						brandNewPostsByUser.getOrDefault(userId, List.of()),
-						adNotDisclosedByUser.getOrDefault(userId, List.of()))) {
-					upserted++;
-				}
-			} catch (RuntimeException e) {
-				// 한 유저의 실패가 나머지를 막으면 장애 하나가 주간 알림 전체를 멈춘다(AlarmRecorder와 동일 정책).
-				log.error("주간 다이제스트 생성 실패(격리) — user {}, week {}", userId, window.startDate(), e);
-			}
+		if (!running.compareAndSet(false, true)) {
+			// 이미 도는 중 — 발송 루프의 pace()가 스케줄러 스레드를 오래 쥐고 있을 수 있어 run·
+			// catchUp이 겹치면 같은 창을 두 스레드가 동시에 upsert하는 경합이 생긴다. 다음 따라잡기
+			// 틱이 10분 뒤 다시 시도하므로 이번 트리거는 건너뛰어도 유실이 아니다.
+			log.warn("주간 다이제스트 실행이 이미 진행 중 — 이번 트리거는 건너뜀 (창 {}~{})",
+					window.startDate(), window.endDateInclusive());
+			return;
 		}
-		log.info("주간 다이제스트 생성 완료 — 창 {}~{} KST, 대상 유저 {}명, upsert {}건",
-				window.startDate(), window.endDateInclusive(), userIds.size(), upserted);
+		try {
+			Map<Long, List<AlarmEventRow>> eventsByUser = monitoringRead
+					.findAlarmEventsBetween(window.startDate(), window.endDateInclusive()).stream()
+					.collect(Collectors.groupingBy(AlarmEventRow::userId, LinkedHashMap::new, Collectors.toList()));
+			List<BrandLinkRow> activeLinks = brandLinks.findAllActive();
+			Map<Long, List<Long>> brandIdsByUser = activeLinks.stream()
+					.collect(Collectors.groupingBy(BrandLinkRow::userId, LinkedHashMap::new,
+							Collectors.mapping(BrandLinkRow::brandId, Collectors.toList())));
+			Map<Long, List<Long>> userIdsByBrand = activeLinks.stream()
+					.collect(Collectors.groupingBy(BrandLinkRow::brandId, LinkedHashMap::new,
+							Collectors.mapping(BrandLinkRow::userId, Collectors.toList())));
+			Set<Long> userIds = new LinkedHashSet<>(eventsByUser.keySet());
+			userIds.addAll(brandIdsByUser.keySet());
+
+			// 품질 리뷰 I3 — 유저 수만큼 왕복하지 않고 전 유저분을 한 번에 모아 조회한 뒤 그룹핑한다.
+			Map<Long, List<WeeklyPostMetrics>> brandNewPostsByUser = brandNewPostsByUser(userIdsByBrand, window);
+			Map<Long, List<String>> adNotDisclosedByUser = adNotDisclosedByUser(userIds, window);
+
+			int upserted = 0;
+			for (long userId : userIds) {
+				try {
+					if (upsertWeekly(userId, window, eventsByUser.getOrDefault(userId, List.of()),
+							brandNewPostsByUser.getOrDefault(userId, List.of()),
+							adNotDisclosedByUser.getOrDefault(userId, List.of()))) {
+						upserted++;
+					}
+				} catch (RuntimeException e) {
+					// 한 유저의 실패가 나머지를 막으면 장애 하나가 주간 알림 전체를 멈춘다(AlarmRecorder와 동일 정책).
+					log.error("주간 다이제스트 생성 실패(격리) — user {}, week {}", userId, window.startDate(), e);
+				}
+			}
+			log.info("주간 다이제스트 생성 완료 — 창 {}~{} KST, 대상 유저 {}명, upsert {}건",
+					window.startDate(), window.endDateInclusive(), userIds.size(), upserted);
+		} finally {
+			running.set(false);
+		}
 	}
 
 	/**
