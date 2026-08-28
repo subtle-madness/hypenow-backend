@@ -342,8 +342,8 @@ public class BrandRegistrationService {
 
 	/**
 	 * 해시태그 스윕 1회 — 등록 백필 꼬리(전 페이지 보강 뒤, ready에 영향 0)·replay 재등록·태그
-	 * PUT/POST 즉시 트리거 3곳이 공유한다. core(또는 시드)는 이미 성공했으므로 여기 실패는
-	 * backfill_error를 남기지 않는다(warn 로그만) — 다음 일일 스윕이 백스톱한다.
+	 * PUT/POST 즉시 트리거 3곳이 공유한다. core는 이미 성공했으므로 여기 실패는 backfill_error를
+	 * 남기지 않는다(warn 로그만) — 다음 일일 스윕이 백스톱한다.
 	 */
 	private void runHashtagSweepSafely(BrandRow row) {
 		try {
