@@ -695,8 +695,22 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
         다이제스트까지 함께 멈추므로(생성과 발송이 같은 잡이다) 재개하면 그 주 창을 다시
         집계해 만들어 낸다. 더 큰 스위치로 `MONITORING_ENABLED=false`(monitoring 서브시스템
         전체 차단 — v3 조회·광고표기 노출도 함께 꺼지므로 과격한 수단)가 있다.
+      - **구 4종 옵트아웃 → 주간 이메일 이관 (배포 후 1회 수동 SQL)**: 마이그레이션
+        `V20260827135725__weekly_notification_digest_expand.sql`은 CHECK 확대만 하고 이관
+        INSERT는 넣지 않는다 — 롤링 창에서 구버전 was의 `EmailOptOutRepository.findOptOuts`가
+        (toFront가 미지 값에 예외를 던지는 구현이라) `WEEKLY_DIGEST` 행을 읽으면 알림 설정
+        조회 API가 500이 나기 때문이다. **롤링 배포가 완전히 끝난 뒤** 아래 SQL을 1회
+        실행해 기존 4종 중 하나라도 꺼 둔 유저를 주간 이메일도 off로 이관한다:
+        ```sql
+        INSERT INTO app.monitoring_email_opt_outs (user_id, event_type)
+        SELECT DISTINCT user_id, 'WEEKLY_DIGEST' FROM app.monitoring_email_opt_outs
+        ON CONFLICT DO NOTHING;
+        ```
+        ⚠️ **반드시 그 주 첫 월요일 09:00 KST 발송 전에 실행할 것** — 늦으면 이관 대상 유저에게
+        원치 않는 첫 주간 메일이 먼저 나간 뒤에야 옵트아웃이 반영된다.
       - 수신 해지: 사용자가 `PATCH /v1/notification-settings {"weeklyEmail": false}`로 끈다
-        (구 4종 매트릭스는 폐지, 기존 옵트아웃은 하나라도 꺼져 있으면 off로 이관됐다).
+        (구 4종 매트릭스는 폐지, 위 수동 이관 SQL 실행 후에는 기존 옵트아웃도 하나라도 꺼져
+        있으면 off로 반영된다).
 6. **was v3 조회 개통 (was V16 배포 후, was 서비스 environment의 `MONITORING_*` 4키 배선과 짝)**
    — was가 monitoring DB를 직접 SELECT해 목록·상태·후보 등을 조립한다(계약 §1). 기본
    비활성이라 서두르지 않아도 된다.
@@ -740,8 +754,11 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
     (생성과 발송이 같은 잡이다) 재개하면 그 주 창을 다시 집계해 만들어 낸다. 더 큰 스위치로
     `MONITORING_ENABLED=false`(monitoring 서브시스템 전체 차단 — v3 조회·광고표기 노출도 함께
     꺼지므로 과격한 수단)가 있다.
+  - 구 4종 옵트아웃 → 주간 이메일 이관은 마이그레이션이 아니라 **배포 후 1회 수동 SQL**이다
+    (§13-5-3 참조 — 첫 월요일 09:00 발송 전 실행 필수).
   - 수신 해지: 사용자가 `PATCH /v1/notification-settings {"weeklyEmail": false}`로 끈다
-    (구 4종 매트릭스는 폐지, 기존 옵트아웃은 하나라도 꺼져 있으면 off로 이관됐다).
+    (구 4종 매트릭스는 폐지, 위 수동 이관 SQL 실행 후에는 기존 옵트아웃도 하나라도 꺼져
+    있으면 off로 반영된다).
 - 백업: `backup.sh`가 analysis와 같은 관용구로 매일 덤프 —
   서버 `~/backups/monitoring-*.sql.zst` 3일 + B2 `hypenow-backups/monitoring/` 7일 롤링(§6).
 

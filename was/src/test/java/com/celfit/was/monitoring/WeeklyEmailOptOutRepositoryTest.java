@@ -67,7 +67,10 @@ class WeeklyEmailOptOutRepositoryTest extends IntegrationTest {
 
 	@Test
 	void 구_4종_옵트아웃_행은_주간_판정에_영향을_주지_않는다() {
-		// 이관은 마이그레이션이 이미 끝냈다 — 이후 새로 생긴 구 어휘 행이 주간 토글을 오염시키면 안 된다.
+		// 구 4종 → WEEKLY_DIGEST 이관은 마이그레이션이 아니라 배포(롤링 완료) 후 수동 SQL
+		// 1회다(README §13-5) — 마이그레이션에 이관 INSERT를 넣으면 롤링 창의 구버전 was가
+		// WEEKLY_DIGEST 행을 읽다가 500이 나기 때문. 이 테스트는 그 이관과 무관하게, 구 어휘
+		// 행이 애초에 주간 토글 판정을 오염시키지 않는지만 검증한다.
 		jdbcClient.sql("""
 				INSERT INTO app.monitoring_email_opt_outs (user_id, event_type)
 				VALUES (:userId, 'COLLECTION_ENDED')

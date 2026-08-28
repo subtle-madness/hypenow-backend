@@ -1,22 +1,18 @@
 -- 주간 알림 다이제스트 개편(2026-08-27 설계 §6·§7·§8) — expand 단계.
--- 셋 다 additive다: ① 옵트아웃 CHECK 허용값 확대 + 보수적 이관 INSERT, ② 신규 테이블 1개,
--- ③ monitoring_digests에 DEFAULT 있는 ADD COLUMN 2개. DROP·RENAME·타입 변경·SET NOT NULL 없음.
-
--- ① 주간 이메일 수신 토글(설계 §5) — 별도 테이블을 만들지 않고 기존 옵트아웃 테이블의
--- event_type 어휘를 하나 넓힌다. 이미 아카이브 카탈로그·탈퇴 이관 경로에 배선된 테이블이라
--- 새 테이블을 만들 때 필요한 배선(ArchiveTables·ACCOUNT_DELETION_ORDER)이 통째로 불필요하다.
--- CHECK 확대는 허용 범위를 넓히기만 하므로 롤링 중 구버전 코드가 이 값을 몰라도 위반이 없다
--- (선례: V20260827060558 brand_post_meta_ad_verdict_check).
+-- 셋 다 additive다: ① 옵트아웃 CHECK 허용값 확대(CHECK·테이블·컬럼만 — 진짜 additive라
+-- 구버전 코드가 새 값을 몰라도 위반이 없다), ② 신규 테이블 1개, ③ monitoring_digests에
+-- DEFAULT 있는 ADD COLUMN 2개. DROP·RENAME·타입 변경·SET NOT NULL 없음.
+--
+-- 주의 — 기존 4종 옵트아웃 → WEEKLY_DIGEST 보수적 이관 INSERT는 여기 없다. 그 INSERT를
+-- 이 마이그레이션에 넣으면 롤링 창에서 구버전 was의 `EmailOptOutRepository.findOptOuts`가
+-- (toFront가 미지 값에 예외를 던지는 구현이라) WEEKLY_DIGEST 행을 읽는 순간 알림 설정
+-- 조회 API가 500이 난다 — CHECK 확대와 달리 이 INSERT는 "새 데이터를 즉시 만들어 구코드가
+-- 마주치게" 하므로 additive 논증이 적용되지 않는다. 이관은 배포(롤링 완료) 후 수동 SQL
+-- 1회로 옮겼다(README §13-5 참조).
 ALTER TABLE app.monitoring_email_opt_outs DROP CONSTRAINT monitoring_email_opt_outs_event_type_check;
 ALTER TABLE app.monitoring_email_opt_outs ADD CONSTRAINT monitoring_email_opt_outs_event_type_check
     CHECK (event_type IN ('COLLECTION_STARTED', 'COLLECTION_ENDED', 'METRICS_HIDDEN',
                           'CONTENT_UNAVAILABLE', 'WEEKLY_DIGEST'));
-
--- 보수적 이관(설계 §7) — 기존 4종 중 하나라도 꺼 둔 유저는 주간 이메일도 off로 시작한다.
--- 구 4종 행은 그대로 남긴다(contract 단계에서 정리) — 롤링 창의 구버전 was가 아직 읽는다.
-INSERT INTO app.monitoring_email_opt_outs (user_id, event_type)
-SELECT DISTINCT user_id, 'WEEKLY_DIGEST' FROM app.monitoring_email_opt_outs
-ON CONFLICT DO NOTHING;
 
 -- ② 미표기 판정 알림 이력(설계 §8 "미표기 재판정 중복") — 게시물당 1회 알림 가드.
 -- notified_week를 함께 들고 있어야 같은 주 재실행(따라잡기·재기동)이 자기가 방금 남긴
