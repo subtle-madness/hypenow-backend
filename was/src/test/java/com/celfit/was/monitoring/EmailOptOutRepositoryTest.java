@@ -67,4 +67,19 @@ class EmailOptOutRepositoryTest extends IntegrationTest {
 
 		assertThat(repository.findOptOuts(userId)).containsExactlyInAnyOrder("collection_ended", "content_issue");
 	}
+
+	@Test
+	void WEEKLY_DIGEST_행이_섞여_있어도_NPE_없이_4종_매트릭스와_무관하게_걸러진다() {
+		// 2026-08-28 재리뷰 Critical 회귀 — V20260827135725가 기존 옵트아웃 유저 전원에게
+		// WEEKLY_DIGEST 행을 백필했다. toFront가 미지 어휘에 null을 돌려주므로(WEEKLY_DIGEST는
+		// 4종 매트릭스 어휘가 아니다) 필터링 없이는 Collectors.toUnmodifiableSet()이 NPE를 던진다.
+		repository.optOut(userId, "collection_ended");
+		jdbcClient.sql("""
+				INSERT INTO app.monitoring_email_opt_outs (user_id, event_type) VALUES (:userId, 'WEEKLY_DIGEST')
+				""")
+				.param("userId", userId)
+				.update();
+
+		assertThat(repository.findOptOuts(userId)).containsExactly("collection_ended");
+	}
 }

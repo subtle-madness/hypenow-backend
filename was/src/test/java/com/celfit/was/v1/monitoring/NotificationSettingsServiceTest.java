@@ -124,4 +124,27 @@ class NotificationSettingsServiceTest extends IntegrationTest {
 
 		assertThat(response.content().get("metrics_private").email()).isFalse();
 	}
+
+	@Test
+	void WEEKLY_DIGEST_옵트아웃_행이_있어도_get이_500_없이_4종_매트릭스를_돌려준다() {
+		// 2026-08-28 재리뷰 Critical 회귀 — V20260827135725 마이그레이션이 기존 옵트아웃 유저
+		// 전원에게 WEEKLY_DIGEST 행을 백필했다. 이 유저는 옵트아웃 이력이 있어(collection_ended)
+		// 백필 대상이었던 것과 동형 — WEEKLY_DIGEST 행이 섞인 상태에서 GET이 여전히 200 +
+		// 4종 완전체를 내려야 한다(수정 전에는 EmailOptOutRepository.findOptOuts의
+		// Collectors.toUnmodifiableSet()이 NPE를 던져 500이 났다).
+		service.patch(userId, Map.of("content", Map.of("collection_ended", Map.of("email", false))));
+		jdbcClient.sql("""
+				INSERT INTO app.monitoring_email_opt_outs (user_id, event_type) VALUES (:userId, 'WEEKLY_DIGEST')
+				""")
+				.param("userId", userId)
+				.update();
+
+		NotificationSettingsResponse response = service.get(userId);
+
+		assertThat(response.content()).hasSize(4);
+		assertThat(response.content().get("collection_ended").email()).isFalse();
+		assertThat(response.content().get("collection_started").email()).isTrue();
+		assertThat(response.content().get("metrics_private").email()).isTrue();
+		assertThat(response.content().get("content_issue").email()).isTrue();
+	}
 }
