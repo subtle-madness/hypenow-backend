@@ -191,6 +191,53 @@ public class BrandReadRepository {
 	}
 
 	/**
+	 * 게시물별 최신 스냅샷 좋아요·댓글·조회수(shortcode 스코프, 2026-08-28 AI aggregate_posts 전용) —
+	 * {@link #findLatestViewsForBrand}처럼 브랜드 전체를 창·정산 조건으로 다시 훑지 않고, 호출부(AI
+	 * 툴박스)가 인덱스에서 이미 걸러낸 shortcode 집합만 받는다({@link #findBrandPostsByShortCodes}와
+	 * 같은 위상 — 인덱스 프로젝션의 후속 배치 조회). content_type을 함께 주는 이유는
+	 * findLatestViewsForBrand와 동일(피드 views null 서빙 규칙을 호출부가 재현해야 한다).
+	 */
+	public List<LatestMetricsRow> findLatestMetricsByShortCodes(Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT DISTINCT ON (short_code) short_code, content_type, views, likes, comments
+				FROM brand_post_snapshot
+				WHERE short_code IN (:shortCodes)
+				ORDER BY short_code, captured_on DESC
+				""")
+				.param("shortCodes", shortCodes)
+				.query(LatestMetricsRow.class)
+				.list();
+	}
+
+	/**
+	 * 캡션 부분일치 검색(2026-08-28 AI search_posts 전용) — 한글 제품명이 공백 유무로 갈리는 걸
+	 * 흡수하기 위해 캡션·질의 양쪽에서 공백을 제거한 뒤 ILIKE로 비교한다. 호출부가 인덱스에서 이미
+	 * 걸러낸(가시성·창) shortcode 집합만 넘기므로 여기선 그 범위 안에서 캡션 열만 읽는다 — 창 안
+	 * 전체를 하이드레이트하지 않고 "정확한 총 매칭 건수"를 얻기 위한 가벼운 경로다(하이드레이트는
+	 * 상위 노출분에만 쓴다). query는 파라미터 바인딩이라 {@code %}·{@code '} 등이 섞여도 SQL 인젝션과
+	 * 무관하다.
+	 */
+	public Set<String> findCaptionMatches(Collection<String> shortCodes, String normalizedQuery) {
+		if (shortCodes.isEmpty() || normalizedQuery.isEmpty()) {
+			return Set.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return new LinkedHashSet<>(jdbc.sql("""
+				SELECT short_code
+				FROM brand_post_meta
+				WHERE short_code IN (:shortCodes)
+				  AND caption IS NOT NULL
+				  AND replace(caption, ' ', '') ILIKE ('%' || :normalizedQuery || '%')
+				""")
+				.param("shortCodes", shortCodes)
+				.param("normalizedQuery", normalizedQuery)
+				.query(String.class)
+				.list());
+	}
+
+	/**
 	 * 게시물별 일 단위 지표 시계열 전량(오름차순) — 브랜드 스냅샷은 윈도우 이탈 후에도 영구
 	 * 보존이라 상한(워터마크)을 두지 않는다. views는 DDL 주석대로 이미 화면 합산값(IG 몫 + FB 몫)이라
 	 * fb_plays를 따로 읽지 않는다.
@@ -459,6 +506,10 @@ public class BrandReadRepository {
 
 	/** 게시물별 최신 스냅샷 views({@link #findLatestViewsForBrand}) — contentType은 피드 views null 규칙용. */
 	public record LatestViewsRow(String shortCode, String contentType, Long views) {
+	}
+
+	/** 게시물별 최신 스냅샷 좋아요·댓글·조회수({@link #findLatestMetricsByShortCodes}) — aggregate_posts 전용. */
+	public record LatestMetricsRow(String shortCode, String contentType, Long views, Long likes, Long comments) {
 	}
 
 	/** brand_post_snapshot 1행 — 컬럼 구성은 레거시 post_snapshot과 동형(캐리포워드 규칙 이식 전제). */

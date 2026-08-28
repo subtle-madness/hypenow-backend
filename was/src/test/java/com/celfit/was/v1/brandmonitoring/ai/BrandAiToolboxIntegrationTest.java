@@ -202,6 +202,49 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 				""").param("brandId", brandId).param("shortCode", shortCode).param("tag", matchedTag).update();
 	}
 
+	/** search_posts 전용 픽스처 - 캡션 매칭 대상 게시물. 지표는 검색 테스트와 무관해 고정값으로 둔다. */
+	private void insertSearchablePost(long brandId, String shortCode, String author, Instant takenAt,
+			String caption) {
+		insertMetricPost(brandId, shortCode, author, takenAt, caption, "REELS", 10L, 2L, 100L);
+	}
+
+	/**
+	 * aggregate_posts 전용 픽스처 - contentType·지표를 자유롭게 지정한다. FEED는 항상 views가 NULL이라는
+	 * 서빙 규칙(CLAUDE.md 함정)을 그대로 재현하려고 별도 인서트문을 쓴다(파라미터로 null Long을
+	 * 바인딩하는 대신 SQL 리터럴 NULL을 쓴다 - JdbcClient의 타입 미상 null 바인딩을 피한다).
+	 */
+	private void insertMetricPost(long brandId, String shortCode, String author, Instant takenAt, String caption,
+			String contentType, long likes, long comments, Long views) {
+		monitoringJdbc.sql("""
+				INSERT INTO brand_tagged_post (brand_id, short_code, author_username, author_ig_user_id, taken_at,
+				                                enriched_at)
+				VALUES (:brandId, :shortCode, :author, :author, :takenAt, now())
+				""").param("brandId", brandId).param("shortCode", shortCode).param("author", author)
+				.param("takenAt", OffsetDateTime.ofInstant(takenAt, ZoneOffset.UTC))
+				.update();
+		monitoringJdbc.sql("""
+				INSERT INTO brand_post_meta (short_code, username, content_type, uploaded_at, caption,
+				                             is_paid_partnership, ad_verdict)
+				VALUES (:shortCode, :author, :contentType, DATE '2026-08-26', :caption, false, 'DISCLOSED')
+				""").param("shortCode", shortCode).param("author", author).param("contentType", contentType)
+				.param("caption", caption).update();
+		if (views == null) {
+			monitoringJdbc.sql("""
+					INSERT INTO brand_post_snapshot (username, short_code, captured_on, content_type, likes,
+					                                  comments, views)
+					VALUES (:author, :shortCode, DATE '2026-08-26', :contentType, :likes, :comments, NULL)
+					""").param("author", author).param("shortCode", shortCode).param("contentType", contentType)
+					.param("likes", likes).param("comments", comments).update();
+		} else {
+			monitoringJdbc.sql("""
+					INSERT INTO brand_post_snapshot (username, short_code, captured_on, content_type, likes,
+					                                  comments, views)
+					VALUES (:author, :shortCode, DATE '2026-08-26', :contentType, :likes, :comments, :views)
+					""").param("author", author).param("shortCode", shortCode).param("contentType", contentType)
+					.param("likes", likes).param("comments", comments).param("views", views).update();
+		}
+	}
+
 	private ObjectNode args() {
 		return objectMapper.createObjectNode();
 	}
@@ -386,5 +429,105 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 		assertThat(result.failed()).isFalse();
 		assertThat(result.shortCodes()).doesNotContain("HTAG1");
 		assertThat(result.payloadJson()).doesNotContain("HTAG1");
+	}
+
+	// ---------- search_posts·aggregate_posts(2026-08-28 데이터 조회 레이어 개선) ----------
+
+	/**
+	 * list_posts가 최신 30건·캡션 발췌만 주다가 273건 중 85건 언급을 0건으로 오답한 실측이 배경이다 -
+	 * search_posts는 30건 상한과 무관하게 창 안 전체(여기선 40건)에서 정확한 총 매칭 건수(35건)를 낸다.
+	 */
+	@Test
+	void search_posts는_창_안_전체에서_상한_없이_정확한_매칭_건수를_돌려준다() {
+		long brandId = insertBrand(monitoringJdbc, "searchbrand");
+		linkRepository.insertLink(userId, brandId, "searchbrand", BrandAccountType.OWN, 12);
+		for (int i = 1; i <= 35; i++) {
+			insertSearchablePost(brandId, "MATCH" + i, "author" + i, NOW.minusSeconds(i * 3600L),
+					"신상 세럼 후기 " + i + "번째");
+		}
+		for (int i = 1; i <= 5; i++) {
+			insertSearchablePost(brandId, "NOMATCH" + i, "author" + i, NOW.minusSeconds(i * 3600L), "그냥 일상 게시물");
+		}
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.SEARCH_POSTS,
+				args().put("brandId", brandId).put("query", "세럼"));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.payloadJson()).contains("\"totalMatches\":35").contains("\"totalInWindow\":40");
+		// 상세 노출은 상위 20건까지만이라도 총 매칭 건수(rowCount)는 35 그대로여야 한다(로그 계약).
+		assertThat(result.rowCount()).isEqualTo(35);
+	}
+
+	/** 캡션·질의 양쪽 공백을 제거하고 비교한다 - 공백 유무로 갈리는 한글 제품명을 흡수한다. */
+	@Test
+	void search_posts는_캡션과_질의의_공백_유무를_흡수한다() {
+		long brandId = insertBrand(monitoringJdbc, "spacingbrand");
+		linkRepository.insertLink(userId, brandId, "spacingbrand", BrandAccountType.OWN, 12);
+		insertSearchablePost(brandId, "SPACED1", "author1", NOW.minusSeconds(3600),
+				"온그리언츠 바쿠글로우캡슐로션 써봤어요");
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.SEARCH_POSTS,
+				args().put("brandId", brandId).put("query", "바쿠 글로우 캡슐"));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.payloadJson()).contains("\"totalMatches\":1").contains("SPACED1");
+	}
+
+	@Test
+	void 남의_brandId로_search_posts하면_실패_결과를_돌려준다() {
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.SEARCH_POSTS,
+				args().put("brandId", otherBrandId).put("query", "아무거나"));
+
+		assertThat(result.failed()).isTrue();
+		assertThat(result.payloadJson()).contains("접근 권한");
+	}
+
+	/** query가 파라미터 바인딩이라 %·'가 섞여도 예외 없이 안전하게 처리된다(SQL 조립 문자열 결합 금지 검증). */
+	@Test
+	void search_posts는_query에_SQL_메타문자가_섞여도_안전하다() {
+		long brandId = insertBrand(monitoringJdbc, "metacharbrand");
+		linkRepository.insertLink(userId, brandId, "metacharbrand", BrandAccountType.OWN, 12);
+		insertSearchablePost(brandId, "META1", "author1", NOW.minusSeconds(3600), "평범한 캡션입니다");
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.SEARCH_POSTS,
+				args().put("brandId", brandId).put("query", "100% 할인' OR '1'='1"));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.payloadJson()).contains("\"totalMatches\":0");
+	}
+
+	/**
+	 * 게시물 수·합계·평균 집계(설계 §요구) - 피드는 조회수가 항상 NULL이라(CLAUDE.md 함정) 조회수
+	 * 집계·평균은 릴스 2건만 분모에 들어가야 한다(피드 1건은 분모에서 제외). 좋아요·댓글은 수집된 3건
+	 * 전부가 분모다. topPost는 조회수가 더 높은 릴스여야 한다.
+	 */
+	@Test
+	void aggregate_posts는_피드_조회수를_제외하고_정확히_집계한다() {
+		long brandId = insertBrand(monitoringJdbc, "aggbrand");
+		linkRepository.insertLink(userId, brandId, "aggbrand", BrandAccountType.OWN, 12);
+		insertMetricPost(brandId, "REEL1", "author1", NOW.minusSeconds(3600), "릴스 하나", "REELS", 10, 2, 1000L);
+		insertMetricPost(brandId, "REEL2", "author2", NOW.minusSeconds(7200), "릴스 둘", "REELS", 20, 3, 4000L);
+		insertMetricPost(brandId, "FEED1", "author3", NOW.minusSeconds(10800), "피드 하나", "FEED", 5, 1, null);
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		String payload = result.payloadJson();
+		assertThat(payload).contains("\"postCount\":3").contains("\"reelsCount\":2").contains("\"feedCount\":1");
+		assertThat(payload).contains("\"totalViews\":5000").contains("\"viewsSampleCount\":2");
+		assertThat(payload).contains("\"avgViews\":2500.0");
+		assertThat(payload).contains("\"totalLikes\":35").contains("\"likesSampleCount\":3");
+		assertThat(payload).contains("\"totalComments\":6").contains("\"commentsSampleCount\":3");
+		assertThat(payload).contains("\"topPost\"").contains("\"shortCode\":\"REEL2\"").contains("\"views\":4000");
+	}
+
+	@Test
+	void 남의_brandId로_aggregate_posts하면_실패_결과를_돌려준다() {
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", otherBrandId));
+
+		assertThat(result.failed()).isTrue();
+		assertThat(result.payloadJson()).contains("접근 권한");
 	}
 }

@@ -74,7 +74,11 @@ public class BrandPostAssembler {
 	/** 댓글 서빙 상한 — monitoring 수집 상한(3페이지 45건)과 같은 수로 맞춘다(레거시 COMMENT_LIMIT 동형). */
 	private static final int COMMENT_LIMIT = 45;
 
-	private static final String CONTENT_TYPE_REELS = "REELS";
+	/** public(N6, 2026-08-28) - {@code com.celfit.was.v1.brandmonitoring.ai.BrandAiToolbox}가
+	 * aggregate_posts 집계에서 브랜드 스냅샷 원시 content_type을 이 값과 같은 규칙(대소문자 무시
+	 * 비교)으로 릴스/피드를 가른다({@link #snapshotOf}·{@link BrandReadRepository#findLatestViewsForBrand}
+	 * 동형 판정) - 리터럴을 그쪽에 복제하면 이 값이 바뀌어도 조용히 드리프트한다(SOURCE_DIRECT와 같은 이유). */
+	public static final String CONTENT_TYPE_REELS = "REELS";
 	private static final String REELS = "reels";
 	private static final String FEED = "feed";
 	private static final String PROFILE_URL_PREFIX = "https://www.instagram.com/";

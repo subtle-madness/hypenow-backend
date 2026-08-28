@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
@@ -37,6 +38,9 @@ import tools.jackson.databind.node.ObjectNode;
  * <p>툴 실패는 같은 툴 기준 1회만 재시도 지시를 붙여 되먹인다(설계 §8) - 두 번째부터는
  * {@code retry: false}로 "이 정보 없이 답하라"고 못 박는다. 그러지 않으면 모델이 같은 실패를
  * 상한까지 반복한다.
+ *
+ * <p>{@code referencedShortCodes}는 이번 실행에서 툴이 건드린 shortCode 전체가 아니라 답변 텍스트에
+ * 실제로 인용된 것만 남긴다(N7, 2026-08-28 - {@link #referencedIn}).
  */
 public class BrandAiAgent {
 
@@ -111,11 +115,12 @@ public class BrandAiAgent {
 
 			if (turn.toolCalls().isEmpty()) {
 				if (turn.text().isBlank() && isBlocked(turn.finishReason())) {
-					return new AgentOutcome(BLOCKED_ANSWER, List.copyOf(shortCodes), List.copyOf(toolCalls),
-							promptTokens, outputTokens, brandId, AiChatLogEntry.OUTCOME_BLOCKED);
+					return new AgentOutcome(BLOCKED_ANSWER, referencedIn(BLOCKED_ANSWER, shortCodes),
+							List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
+							AiChatLogEntry.OUTCOME_BLOCKED);
 				}
 				String answer = turn.text().isBlank() ? FALLBACK_ANSWER : turn.text();
-				return new AgentOutcome(answer, List.copyOf(shortCodes), List.copyOf(toolCalls),
+				return new AgentOutcome(answer, referencedIn(answer, shortCodes), List.copyOf(toolCalls),
 						promptTokens, outputTokens, brandId,
 						capped ? AiChatLogEntry.OUTCOME_TOOL_CAP : AiChatLogEntry.OUTCOME_OK);
 			}
@@ -127,8 +132,9 @@ public class BrandAiAgent {
 			// 끊는다 - 이미 MAX_LLM_CALLS 안전망과 같은 병리이므로 같은 outcome으로 기록한다(M2).
 			if (capped) {
 				log.warn("AI 에이전트 강제 답변 턴에서도 툴 호출만 반환 - userId={}, 툴 호출 {}회", userId, toolCalls.size());
-				return new AgentOutcome(FALLBACK_ANSWER, List.copyOf(shortCodes), List.copyOf(toolCalls),
-						promptTokens, outputTokens, brandId, AiChatLogEntry.OUTCOME_LLM_CALL_CAP);
+				return new AgentOutcome(FALLBACK_ANSWER, referencedIn(FALLBACK_ANSWER, shortCodes),
+						List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
+						AiChatLogEntry.OUTCOME_LLM_CALL_CAP);
 			}
 
 			contents.add(client.modelToolCallContent(turn.toolCalls()));
@@ -155,8 +161,26 @@ public class BrandAiAgent {
 		}
 
 		log.warn("AI 에이전트 LLM 호출 안전망 도달 - userId={}, 툴 호출 {}회", userId, toolCalls.size());
-		return new AgentOutcome(FALLBACK_ANSWER, List.copyOf(shortCodes), List.copyOf(toolCalls),
+		return new AgentOutcome(FALLBACK_ANSWER, referencedIn(FALLBACK_ANSWER, shortCodes), List.copyOf(toolCalls),
 				promptTokens, outputTokens, brandId, AiChatLogEntry.OUTCOME_LLM_CALL_CAP);
+	}
+
+	/**
+	 * 참조 shortCode 필터(N7, 2026-08-28) - 툴이 이번 실행에서 건드린 shortCode 전체({@code
+	 * shortCodes})가 아니라 <b>답변 텍스트에 실제로 인용된</b> 것만 referencedShortCodes로 내보낸다.
+	 * 이전에는 list_posts 등이 훑고 지나간 코드가 답변에 한마디도 안 나와도 전부 참조 목록에 실렸다 -
+	 * 프론트가 "이 답변이 가리키는 게시물"로 보여주는 배지치고는 과다 노출이다. shortCode는 영숫자·
+	 * -·_ 조합이라 부분 문자열 오탐 위험이 낮아 코드 단위 contains로 충분하다(설계 판단). 답변에
+	 * 코드가 하나도 없으면(FALLBACK_ANSWER·BLOCKED_ANSWER 등) 자연히 빈 배열이 된다.
+	 */
+	private static List<String> referencedIn(String answer, Set<String> touchedShortCodes) {
+		List<String> referenced = new ArrayList<>();
+		for (String code : touchedShortCodes) {
+			if (answer.contains(code)) {
+				referenced.add(code);
+			}
+		}
+		return referenced;
 	}
 
 	/** STOP이 아니면서 텍스트도 툴 호출도 없는 경우만 "막혔다"로 본다(I7) - finishReason 자체가

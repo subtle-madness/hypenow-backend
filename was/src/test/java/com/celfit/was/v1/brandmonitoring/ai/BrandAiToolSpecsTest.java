@@ -12,10 +12,10 @@ class BrandAiToolSpecsTest {
 	private final ObjectMapper om = new ObjectMapper();
 
 	@Test
-	void 설계가_정한_툴_6종이_그대로_선언된다() {
+	void 설계가_정한_툴_8종이_그대로_선언된다() {
 		assertThat(BrandAiToolSpecs.ALL).extracting(AiToolSpec::name)
-				.containsExactly("list_brands", "list_posts", "get_post", "get_comments",
-						"list_hashtag_posts", "get_author");
+				.containsExactly("list_brands", "list_posts", "search_posts", "aggregate_posts", "get_post",
+						"get_comments", "list_hashtag_posts", "get_author");
 	}
 
 	@Test

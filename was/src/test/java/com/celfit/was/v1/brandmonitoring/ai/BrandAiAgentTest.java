@@ -100,12 +100,12 @@ class BrandAiAgentTest {
 				.willReturn(AiToolResult.ok("{\"posts\":[]}", 3, List.of("ABC")));
 		List<String> captured = new ArrayList<>();
 		BrandAiAgent agent = agentWith(
-				List.of(functionCall("list_posts", "{\"brandId\":7}"), textAnswer("3건 있어요")),
+				List.of(functionCall("list_posts", "{\"brandId\":7}"), textAnswer("ABC 게시물 등 3건 있어요")),
 				captured, toolbox);
 
 		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "알려줘")));
 
-		assertThat(outcome.answer()).isEqualTo("3건 있어요");
+		assertThat(outcome.answer()).isEqualTo("ABC 게시물 등 3건 있어요");
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_OK);
 		assertThat(outcome.referencedShortCodes()).containsExactly("ABC");
 		assertThat(outcome.toolCalls()).hasSize(1);
@@ -253,6 +253,44 @@ class BrandAiAgentTest {
 
 		// 소유 검증 실패 등 failed 결과의 brandId는 신뢰할 수 없다(M1) - 로그에 남기면 안 된다
 		assertThat(outcome.brandId()).isNull();
+	}
+
+	/**
+	 * 참조 shortCode 필터(N7, 2026-08-28) - 툴이 이번 실행에서 건드린 코드 전부가 아니라 답변 텍스트에
+	 * 실제로 등장하는 코드만 referencedShortCodes에 남아야 한다. 3건(ABC·DEF·GHI) 중 답변은 ABC만
+	 * 언급하므로 나머지 둘은 빠져야 한다.
+	 */
+	@Test
+	void referencedShortCodes는_답변에_실제_등장한_코드만_남긴다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.ok("{\"posts\":[]}", 3, List.of("ABC", "DEF", "GHI")));
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(
+				List.of(functionCall("search_posts", "{\"brandId\":7,\"query\":\"세럼\"}"),
+						textAnswer("ABC 게시물에서만 언급을 확인했어요")),
+				captured, toolbox);
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "몇 번 언급됐어?")));
+
+		assertThat(outcome.referencedShortCodes()).containsExactly("ABC");
+	}
+
+	/** 답변에 shortCode가 하나도 등장하지 않으면 참조 목록은 빈 배열이어야 한다(설계 §요구). */
+	@Test
+	void 답변에_인용된_코드가_없으면_referencedShortCodes는_빈_배열이다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.ok("{\"totalMatches\":85}", 85, List.of("ABC", "DEF")));
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(
+				List.of(functionCall("search_posts", "{\"brandId\":7,\"query\":\"세럼\"}"),
+						textAnswer("최근 30일 동안 총 85건 언급됐어요")),
+				captured, toolbox);
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "몇 번 언급됐어?")));
+
+		assertThat(outcome.referencedShortCodes()).isEmpty();
 	}
 
 	@Test

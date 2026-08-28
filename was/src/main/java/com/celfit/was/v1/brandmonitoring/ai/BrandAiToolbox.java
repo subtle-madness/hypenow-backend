@@ -19,24 +19,29 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * 툴 6종 실행기(설계 §4) - 전부 읽기 전용이고, <b>brandId·shortCode 소유 검증이 이 클래스 안에서
- * 강제된다</b>. LLM이 임의 id를 넘길 수 있다는 전제로 짜여 있으며, 검증에 걸리면 예외가 아니라
- * failed 결과를 돌려 모델이 스스로 물러나게 한다.
+ * 툴 8종 실행기(설계 §4, 2026-08-28 search_posts·aggregate_posts 신설) - 전부 읽기 전용이고,
+ * <b>brandId·shortCode 소유 검증이 이 클래스 안에서 강제된다</b>. LLM이 임의 id를 넘길 수 있다는
+ * 전제로 짜여 있으며, 검증에 걸리면 예외가 아니라 failed 결과를 돌려 모델이 스스로 물러나게 한다.
  *
  * <p><b>2026-08-27 격리 계통 재배치(리뷰 C1/I2/I3/I4/I9)</b> — 브랜드 풀은 유저 간 공유라 원시
  * {@link BrandReadRepository} 직접 호출로는 FE가 강제하는 유저별 가시성 필터(direct-only 게시물은
  * 등록자 전용)·표시 창(collectionMonths) 검사·경쟁사 광고 판정 억제를 건너뛴다. 게시물 관련 툴
- * (list_posts·get_post·get_comments·list_hashtag_posts)은 전부 FE와 같은 조립 경로 —
- * {@link BrandPostAssembler#indexForBrand}·{@link BrandPostAssembler#hydrate}·
+ * (list_posts·search_posts·aggregate_posts·get_post·get_comments·list_hashtag_posts)은 전부 FE와
+ * 같은 조립 경로 — {@link BrandPostAssembler#indexForBrand}·{@link BrandPostAssembler#hydrate}·
  * {@link BrandHashtagPostAssembler#assembleForBrand} — 위에서 동작한다({@link
  * com.celfit.was.v1.brandmonitoring.V1BrandPostsController}가 정본 참조 구현). 이 경로가 이미
  * ENRICHED_ONLY·등록자 원장 필터·창 검사·경쟁사 억제를 전부 강제하므로 이 클래스가 다시 구현하지
@@ -66,6 +71,9 @@ public class BrandAiToolbox {
 	private static final int MAX_DAYS = 365;
 	private static final int CAPTION_EXCERPT_LENGTH = 120;
 	private static final int CAPTION_FULL_LENGTH = 1500;
+	/** search_posts 상세 노출 상한 - totalMatches는 이 값과 무관하게 창 안 전체를 센다(설계 §요구). */
+	private static final int MAX_SEARCH_MATCHES = 20;
+	private static final int SEARCH_CAPTION_EXCERPT_LENGTH = 160;
 	/** 댓글 본문 절단 길이(I6) - 인스타 댓글은 최대 2,200자라 45건 무절단 × 매 턴 전체 재전송이면
 	 * O(k²)로 토큰이 터진다. 300자면 맥락 파악에는 충분하다. */
 	private static final int COMMENT_BODY_LENGTH = 300;
@@ -103,6 +111,8 @@ public class BrandAiToolbox {
 		return switch (toolName) {
 			case BrandAiToolSpecs.LIST_BRANDS -> listBrands(userId);
 			case BrandAiToolSpecs.LIST_POSTS -> listPosts(session, userId, args);
+			case BrandAiToolSpecs.SEARCH_POSTS -> searchPosts(session, userId, args);
+			case BrandAiToolSpecs.AGGREGATE_POSTS -> aggregatePosts(session, userId, args);
 			case BrandAiToolSpecs.GET_POST -> getPost(session, userId, args);
 			case BrandAiToolSpecs.GET_COMMENTS -> getComments(session, userId, args);
 			case BrandAiToolSpecs.LIST_HASHTAG_POSTS -> listHashtagPosts(userId, args);
@@ -178,21 +188,13 @@ public class BrandAiToolbox {
 		BrandAccountRow account = accountOpt.get();
 
 		boolean performanceSort = SORT_PERFORMANCE_DESC.equals(args.path("sort").asString());
-		BrandPostIndex index = indexFor(session, userId, account, performanceSort);
-
-		LocalDate today = LocalDate.ofInstant(clock.instant(), KstTimestamps.KST);
-		LocalDate windowStart = today.minusMonths(link.collectionMonths());
-		List<PostRef> linkWindowRefs = index.refs().stream().filter(r -> withinLinkWindow(r, windowStart)).toList();
-
-		int days = Math.clamp(args.path("days").asInt(DEFAULT_DAYS), 1, MAX_DAYS);
-		LocalDate since = today.minusDays(days);
-		List<PostRef> inWindow = linkWindowRefs.stream().filter(r -> withinUploadWindow(r.uploadedOn(), since))
-				.toList();
+		BrandWindow window = resolveWindow(session, userId, link, account, args, performanceSort);
+		BrandPostIndex index = window.index();
 
 		Comparator<PostRef> order = performanceSort
 				? Comparator.comparing(PostRef::latestViews, Comparator.nullsLast(Comparator.reverseOrder()))
 				: Comparator.comparing(PostRef::uploadedOn, Comparator.nullsLast(Comparator.reverseOrder()));
-		List<PostRef> page = inWindow.stream().sorted(order).limit(MAX_POSTS).toList();
+		List<PostRef> page = window.inWindow().stream().sorted(order).limit(MAX_POSTS).toList();
 		List<String> codes = page.stream().map(PostRef::shortcode).toList();
 
 		// hydrate 반환 순서는 입력 codes 순서와 같다(BrandPostAssembler#hydrate 계약) - 위에서 이미
@@ -204,9 +206,9 @@ public class BrandAiToolbox {
 		payload.put("brandId", link.brandId());
 		// since·totalInWindow는 반환된 posts 전원이 실제로 통과한 ② days 필터 기준이다(N1) - direct
 		// 면제가 붙는 ①(링크 창)의 windowStart는 별개 상한이라 여기 싣지 않는다(이미 posts에 반영됨).
-		payload.put("since", since.toString());
+		payload.put("since", window.since().toString());
 		payload.put("returned", posts.size());
-		payload.put("totalInWindow", inWindow.size());
+		payload.put("totalInWindow", window.inWindow().size());
 		ArrayNode postsNode = payload.putArray("posts");
 		for (BrandPostResponse post : posts) {
 			ObjectNode node = postsNode.addObject();
@@ -221,6 +223,235 @@ public class BrandAiToolbox {
 			node.put("views", latest == null ? null : latest.views());
 		}
 		return AiToolResult.ok(payload.toString(), posts.size(), codes);
+	}
+
+	/**
+	 * 링크 창(①, direct 면제) → 모델 days 필터(②, 면제 없음) 적용 공통 로직(N5, 2026-08-28 search_posts·
+	 * aggregate_posts 신설) - list_posts의 {@link #listPosts} 본문에서 뽑아냈다. 세 툴 모두 이 두 판정을
+	 * 같은 순서로 공유해야 한다(N1 주석 참조) - 따로 구현하면 창 정의가 갈릴 위험이 있다.
+	 */
+	private record BrandWindow(BrandPostIndex index, List<PostRef> inWindow, LocalDate since) {
+	}
+
+	private BrandWindow resolveWindow(ToolSession session, long userId, BrandLinkRow link, BrandAccountRow account,
+			JsonNode args, boolean withViews) {
+		BrandPostIndex index = indexFor(session, userId, account, withViews);
+
+		LocalDate today = LocalDate.ofInstant(clock.instant(), KstTimestamps.KST);
+		LocalDate windowStart = today.minusMonths(link.collectionMonths());
+		List<PostRef> linkWindowRefs = index.refs().stream().filter(r -> withinLinkWindow(r, windowStart)).toList();
+
+		int days = Math.clamp(args.path("days").asInt(DEFAULT_DAYS), 1, MAX_DAYS);
+		LocalDate since = today.minusDays(days);
+		List<PostRef> inWindow = linkWindowRefs.stream().filter(r -> withinUploadWindow(r.uploadedOn(), since))
+				.toList();
+		return new BrandWindow(index, inWindow, since);
+	}
+
+	/**
+	 * 캡션 검색(신설, 2026-08-28) - "제품명 몇 번 언급됐어?" 같은 질문을 list_posts의 30건 발췌 목록을
+	 * 모델이 눈으로 세는 방식으로 오답(실측: 273건 중 85건 언급을 0건으로 답함)내지 않도록, 창 안
+	 * 전체를 대상으로 정확한 총 매칭 건수를 낸다. 캡션 매칭 자체는 {@link
+	 * BrandReadRepository#findCaptionMatches}(풀 게시물, SQL ILIKE)와 과도기 폴백 카드(이미
+	 * 인메모리인 캡션을 자바에서 같은 규칙으로 비교) 두 갈래를 합친다 - 창 안 전체를 매번
+	 * hydrate하면 08-27에 고친 것과 같은 급의 타임아웃이 재발한다(설계 배경, "행×컬럼 매핑이
+	 * 지배 비용").
+	 *
+	 * <p>상세(캡션 발췌·게시자·최신 지표)는 매칭 상위 {@value #MAX_SEARCH_MATCHES}건만 hydrate한다 -
+	 * hydrate 비용은 입력 코드 수에 비례하므로 이 상한이 곧 실질 상한이다. totalMatches는 이 상한과
+	 * 무관하게 창 안 전체 매칭 수 그대로다(설계 §요구 - "정확한 총 매칭 건수(상한 없음)"가 계약).
+	 */
+	private AiToolResult searchPosts(ToolSession session, long userId, JsonNode args) {
+		String normalizedQuery = args.path("query").asString("").replace(" ", "");
+		if (normalizedQuery.isEmpty()) {
+			return error("query가 필요합니다.");
+		}
+		Optional<BrandLinkRow> linkOpt = ownedBrand(userId, args.path("brandId").asLong(0));
+		if (linkOpt.isEmpty()) {
+			return error("그 브랜드는 이 사용자의 모니터링 목록에 없거나 접근 권한이 없습니다. list_brands로 확인하세요.");
+		}
+		BrandLinkRow link = linkOpt.get();
+		Optional<BrandAccountRow> accountOpt = brandReadRepository.findAccount(link.brandId());
+		if (accountOpt.isEmpty()) {
+			return error("그 브랜드의 계정 정보가 아직 수집되지 않았습니다.");
+		}
+		BrandAccountRow account = accountOpt.get();
+		BrandWindow window = resolveWindow(session, userId, link, account, args, false);
+
+		List<PostRef> poolRefs = new ArrayList<>();
+		List<PostRef> legacyRefs = new ArrayList<>();
+		for (PostRef ref : window.inWindow()) {
+			(window.index().poolCodes().contains(ref.shortcode()) ? poolRefs : legacyRefs).add(ref);
+		}
+		Set<String> poolCodes = poolRefs.stream().map(PostRef::shortcode)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		Set<String> matchedPoolCodes = brandReadRepository.findCaptionMatches(poolCodes, normalizedQuery);
+
+		String lowerQuery = normalizedQuery.toLowerCase(Locale.ROOT);
+		List<PostRef> matchedRefs = new ArrayList<>();
+		for (PostRef ref : poolRefs) {
+			if (matchedPoolCodes.contains(ref.shortcode())) {
+				matchedRefs.add(ref);
+			}
+		}
+		for (PostRef ref : legacyRefs) {
+			BrandPostResponse legacy = window.index().legacyByCode().get(ref.shortcode());
+			String caption = legacy == null ? null : legacy.caption();
+			if (caption != null && caption.replace(" ", "").toLowerCase(Locale.ROOT).contains(lowerQuery)) {
+				matchedRefs.add(ref);
+			}
+		}
+
+		List<String> topCodes = matchedRefs.stream()
+				.sorted(Comparator.comparing(PostRef::uploadedOn, Comparator.nullsLast(Comparator.reverseOrder())))
+				.limit(MAX_SEARCH_MATCHES)
+				.map(PostRef::shortcode)
+				.toList();
+		List<BrandPostResponse> hydrated = postAssembler.hydrate(userId, account, link.accountType(), window.index(),
+				topCodes, false);
+		Map<String, BrandPostResponse> hydratedByCode = hydrated.stream()
+				.collect(Collectors.toMap(BrandPostResponse::shortcode, Function.identity(), (a, b) -> a));
+
+		ObjectNode payload = objectMapper.createObjectNode();
+		payload.put("brandId", link.brandId());
+		payload.put("since", window.since().toString());
+		payload.put("totalMatches", matchedRefs.size());
+		payload.put("totalInWindow", window.inWindow().size());
+		ArrayNode matchesNode = payload.putArray("matches");
+		List<String> codesOut = new ArrayList<>();
+		for (String code : topCodes) {
+			BrandPostResponse post = hydratedByCode.get(code);
+			if (post == null) {
+				continue;
+			}
+			codesOut.add(code);
+			ObjectNode node = matchesNode.addObject();
+			node.put("shortCode", post.shortcode());
+			node.put("takenAt", post.takenAt());
+			node.put("authorUsername", post.authorUsername());
+			node.put("caption", truncate(post.caption(), SEARCH_CAPTION_EXCERPT_LENGTH));
+			TrackingItemResponse.SnapshotResponse latest = post.latestSnapshot();
+			node.put("likes", latest == null ? null : latest.likes());
+			node.put("views", latest == null ? null : latest.views());
+		}
+		// rowCount는 다른 툴과 달리 "돌려준" 상위 건수가 아니라 총 매칭 건수다 - 이 툴의 핵심 계약이
+		// 상한 없는 정확한 카운트라, 로그(app.ai_chat_logs.tool_calls[].rows)에도 진짜 수를 남긴다.
+		return AiToolResult.ok(payload.toString(), matchedRefs.size(), codesOut);
+	}
+
+	/**
+	 * 집계(신설, 2026-08-28) - 게시물 수·합계·평균 질문을 SQL 집계로 낸다(list_posts 30건 표본으로
+	 * 어림잡지 않는다). 지표는 {@link BrandReadRepository#findLatestMetricsByShortCodes}로 인덱스가
+	 * 이미 좁혀 놓은 풀 shortcode만 배치 조회한다 - search_posts와 같은 이유로 창 안 전체를
+	 * hydrate하지 않는다. 과도기 폴백 카드는 소량이라 인메모리 값을 그대로 쓴다.
+	 *
+	 * <p>조회수는 릴스만 분모·분자에 들어간다(피드는 항상 null) - payload의 viewsNote가 그 규칙을
+	 * 모델에게도 명시한다. 좋아요·댓글은 "수집된 것 기준"이라 스냅샷이 아예 없는(아직 미수집) 게시물은
+	 * 표본에서 빠지고, 그 표본 수를 각각 *SampleCount로 함께 싣는다.
+	 */
+	private AiToolResult aggregatePosts(ToolSession session, long userId, JsonNode args) {
+		Optional<BrandLinkRow> linkOpt = ownedBrand(userId, args.path("brandId").asLong(0));
+		if (linkOpt.isEmpty()) {
+			return error("그 브랜드는 이 사용자의 모니터링 목록에 없거나 접근 권한이 없습니다. list_brands로 확인하세요.");
+		}
+		BrandLinkRow link = linkOpt.get();
+		Optional<BrandAccountRow> accountOpt = brandReadRepository.findAccount(link.brandId());
+		if (accountOpt.isEmpty()) {
+			return error("그 브랜드의 계정 정보가 아직 수집되지 않았습니다.");
+		}
+		BrandAccountRow account = accountOpt.get();
+		BrandWindow window = resolveWindow(session, userId, link, account, args, false);
+
+		Set<String> poolCodes = window.inWindow().stream().map(PostRef::shortcode)
+				.filter(window.index().poolCodes()::contains)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		Map<String, BrandReadRepository.LatestMetricsRow> metricsByCode = brandReadRepository
+				.findLatestMetricsByShortCodes(poolCodes).stream()
+				.collect(Collectors.toMap(BrandReadRepository.LatestMetricsRow::shortCode, Function.identity(),
+						(a, b) -> a));
+
+		long reelsCount = 0;
+		long feedCount = 0;
+		long totalViews = 0;
+		long viewsSampleCount = 0;
+		long totalLikes = 0;
+		long likesSampleCount = 0;
+		long totalComments = 0;
+		long commentsSampleCount = 0;
+		String topShortCode = null;
+		Long topViews = null;
+
+		for (PostRef ref : window.inWindow()) {
+			String code = ref.shortcode();
+			String contentType;
+			Long views;
+			Long likes;
+			Long comments;
+			if (window.index().poolCodes().contains(code)) {
+				BrandReadRepository.LatestMetricsRow row = metricsByCode.get(code);
+				contentType = row == null ? null : row.contentType();
+				views = row == null ? null : row.views();
+				likes = row == null ? null : row.likes();
+				comments = row == null ? null : row.comments();
+			} else {
+				BrandPostResponse legacy = window.index().legacyByCode().get(code);
+				TrackingItemResponse.SnapshotResponse latest = legacy == null ? null : legacy.latestSnapshot();
+				contentType = legacy == null ? null : legacy.contentType();
+				views = latest == null ? null : latest.views();
+				likes = latest == null ? null : latest.likes();
+				comments = latest == null ? null : latest.comments();
+			}
+
+			boolean isReels = BrandPostAssembler.CONTENT_TYPE_REELS.equalsIgnoreCase(contentType);
+			if (isReels) {
+				reelsCount++;
+			} else {
+				feedCount++;
+			}
+			if (isReels && views != null) {
+				totalViews += views;
+				viewsSampleCount++;
+				if (topViews == null || views > topViews) {
+					topViews = views;
+					topShortCode = code;
+				}
+			}
+			if (likes != null) {
+				totalLikes += likes;
+				likesSampleCount++;
+			}
+			if (comments != null) {
+				totalComments += comments;
+				commentsSampleCount++;
+			}
+		}
+
+		ObjectNode payload = objectMapper.createObjectNode();
+		payload.put("brandId", link.brandId());
+		payload.put("since", window.since().toString());
+		payload.put("postCount", window.inWindow().size());
+		payload.put("reelsCount", reelsCount);
+		payload.put("feedCount", feedCount);
+		payload.put("viewsNote", "피드 게시물은 조회수가 항상 null이라 조회수 집계·평균은 릴스만 대상입니다.");
+		payload.put("totalViews", totalViews);
+		payload.put("avgViews", viewsSampleCount == 0 ? null : (double) totalViews / viewsSampleCount);
+		payload.put("viewsSampleCount", viewsSampleCount);
+		payload.put("totalLikes", totalLikes);
+		payload.put("avgLikes", likesSampleCount == 0 ? null : (double) totalLikes / likesSampleCount);
+		payload.put("likesSampleCount", likesSampleCount);
+		payload.put("totalComments", totalComments);
+		payload.put("avgComments", commentsSampleCount == 0 ? null : (double) totalComments / commentsSampleCount);
+		payload.put("commentsSampleCount", commentsSampleCount);
+		List<String> codes;
+		if (topShortCode != null) {
+			ObjectNode topPost = payload.putObject("topPost");
+			topPost.put("shortCode", topShortCode);
+			topPost.put("views", topViews);
+			codes = List.of(topShortCode);
+		} else {
+			codes = List.of();
+		}
+		return AiToolResult.ok(payload.toString(), window.inWindow().size(), codes);
 	}
 
 	/**
