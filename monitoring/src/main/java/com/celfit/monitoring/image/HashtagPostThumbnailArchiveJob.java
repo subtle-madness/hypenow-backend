@@ -10,9 +10,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 /**
  * 해시태그 발견 게시물 썸네일 아카이브({@link BrandPostThumbnailArchiveJob}과 동형) — 대상은
  * {@code brand_hashtag_post} 중 <b>verdict='RELEVANT'만</b>이다. 서빙 계약(was
- * BrandReadRepository.findHashtagPosts)이 RELEVANT만 노출하고, 판정은 저장 후 불변이라
- * (BrandHashtagCollectService — "DB에 있는 코드는 재판정하지 않는다") 비노출 판정분을 아카이브해
- * 둘 이유가 없다.
+ * BrandReadRepository.findHashtagPosts)이 RELEVANT만 노출한다.
+ *
+ * <p>2026-08-27 해시태그 직접 수집 전환으로 이 감지 구조 자체가 폐기됐다 — 이 잡은 구
+ * {@code brand_hashtag_post} 잔존 행을 서빙하기 위해서만 의도적으로 얼려둔 죽은 경로이고,
+ * 다음 릴리스에 테이블(brand_hashtag_post·brand_hashtag_post_matched_tags)과 함께 제거된다
+ * (expand-contract, 설계 §1).
  *
  * <p>PK가 (brand_id, short_code)라 같은 게시물이 브랜드별 행으로 중복될 수 있다 — 후보는
  * {@code DISTINCT ON (short_code)}로 접고, UPDATE도 short_code 기준으로 쳐서 전 브랜드 행에

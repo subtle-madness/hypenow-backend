@@ -24,8 +24,9 @@ import org.springframework.stereotype.Service;
  * 다음날 스윕이 자연 백스톱한다(08-06 운영 결정: 현행 유지).
  *
  * <p>2026-08-18 direct 통합(§3-2) — 브랜드마다 유저태그 열거(1단계) 다음에 direct 게시물
- * 단건 수집({@link BrandDirectCollectService#sweepDirect}, 2단계)이, 그 다음에 해시태그 발견
- * 스윕(3단계)이 각자 격리된 채로 돈다.
+ * 단건 수집({@link BrandDirectCollectService#sweepUnenumerated}, 2단계)이, 그 다음에 해시태그
+ * 수집(3단계)이 각자 격리된 채로 돈다. 2026-08-27 해시태그 직접 수집 전환으로 2단계 모수는
+ * direct ∪ hashtag(열거가 도달할 수 없는 행 전부)로 넓어졌고, 3단계는 "감지"가 아니라 "수집"이다.
  *
  * <p>계정 삭제·비공개 전환(SubjectNotFound·PrivateAccount)도 상태 전이 없이 격리만 한다 —
  * 브랜드 추적은 탈퇴(CLOSED)까지가 정본이라(스펙 §8) 캠페인의 hidden 전이를 승계하지 않는다.
@@ -119,7 +120,7 @@ public class BrandSweepJob {
 				log.warn("브랜드 스윕 실패(격리) — {}: {}", b.username(), e.toString());
 			}
 			try {
-				directCollect.sweepDirect(b);
+				directCollect.sweepUnenumerated(b);
 			} catch (RuntimeException e) {
 				directFailures++;
 				log.warn("브랜드 direct 스윕 실패(격리) — {}: {}", b.username(), e.toString());

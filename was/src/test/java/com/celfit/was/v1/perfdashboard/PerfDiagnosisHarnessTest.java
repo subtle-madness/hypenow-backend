@@ -2,6 +2,7 @@ package com.celfit.was.v1.perfdashboard;
 
 import com.celfit.was.archive.ArchiveWriter;
 import com.celfit.was.monitoring.BrandDirectPostRepository;
+import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandPostCampaignRepository;
@@ -60,7 +61,8 @@ class PerfDiagnosisHarnessTest {
 		TrackingItemAssembler trackingItemAssembler = new TrackingItemAssembler(itemRepository,
 				campaignRepository, Optional.of(readRepository), new ObjectMapper());
 		BrandPostAssembler brandPostAssembler = new BrandPostAssembler(brandReadRepository,
-				postCampaignRepository, directPostRepository, trackingItemAssembler, itemRepository, false);
+				postCampaignRepository, directPostRepository, trackingItemAssembler, itemRepository,
+				new BrandHashtagTagRepository(app), false);
 		PerformanceContentAssembler assembler = new PerformanceContentAssembler(trackingItemAssembler,
 				linkRepository, campaignRepository, Optional.of(brandReadRepository),
 				Optional.of(brandPostAssembler));

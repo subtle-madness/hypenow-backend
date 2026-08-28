@@ -36,7 +36,8 @@ import org.springframework.web.bind.annotation.RestController;
  * 브랜드 태그 모니터링 등록/탈퇴 + 태그 셋 관리 API(수집 파이프라인 진입점 — was 조회 API·FE 계약은
  * 범위 밖). 태그는 GET(조회)·PUT(전체 교체)·POST(단건·다건 추가)·DELETE {item}(단건 삭제)·
  * DELETE(전체 삭제) 표준 REST 5종을 제공한다(2026-08-12 확장 — 유저 결정: 표준 REST 단건 조작
- * 추가). 저장은 전부 tombstone(deleted_at) — 하드 삭제하면 등록 replay의 자동 시드가 되살리기 때문.
+ * 추가). 저장은 전부 tombstone(deleted_at) — 하드 삭제하면 새 사용자 등록의 유도 태그 push(was
+ * 책임, 2026-08-28~)가 그 자리를 재활성으로 되살리기 때문.
  * <b>제외 문자열 관리 API는 2026-08-17 FE 협의로 폐기됐다</b>(프론트는 이미 UI·호출 제거) — 이
  * 컨트롤러에서 5종 엔드포인트를 걷어냈다({@code brand_hashtag_exclusion} 테이블 자체는
  * expand-contract 원칙상 DROP하지 않고 남아 있다).
@@ -73,8 +74,8 @@ public class BrandController {
 	/**
 	 * 태그 셋(유저 관리 API, 2026-08-12) — GET 응답·PUT 요청 바디 공용. tags는 정규화(trim·선행 #
 	 * 제거·소문자·blank 제거·중복 제거) 후 저장하되, 무효 문자를 포함한 항목은 절삭하지 않고
-	 * 통째로 거부한다(자동 유도 BrandHashtagTags.derive와 의도적으로 다른 규칙 — 유저 입력이라
-	 * 잘라내면 유저가 입력한 문자열과 실제 저장된 태그가 어긋난다).
+	 * 통째로 거부한다(was의 자동 유도와 의도적으로 다른 규칙 — 유저 입력이라 잘라내면 유저가
+	 * 입력한 문자열과 실제 저장된 태그가 어긋난다).
 	 */
 	public record HashtagTagsBody(List<String> tags) {}
 
@@ -249,8 +250,8 @@ public class BrandController {
 	 * {@link BrandHashtagRepository#replaceTags} 참조). 브랜드 미존재·비ACTIVE는 404가 이 가드보다
 	 * 우선한다.
 	 *
-	 * <p>유효 문자 검증은 유저 입력이므로 자동 유도(BrandHashtagTags.derive)처럼 절삭하지 않고
-	 * 통째로 거부한다 — 무효 문자 포함 항목이 하나라도 있으면 422(문제 태그를 메시지에 명시).
+	 * <p>유효 문자 검증은 유저 입력이므로 was의 자동 유도처럼 절삭하지 않고 통째로 거부한다 —
+	 * 무효 문자 포함 항목이 하나라도 있으면 422(문제 태그를 메시지에 명시).
 	 * 빈 목록은 허용한다(2026-08-12 — 전체 삭제 API가 생겨 "전부 지우기"가 정당한 상태이므로 구
 	 * 하한 가드는 폐지, {@link #deleteAllHashtagTags} 참조. 브랜드 태그 감지가 전부 꺼지는 셈이다).
 	 *

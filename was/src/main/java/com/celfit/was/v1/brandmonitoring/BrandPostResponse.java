@@ -21,7 +21,7 @@ import java.util.List;
 public record BrandPostResponse(
 		String id,
 		String brandAccountId,
-		@Schema(allowableValues = {"tagged", "direct"}) String source,
+		@Schema(allowableValues = {"tagged", "direct", "hashtag"}) String source,
 		String postUrl,
 		String shortcode,
 		// 값은 "reels"/"feed" — 레거시 TrackedPost.contentType과 같은 어휘로 통일한다(direct 산지가

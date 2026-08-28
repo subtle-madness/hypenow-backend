@@ -469,7 +469,8 @@ public class PerformanceContentAssembler {
 				: BrandPostAssembler.resolveImageUrl(author.imageObjectPath(), author.profilePicUrl());
 		boolean reels = snap != null && CONTENT_TYPE_REELS.equalsIgnoreCase(snap.contentType());
 		return new DashboardRef(SYNTHETIC_ID_PREFIX + row.shortCode(), row.shortCode(),
-				BrandPostAssembler.resolveSource(row.tagDetectedAt(), row.directRegisteredAt(), registeredByUser),
+				BrandPostAssembler.resolveSource(row.tagDetectedAt(), row.directRegisteredAt(),
+						row.hashtagDetectedAt(), registeredByUser),
 				// 협찬 판정 입력은 캡션 원문이 아니라 SQL 마커 매치다(2026-08-27 P0 슬림 인덱스) —
 				// 브랜드 표면과 같은 caption_marker를 쓴다(동치성은 골든 코퍼스가 봉인).
 				BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.captionMarker()),
