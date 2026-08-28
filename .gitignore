@@ -20,3 +20,9 @@ mac-migration-kit/
 
 # 파이썬 바이트코드 캐시(deploy 테스트 실행 시 생성)
 __pycache__/
+
+# 벤치 1회성 산출물
+bench/results/
+# 로컬 편집기·스크래치 파일
+*.code-workspace
+.scratch_*
