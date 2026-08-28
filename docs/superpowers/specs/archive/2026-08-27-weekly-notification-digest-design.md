@@ -1,6 +1,6 @@
 # 주간 알림 다이제스트 개편 설계
 
-> 상태: 🟢 활성 · 2026-08-27 브레인스토밍 확정. 구현 계획은 후속(plans/).
+> 상태: ✅ 구현됨(코드 반영 완료, 배포 대기) · 구현 계획은 [plans/archive/2026-08-27-weekly-notification-digest.md](../../plans/archive/2026-08-27-weekly-notification-digest.md).
 
 ## 1. 배경과 문제
 

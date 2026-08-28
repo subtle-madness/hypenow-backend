@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 2026-08-27 작성. 설계 정본은 [specs/2026-08-27-weekly-notification-digest-design.md](../specs/2026-08-27-weekly-notification-digest-design.md).
+> 상태: ✅ 구현됨 · 2026-08-27 실행 완료(리뷰 반영 포함). 설계 정본은 [specs/archive/2026-08-27-weekly-notification-digest-design.md](../../specs/archive/2026-08-27-weekly-notification-digest-design.md).
 
 **Goal:** 콘텐츠 알림 4종의 일일 다이제스트를 폐지하고, 브랜드 새 게시물 발견과 등록 게시물 광고 미표기 판정을 더한 **주 1건(월 09:00 KST) 인앱 알림 + 주간 리포트 메일 1통**으로 통합한다.
 
@@ -3616,32 +3616,36 @@
 
 **Steps:**
 
-- [ ] 전체 테스트 1회 — PR 직전 단 한 번만 돈다(모듈 4개가 각자 Testcontainers를 띄우므로 로컬 자원 경합이 크다. `colima stop && colima start --cpu 8 --memory 12`가 선행돼야 한다).
+- [x] 전체 테스트 1회 — PR 직전 단 한 번만 돈다(모듈 4개가 각자 Testcontainers를 띄우므로 로컬 자원 경합이 크다. `colima stop && colima start --cpu 8 --memory 12`가 선행돼야 한다).
   ```
   ./gradlew test
   ```
   기대 출력: `BUILD SUCCESSFUL`. 실패가 대량이면 먼저 `echo $DOCKER_HOST`부터 확인한다(미설정이 대량 실패의 가장 흔한 원인).
+  실측(2026-08-28, colima 8CPU/12GiB 기동 상태 확인 후 실행): `BUILD SUCCESSFUL`. was 1591·analytics 356·crawler 507·monitoring 840·common-llm 8 = 총 3,302건, 실패·에러 0건(대부분 캐시 재사용 — 직전 실행분과 소스 동일해 재검증됨).
 
-- [ ] 마이그레이션 안전 가드 로컬 확인
+- [x] 마이그레이션 안전 가드 로컬 확인
   ```
   ./.github/scripts/check-migration-safety.sh
   ```
   기대 출력: 새 마이그레이션이 파괴적 구문·미래 채번·역전 없음으로 통과. 스크립트가 base 브랜치를 요구하면 `develop` 기준으로 돈다.
+  실측: 인자 없이 실행하면 사용법 출력 후 exit 1(base-ref 필수) — `./.github/scripts/check-migration-safety.sh develop`로 실행. was `V20260827135725`가 파괴적 DDL 검사 대상(OK)으로 출력, 버전 중복·채번 질서 위반 없음으로 통과. monitoring `V20260827171444`는 파괴적 DDL 검사 스코프 밖(설계상 was app+analytics만 대상)이라 개별 출력엔 안 뜨지만 버전 중복·채번 질서 검사(4개 디렉토리 전부 대상)에는 포함돼 통과 확인.
 
-- [ ] `DECISIONS.md` 맨 위에 아래 행을 추가한다.
+- [x] `DECISIONS.md` 맨 위에 아래 행을 추가한다.
   ```markdown
   | 2026-08-27 | 알림을 주간 1건으로 통일 | 일일·즉시 레인 폐지, 매주 월 09:00 KST 지난주 요약 1건(인앱+메일). 브랜드 새 게시물 발견·등록 게시물 광고 미표기 판정을 신규 섹션으로 추가. 알림 설정은 주간 이메일 토글 1개로 축소(FE 통지 필요). 메일 발송은 monitoring에서 was로 이관. [설계](docs/superpowers/specs/archive/2026-08-27-weekly-notification-digest-design.md) |
   ```
+  실측: 위 초안 문구는 리뷰 반영분(따라잡기 크론이 월요일 한정이 아니라 매일 09:10~23:50 10분 간격, 이벤트 0건 주는 미생성이 아니라 `clearItems`로 행 보존·items만 비움)을 담지 못해 최종 코드 기준으로 다듬어 넣었다 — 실제 추가한 문구는 `DECISIONS.md` 12행 참조.
 
-- [ ] 완료 문서 아카이브 — 스펙과 계획을 같은 커밋에서 옮기고, 이 두 문서를 가리키는 링크를 고친다.
+- [x] 완료 문서 아카이브 — 스펙과 계획을 같은 커밋에서 옮기고, 이 두 문서를 가리키는 링크를 고친다.
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign mv docs/superpowers/specs/2026-08-27-weekly-notification-digest-design.md docs/superpowers/specs/archive/2026-08-27-weekly-notification-digest-design.md
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign mv docs/superpowers/plans/2026-08-27-weekly-notification-digest.md docs/superpowers/plans/archive/2026-08-27-weekly-notification-digest.md
   grep -rn "2026-08-27-weekly-notification-digest" --include='*.md' . | grep -v "/archive/"
   ```
   마지막 grep이 매치를 내면 그 링크를 `archive/` 경로로 고친다(아카이빙이 링크를 조용히 깨뜨린 전력이 있다). 두 문서의 상태 헤더도 `> 상태: ✅ 구현됨`으로 바꾼다.
+  실측: 두 파일 git mv 완료, 잔여 grep 매치 없음(본 파일 안의 git mv 명령어 예시 문구 2건만 예외 — 링크가 아니라 과거 지시 텍스트라 유지). 스펙 헤더는 `✅ 구현됨(코드 반영 완료, 배포 대기)`, 계획(본 파일) 헤더는 `✅ 구현됨 · 2026-08-27 실행 완료(리뷰 반영 포함)`로 갱신하고 상호 링크도 archive 경로로 고쳤다.
 
-- [ ] 커밋과 push (PR은 열지 않는다 — 사용자 승인 후에만)
+- [x] 커밋과 push (PR은 열지 않는다 — 사용자 승인 후에만)
   ```
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign add -A
   git -C /Users/woomin/Project/hypenow-backend/.worktrees/notification-weekly-redesign commit -m "$(cat <<'EOF'
