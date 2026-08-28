@@ -112,9 +112,12 @@ class DigestRepositoryTest extends IntegrationTest {
 
 	@Test
 	void markAllRead는_응답_창_30건_밖의_행까지_전부_읽음_처리한다() {
+		// items는 비어있지 않은 값을 쓴다 — "[]"(클리어된 행)는 markAllRead 대상에서 빠진다
+		// (2026-08-28 재리뷰 nit, 아래 markAllRead는_비워진_행을_건드리지_않는다 참조).
 		LocalDate base = LocalDate.of(2026, 1, 1);
+		String nonEmptyItems = "[{\"category\":\"content\",\"type\":\"collection_started\",\"summary\":\"s\",\"count\":1}]";
 		for (int i = 0; i < 31; i++) {
-			repository.upsert(userId, base.plusDays(i), "[]");
+			repository.upsert(userId, base.plusDays(i), nonEmptyItems);
 		}
 		assertThat(repository.countByUser(userId)).isEqualTo(31);
 
@@ -126,6 +129,23 @@ class DigestRepositoryTest extends IntegrationTest {
 				.query(Long.class)
 				.single();
 		assertThat(unreadCount).isZero();
+	}
+
+	@Test
+	void markAllRead는_비워진_행을_건드리지_않는다() {
+		// 2026-08-28 재리뷰 nit — clearItems로 비워진 행(items='[]')은 "사용자에게 존재하지
+		// 않는" 것으로 취급해야 한다. 여기서도 건드리면 클리어→모두읽음→같은 주 재채움 순서가
+		// 겹쳤을 때 되살아난 다이제스트가 이미 읽음 처리된 채로 노출된다.
+		long visibleId = repository.upsert(userId, LocalDate.of(2026, 7, 29),
+				"[{\"category\":\"content\",\"type\":\"collection_started\",\"summary\":\"s\",\"count\":1}]");
+		long clearedId = repository.upsert(userId, LocalDate.of(2026, 7, 28), "[]");
+
+		repository.markAllRead(userId);
+
+		assertThat(repository.findRecentByUser(userId, 10).stream()
+				.filter(row -> row.id() == visibleId).findFirst().orElseThrow().readAt()).isNotNull();
+		assertThat(repository.findRecentByUser(userId, 10).stream()
+				.filter(row -> row.id() == clearedId).findFirst().orElseThrow().readAt()).isNull();
 	}
 
 	@Test

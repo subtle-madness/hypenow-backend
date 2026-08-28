@@ -160,12 +160,18 @@ public class DigestRepository {
 				.update();
 	}
 
-	/** 안읽음 전체 읽음 처리 — 응답 창(최근 30건) 제한 없이 유저 전체 대상(6.32 all=true). */
+	/**
+	 * 안읽음 전체 읽음 처리 — 응답 창(최근 30건) 제한 없이 유저 전체 대상(6.32 all=true).
+	 * items='[]'로 비워진(clearItems) 행은 제외한다(2026-08-28 재리뷰 nit) — "비워진 행은
+	 * 사용자에게 존재하지 않는다"는 findVisibleRecentByUser/countVisibleByUser와 같은 규칙을
+	 * 여기서도 지키지 않으면, 클리어→모두읽음→같은 주 재채움 순서가 겹쳤을 때 되살아난 행이
+	 * 이미 읽음 처리된 채로 노출된다.
+	 */
 	public void markAllRead(long userId) {
 		jdbcClient.sql("""
 				UPDATE app.monitoring_digests
 				SET read_at = now()
-				WHERE user_id = :userId AND read_at IS NULL
+				WHERE user_id = :userId AND read_at IS NULL AND items <> '[]'::jsonb
 				""")
 				.param("userId", userId)
 				.update();
