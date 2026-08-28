@@ -684,6 +684,8 @@ public class PerformanceContentAssembler {
 	 * 스냅샷 병합(설계 결정 6) — 날짜별로 합치고, 지표별로 non-null을 우선하되 둘 다 값이면
 	 * <b>브랜드 값</b>을 쓴다(브랜드 스윕 03:00이 레거시 02:00보다 늦어 "늦게 수집된 원천값" 규칙에 맞다).
 	 * 숨김 불리언은 "관측된 켜짐 우선" — 어느 쪽이든 true면 true다(한쪽이 못 본 것을 false로 덮지 않는다).
+	 * 숨김이 켜지면 대응 값(likes·shares)은 다른 산지가 관측했더라도 접는다(null) — 단일 산지 계약
+	 * (숨김이면 값 null)을 병합 결과도 지켜야 두 집계 표면의 좋아요 합이 갈리지 않는다({@code mergeOne}).
 	 *
 	 * <p>날짜 키는 앞 10자다 — 산지에 따라 날짜와 타임스탬프가 섞여 들어와도 같은 하루로 접힌다.
 	 * 결과는 날짜 오름차순(계약).
@@ -718,19 +720,28 @@ public class PerformanceContentAssembler {
 		return List.copyOf(byDate.values());
 	}
 
-	/** Map.merge 계약상 첫 인자가 기존 값(레거시), 둘째가 새 값(브랜드)이다. */
+	/**
+	 * Map.merge 계약상 첫 인자가 기존 값(레거시), 둘째가 새 값(브랜드)이다.
+	 *
+	 * <p>숨김이 켜진 지표(likes·shares)는 다른 산지가 준 값을 접는다(null) — 값 pick과 숨김 OR를
+	 * 독립으로 두면 {@code likes != null && likesHidden == true} 조합이 생겨 단일 산지 계약
+	 * ({@link TrackingItemResponse.SnapshotResponse} — 숨김이면 값 null)이 깨지고,
+	 * {@code /growth}(숨김이면 합산 제외)와 {@code /comparison}(무게이트 합산)의 합이 갈린다.
+	 */
 	private static TrackingItemResponse.SnapshotResponse mergeOne(TrackingItemResponse.SnapshotResponse legacy,
 			TrackingItemResponse.SnapshotResponse brand) {
 		logConflicts(legacy, brand);
+		boolean likesHidden = legacy.likesHidden() || brand.likesHidden();
+		boolean sharesHidden = legacy.sharesHidden() || brand.sharesHidden();
 		return new TrackingItemResponse.SnapshotResponse(
 				legacy.date(),
 				pick(legacy.views(), brand.views()),
-				pick(legacy.likes(), brand.likes()),
-				legacy.likesHidden() || brand.likesHidden(),
+				likesHidden ? null : pick(legacy.likes(), brand.likes()),
+				likesHidden,
 				pick(legacy.comments(), brand.comments()),
 				pick(legacy.saves(), brand.saves()),
-				pick(legacy.shares(), brand.shares()),
-				legacy.sharesHidden() || brand.sharesHidden(),
+				sharesHidden ? null : pick(legacy.shares(), brand.shares()),
+				sharesHidden,
 				pick(legacy.reposts(), brand.reposts()));
 	}
 

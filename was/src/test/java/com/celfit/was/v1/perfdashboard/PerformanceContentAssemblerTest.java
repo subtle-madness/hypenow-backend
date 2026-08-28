@@ -116,6 +116,25 @@ class PerformanceContentAssemblerTest {
 		assertThat(merged.get(0).reposts()).isEqualTo(4L);
 	}
 
+	/**
+	 * 단일 산지 계약(숨김이면 값 null — {@link SnapshotResponse})을 병합 결과도 지킨다 — 한 산지는
+	 * 값을 관측하고 다른 산지는 숨김을 관측하면 값은 접는다. 값과 숨김이 같이 실리면
+	 * {@code /growth}(숨김이면 합산 제외)와 {@code /comparison}(무게이트 합산)의 합이 갈린다.
+	 */
+	@Test
+	void 한_산지가_값을_주고_다른_산지가_숨김을_관측하면_값은_접힌다() {
+		// 레거시는 shares 값·likes 숨김, 브랜드는 likes 값·shares 숨김 — 양방향 다 접혀야 한다.
+		var legacy = List.of(new SnapshotResponse("2026-08-06", 100L, null, true, 5L, null, 3L, false, null));
+		var brand = List.of(new SnapshotResponse("2026-08-06", 120L, 8L, false, null, null, null, true, null));
+
+		var merged = PerformanceContentAssembler.mergeSnapshots(legacy, brand);
+
+		assertThat(merged.get(0).likesHidden()).isTrue();
+		assertThat(merged.get(0).likes()).isNull();
+		assertThat(merged.get(0).sharesHidden()).isTrue();
+		assertThat(merged.get(0).shares()).isNull();
+	}
+
 	@Test
 	void 한쪽이_비면_다른_쪽을_그대로_돌려준다() {
 		var only = List.of(snapshot("2026-08-06", 100L, 1L, 5L));
@@ -698,6 +717,44 @@ class PerformanceContentAssemblerTest {
 		assertThat(overlap.latestComments()).isEqualTo(5L);     // 브랜드 null → 레거시
 		assertThat(overlap.source()).isEqualTo("tagged");
 		assertThat(overlap.brandAccountId()).isEqualTo("42");
+	}
+
+	/**
+	 * 병합 산지 정합(2026-08-28) — 한 산지가 값을, 다른 산지가 숨김을 관측한 콘텐츠의 ref는
+	 * {@code likes=null·likesHidden=true}로 접혀야 {@code /growth}(숨김이면 합산 제외)와
+	 * {@code /comparison}(무게이트 합산)의 좋아요 합이 같다. {@code mergeOne}이 값을 접지 않으면
+	 * 같은 refs를 받은 두 표면이 다른 합을 낸다 — 이 단정이 그 회귀를 고정한다.
+	 */
+	@Test
+	void 병합_콘텐츠의_likes_합산은_growth와_comparison이_같다() {
+		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/",
+				List.of(snapshot("2026-08-06", 100L, 40L, 5L))));
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(OWN_LINK));
+		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(OWN_ACCOUNT));
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any())).willReturn(List.of(
+				taggedRow("ABC", "2026-08-06T09:00:00+09:00"),
+				taggedRow("POOL1", "2026-08-06T09:00:00+09:00")));
+		given(brandReadRepository.findLatestSnapshotsForBrand(eq(BRAND_ID), any(), eq(false)))
+				.willReturn(List.of(latestSnapshot("POOL1", 200L, 20L, 2L)));
+		// 브랜드 산지는 좋아요 숨김을 관측했다(값 null — 단일 산지 계약). 레거시 값 40과의 병합이 시험대다.
+		given(brandPostAssembler.hydrate(eq(USER_ID), eq(OWN_ACCOUNT), eq("own"), any(), eq(List.of("ABC")),
+				eq(false))).willReturn(List.of(taggedPost("ABC",
+						List.of(new SnapshotResponse("2026-08-06", 120L, null, true, null, null, null, false,
+								null)))));
+
+		var refs = assembler().index(USER_ID).refs();
+
+		LocalDate today = LocalDate.parse("2026-08-06");
+		var growthPoint = PerformanceGrowthAggregator.aggregate(refs,
+				PerformanceGrowthAggregator.Granularity.MONTH, null, null, List.of()).points().get(0);
+		var comparisonBucket = PerformanceComparisonAssembler.compare(OWN_ACCOUNT, "own", refs,
+				PerformanceComparisonAssembler.bucketRanges(today), today).buckets().get(0);
+
+		// 숨김 관측 콘텐츠(ABC)는 양쪽 다 합산 제외 — POOL1의 20만 남고, 숨김은 카운트로 남는다.
+		assertThat(growthPoint.likes()).isEqualTo(20L);
+		assertThat(comparisonBucket.likes()).isEqualTo(20L);
+		assertThat(growthPoint.likesHiddenCount()).isEqualTo(1);
+		assertThat(comparisonBucket.likesHiddenCount()).isEqualTo(1);
 	}
 
 	/**

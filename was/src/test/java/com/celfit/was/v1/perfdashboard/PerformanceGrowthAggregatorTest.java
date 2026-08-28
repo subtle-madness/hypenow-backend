@@ -211,6 +211,10 @@ class PerformanceGrowthAggregatorTest {
 		// 참여율 분모 규칙(FE 요청 2026-08-27 ①) — 분자(likes)가 숨김·미상으로 빠지는 게시물의
 		// 팔로워가 분모에 남으면 분자·분모 모수가 어긋나 참여율이 과소 표시된다. 인플루언서 집계의
 		// ratedFollowers(숨김 아님 + likes 있음 + 팔로워 있음)와 같은 게이트다.
+		//
+		// 2행(숨김인데 값도 있음)은 어셈블러 계약상 나올 수 없는 조합이다(2026-08-28 mergeOne 정합:
+		// 숨김이면 값을 접는다) — 그럼에도 넣는 이유는 이 게이트가 그 불변식에 <b>기대지 않고</b>
+		// 자체로 숨김을 배제함을 고정하기 위해서다. 불변식이 깨져도 분모는 부풀지 않아야 한다.
 		var res = PerformanceGrowthAggregator.aggregate(List.of(
 				ref("2026-08-26", null, true, null, 10L, false, 1L, 1000L),      // likes 앎 → 포함
 				ref("2026-08-26", null, true, null, 40L, true, 1L, 2000L),       // 숨김 → 제외
