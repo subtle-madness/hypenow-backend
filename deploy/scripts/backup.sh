@@ -10,9 +10,9 @@
 #
 # 보관 정책 (세 계열 모두 pg_dump|zstd|tee|rclone rcat 단일 파이프라인 — 08-25 crawler,
 # 08-30 analysis·monitoring):
-#   - analysis:   서버 3일 롤링 + B2 7일(기간) 롤링 — 덤프가 작지만(145MB급) 분석 결과는
-#                 raw에서 재파생 가능(LLM 재호출 비용만 부담)이라 길게 들 이유가 없다.
-#                 성공해도 tee 로컬 사본을 남긴다(crawler와 다른 점 — 로컬 3일이 정책)
+#   - analysis:   성공 시 서버 로컬 0개 + B2 7일(기간) 롤링 — 분석 결과는 raw에서 재파생
+#                 가능(LLM 재호출 비용만 부담)이라 길게 들 이유가 없다. 실패 시에만
+#                 로컬 전용 덤프로 폴백해 $LOCAL_FALLBACK_KEEP개 롤링
 #   - crawler:    B2가 살아 있으면 덤프를 B2로 직스트리밍 — 성공 시 서버 로컬 0개
 #                 (B2 사본 확인됨), 실패 시 로컬 전용 덤프로 폴백해
 #                 $LOCAL_CRAWLER_KEEP개 롤링(offsite_ok 분기 — B2가 막혀도 로컬 사본 +
@@ -20,8 +20,8 @@
 #                 덤프 전 선-회전으로 과거 실패일 폴백 사본을 KEEP-1개까지 줄여 "구 사본 +
 #                 신규 덤프" 동시 존재 피크를 없앤다
 #                 (08-03 hypenow-disk-high: 구 3 + 신규 1 공존으로 루트 디스크 85% 순간 초과).
-#   - monitoring: 서버 3일 롤링 + B2 7일(기간) 롤링 — 캠페인·스냅샷뿐이라 덤프가 작다
-#                 (1.4GB급). analysis와 동일하게 tee 사본을 남긴다
+#   - monitoring: analysis와 완전히 동형(성공 시 로컬 0개 + B2 7일). 캠페인·스냅샷뿐이지만
+#                 덤프는 1.7GB급이고 매일 큰다 — 로컬 3개면 5GB가 루트 디스크에 상주했다
 #
 # (07-26: Google Drive 무료 15GB가 crawler 덤프 증가로 초과되어 B2로 전환.
 #  07-27~30: 전환한 B2도 무제한이 아니라 캡에 걸림 → 보관 개수 축소로 재대응.
@@ -67,11 +67,18 @@
 #  monitoring 로컬 덤프 완료 15:39:50 → 실행 종료(backup.log) 15:43. 마지막 ~3분이 순수
 #  재읽기 업로드 패스다(analysis 155MB + monitoring 1.77GB를 bwlimit 10MiB/s로 = 약 193초로
 #  거의 정확히 맞는다). 스트리밍으로 합치면 이 꼬리가 통째로 사라진다.
-#  crawler와 **다른 점 하나**: 성공해도 tee 로컬 사본을 지우지 않는다(mv로 정식 이름 승격).
-#  analysis·monitoring은 "서버 3일 + B2 7일"이 의도된 정책이라 crawler의 로컬 0개 분기를
-#  따라가면 안 된다.
-#  **같은 점**: pipefail로 파이프 어느 단계가 죽어도 통째 실패, rcat이 남긴 반쪽 원격본
-#  즉시 제거, 로컬 전용 덤프로 폴백, nice -n 19 + --bwlimit.
+#  crawler와 **완전히 같은 의미론**으로 맞췄다: 성공 시 로컬 사본 0개(tee 임시본 폐기 +
+#  과거 실패일 폴백까지 정리), 실패 시에만 로컬 전용 덤프 폴백($LOCAL_FALLBACK_KEEP개 롤링),
+#  pipefail 통째 실패 판정, rcat이 남긴 반쪽 원격본 즉시 제거, nice -n 19 + --bwlimit.
+#  종전 "서버 3일 롤링"을 버린 이유 — 08-30 서버 실측으로 로컬 상주분이 monitoring 3개
+#  5.03GB + analysis 3개 0.45GB = **5.5GB**였다(monitoring 덤프는 1.1→1.77GB로 한 주 만에
+#  60% 컸다). 이 서버는 루트 디스크가 87%까지 찬 전력이 있고(07-30·08-24 disk-high),
+#  두 계열 다 B2 7일 사본으로 복원 창이 이미 충분하다. B2가 막힌 날은 폴백이 그대로
+#  로컬 스냅샷을 남기므로 장애 기간 안전망(07-27~08-13 전력)은 유지된다.
+#  ⚠ 부수효과: pull-backup.sh는 서버 ~/backups/에서 긁어오는 도구라 평상시 가져올 게
+#  없어진다(crawler는 08-25부터 이미 그랬다) — B2 장애일 폴백 회수용으로만 남는다.
+#  손안의 사본이 필요하면 맥에서 `rclone copy b2:hypenow-backups/... `로 직접 받을 것.
+#  로컬 정리 글롭은 crawler와 같은 <계열>-[0-9]* — 수동 스냅샷(analysis-pre-* 등)은 남는다.
 #  실패 시 tee 사본을 살려 쓰지 않고 재덤프하는 이유 — rclone이 중간에 죽으면 tee도 SIGPIPE로
 #  함께 죽어 로컬 사본이 잘려 있다. 파이프 단계별 종료코드(PIPESTATUS)로 "업로드만 EOF 직전에
 #  실패" 케이스를 골라내 재덤프를 아낄 수도 있지만, 반쪽 파일을 정식 이름으로 승격시킬 위험을
@@ -88,6 +95,8 @@ set -euo pipefail
 
 B2_CRAWLER_KEEP=3     # B2에 유지할 crawler 덤프 개수 — 복원 창 3일, 덤프가 11GiB급이라 개수가 곧 용량(08-04 5→3)
 LOCAL_CRAWLER_KEEP=2  # B2 실패 시 서버에 남길 crawler 덤프 개수 — 로컬 pull 사본 전제(08-04 축소)
+LOCAL_FALLBACK_KEEP=3 # B2 실패 시 서버에 남길 analysis·monitoring 개수 — 평상시는 0개(08-30~).
+                      # 종전 "서버 3일 롤링"의 3을 그대로 물려받되, 이제 실패일 폴백에만 적용된다
 B2_BWLIMIT=10M        # rclone 업로드 대역 상한 — 무제한 시 실효 17MiB/s가 iowait를 포화시킴(08-20 알람).
                       # 10M이면 crawler 11GiB급 업로드가 ~20분 — 크론 슬롯(15:00, 다음 배치는 16:00 크롤)에 여유
 BACKUP_CPUQUOTA=35%   # 백업 유닛 CPU 상한(2코어 중 0.35코어) — 08-27 실험 실측 안전선(상단 주석).
@@ -138,7 +147,7 @@ fi
 rm -f "$BACKUP_DIR"/.analysis-*.sql.*.tmp
 
 # analysis: 덤프·압축·로컬 기록(tee)·업로드를 한 파이프라인으로 스트리밍(08-30, 상단 주석).
-# crawler와 달리 성공해도 로컬 사본을 남긴다 — 서버 3일 롤링이 의도된 정책이다.
+# crawler와 동형 — 성공하면 로컬 사본을 남기지 않고, 실패한 날만 로컬 폴백을 굴린다.
 analysis_offsite=false
 if "$b2_ready"; then
   if docker compose exec -T postgres pg_dump -U "$DB_USER" -d analysis \
@@ -146,7 +155,10 @@ if "$b2_ready"; then
       | tee "$BACKUP_DIR/.analysis-$STAMP.sql.zst.tmp" \
       | nice -n 19 rclone rcat --bwlimit "$B2_BWLIMIT" "$B2/analysis/analysis-$STAMP.sql.zst"; then
     analysis_offsite=true
-    mv "$BACKUP_DIR/.analysis-$STAMP.sql.zst.tmp" "$BACKUP_DIR/analysis-$STAMP.sql.zst"
+    rm -f "$BACKUP_DIR/.analysis-$STAMP.sql.zst.tmp"   # B2 사본 확인 — 로컬 임시본 폐기
+    # 남아 있는 건 과거 실패일의 폴백뿐 — B2 사본이 확인된 지금 정리한다(평상시 로컬 0개).
+    # 글롭이 analysis-[0-9]*인 이유는 crawler와 같다: 수동 스냅샷(analysis-pre-* 등)은 건드리지 않는다.
+    rm -f "$BACKUP_DIR"/analysis-[0-9]*.sql.*
   else
     # 파이프 어느 단계가 죽었든 통째 실패로 처리한다. pg_dump가 중간에 죽어도 rcat은 잘린
     # 스트림을 정상 종료로 닫고 원격 파일을 만들 수 있다 — 반쪽 원격본이 정식 이름으로
@@ -159,13 +171,15 @@ if "$b2_ready"; then
   fi
 fi
 if ! "$analysis_offsite"; then
-  # 폴백: 종전 방식의 로컬 전용 덤프 — B2 장애 기간(07-27~08-13 전력)에도 시점 스냅샷을
-  # 로컬에 남긴다. set -euo라 여기가 실패하면 즉사 → mv 미도달(반쪽 파일은 .tmp로만 존재).
+  # 폴백: 로컬 전용 덤프 — B2 장애 기간(07-27~08-13 전력)에도 시점 스냅샷을 로컬에 남긴다.
+  # set -euo라 여기가 실패하면 즉사 → mv 미도달(반쪽 파일은 .tmp로만 존재).
   docker compose exec -T postgres pg_dump -U "$DB_USER" -d analysis \
     | nice -n 19 zstd -q > "$BACKUP_DIR/.analysis-$STAMP.sql.zst.tmp"
   mv "$BACKUP_DIR/.analysis-$STAMP.sql.zst.tmp" "$BACKUP_DIR/analysis-$STAMP.sql.zst"
+  # 연속 실패일의 폴백만 $LOCAL_FALLBACK_KEEP개로 롤링(성공하면 위에서 통째로 사라진다)
+  { ls -1t "$BACKUP_DIR"/analysis-[0-9]*.sql.* 2>/dev/null \
+      | tail -n +"$((LOCAL_FALLBACK_KEEP + 1))" | xargs -r rm; } || true
 fi
-ls -1t "$BACKUP_DIR"/analysis-*.sql.* | tail -n +4 | xargs -r rm
 
 # crawler 덤프는 GB급이라 "로컬에 쓰고 다시 읽어 올리는" 2단계가 시간·디스크 I/O를 배로
 # 먹는다 — B2가 살아 있으면 덤프·압축·로컬 기록(tee)·업로드를 한 파이프라인으로 스트리밍
@@ -211,7 +225,8 @@ if [ -n "${MONITORING_DB_USER:-}" ]; then
         | nice -n 19 rclone rcat --bwlimit "$B2_BWLIMIT" "$B2/monitoring/monitoring-$STAMP.sql.zst"; then
       monitoring_offsite=true
       MONITORING_DUMP="monitoring-$STAMP.sql.zst"
-      mv "$BACKUP_DIR/.monitoring-$STAMP.sql.zst.tmp" "$BACKUP_DIR/monitoring-$STAMP.sql.zst"
+      rm -f "$BACKUP_DIR/.monitoring-$STAMP.sql.zst.tmp"   # B2 사본 확인 — 로컬 임시본 폐기
+      rm -f "$BACKUP_DIR"/monitoring-[0-9]*.sql.*          # 과거 실패일 폴백 정리(평상시 0개)
     else
       echo "경고: monitoring 스트리밍 백업 실패 — 반쪽 원격본 정리 후 로컬 전용 덤프로 폴백" >&2
       rclone deletefile "$B2/monitoring/monitoring-$STAMP.sql.zst" || true
@@ -224,14 +239,13 @@ if [ -n "${MONITORING_DB_USER:-}" ]; then
         | nice -n 19 zstd -q > "$BACKUP_DIR/.monitoring-$STAMP.sql.zst.tmp"; then
       MONITORING_DUMP="monitoring-$STAMP.sql.zst"
       mv "$BACKUP_DIR/.monitoring-$STAMP.sql.zst.tmp" "$BACKUP_DIR/monitoring-$STAMP.sql.zst"
+      # 연속 실패일의 폴백만 $LOCAL_FALLBACK_KEEP개로 롤링(성공하면 위에서 통째로 사라진다)
+      { ls -1t "$BACKUP_DIR"/monitoring-[0-9]*.sql.* 2>/dev/null \
+          | tail -n +"$((LOCAL_FALLBACK_KEEP + 1))" | xargs -r rm; } || true
     else
       echo "경고: monitoring 덤프 실패 — 기존 백업은 계속(개통은 deploy/README.md §13)" >&2
       rm -f "$BACKUP_DIR/.monitoring-$STAMP.sql.zst.tmp"   # 반쪽 파일 제거
     fi
-  fi
-  # 로컬 3일 롤링 — 오늘자 사본이 생겼을 때만(덤프가 통째로 실패한 날에 과거 사본을 깎지 않는다)
-  if [ -n "$MONITORING_DUMP" ]; then
-    ls -1t "$BACKUP_DIR"/monitoring-*.sql.* | tail -n +4 | xargs -r rm
   fi
 else
   echo "경고: MONITORING_DB_USER 미설정 — monitoring 백업 건너뜀(개통은 deploy/README.md §13)" >&2
