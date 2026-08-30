@@ -2,10 +2,12 @@ package com.celfit.was.v1.brandmonitoring.ai;
 
 import com.celfit.common.llm.LlmQuotaExhaustedException;
 import com.celfit.was.auth.AppUserDetails;
+import com.celfit.was.setting.AppSettingRepository;
 import com.celfit.was.v1.account.RateLimiter;
 import com.celfit.was.v1.common.ApiResponse;
 import com.celfit.was.v1.common.V1ApiException;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -38,8 +40,11 @@ public class V1BrandAiChatController {
 
 	/** 동기 응답 상한(설계 §5). */
 	private static final int RESPONSE_TIMEOUT_SECONDS = 60;
-	/** 분당 질문 수 - 하루 상한과 별개로 연타·자동화를 막는다. */
-	private static final int PER_MINUTE_LIMIT = 5;
+	/** 분당 질문 수 기준값 - 마이그레이션이 시드한 app_setting {@value #PER_MINUTE_LIMIT_KEY}(기본값
+	 * {@value #DEFAULT_PER_MINUTE_LIMIT}), 런타임 조정은 그 행 UPDATE로(AiChatQuota.DAILY_LIMIT_KEY와
+	 * 동일 관용구, FE 변경요청서 2026-08-28 §9.1). */
+	static final String PER_MINUTE_LIMIT_KEY = "ai.chat.per-minute-limit";
+	static final int DEFAULT_PER_MINUTE_LIMIT = 5;
 	/** 대화 이력 상한 - 무상태라 프론트가 무한히 키울 수 있어 서버가 자른다. */
 	private static final int MAX_MESSAGES = 20;
 	private static final int MAX_CONTENT_LENGTH = 2_000;
@@ -51,16 +56,19 @@ public class V1BrandAiChatController {
 	private final AiChatQuota quota;
 	private final AiChatLogRepository logRepository;
 	private final RateLimiter rateLimiter;
+	private final AppSettingRepository settingRepository;
 	// 타입을 Executor로 잡는다 - 테스트에서 동기 실행기(Runnable::run)로 갈아끼워 결정론을 얻는다
 	private final Executor executor;
 
 	public V1BrandAiChatController(BrandAiAgent agent, AiChatQuota quota,
 			AiChatLogRepository logRepository, RateLimiter rateLimiter,
+			AppSettingRepository settingRepository,
 			@Qualifier("brandAiChatExecutor") Executor executor) {
 		this.agent = agent;
 		this.quota = quota;
 		this.logRepository = logRepository;
 		this.rateLimiter = rateLimiter;
+		this.settingRepository = settingRepository;
 		this.executor = executor;
 	}
 
@@ -74,7 +82,7 @@ public class V1BrandAiChatController {
 		List<AiChatMessage> messages = validate(request);
 		String question = messages.get(messages.size() - 1).content();
 
-		if (!rateLimiter.tryAcquire("ai-chat:" + userId, PER_MINUTE_LIMIT)) {
+		if (!rateLimiter.tryAcquire("ai-chat:" + userId, perMinuteLimit())) {
 			throw V1ApiException.rateLimited();
 		}
 		quota.requireWithinDailyLimit(userId);
@@ -116,7 +124,9 @@ public class V1BrandAiChatController {
 		} catch (TimeoutException e) {
 			future.cancel(true);
 			log.warn("AI 챗 응답 시간 초과({}초) - userId={}", RESPONSE_TIMEOUT_SECONDS, userId);
-			throw V1ApiException.badGateway("AI_TIMEOUT", "답변 생성이 너무 오래 걸렸어요. 잠시 후 다시 시도해 주세요.");
+			// 코드는 FE 계약(변경요청서 §9.1)에 맞춰 AI_UNAVAILABLE로 통일한다 - 타임아웃도 결국 "지금은
+			// 답변을 못 받았다"는 같은 사용자 경험이라 LLM 실패 경로와 코드를 나눌 이유가 없다.
+			throw V1ApiException.badGateway("AI_UNAVAILABLE", "답변 생성이 너무 오래 걸렸어요. 잠시 후 다시 시도해 주세요.");
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
 			throw V1ApiException.badGateway("AI_UNAVAILABLE", "답변을 받지 못했어요. 잠시 후 다시 시도해 주세요.");
@@ -162,5 +172,21 @@ public class V1BrandAiChatController {
 
 	private static long elapsedMillis(long startedAtNanos) {
 		return (System.nanoTime() - startedAtNanos) / 1_000_000L;
+	}
+
+	/** app_setting {@value #PER_MINUTE_LIMIT_KEY} 조회 - AiChatQuota.dailyLimit()과 동일한 폴백
+	 * 관용구(캐시 없이 매번 조회, 숫자가 아니면 기본값). */
+	private int perMinuteLimit() {
+		Optional<String> stored = settingRepository.findValue(PER_MINUTE_LIMIT_KEY);
+		if (stored.isEmpty()) {
+			return DEFAULT_PER_MINUTE_LIMIT;
+		}
+		try {
+			return Integer.parseInt(stored.get().trim());
+		} catch (NumberFormatException e) {
+			log.warn("{} 값이 숫자가 아님({}) - 기본값 {}로 폴백", PER_MINUTE_LIMIT_KEY, stored.get(),
+					DEFAULT_PER_MINUTE_LIMIT);
+			return DEFAULT_PER_MINUTE_LIMIT;
+		}
 	}
 }

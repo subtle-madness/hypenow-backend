@@ -5,6 +5,7 @@ import com.celfit.was.v1.common.V1ApiException;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,9 +47,24 @@ public class AiChatQuota {
 		int limit = dailyLimit();
 		int used = logRepository.countSince(userId, startOfTodayKst());
 		if (used >= limit) {
-			throw new V1ApiException(HttpStatus.TOO_MANY_REQUESTS, "AI_DAILY_LIMIT_REACHED",
-					"오늘 질문 가능 횟수(" + limit + "회)를 모두 사용했어요. 내일 다시 시도해 주세요.");
+			// 코드는 FE 계약(변경요청서 §9.1)에 맞춰 RATE_LIMITED로 통일한다 - 분당 한도(RateLimiter)와
+			// 같은 코드를 쓰되 메시지로 한도·리셋 시각을 구분해 안내한다.
+			throw new V1ApiException(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED",
+					"오늘 질문 가능 횟수(" + limit + "회)를 모두 사용했어요. "
+							+ resetAt().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME) + "에 다시 이용할 수 있어요.");
 		}
+	}
+
+	/** 사용량 조회 API 전용(FE 변경요청서 §9.2) - 오늘 상한·잔여 횟수·다음 초기화 시각을 함께 돌려준다. */
+	public Usage usage(long userId) {
+		int limit = dailyLimit();
+		int used = logRepository.countSince(userId, startOfTodayKst());
+		return new Usage(limit, Math.max(0, limit - used), resetAt());
+	}
+
+	/** 다음 초기화 시각 - KST 다음 자정(설계 §7). */
+	private OffsetDateTime resetAt() {
+		return startOfTodayKst().plusDays(1);
 	}
 
 	int dailyLimit() {
@@ -67,5 +83,9 @@ public class AiChatQuota {
 	private OffsetDateTime startOfTodayKst() {
 		return OffsetDateTime.now(clock).atZoneSameInstant(KST).toLocalDate()
 				.atStartOfDay(KST).toOffsetDateTime();
+	}
+
+	/** GET /v1/brand-monitoring/ai/usage 응답 조립용(FE 변경요청서 §9.2) - remaining은 이미 0 이하로 내려가지 않게 보정된 값. */
+	public record Usage(int dailyLimit, int remaining, OffsetDateTime resetAt) {
 	}
 }

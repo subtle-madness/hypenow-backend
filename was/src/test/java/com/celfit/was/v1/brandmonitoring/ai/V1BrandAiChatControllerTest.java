@@ -18,11 +18,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.celfit.was.auth.AppUser;
 import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.config.SecurityConfig;
+import com.celfit.was.setting.AppSettingRepository;
 import com.celfit.was.v1.account.RateLimiter;
 import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.Executor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -69,11 +71,15 @@ class V1BrandAiChatControllerTest {
 	AiChatLogRepository logRepository;
 	@MockitoBean
 	RateLimiter rateLimiter;
+	@MockitoBean
+	AppSettingRepository settingRepository;
 
 	@BeforeEach
 	void allowRateLimit() {
 		// Mockito boolean 기본값이 false라 명시적으로 열어 주지 않으면 모든 테스트가 429가 된다
 		given(rateLimiter.tryAcquire(anyString(), anyInt())).willReturn(true);
+		// Optional 기본 스텁은 null이라 명시하지 않으면 perMinuteLimit()에서 NPE가 난다 - 기본값 폴백 경로로 통일
+		given(settingRepository.findValue(anyString())).willReturn(Optional.empty());
 	}
 
 	private static AppUserDetails principal() {
@@ -107,14 +113,15 @@ class V1BrandAiChatControllerTest {
 
 	@Test
 	void 일일_상한_초과는_429다() throws Exception {
+		// FE 계약(변경요청서 §9.1)에 맞춰 코드는 분당 한도와 동일한 RATE_LIMITED로 통일한다
 		willThrow(new V1ApiException(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS,
-				"AI_DAILY_LIMIT_REACHED", "오늘 질문 가능 횟수(30회)를 모두 사용했어요. 내일 다시 시도해 주세요."))
+				"RATE_LIMITED", "오늘 질문 가능 횟수(30회)를 모두 사용했어요. 2026-08-31T00:00:00+09:00에 다시 이용할 수 있어요."))
 				.given(quota).requireWithinDailyLimit(anyLong());
 
 		mockMvc.perform(post("/v1/brand-monitoring/ai/chat").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON).content(body("알려줘")))
 				.andExpect(status().isTooManyRequests())
-				.andExpect(jsonPath("$.error.code").value("AI_DAILY_LIMIT_REACHED"));
+				.andExpect(jsonPath("$.error.code").value("RATE_LIMITED"));
 	}
 
 	@Test

@@ -64,7 +64,8 @@ class AiChatQuotaIntegrationTest extends IntegrationTest {
 		assertThatThrownBy(() -> quota.requireWithinDailyLimit(userId))
 				.isInstanceOfSatisfying(V1ApiException.class, e -> {
 					assertThat(e.status()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
-					assertThat(e.code()).isEqualTo("AI_DAILY_LIMIT_REACHED");
+					// FE 계약(변경요청서 §9.1)에 맞춰 분당 한도와 동일한 RATE_LIMITED로 통일한다
+					assertThat(e.code()).isEqualTo("RATE_LIMITED");
 					assertThat(e.getMessage()).contains("2");
 				});
 	}
@@ -74,6 +75,40 @@ class AiChatQuotaIntegrationTest extends IntegrationTest {
 		settingRepository.upsert(AiChatQuota.DAILY_LIMIT_KEY, "없음");
 
 		assertThat(quota.dailyLimit()).isEqualTo(AiChatQuota.DEFAULT_DAILY_LIMIT);
+	}
+
+	@Test
+	void usage는_상한_잔여_리셋시각을_돌려준다() {
+		settingRepository.upsert(AiChatQuota.DAILY_LIMIT_KEY, "10");
+		logRepository.insert(logOf());
+		logRepository.insert(logOf());
+
+		AiChatQuota.Usage usage = quota.usage(userId);
+
+		assertThat(usage.dailyLimit()).isEqualTo(10);
+		assertThat(usage.remaining()).isEqualTo(8);
+		// 리셋 시각은 항상 KST 자정(+09:00) - 실시계 기준이라 정확한 날짜는 검증하지 않고 오프셋·시각만 본다
+		assertThat(usage.resetAt().getOffset().getTotalSeconds()).isEqualTo(9 * 3600);
+		assertThat(usage.resetAt().toLocalTime().toString()).isEqualTo("00:00");
+	}
+
+	@Test
+	void usage의_remaining은_0_밑으로_내려가지_않는다() {
+		settingRepository.upsert(AiChatQuota.DAILY_LIMIT_KEY, "1");
+		logRepository.insert(logOf());
+		logRepository.insert(logOf());
+
+		assertThat(quota.usage(userId).remaining()).isZero();
+	}
+
+	@Test
+	void usage는_llm_failed_행을_사용량에서_제외한다() {
+		settingRepository.upsert(AiChatQuota.DAILY_LIMIT_KEY, "10");
+		logRepository.insert(logOf());
+		logRepository.insert(new AiChatLogEntry(userId, null, "실패", null, List.of(), 1, 0, 1L,
+				AiChatLogEntry.OUTCOME_LLM_FAILED));
+
+		assertThat(quota.usage(userId).remaining()).isEqualTo(9);
 	}
 
 	private AiChatLogEntry logOf() {
