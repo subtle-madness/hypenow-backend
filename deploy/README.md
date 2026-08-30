@@ -338,8 +338,12 @@ GCS 값 하나가 된다 — 알람은 스트림별 평가라 어느 쪽이든 �
 ## 6. 백업·복원
 - 자동: 서버 크론이 매일 15:00 UTC(KST 00:00) 덤프 (맥·서버 어느 쪽이 꺼져 있든 오프사이트 사본 유지 —
   08-20 백업 I/O가 야간 분석 파이프라인과 겹치던 사고 이후 이 슬롯)
-  - **analysis**: 서버 `~/backups/` 3일 롤링 + B2 `hypenow-backups/analysis/` 7일(기간) 롤링
-    — 분석 결과는 raw에서 재파생 가능(LLM 재호출 비용만 부담)이라 짧게 유지(08-04 7일/30일에서 축소)
+  - **analysis**: **B2로 직스트리밍**(`pg_dump|zstd|tee|rclone rcat`, 08-30~) — 서버
+    `~/backups/` 3일 롤링 + B2 `hypenow-backups/analysis/` 7일(기간) 롤링.
+    분석 결과는 raw에서 재파생 가능(LLM 재호출 비용만 부담)이라 짧게 유지(08-04 7일/30일에서 축소).
+    **crawler와 달리 성공해도 `tee` 로컬 사본을 남긴다** — 서버 3일 롤링이 정책이다.
+    업로드 실패 시 잘린 원격본을 지우고 로컬 전용 덤프로 폴백한다(`offsite_ok` 판정은
+    analysis+crawler 둘 다 성공일 때만 — crawler 로컬 보관 분기의 기준)
   - **crawler**(raw — 07-19부터 서버가 수집 주체라 서버 raw가 유일 원본): B2가 살아 있으면
     **B2로 직스트리밍**(`pg_dump|zstd|tee|rclone rcat`, 08-25~) — **성공 시 서버 로컬 0개**
     (B2 사본 확인됨 — 덤프 19분+업로드 19분 직렬이 ~20분 동시 진행으로, 로컬 11GiB 상주와
@@ -355,8 +359,12 @@ GCS 값 하나가 된다 — 알람은 스트림별 평가라 어느 쪽이든 �
     "최신 30개" 정책이 요구한 ~240GB가 캡을 초과해 며칠간 오프사이트 백업 공백 발생. 07-29~
     재발 — 캡 상향 전까지 오프사이트 공백은 `pull-backup.sh` 수동 pull이 보완). 용량
     여유가 생기면 `B2_CRAWLER_KEEP`만 올릴 것.
-  - **monitoring**(시딩 캠페인 — postgres 인스턴스 내 별도 DB, §13): 서버 3일 롤링 +
-    B2 `hypenow-backups/monitoring/` 7일(기간) 롤링. 덤프가 작아 analysis와 같은 기간 롤링.
+  - **monitoring**(시딩 캠페인 — postgres 인스턴스 내 별도 DB, §13): analysis와 같은
+    직스트리밍(08-30~) — 서버 3일 롤링 + B2 `hypenow-backups/monitoring/` 7일(기간) 롤링.
+    통째로 **비치명**이다(개통 전·DB 미생성이어도 나머지 백업은 계속). 08-30 전환 근거:
+    2패스 시절 08-29 실측으로 monitoring 로컬 덤프 완료 15:39:50 → 실행 종료 15:43 —
+    마지막 ~3분이 analysis 155MB + monitoring 1.77GB를 디스크에서 되읽는 업로드 패스였다
+    (이 서버는 백업 재읽기 I/O가 외부 health 프로브를 죽인 전력이 있다 — 08-20).
 - 수동 pull(보조): `deploy/scripts/pull-backup.sh ubuntu@<IP>` → `~/backups/hypenow/`
 - 복원 리허설(로컬): `zstdcat analysis-*.sql.zst | psql -h localhost -p 5433 -U crawler -d <빈 DB>`
   (08-04 이전 덤프는 `.sql.gz` — `gunzip -c`로. 압축은 08-04 gzip→zstd 전환: 2 vCPU에서
