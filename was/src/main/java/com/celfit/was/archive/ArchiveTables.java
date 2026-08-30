@@ -155,6 +155,19 @@ public final class ArchiveTables {
 			List.of(), "t.user_id = :userId");
 
 	/**
+	 * AI 어시스턴트 대화 컨테이너(2026-08-28 FE 변경요청서 §8) — users CASCADE(직접 FK). AI_CHAT_LOGS와
+	 * 같은 위상(자식 없음, 순정 CASCADE 자식이라 명시 DELETE 불필요 — USERS 삭제 시 함께 사라진다).
+	 *
+	 * <p>ai_chat_logs.conversation_id가 이 테이블을 가리키지만 그 FK는 CASCADE가 아니다(NO ACTION) —
+	 * users 삭제 한 문장 안에서 ai_conversations·ai_chat_logs 둘 다 users에 대한 독립적인 직접
+	 * CASCADE라 함께 지워지고, NO ACTION 제약은 기본값(문장 끝 지연 검사)이라 그 시점엔 이미 양쪽
+	 * 다 사라져 있어 위반이 나지 않는다(RESTRICT였다면 달랐을 것 — 의도적으로 NO ACTION을 골랐다).
+	 */
+	public static final ArchiveTable AI_CONVERSATIONS = new ArchiveTable(
+			"app.ai_conversations", List.of("id"), "t.user_id",
+			List.of(), "t.user_id = :userId");
+
+	/**
 	 * 아카이브 카탈로그 전체 — 어떤 삭제 경로(탈퇴 이관, 저장 해제, 캠페인 삭제, 등록 롤백 등)로든
 	 * 아카이브되는 테이블 전부. ArchiveInventoryTest의 "분류됨" 판정 기준이 이 목록이다 — 여기 없는
 	 * app 테이블은 EXCLUDED에 사유와 함께 있어야 한다. ACCOUNT_DELETION_ORDER와 달리 순서·CASCADE
@@ -179,7 +192,8 @@ public final class ArchiveTables {
 			BRAND_POST_REGISTRATION_ENTRIES,
 			BRAND_POST_CAMPAIGNS,
 			BRAND_HASHTAG_TAGS,
-			AI_CHAT_LOGS);
+			AI_CHAT_LOGS,
+			AI_CONVERSATIONS);
 
 	/**
 	 * 탈퇴 시 이관 대상과 순서 — 자식 14개 + users. CATALOG의 부분집합이어야 한다(테스트로 강제).
@@ -204,6 +218,7 @@ public final class ArchiveTables {
 			BRAND_POST_CAMPAIGNS,
 			BRAND_HASHTAG_TAGS,
 			AI_CHAT_LOGS,
+			AI_CONVERSATIONS,
 			USERS);
 
 	private ArchiveTables() {
