@@ -110,7 +110,7 @@ public class BrandAiToolbox {
 
 	public AiToolResult execute(ToolSession session, long userId, String toolName, JsonNode args) {
 		return switch (toolName) {
-			case BrandAiToolSpecs.LIST_BRANDS -> listBrands(userId);
+			case BrandAiToolSpecs.LIST_BRANDS -> listBrands(session, userId);
 			case BrandAiToolSpecs.LIST_POSTS -> listPosts(session, userId, args);
 			case BrandAiToolSpecs.SEARCH_POSTS -> searchPosts(session, userId, args);
 			case BrandAiToolSpecs.AGGREGATE_POSTS -> aggregatePosts(session, userId, args);
@@ -132,22 +132,40 @@ public class BrandAiToolbox {
 	 *
 	 * <p>2026-08-30 FE scope 강제(T3) - 이 세션이 FE 화면 필터({@link AiScope})도 함께 들고 다닌다.
 	 * 툴박스가 싱글턴이라 필터도 요청 스코프로만 살아야 하는 이유는 캐시와 같다.
+	 *
+	 * <p><b>F1(2026-08-30 리뷰) brandId 강제</b> - 컨트롤러가 accountIds[0]을 검증해 얻은 brandId를 이
+	 * 세션이 함께 들고 다닌다. list_posts 등 brandId를 인자로 받는 툴은 모델이 이 유저가 소유한 <i>다른</i>
+	 * brandId를 넣어도(예: list_brands로 얻은 경쟁사 계정 id) 여기 담긴 값과 다르면 소유 여부와 무관하게
+	 * 막는다 - 소유 검증만으로는 "이 대화가 스코프된 계정"을 벗어난 조회를 막지 못한다(리뷰 지적). brandId가
+	 * null이면 무제한(기존 2-인자 생성자 호환 - 단발 테스트·컨트롤러 미배선 경로 전용, 실제 요청 경로는
+	 * 항상 값이 채워진다).
 	 */
 	public static final class ToolSession {
 		private final Map<IndexCacheKey, BrandPostIndex> indexCache = new HashMap<>();
 		private final AiScope scope;
+		private final Long brandId;
 
-		/** scope 없는 세션(기존 관용구 유지) - 무필터와 동일하다. */
+		/** scope·brandId 없는 세션(기존 관용구 유지) - 무필터·무제한과 동일하다. */
 		public ToolSession() {
-			this(null);
+			this(null, null);
 		}
 
+		/** scope만 있는 세션(기존 2-인자 관용구 유지, F1 이전 호출부·단발 테스트 호환) - brandId 제한 없음. */
 		public ToolSession(AiScope scope) {
+			this(scope, null);
+		}
+
+		public ToolSession(AiScope scope, Long brandId) {
 			this.scope = scope;
+			this.brandId = brandId;
 		}
 
 		AiScope scope() {
 			return scope;
+		}
+
+		Long brandId() {
+			return brandId;
 		}
 
 		/**
@@ -176,9 +194,20 @@ public class BrandAiToolbox {
 				key -> postAssembler.indexForBrand(userId, account, withViews));
 	}
 
-	private AiToolResult listBrands(long userId) {
+	/**
+	 * 세션에 brandId가 고정돼 있으면(F1) 그 브랜드 1건만 돌려준다 - 대화 하나는 accountIds[0] 하나에
+	 * 묶인다는 계약(설계 §5)의 자연스러운 귀결이다. 여러 브랜드를 오가며 비교하는 질문은 이번 계약
+	 * 범위 밖이라(설계 §요구), list_brands가 다른 브랜드까지 보여주면 모델이 그 브랜드로 다른 툴을
+	 * 불러도 되는 것처럼 오인할 여지를 준다. 세션에 brandId가 없으면(단발 테스트 등) 기존처럼 전체를
+	 * 돌려준다.
+	 */
+	private AiToolResult listBrands(ToolSession session, long userId) {
 		ArrayNode brands = objectMapper.createArrayNode();
+		Long sessionBrandId = session.brandId();
 		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
+			if (sessionBrandId != null && link.brandId() != sessionBrandId) {
+				continue;
+			}
 			ObjectNode node = brands.addObject();
 			node.put("brandId", link.brandId());
 			node.put("username", link.username());
@@ -210,7 +239,12 @@ public class BrandAiToolbox {
 	 * 함수를 이 값 하나만으로 호출한 것과 동형).
 	 */
 	private AiToolResult listPosts(ToolSession session, long userId, JsonNode args) {
-		Optional<BrandLinkRow> linkOpt = ownedBrand(userId, args.path("brandId").asLong(0));
+		long requestedBrandId = args.path("brandId").asLong(0);
+		Optional<AiToolResult> mismatch = scopeMismatch(session, requestedBrandId);
+		if (mismatch.isPresent()) {
+			return mismatch.get();
+		}
+		Optional<BrandLinkRow> linkOpt = ownedBrand(userId, requestedBrandId);
 		if (linkOpt.isEmpty()) {
 			return error("그 브랜드는 이 사용자의 모니터링 목록에 없거나 접근 권한이 없습니다. list_brands로 확인하세요.");
 		}
@@ -354,6 +388,11 @@ public class BrandAiToolbox {
 		return true;
 	}
 
+	/** {@link #findAuthorsByUsernameBatched} IN 절 배치 크기(F7, 2026-08-30 리뷰) - PostgreSQL 바인드
+	 * 파라미터 상한(65,535)에는 한참 못 미치지만, 대량 브랜드(수집 기간이 길어 게시물·작성자 수가
+	 * 큰 브랜드)의 단일 쿼리 비대화를 막는 상한을 미리 걸어 둔다. */
+	private static final int AUTHOR_LOOKUP_BATCH_SIZE = 1_000;
+
 	/**
 	 * scope의 작성자 검색(q)·팔로워 범위 필터(T3) - author_username 배치 조회가 필요해 목록 단위로
 	 * 뺐다. q·팔로워 조건이 전혀 없으면(가장 흔한 경우) 조회 자체를 생략한다. 작성자 정보가 없는
@@ -368,7 +407,7 @@ public class BrandAiToolbox {
 		if (usernames.isEmpty()) {
 			return List.of();
 		}
-		Map<String, AuthorRow> byUsername = brandReadRepository.findAuthorsByUsername(usernames).stream()
+		Map<String, AuthorRow> byUsername = findAuthorsByUsernameBatched(usernames).stream()
 				.collect(Collectors.toMap(AuthorRow::username, Function.identity(), (a, b) -> a));
 		List<PostRef> out = new ArrayList<>();
 		for (PostRef ref : refs) {
@@ -378,6 +417,56 @@ public class BrandAiToolbox {
 			AuthorRow author = byUsername.get(ref.authorUsername());
 			if (author != null && matchesAuthorScope(author, scope)) {
 				out.add(ref);
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * {@link BrandReadRepository#findAuthorsByUsername}을 {@value #AUTHOR_LOOKUP_BATCH_SIZE}건 단위로
+	 * 쪼개 호출한다(F7, 2026-08-30 리뷰) - 그 리포지토리는 IN 절에 컬렉션을 그대로 바인딩해 요청 수만큼
+	 * 배치 안에 담아 던진다(javadoc 명시). 창 안 게시물 수(usernames 상한)는 브랜드 수집 기간에 따라
+	 * 커질 수 있어 여기서 상한 없이 넘기면 단일 쿼리가 비대해진다.
+	 */
+	private List<AuthorRow> findAuthorsByUsernameBatched(Set<String> usernames) {
+		if (usernames.size() <= AUTHOR_LOOKUP_BATCH_SIZE) {
+			return brandReadRepository.findAuthorsByUsername(usernames);
+		}
+		List<AuthorRow> out = new ArrayList<>();
+		List<String> ordered = new ArrayList<>(usernames);
+		for (int i = 0; i < ordered.size(); i += AUTHOR_LOOKUP_BATCH_SIZE) {
+			List<String> batch = ordered.subList(i, Math.min(i + AUTHOR_LOOKUP_BATCH_SIZE, ordered.size()));
+			out.addAll(brandReadRepository.findAuthorsByUsername(batch));
+		}
+		return out;
+	}
+
+	/**
+	 * {@link #applyAuthorScope}의 해시태그 발견 게시물 버전(F6, 2026-08-30 리뷰) - list_hashtag_posts는
+	 * {@link BrandHashtagPostResponse}를 다뤄 {@link PostRef}와 타입이 다르다. followers는 이 응답 자체에
+	 * 없어(BrandHashtagPostResponse javadoc 참조 - 재수집 파이프라인이 없는 슬림 셰이프) q·팔로워 둘 다
+	 * author_profile 배치 조회로만 판정한다 - {@link #matchesAuthorScope}(AuthorRow 기준)를 그대로 공유한다.
+	 */
+	private List<BrandHashtagPostResponse> applyHashtagAuthorScope(List<BrandHashtagPostResponse> rows,
+			AiScope scope) {
+		if (scope == null || (scope.q() == null && scope.followerMin() == null && scope.followerMax() == null)) {
+			return rows;
+		}
+		Set<String> usernames = rows.stream().map(BrandHashtagPostResponse::authorUsername).filter(Objects::nonNull)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		if (usernames.isEmpty()) {
+			return List.of();
+		}
+		Map<String, AuthorRow> byUsername = findAuthorsByUsernameBatched(usernames).stream()
+				.collect(Collectors.toMap(AuthorRow::username, Function.identity(), (a, b) -> a));
+		List<BrandHashtagPostResponse> out = new ArrayList<>();
+		for (BrandHashtagPostResponse row : rows) {
+			if (row.authorUsername() == null) {
+				continue;
+			}
+			AuthorRow author = byUsername.get(row.authorUsername());
+			if (author != null && matchesAuthorScope(author, scope)) {
+				out.add(row);
 			}
 		}
 		return out;
@@ -432,7 +521,12 @@ public class BrandAiToolbox {
 		if (normalizedQuery.isEmpty()) {
 			return error("query가 필요합니다.");
 		}
-		Optional<BrandLinkRow> linkOpt = ownedBrand(userId, args.path("brandId").asLong(0));
+		long requestedBrandId = args.path("brandId").asLong(0);
+		Optional<AiToolResult> mismatch = scopeMismatch(session, requestedBrandId);
+		if (mismatch.isPresent()) {
+			return mismatch.get();
+		}
+		Optional<BrandLinkRow> linkOpt = ownedBrand(userId, requestedBrandId);
 		if (linkOpt.isEmpty()) {
 			return error("그 브랜드는 이 사용자의 모니터링 목록에 없거나 접근 권한이 없습니다. list_brands로 확인하세요.");
 		}
@@ -517,7 +611,12 @@ public class BrandAiToolbox {
 	 * 표본에서 빠지고, 그 표본 수를 각각 *SampleCount로 함께 싣는다.
 	 */
 	private AiToolResult aggregatePosts(ToolSession session, long userId, JsonNode args) {
-		Optional<BrandLinkRow> linkOpt = ownedBrand(userId, args.path("brandId").asLong(0));
+		long requestedBrandId = args.path("brandId").asLong(0);
+		Optional<AiToolResult> mismatch = scopeMismatch(session, requestedBrandId);
+		if (mismatch.isPresent()) {
+			return mismatch.get();
+		}
+		Optional<BrandLinkRow> linkOpt = ownedBrand(userId, requestedBrandId);
 		if (linkOpt.isEmpty()) {
 			return error("그 브랜드는 이 사용자의 모니터링 목록에 없거나 접근 권한이 없습니다. list_brands로 확인하세요.");
 		}
@@ -693,12 +792,19 @@ public class BrandAiToolbox {
 	}
 
 	/**
-	 * 해시태그 발견 목록(I2) - {@link BrandHashtagPostAssembler#assembleForBrand}가 tagged 겹침 제외·
-	 * 조회자 본인 태그 원장 교집합 필터·조회자 스코프 brandPostId를 전부 강제한다. 이 메서드는 모델
-	 * 요청 창(days)만 얹어 자른다.
+	 * 해시태그 발견 목록(I2, F6 2026-08-30 리뷰) - {@link BrandHashtagPostAssembler#assembleForBrand}가
+	 * tagged 겹침 제외·조회자 본인 태그 원장 교집합 필터·조회자 스코프 brandPostId를 전부 강제한다.
+	 * 이 메서드는 모델 요청 창(days)에 더해 scope의 날짜·작성자 검색(q)·팔로워 범위 축까지 적용한다 -
+	 * mediaType·source·sponsorship 판정만 여전히 없다(해시태그 발견 게시물은 브랜드 계정 풀 데이터가
+	 * 아니라 그 세 축의 원천 컬럼 자체가 없다).
 	 */
 	private AiToolResult listHashtagPosts(ToolSession session, long userId, JsonNode args) {
-		Optional<BrandLinkRow> linkOpt = ownedBrand(userId, args.path("brandId").asLong(0));
+		long requestedBrandId = args.path("brandId").asLong(0);
+		Optional<AiToolResult> mismatch = scopeMismatch(session, requestedBrandId);
+		if (mismatch.isPresent()) {
+			return mismatch.get();
+		}
+		Optional<BrandLinkRow> linkOpt = ownedBrand(userId, requestedBrandId);
 		if (linkOpt.isEmpty()) {
 			return error("그 브랜드는 이 사용자의 모니터링 목록에 없거나 접근 권한이 없습니다. list_brands로 확인하세요.");
 		}
@@ -707,11 +813,15 @@ public class BrandAiToolbox {
 
 		LocalDate cutoff = cutoffDateFor(link, args);
 		AiScope scope = session.scope();
-		List<BrandHashtagPostResponse> page = all.stream()
+		List<BrandHashtagPostResponse> dateFiltered = all.stream()
 				.filter(row -> row.takenAt() != null && !OffsetDateTime.parse(row.takenAt()).toLocalDate().isBefore(cutoff))
 				// FE scope 강제(T3, 2026-08-30) - 해시태그 발견 게시물은 브랜드 계정 스코프 데이터가
-				// 아니라(source·sponsorship·mediaType 판정이 없다) 날짜 축만 적용한다.
+				// 아니라(source·sponsorship·mediaType 판정이 없다) 날짜 축만 스트림에서 적용한다.
 				.filter(row -> withinScopeDate(row, scope))
+				.toList();
+		// q·팔로워 축(F6) - author_profile 배치 조회가 필요해 목록 단위로 뺐다(applyAuthorScope와 동형).
+		List<BrandHashtagPostResponse> scoped = applyHashtagAuthorScope(dateFiltered, scope);
+		List<BrandHashtagPostResponse> page = scoped.stream()
 				.sorted(Comparator.comparing(BrandHashtagPostResponse::takenAt,
 						Comparator.nullsLast(Comparator.reverseOrder())))
 				.limit(MAX_HASHTAG_POSTS)
@@ -768,6 +878,25 @@ public class BrandAiToolbox {
 	}
 
 	/**
+	 * 세션 brandId 고정 검사(F1, 2026-08-30 리뷰) - brandId를 인자로 받는 툴(list_posts·search_posts·
+	 * aggregate_posts·list_hashtag_posts) 전부가 실제 쿼리를 태우기 전에 이 검사부터 거친다. 소유
+	 * 검증({@link #ownedBrand})은 "이 유저의 브랜드인가"만 보므로, 유저가 own·competitor 여러 브랜드를
+	 * 모니터링 중이면 다른 소유 브랜드로도 통과한다 - 이 대화가 스코프된 계정(세션 brandId)을 벗어나는
+	 * 걸 막는 건 이 검사의 몫이다. 예외를 던지지 않고 실패 결과를 돌려줘 모델이 다음 호출에서 brandId를
+	 * 세션 값으로 고쳐 부르게 유도한다(설계 §8과 같은 자가 수정 관용구). 세션에 brandId가 없거나
+	 * (단발 테스트) 요청 brandId가 아예 없으면(0 이하 - 곧이어 ownedBrand가 그 케이스를 처리한다)
+	 * 검사를 건너뛴다.
+	 */
+	private Optional<AiToolResult> scopeMismatch(ToolSession session, long requestedBrandId) {
+		Long sessionBrandId = session.brandId();
+		if (sessionBrandId != null && requestedBrandId > 0 && sessionBrandId != requestedBrandId) {
+			return Optional.of(error("이 대화는 브랜드 " + sessionBrandId + "로 고정되어 있습니다. "
+					+ "brandId=" + sessionBrandId + "로 다시 호출하세요."));
+		}
+		return Optional.empty();
+	}
+
+	/**
 	 * shortCode가 이 유저에게 보이는 어느 브랜드의 풀에 속하는지(C1) - {@link
 	 * com.celfit.was.v1.brandmonitoring.V1BrandPostsController#get} 정본 관용구와 동형이다: 유저의
 	 * 활성 링크를 순회하며 indexForBrand로 노출 필터를 태우고, 그 브랜드의 표시 창(collectionMonths)
@@ -781,7 +910,12 @@ public class BrandAiToolbox {
 		}
 		LocalDate today = LocalDate.ofInstant(clock.instant(), KstTimestamps.KST);
 		AiScope scope = session.scope();
-		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
+		// 세션 brandId 고정(F1, 2026-08-30 리뷰) - get_post·get_comments는 shortCode만 받아 brandId 인자가
+		// 없다. 예전엔 유저의 활성 링크 전부를 순회해 이 대화가 스코프되지 않은 다른 브랜드의 shortCode도
+		// 조회 대상에 들었다 - 세션에 brandId가 고정돼 있으면 그 브랜드 링크 1건으로만 후보를 좁힌다.
+		List<BrandLinkRow> candidates = session.brandId() == null ? linkRepository.findAllActiveByUser(userId)
+				: linkRepository.findActiveByUserAndBrand(userId, session.brandId()).map(List::of).orElseGet(List::of);
+		for (BrandLinkRow link : candidates) {
 			Optional<BrandAccountRow> accountOpt = brandReadRepository.findAccount(link.brandId());
 			if (accountOpt.isEmpty()) {
 				continue;

@@ -783,4 +783,149 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 		assertThat(ref).isPresent();
 		assertThat(ref.get().authorUsername()).isEqualTo("cache_author");
 	}
+
+	// ---------- F6(2026-08-30 리뷰) 해시태그 q·팔로워 필터 ----------
+
+	@Test
+	void list_hashtag_posts는_scope_q_필터로_작성자를_좁힌다() {
+		long brandId = insertBrand(monitoringJdbc, "hashtagqbrand");
+		linkRepository.insertLink(userId, brandId, "hashtagqbrand", BrandAccountType.OWN, 12);
+		insertHashtagPost(brandId, "HQ1", "#brand", "glow_official");
+		insertHashtagPost(brandId, "HQ2", "#brand", "random_user");
+		insertAuthorProfile("glow_official", "glow_official", "글로우 공식", 5000L);
+		insertAuthorProfile("random_user", "random_user", "랜덤유저", 5000L);
+		AiScope scope = new AiScope(null, null, null, null, null, null, null, "glow");
+
+		AiToolResult result = toolbox.execute(new BrandAiToolbox.ToolSession(scope), userId,
+				BrandAiToolSpecs.LIST_HASHTAG_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).containsExactly("HQ1");
+	}
+
+	@Test
+	void list_hashtag_posts는_scope_팔로워_범위_필터로_좁힌다() {
+		long brandId = insertBrand(monitoringJdbc, "hashtagfollowerbrand");
+		linkRepository.insertLink(userId, brandId, "hashtagfollowerbrand", BrandAccountType.OWN, 12);
+		insertHashtagPost(brandId, "HF1", "#brand", "big_author");
+		insertHashtagPost(brandId, "HF2", "#brand", "small_author");
+		insertAuthorProfile("big_author", "big_author", "빅", 100_000L);
+		insertAuthorProfile("small_author", "small_author", "스몰", 500L);
+		AiScope scope = new AiScope(null, null, null, null, null, 10_000, null, null);
+
+		AiToolResult result = toolbox.execute(new BrandAiToolbox.ToolSession(scope), userId,
+				BrandAiToolSpecs.LIST_HASHTAG_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).containsExactly("HF1");
+	}
+
+	// ---------- F5(2026-08-30 리뷰) scope 대소문자 정규화 ----------
+
+	/** FE가 대문자로 보내도(예: "DIRECT") AiScope.from()이 소문자로 정규화해 source 필터가 정상 동작한다. */
+	@Test
+	void scope_source_필터는_대문자_입력도_소문자로_정규화되어_정상_동작한다() {
+		long brandId = insertBrand(monitoringJdbc, "scopeuppercasebrand");
+		linkRepository.insertLink(userId, brandId, "scopeuppercasebrand", BrandAccountType.OWN, 12);
+		insertTaggedPost(monitoringJdbc, brandId, "TAGGEDUP", "author1", NOW.minusSeconds(3600));
+		insertDirectOnlyPost(userId, brandId, "DIRECTUP", "author2", NOW.minusSeconds(3600));
+		AiScope scope = AiScope.from(
+				new AiMessagesRequest.ScopeRequest(null, null, null, null, "DIRECT", null, null, null));
+
+		AiToolResult result = toolbox.execute(new BrandAiToolbox.ToolSession(scope), userId,
+				BrandAiToolSpecs.LIST_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).containsExactly("DIRECTUP");
+	}
+
+	// ---------- F1(2026-08-30 리뷰) 세션 brandId 강제 ----------
+
+	@Test
+	void 세션에_고정된_brandId와_다른_소유_브랜드로_list_posts하면_실패_결과다() {
+		long secondBrandId = insertBrand(monitoringJdbc, "secondownedbrand");
+		linkRepository.insertLink(userId, secondBrandId, "secondownedbrand", BrandAccountType.OWN, 12);
+		insertPost(monitoringJdbc, secondBrandId, "SECOND1", "second_author");
+		// 세션은 myBrandId로 고정 - 유저가 secondBrandId도 소유하고 있지만 이 대화 범위 밖이다.
+		BrandAiToolbox.ToolSession session = new BrandAiToolbox.ToolSession(null, myBrandId);
+
+		AiToolResult result = toolbox.execute(session, userId, BrandAiToolSpecs.LIST_POSTS,
+				args().put("brandId", secondBrandId));
+
+		assertThat(result.failed()).isTrue();
+		assertThat(result.shortCodes()).isEmpty();
+	}
+
+	@Test
+	void 세션에_고정된_brandId와_다른_소유_브랜드로_search_posts하면_실패_결과다() {
+		long secondBrandId = insertBrand(monitoringJdbc, "secondownedsearchbrand");
+		linkRepository.insertLink(userId, secondBrandId, "secondownedsearchbrand", BrandAccountType.OWN, 12);
+		BrandAiToolbox.ToolSession session = new BrandAiToolbox.ToolSession(null, myBrandId);
+
+		AiToolResult result = toolbox.execute(session, userId, BrandAiToolSpecs.SEARCH_POSTS,
+				args().put("brandId", secondBrandId).put("query", "아무거나"));
+
+		assertThat(result.failed()).isTrue();
+	}
+
+	@Test
+	void 세션에_고정된_brandId와_다른_소유_브랜드로_aggregate_posts하면_실패_결과다() {
+		long secondBrandId = insertBrand(monitoringJdbc, "secondownedaggbrand");
+		linkRepository.insertLink(userId, secondBrandId, "secondownedaggbrand", BrandAccountType.OWN, 12);
+		BrandAiToolbox.ToolSession session = new BrandAiToolbox.ToolSession(null, myBrandId);
+
+		AiToolResult result = toolbox.execute(session, userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", secondBrandId));
+
+		assertThat(result.failed()).isTrue();
+	}
+
+	@Test
+	void 세션에_고정된_brandId와_다른_소유_브랜드로_list_hashtag_posts하면_실패_결과다() {
+		long secondBrandId = insertBrand(monitoringJdbc, "secondownedhashtagbrand");
+		linkRepository.insertLink(userId, secondBrandId, "secondownedhashtagbrand", BrandAccountType.OWN, 12);
+		BrandAiToolbox.ToolSession session = new BrandAiToolbox.ToolSession(null, myBrandId);
+
+		AiToolResult result = toolbox.execute(session, userId, BrandAiToolSpecs.LIST_HASHTAG_POSTS,
+				args().put("brandId", secondBrandId));
+
+		assertThat(result.failed()).isTrue();
+	}
+
+	@Test
+	void 세션에_고정된_brandId와_다른_소유_브랜드의_shortCode로_get_post하면_실패_결과다() {
+		long secondBrandId = insertBrand(monitoringJdbc, "secondownedgetpostbrand");
+		linkRepository.insertLink(userId, secondBrandId, "secondownedgetpostbrand", BrandAccountType.OWN, 12);
+		insertPost(monitoringJdbc, secondBrandId, "SECONDPOST1", "second_author2");
+		BrandAiToolbox.ToolSession session = new BrandAiToolbox.ToolSession(null, myBrandId);
+
+		AiToolResult result = toolbox.execute(session, userId, BrandAiToolSpecs.GET_POST,
+				args().put("shortCode", "SECONDPOST1"));
+
+		assertThat(result.failed()).isTrue();
+	}
+
+	@Test
+	void 세션에_brandId가_고정되면_list_brands는_그_브랜드_1건만_돌려준다() {
+		long secondBrandId = insertBrand(monitoringJdbc, "secondbrandforlist");
+		linkRepository.insertLink(userId, secondBrandId, "secondbrandforlist", BrandAccountType.OWN, 12);
+		BrandAiToolbox.ToolSession session = new BrandAiToolbox.ToolSession(null, myBrandId);
+
+		AiToolResult result = toolbox.execute(session, userId, BrandAiToolSpecs.LIST_BRANDS, args());
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.rowCount()).isEqualTo(1);
+		assertThat(result.payloadJson()).contains("mybrand").doesNotContain("secondbrandforlist");
+	}
+
+	/** 세션 brandId와 요청 brandId가 같으면 정상 통과한다(회귀 방지 - scopeMismatch가 정상 케이스까지 막지 않는지). */
+	@Test
+	void 세션_brandId와_요청_brandId가_같으면_정상_통과한다() {
+		BrandAiToolbox.ToolSession session = new BrandAiToolbox.ToolSession(null, myBrandId);
+
+		AiToolResult result = toolbox.execute(session, userId, BrandAiToolSpecs.LIST_POSTS,
+				args().put("brandId", myBrandId));
+
+		assertThat(result.failed()).isFalse();
+	}
 }

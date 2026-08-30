@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * FE 화면 필터(FE 변경요청서 2026-08-28 §5) - 프론트가 지정한 조회 범위를 서버가 강제하는 정본 표현.
@@ -50,12 +51,15 @@ public record AiScope(LocalDate dateFrom, LocalDate dateTo, String mediaType, St
 		}
 	}
 
-	/** "all"·빈 값은 무필터(null)로 접는다 - reels|feed|all|null 같은 4값 계약을 3값(구체값·null)으로 줄인다. */
+	/** "all"·빈 값은 무필터(null)로 접는다 - reels|feed|all|null 같은 4값 계약을 3값(구체값·null)으로 줄인다.
+	 * 소문자로 통일한다(F5, 2026-08-30 리뷰) - FE가 대문자·혼합 대소문자로 보내도(예: "REELS")
+	 * {@link BrandAiToolbox}의 source·sponsorship 비교가 대소문자 무관하게 걸리도록 정규화 시점에
+	 * 한 번만 처리한다 - 이후 비교 로직이 매번 equalsIgnoreCase를 챙길 필요가 없다. */
 	private static String normalize(String raw) {
 		if (raw == null || raw.isBlank() || ALL.equalsIgnoreCase(raw)) {
 			return null;
 		}
-		return raw.trim();
+		return raw.trim().toLowerCase(Locale.ROOT);
 	}
 
 	public boolean isEmpty() {
