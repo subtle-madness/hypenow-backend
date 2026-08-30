@@ -2,16 +2,35 @@ package com.celfit.was.v1.brandmonitoring.ai;
 
 import java.util.List;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.JsonNodeFactory;
 
 /**
  * app.ai_chat_logs 1행(설계 §6) - 질문 1건당 1행. 에이전트 루프가 끝난 뒤 컨트롤러가 조립한다.
  *
- * @param brandId 모델이 툴 인자로 실제 조회한 브랜드. 특정되지 않았으면 null.
- * @param answer  LLM 실패 시 null - 실패한 질문도 수요 신호라 행은 남긴다.
+ * @param brandId        모델이 툴 인자로 실제 조회한 브랜드. 특정되지 않았으면 null.
+ * @param answer         LLM 실패 시 null - 실패한 질문도 수요 신호라 행은 남긴다.
+ * @param conversationId 이 질문이 속한 대화(app.ai_conversations). 대화에 안 묶인 질문은 null
+ *                        (FE 변경요청서 2026-08-28 §8).
+ * @param presetId       질문을 촉발한 프리셋 식별자. 자유 질의는 null.
+ * @param scope          질문 당시 프론트가 지정한 조회 범위(기간·계정 등). 없으면 null.
+ * @param followUps      답변에 딸린 후속 질문 제안 목록(jsonb 배열). 없으면 빈 배열.
+ * @param refs           답변이 인용한 참조 목록(jsonb 배열, 컬럼명은 SQL 예약어 회피로 refs).
+ *                        없으면 빈 배열.
  */
 public record AiChatLogEntry(long userId, Long brandId, String question, String answer,
 		List<ToolCallLog> toolCalls, int promptTokens, int outputTokens, long elapsedMillis,
-		String outcome) {
+		String outcome, Long conversationId, String presetId, JsonNode scope, JsonNode followUps,
+		JsonNode refs) {
+
+	/** 대화·프리셋·범위·후속질문·참조 필드 없이 적재하던 기존 호출부 호환용(설계 §8 도입 이전
+	 * 관용구) - 신규 필드는 전부 빈 값(null 또는 빈 jsonb 배열)으로 채운다. */
+	public AiChatLogEntry(long userId, Long brandId, String question, String answer,
+			List<ToolCallLog> toolCalls, int promptTokens, int outputTokens, long elapsedMillis,
+			String outcome) {
+		this(userId, brandId, question, answer, toolCalls, promptTokens, outputTokens, elapsedMillis,
+				outcome, null, null, null, JsonNodeFactory.instance.arrayNode(),
+				JsonNodeFactory.instance.arrayNode());
+	}
 
 	/** 정상 답변 완료. */
 	public static final String OUTCOME_OK = "ok";
