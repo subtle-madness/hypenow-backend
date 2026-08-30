@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 챗 사용량 조회 표면(FE 변경요청서 2026-08-28 §9.2) - 오늘 상한·잔여 횟수·다음 초기화 시각.
  * 프론트가 챗 입력창에 "오늘 12/30회 남음" 같은 안내를 그리는 데 쓴다.
  *
- * <p>킬 스위치·인증은 {@link V1BrandAiChatController}와 동일한 조건이다 - 어시스턴트 기능 전체가
+ * <p>킬 스위치·인증은 {@link V1BrandAiMessagesController}와 동일한 조건이다 - 어시스턴트 기능 전체가
  * 하나의 표면이라는 판단은 그대로 유지한다.
  */
 @RestController

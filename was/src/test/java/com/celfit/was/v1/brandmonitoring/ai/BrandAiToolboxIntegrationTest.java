@@ -12,11 +12,13 @@ import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.v1.brandmonitoring.BrandAccountType;
 import com.celfit.was.v1.brandmonitoring.BrandHashtagPostAssembler;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
+import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -247,6 +249,15 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 
 	private ObjectNode args() {
 		return objectMapper.createObjectNode();
+	}
+
+	/** author_profile 1행 - scope의 작성자 검색(q)·팔로워 필터(T3) 테스트 전용. */
+	private void insertAuthorProfile(String igUserId, String username, String fullName, Long followers) {
+		monitoringJdbc.sql("""
+				INSERT INTO author_profile (ig_user_id, username, full_name, followers, fetched_at)
+				VALUES (:igUserId, :username, :fullName, :followers, now())
+				""").param("igUserId", igUserId).param("username", username).param("fullName", fullName)
+				.param("followers", followers).update();
 	}
 
 	@Test
@@ -596,5 +607,180 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 		assertThat(result.failed()).isFalse();
 		assertThat(result.shortCodes()).contains("OLD60LIST");
 		assertThat(result.payloadJson()).contains("\"window\":\"collection_window\"");
+	}
+
+	// ---------- FE scope 강제(T3, 2026-08-28 FE 변경요청서) ----------
+
+	@Test
+	void scope_날짜_필터는_범위_밖_게시물을_제외한다() {
+		long brandId = insertBrand(monitoringJdbc, "scopedatebrand");
+		linkRepository.insertLink(userId, brandId, "scopedatebrand", BrandAccountType.OWN, 12);
+		insertTaggedPost(monitoringJdbc, brandId, "INRANGE", "author1", NOW.minusSeconds(3L * 86400));
+		insertTaggedPost(monitoringJdbc, brandId, "OUTRANGE", "author2", NOW.minusSeconds(30L * 86400));
+		AiScope scope = new AiScope(java.time.LocalDate.of(2026, 8, 20), java.time.LocalDate.of(2026, 8, 27),
+				null, null, null, null, null, null);
+
+		AiToolResult result = toolbox.execute(new BrandAiToolbox.ToolSession(scope), userId,
+				BrandAiToolSpecs.LIST_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).contains("INRANGE").doesNotContain("OUTRANGE");
+	}
+
+	@Test
+	void scope_mediaType_필터는_릴스만_남긴다() {
+		long brandId = insertBrand(monitoringJdbc, "scopemediabrand");
+		linkRepository.insertLink(userId, brandId, "scopemediabrand", BrandAccountType.OWN, 12);
+		insertMetricPost(brandId, "REELPOST", "author1", NOW.minusSeconds(3600), "릴스", "REELS", 1, 1, 100L);
+		insertMetricPost(brandId, "FEEDPOST", "author2", NOW.minusSeconds(3600), "피드", "FEED", 1, 1, null);
+		AiScope scope = new AiScope(null, null, "reels", null, null, null, null, null);
+
+		AiToolResult result = toolbox.execute(new BrandAiToolbox.ToolSession(scope), userId,
+				BrandAiToolSpecs.AGGREGATE_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.payloadJson()).contains("\"postCount\":1").contains("\"reelsCount\":1")
+				.contains("\"feedCount\":0");
+	}
+
+	@Test
+	void scope_source_필터는_direct만_남긴다() {
+		long brandId = insertBrand(monitoringJdbc, "scopesourcebrand");
+		linkRepository.insertLink(userId, brandId, "scopesourcebrand", BrandAccountType.OWN, 12);
+		insertTaggedPost(monitoringJdbc, brandId, "TAGGEDONE", "author1", NOW.minusSeconds(3600));
+		insertDirectOnlyPost(userId, brandId, "DIRECTONE", "author2", NOW.minusSeconds(3600));
+		AiScope scope = new AiScope(null, null, null, null, "direct", null, null, null);
+
+		AiToolResult result = toolbox.execute(new BrandAiToolbox.ToolSession(scope), userId,
+				BrandAiToolSpecs.LIST_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).containsExactly("DIRECTONE");
+	}
+
+	@Test
+	void scope_sponsorship_필터는_광고_표기만_남긴다() {
+		long brandId = insertBrand(monitoringJdbc, "sponsorshipbrand");
+		linkRepository.insertLink(userId, brandId, "sponsorshipbrand", BrandAccountType.OWN, 12);
+		insertSearchablePost(brandId, "ADPOST", "author1", NOW.minusSeconds(3600), "#광고 협찬 받았어요");
+		insertSearchablePost(brandId, "ORGANICPOST", "author2", NOW.minusSeconds(3600), "그냥 일상 게시물");
+		AiScope scope = new AiScope(null, null, null, "sponsored", null, null, null, null);
+
+		AiToolResult result = toolbox.execute(new BrandAiToolbox.ToolSession(scope), userId,
+				BrandAiToolSpecs.LIST_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).containsExactly("ADPOST");
+	}
+
+	@Test
+	void scope_q_필터는_작성자_계정명_부분일치로_좁힌다() {
+		long brandId = insertBrand(monitoringJdbc, "scopeqbrand");
+		linkRepository.insertLink(userId, brandId, "scopeqbrand", BrandAccountType.OWN, 12);
+		insertTaggedPost(monitoringJdbc, brandId, "GLOWPOST", "glow_official", NOW.minusSeconds(3600));
+		insertTaggedPost(monitoringJdbc, brandId, "OTHERPOST", "random_user", NOW.minusSeconds(3600));
+		insertAuthorProfile("glow_official", "glow_official", "글로우 공식", 5000L);
+		insertAuthorProfile("random_user", "random_user", "랜덤유저", 5000L);
+		AiScope scope = new AiScope(null, null, null, null, null, null, null, "glow");
+
+		AiToolResult result = toolbox.execute(new BrandAiToolbox.ToolSession(scope), userId,
+				BrandAiToolSpecs.LIST_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).containsExactly("GLOWPOST");
+	}
+
+	@Test
+	void scope_팔로워_범위_필터는_범위_밖_작성자를_제외한다() {
+		long brandId = insertBrand(monitoringJdbc, "scopefollowerbrand");
+		linkRepository.insertLink(userId, brandId, "scopefollowerbrand", BrandAccountType.OWN, 12);
+		insertTaggedPost(monitoringJdbc, brandId, "BIGPOST", "big_author", NOW.minusSeconds(3600));
+		insertTaggedPost(monitoringJdbc, brandId, "SMALLPOST", "small_author", NOW.minusSeconds(7200));
+		insertAuthorProfile("big_author", "big_author", "빅", 100_000L);
+		insertAuthorProfile("small_author", "small_author", "스몰", 500L);
+		AiScope scope = new AiScope(null, null, null, null, null, 10_000, null, null);
+
+		AiToolResult result = toolbox.execute(new BrandAiToolbox.ToolSession(scope), userId,
+				BrandAiToolSpecs.LIST_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).containsExactly("BIGPOST");
+	}
+
+	/** 작성자 프로필이 아예 수집되지 않은 게시물은 q·팔로워 필터가 걸려 있으면 제외한다(설계 §요구). */
+	@Test
+	void scope_작성자_필터는_프로필_미수집_게시물을_제외한다() {
+		long brandId = insertBrand(monitoringJdbc, "scopenoprofilebrand");
+		linkRepository.insertLink(userId, brandId, "scopenoprofilebrand", BrandAccountType.OWN, 12);
+		insertTaggedPost(monitoringJdbc, brandId, "NOPROFILE", "unknown_author", NOW.minusSeconds(3600));
+		AiScope scope = new AiScope(null, null, null, null, null, 0, null, null);
+
+		AiToolResult result = toolbox.execute(new BrandAiToolbox.ToolSession(scope), userId,
+				BrandAiToolSpecs.LIST_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).doesNotContain("NOPROFILE");
+	}
+
+	@Test
+	void scope_밖_shortCode로_get_post하면_실패_결과다() {
+		long brandId = insertBrand(monitoringJdbc, "scopegetpostbrand");
+		linkRepository.insertLink(userId, brandId, "scopegetpostbrand", BrandAccountType.OWN, 12);
+		insertMetricPost(brandId, "FEEDONLY", "author1", NOW.minusSeconds(3600), "피드", "FEED", 1, 1, null);
+		AiScope scope = new AiScope(null, null, "reels", null, null, null, null, null);
+
+		AiToolResult result = toolbox.execute(new BrandAiToolbox.ToolSession(scope), userId,
+				BrandAiToolSpecs.GET_POST, args().put("shortCode", "FEEDONLY"));
+
+		assertThat(result.failed()).isTrue();
+	}
+
+	/** scope 날짜는 링크 창(collectionMonths)과 교집합이다 - scope가 더 넓어도 링크 창 밖은 여전히 막힌다. */
+	@Test
+	void scope_날짜가_링크_창보다_넓어도_링크_창_밖_게시물은_안_나온다() {
+		long brandId = insertBrand(monitoringJdbc, "scopewindowbrand");
+		// 1개월 표시 창
+		linkRepository.insertLink(userId, brandId, "scopewindowbrand", BrandAccountType.OWN, 1);
+		insertTaggedPost(monitoringJdbc, brandId, "FARPAST", "author1", NOW.minusSeconds(200L * 86400));
+		// scope는 아주 넓게(1년 전부터) 잡아도 링크 창(1개월)이 여전히 더 좁은 제약이다.
+		AiScope scope = new AiScope(java.time.LocalDate.of(2025, 1, 1), null, null, null, null, null, null, null);
+
+		AiToolResult result = toolbox.execute(new BrandAiToolbox.ToolSession(scope), userId,
+				BrandAiToolSpecs.LIST_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).doesNotContain("FARPAST");
+	}
+
+	@Test
+	void list_hashtag_posts는_scope_날짜만_적용한다() {
+		long brandId = insertBrand(monitoringJdbc, "scopehashtagbrand");
+		linkRepository.insertLink(userId, brandId, "scopehashtagbrand", BrandAccountType.OWN, 12);
+		// insertHashtagPost는 항상 NOW-1일에 심는다(고정 helper) - scope.dateFrom을 그보다 미래로 잡아
+		// 게시물이 scope 날짜 필터 하나만으로 걸러지는지 본다.
+		insertHashtagPost(brandId, "HTAGIN", "#brand", "author1");
+		LocalDate afterSeed = KstTimestamps.toKstDate(OffsetDateTime.ofInstant(NOW, ZoneOffset.UTC)).plusDays(1);
+		AiScope scope = new AiScope(afterSeed, null, null, null, null, null, null, null);
+
+		AiToolResult result = toolbox.execute(new BrandAiToolbox.ToolSession(scope), userId,
+				BrandAiToolSpecs.LIST_HASHTAG_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).doesNotContain("HTAGIN");
+	}
+
+	/** references 라벨 조립(T7) 지원 - list_posts를 한 번 태우면 세션 캐시에서 shortCode로 PostRef를 찾을 수 있어야 한다. */
+	@Test
+	void 세션은_list_posts_이후_findCachedRef로_PostRef를_찾을_수_있다() {
+		long brandId = insertBrand(monitoringJdbc, "cachedrefbrand");
+		linkRepository.insertLink(userId, brandId, "cachedrefbrand", BrandAccountType.OWN, 12);
+		insertPost(monitoringJdbc, brandId, "CACHEME", "cache_author");
+		BrandAiToolbox.ToolSession session = new BrandAiToolbox.ToolSession(null);
+
+		toolbox.execute(session, userId, BrandAiToolSpecs.LIST_POSTS, args().put("brandId", brandId));
+
+		var ref = session.findCachedRef("CACHEME");
+		assertThat(ref).isPresent();
+		assertThat(ref.get().authorUsername()).isEqualTo("cache_author");
 	}
 }

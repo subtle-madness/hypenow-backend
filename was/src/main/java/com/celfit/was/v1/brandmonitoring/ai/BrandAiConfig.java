@@ -105,6 +105,17 @@ public class BrandAiConfig {
 	}
 
 	/**
+	 * 후속 질문 생성기(FE 변경요청서 §3.3, 2026-08-30) - 툴 콜링용 {@link GeminiChatClient} 빈을 그대로
+	 * 재사용한다(Vertex 자격증명·모델·재시도 배선이 동일해도 무방 - 구조화 출력 1콜뿐이라 별도 전송
+	 * 설정을 새로 둘 이유가 없다).
+	 */
+	@Bean
+	public BrandAiFollowUpGenerator brandAiFollowUpGenerator(GeminiChatClient brandAiChatClient,
+			ObjectMapper objectMapper) {
+		return new BrandAiFollowUpGenerator(brandAiChatClient, objectMapper);
+	}
+
+	/**
 	 * 챗 전용 실행 풀 - 60초 응답 계약(설계 §5)을 실제로 지키려면 요청 스레드가 아닌 곳에서 돌리고
 	 * 시간 초과를 끊어야 한다. 공용 {@code ConcurrencyLimiter}(permits 4)를 쓰지 않는 이유: 60초짜리
 	 * 작업이 그 벌크헤드를 물면 무관한 무거운 엔드포인트까지 함께 굶는다.

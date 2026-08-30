@@ -1,11 +1,14 @@
 package com.celfit.was.v1.brandmonitoring.ai;
 
+import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,6 +69,8 @@ public class BrandAiAgent {
 	/** 안전 필터·응답 길이 제한으로 막혀 답변 자체를 만들지 못했을 때 돌려줄 안내 문구(I7). */
 	private static final String BLOCKED_ANSWER =
 			"이 질문에는 안전 정책이나 응답 길이 제한 때문에 답변을 만들지 못했어요. 질문을 조금 다르게 바꿔서 다시 시도해 주세요.";
+	/** references 상한(FE 변경요청서 §7) - 답변이 아무리 많은 shortCode를 인용해도 참조 목록은 10개까지만. */
+	private static final int MAX_REFERENCES = 10;
 
 	private static final Logger log = LoggerFactory.getLogger(BrandAiAgent.class);
 
@@ -81,7 +86,18 @@ public class BrandAiAgent {
 		this.clock = clock;
 	}
 
+	/** 기존 2-인자 관용구 유지(호환) - scope 없음(무필터)·추가 프롬프트 없음과 동일하다. */
 	public AgentOutcome run(long userId, List<AiChatMessage> messages) {
+		return run(userId, messages, null, "");
+	}
+
+	/**
+	 * @param scope              FE 화면 필터(T3, 2026-08-30) - null이면 무필터. 툴 실행 세션에 실려
+	 *                           게시물 계열 툴 전부에 강제된다({@link BrandAiToolbox.ToolSession}).
+	 * @param extraSystemPrompt  시스템 프롬프트 뒤에 이어붙일 문구(scope 요약 1줄 + 프리셋 지시문,
+	 *                           T3·T4) - 빈 문자열이면 기존 프롬프트와 동일하다.
+	 */
+	public AgentOutcome run(long userId, List<AiChatMessage> messages, AiScope scope, String extraSystemPrompt) {
 		List<JsonNode> contents = new ArrayList<>();
 		for (AiChatMessage message : messages) {
 			contents.add(AiChatMessage.ROLE_ASSISTANT.equals(message.role())
@@ -94,7 +110,8 @@ public class BrandAiAgent {
 		Map<String, Integer> failuresByTool = new HashMap<>();
 		// 요청 스코프 인덱스 캐시(N2) - 이 run() 호출 안에서만 재사용하고 절대 넘어 살지 않는다
 		// (BrandAiToolbox는 싱글턴 빈이라 캐시를 그쪽 인스턴스 필드에 두면 유저 간에 섞인다).
-		BrandAiToolbox.ToolSession toolSession = new BrandAiToolbox.ToolSession();
+		BrandAiToolbox.ToolSession toolSession = new BrandAiToolbox.ToolSession(scope);
+		String basePrompt = BrandAiPrompt.SYSTEM + (extraSystemPrompt == null ? "" : extraSystemPrompt);
 		Long brandId = null;
 		int promptTokens = 0;
 		int outputTokens = 0;
@@ -107,22 +124,26 @@ public class BrandAiAgent {
 			// 원인별 문구 분기(N3, 2026-08-28 재리뷰) - 툴 상한은 TOOL_CAP_NOTE, 벽시계·토큰 예산은
 			// TIME_BUDGET_NOTE. 이전에는 원인과 무관하게 항상 TIME_BUDGET_NOTE만 나가 TOOL_CAP_NOTE가
 			// 죽은 코드였다.
-			String systemPrompt = !capped ? BrandAiPrompt.SYSTEM
-					: BrandAiPrompt.SYSTEM + (toolCapped ? BrandAiPrompt.TOOL_CAP_NOTE : BrandAiPrompt.TIME_BUDGET_NOTE);
+			String systemPrompt = !capped ? basePrompt
+					: basePrompt + (toolCapped ? BrandAiPrompt.TOOL_CAP_NOTE : BrandAiPrompt.TIME_BUDGET_NOTE);
 			LlmTurn turn = client.generate(systemPrompt, contents, BrandAiToolSpecs.ALL, capped);
 			promptTokens += turn.promptTokens();
 			outputTokens += turn.outputTokens();
 
 			if (turn.toolCalls().isEmpty()) {
 				if (turn.text().isBlank() && isBlocked(turn.finishReason())) {
-					return new AgentOutcome(BLOCKED_ANSWER, referencedIn(BLOCKED_ANSWER, shortCodes),
+					List<String> blockedReferenced = referencedIn(BLOCKED_ANSWER, shortCodes);
+					return new AgentOutcome(BLOCKED_ANSWER, blockedReferenced,
+							buildReferences(toolSession, blockedReferenced),
 							List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
-							AiChatLogEntry.OUTCOME_BLOCKED);
+							AiChatLogEntry.OUTCOME_BLOCKED, false);
 				}
-				String answer = turn.text().isBlank() ? FALLBACK_ANSWER : turn.text();
-				return new AgentOutcome(answer, referencedIn(answer, shortCodes), List.copyOf(toolCalls),
-						promptTokens, outputTokens, brandId,
-						capped ? AiChatLogEntry.OUTCOME_TOOL_CAP : AiChatLogEntry.OUTCOME_OK);
+				boolean hasRealAnswer = !turn.text().isBlank();
+				String answer = hasRealAnswer ? turn.text() : FALLBACK_ANSWER;
+				List<String> referenced = referencedIn(answer, shortCodes);
+				return new AgentOutcome(answer, referenced, buildReferences(toolSession, referenced),
+						List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
+						capped ? AiChatLogEntry.OUTCOME_TOOL_CAP : AiChatLogEntry.OUTCOME_OK, hasRealAnswer);
 			}
 
 			// 강제 답변 턴을 1회로 제한한다(C2 잔여) - mode=NONE으로 보냈는데도 모델이 functionCall만
@@ -132,9 +153,10 @@ public class BrandAiAgent {
 			// 끊는다 - 이미 MAX_LLM_CALLS 안전망과 같은 병리이므로 같은 outcome으로 기록한다(M2).
 			if (capped) {
 				log.warn("AI 에이전트 강제 답변 턴에서도 툴 호출만 반환 - userId={}, 툴 호출 {}회", userId, toolCalls.size());
-				return new AgentOutcome(FALLBACK_ANSWER, referencedIn(FALLBACK_ANSWER, shortCodes),
+				List<String> referenced = referencedIn(FALLBACK_ANSWER, shortCodes);
+				return new AgentOutcome(FALLBACK_ANSWER, referenced, buildReferences(toolSession, referenced),
 						List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
-						AiChatLogEntry.OUTCOME_LLM_CALL_CAP);
+						AiChatLogEntry.OUTCOME_LLM_CALL_CAP, false);
 			}
 
 			contents.add(client.modelToolCallContent(turn.toolCalls()));
@@ -161,8 +183,10 @@ public class BrandAiAgent {
 		}
 
 		log.warn("AI 에이전트 LLM 호출 안전망 도달 - userId={}, 툴 호출 {}회", userId, toolCalls.size());
-		return new AgentOutcome(FALLBACK_ANSWER, referencedIn(FALLBACK_ANSWER, shortCodes), List.copyOf(toolCalls),
-				promptTokens, outputTokens, brandId, AiChatLogEntry.OUTCOME_LLM_CALL_CAP);
+		List<String> referenced = referencedIn(FALLBACK_ANSWER, shortCodes);
+		return new AgentOutcome(FALLBACK_ANSWER, referenced, buildReferences(toolSession, referenced),
+				List.copyOf(toolCalls), promptTokens, outputTokens, brandId, AiChatLogEntry.OUTCOME_LLM_CALL_CAP,
+				false);
 	}
 
 	/**
@@ -181,6 +205,35 @@ public class BrandAiAgent {
 			}
 		}
 		return referenced;
+	}
+
+	/**
+	 * references 조립(FE 변경요청서 §7, 2026-08-30) - referencedShortCodes를 라벨이 붙은 참조로
+	 * 바꾼다. 라벨은 이번 실행에서 {@link BrandAiToolbox.ToolSession}에 캐시된 인덱스에서 찾는다
+	 * (best-effort - list_hashtag_posts 산지처럼 인덱스를 거치지 않은 shortCode는 최소 라벨로
+	 * 폴백한다). 최대 {@value #MAX_REFERENCES}개까지만 싣는다.
+	 */
+	private static List<ReferenceInfo> buildReferences(BrandAiToolbox.ToolSession toolSession,
+			List<String> shortCodes) {
+		List<ReferenceInfo> out = new ArrayList<>();
+		for (String code : shortCodes) {
+			if (out.size() >= MAX_REFERENCES) {
+				break;
+			}
+			Optional<BrandPostAssembler.PostRef> ref = toolSession.findCachedRef(code);
+			out.add(new ReferenceInfo(code, ref.map(BrandAiAgent::labelFor).orElse("게시물 " + code)));
+		}
+		return out;
+	}
+
+	/** views null이면 "@username"만(설계 §요구) - 캐시에서 조회수를 못 얻은 흔한 경우(withViews=false 인덱스)다. */
+	private static String labelFor(BrandPostAssembler.PostRef ref) {
+		if (ref.authorUsername() == null) {
+			return ref.latestViews() == null ? "게시물 " + ref.shortcode()
+					: String.format(Locale.KOREA, "%,d회", ref.latestViews());
+		}
+		String base = "@" + ref.authorUsername();
+		return ref.latestViews() == null ? base : base + " · " + String.format(Locale.KOREA, "%,d회", ref.latestViews());
 	}
 
 	/** STOP이 아니면서 텍스트도 툴 호출도 없는 경우만 "막혔다"로 본다(I7) - finishReason 자체가
@@ -203,10 +256,17 @@ public class BrandAiAgent {
 	/**
 	 * 루프 1회의 산출물.
 	 *
-	 * @param brandId 모델이 처음 넘긴 brandId 인자 - 로그 분석에서 "어느 브랜드 질문인가"를 가른다.
+	 * @param brandId  모델이 처음 넘긴 brandId 인자 - 로그 분석에서 "어느 브랜드 질문인가"를 가른다.
+	 * @param answered true면 실제로 생성된 답변 텍스트다(FALLBACK_ANSWER·BLOCKED_ANSWER가 아님) -
+	 *                 호출부(컨트롤러)가 이 값으로 followUps 생성 여부를 가른다(설계 §요구 "답변이
+	 *                 실패/차단/폴백 문구면 호출 자체를 생략").
 	 */
-	public record AgentOutcome(String answer, List<String> referencedShortCodes,
+	public record AgentOutcome(String answer, List<String> referencedShortCodes, List<ReferenceInfo> references,
 			List<AiChatLogEntry.ToolCallLog> toolCalls, int promptTokens, int outputTokens,
-			Long brandId, String outcome) {
+			Long brandId, String outcome, boolean answered) {
+	}
+
+	/** 참조 1건(FE 변경요청서 §7) - label은 라벨 조립 결과 문자열(형(type)·후속 매핑은 컨트롤러 몫). */
+	public record ReferenceInfo(String shortCode, String label) {
 	}
 }

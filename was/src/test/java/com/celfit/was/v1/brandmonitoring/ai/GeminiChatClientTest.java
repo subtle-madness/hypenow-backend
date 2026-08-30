@@ -138,6 +138,32 @@ class GeminiChatClientTest {
 				.isEqualTo("앞뒤");
 	}
 
+	/** 구조화 출력 1콜(followUps 생성 전용, FE §3.3) - tools 없이 responseSchema·responseMimeType만 싣는다. */
+	@Test
+	void generateStructured는_tools_없이_responseSchema를_싣는다() {
+		List<String> sent = new ArrayList<>();
+		GeminiChatClient client = new GeminiChatClient(body -> {
+			sent.add(body);
+			return "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"[]\"}]}}]}";
+		}, om);
+		JsonNode schema = om.readTree("{\"type\":\"array\"}");
+
+		client.generateStructured("시스템 지시", "질문: 안녕\n답변: 반가워요", schema, 256);
+
+		JsonNode body = om.readTree(sent.get(0));
+		assertThat(body.path("systemInstruction").path("parts").path(0).path("text").asString())
+				.isEqualTo("시스템 지시");
+		assertThat(body.path("contents").path(0).path("role").asString()).isEqualTo("user");
+		assertThat(body.path("contents").path(0).path("parts").path(0).path("text").asString())
+				.contains("질문: 안녕");
+		assertThat(body.has("tools")).isFalse();
+		assertThat(body.path("generationConfig").path("responseMimeType").asString())
+				.isEqualTo("application/json");
+		assertThat(body.path("generationConfig").path("responseSchema").path("type").asString())
+				.isEqualTo("array");
+		assertThat(body.path("generationConfig").path("maxOutputTokens").asInt()).isEqualTo(256);
+	}
+
 	@Test
 	void 툴_결과_컨텐츠는_functionResponse_파트로_조립된다() {
 		GeminiChatClient client = new GeminiChatClient(

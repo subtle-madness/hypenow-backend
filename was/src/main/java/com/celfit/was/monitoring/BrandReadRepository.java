@@ -124,13 +124,18 @@ public class BrandReadRepository {
 	 * {@link #findBrandPostsInWindow}와 동형이어야 한다 — 어긋나면 counts가 목록 모수와 갈라진다.
 	 * 메타 없는 행도 모수에 남도록 LEFT JOIN(판정 입력 null → unknown). 정렬은 호출부(자바) 몫이라
 	 * ORDER BY를 두지 않는다.
+	 *
+	 * <p>2026-08-30 FE 계약 개편(AI scope 강제) — {@code content_type}(m)·{@code author_username}(t) 2컬럼을
+	 * 얹는다. AI 어시스턴트의 scope 필터(mediaType·작성자 검색)가 게시물 계열 툴 전부에 강제되려면 이
+	 * 인덱스 단계에서 미디어 타입·작성자를 알아야 하고, 컬럼 2개 추가는 단일 쿼리 구조를 유지한다
+	 * ({@code com.celfit.was.v1.brandmonitoring.ai.BrandAiToolbox} 전용, 표시 표면 소비처는 무영향).
 	 */
 	public List<BrandPostIndexRow> findBrandPostIndex(long brandId, OffsetDateTime cutoff,
 			boolean enrichedOnly) {
 		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
 		return jdbc.sql("""
 				SELECT t.short_code, t.taken_at, t.tag_detected_at, t.direct_registered_at,
-				       m.is_paid_partnership, m.caption
+				       m.is_paid_partnership, m.caption, m.content_type, t.author_username
 				FROM brand_tagged_post t
 				LEFT JOIN brand_post_meta m ON m.short_code = t.short_code
 				WHERE t.brand_id = :brandId
@@ -499,9 +504,14 @@ public class BrandReadRepository {
 	 * 브랜드 게시물 인덱스 1행({@link #findBrandPostIndex}) — isPaidPartnership·caption null은
 	 * "메타 미보강(LEFT JOIN 미스)"과 "키 부재" 둘 다일 수 있고 어느 쪽이든 판정은 unknown이라
 	 * 구분하지 않는다. tagDetectedAt·directRegisteredAt은 source 파생·노출 필터 입력이다.
+	 *
+	 * @param contentType    m.content_type(LEFT JOIN 미스면 null) — AI scope의 mediaType 필터 입력
+	 *                       (2026-08-30, {@code BrandPostAssembler#contentTypeOf}로 정규화해 씀).
+	 * @param authorUsername t.author_username — AI scope의 작성자 검색(q)·팔로워 필터 입력.
 	 */
 	public record BrandPostIndexRow(String shortCode, OffsetDateTime takenAt, OffsetDateTime tagDetectedAt,
-			OffsetDateTime directRegisteredAt, Boolean isPaidPartnership, String caption) {
+			OffsetDateTime directRegisteredAt, Boolean isPaidPartnership, String caption, String contentType,
+			String authorUsername) {
 	}
 
 	/** 게시물별 최신 스냅샷 views({@link #findLatestViewsForBrand}) — contentType은 피드 views null 규칙용. */

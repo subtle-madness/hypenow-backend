@@ -342,6 +342,9 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(enriched.tagDetectedAt()).isNotNull();
 		assertThat(enriched.directRegisteredAt()).isNull();
 		assertThat(enriched.takenAt()).isNotNull();
+		// 2026-08-30 AI scope 필터 컬럼 — content_type은 메타 산지 그대로(정규화는 호출부 몫), author_username은 t 산지.
+		assertThat(enriched.contentType()).isEqualTo("REELS");
+		assertThat(enriched.authorUsername()).isEqualTo("influencer_a");
 		BrandReadRepository.BrandPostIndexRow noMeta = rows.stream()
 				.filter(r -> r.shortCode().equals("NOMETA")).findFirst().orElseThrow();
 		assertThat(noMeta.caption()).isNull();               // 메타 없음 → 판정 입력 null(unknown)

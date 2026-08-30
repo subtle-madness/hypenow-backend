@@ -23,6 +23,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
@@ -115,7 +116,7 @@ public class BrandAiToolbox {
 			case BrandAiToolSpecs.AGGREGATE_POSTS -> aggregatePosts(session, userId, args);
 			case BrandAiToolSpecs.GET_POST -> getPost(session, userId, args);
 			case BrandAiToolSpecs.GET_COMMENTS -> getComments(session, userId, args);
-			case BrandAiToolSpecs.LIST_HASHTAG_POSTS -> listHashtagPosts(userId, args);
+			case BrandAiToolSpecs.LIST_HASHTAG_POSTS -> listHashtagPosts(session, userId, args);
 			case BrandAiToolSpecs.GET_AUTHOR -> getAuthor(args);
 			default -> error("알 수 없는 툴입니다: " + toolName);
 		};
@@ -128,9 +129,42 @@ public class BrandAiToolbox {
 	 * 반복 조회할 수 있다. 이 세션이 그 결과를 요청 스코프로만 재사용한다 - 툴박스 자체는 싱글턴 빈이라
 	 * 인스턴스 필드에 캐시를 두면 유저 간 데이터가 섞이므로, 호출자({@link BrandAiAgent#run})가 매 요청
 	 * 새로 만들어 매 execute 호출에 넘긴다.
+	 *
+	 * <p>2026-08-30 FE scope 강제(T3) - 이 세션이 FE 화면 필터({@link AiScope})도 함께 들고 다닌다.
+	 * 툴박스가 싱글턴이라 필터도 요청 스코프로만 살아야 하는 이유는 캐시와 같다.
 	 */
 	public static final class ToolSession {
 		private final Map<IndexCacheKey, BrandPostIndex> indexCache = new HashMap<>();
+		private final AiScope scope;
+
+		/** scope 없는 세션(기존 관용구 유지) - 무필터와 동일하다. */
+		public ToolSession() {
+			this(null);
+		}
+
+		public ToolSession(AiScope scope) {
+			this.scope = scope;
+		}
+
+		AiScope scope() {
+			return scope;
+		}
+
+		/**
+		 * 세션에 이미 캐시된 인덱스 전체에서 shortcode로 {@link PostRef}를 찾는다(references 라벨 조립
+		 * 전용, FE 변경요청서 §7) - list_hashtag_posts 산지 게시물처럼 이 세션에서 인덱스를 한 번도
+		 * 거치지 않은 shortcode는 못 찾는다(empty). 참조는 응답당 최대 10건이라 O(n) 스캔 비용이 작다.
+		 */
+		public Optional<PostRef> findCachedRef(String shortcode) {
+			for (BrandPostIndex index : indexCache.values()) {
+				for (PostRef ref : index.refs()) {
+					if (ref.shortcode().equals(shortcode)) {
+						return Optional.of(ref);
+					}
+				}
+			}
+			return Optional.empty();
+		}
 	}
 
 	/** 인덱스 캐시 키 - withViews 여부에 따라 latestViews 유무가 달라 브랜드마다 최대 두 변형이 있다. */
@@ -250,21 +284,134 @@ public class BrandAiToolbox {
 	private BrandWindow resolveWindow(ToolSession session, long userId, BrandLinkRow link, BrandAccountRow account,
 			JsonNode args, boolean withViews) {
 		BrandPostIndex index = indexFor(session, userId, account, withViews);
+		AiScope scope = session.scope();
 
 		LocalDate today = LocalDate.ofInstant(clock.instant(), KstTimestamps.KST);
 		LocalDate windowStart = today.minusMonths(link.collectionMonths());
 		List<PostRef> linkWindowRefs = index.refs().stream().filter(r -> withinLinkWindow(r, windowStart)).toList();
 
+		LocalDate since;
+		String windowKind;
+		List<PostRef> dateWindowRefs;
 		int requestedDays = args.path("days").asInt(0);
 		if (requestedDays <= 0) {
 			// days 미지정(또는 0) - 링크 창(①)을 그대로 모수로 쓴다. ② 필터는 적용하지 않는다.
-			return new BrandWindow(index, linkWindowRefs, windowStart, WINDOW_COLLECTION);
+			since = laterOf(windowStart, scope == null ? null : scope.dateFrom());
+			windowKind = WINDOW_COLLECTION;
+			dateWindowRefs = linkWindowRefs;
+		} else {
+			int days = Math.clamp(requestedDays, 1, MAX_DAYS);
+			LocalDate daysSince = today.minusDays(days);
+			since = laterOf(daysSince, scope == null ? null : scope.dateFrom());
+			windowKind = WINDOW_DAYS_FILTER;
+			dateWindowRefs = linkWindowRefs.stream().filter(r -> withinUploadWindow(r.uploadedOn(), daysSince))
+					.toList();
 		}
-		int days = Math.clamp(requestedDays, 1, MAX_DAYS);
-		LocalDate since = today.minusDays(days);
-		List<PostRef> inWindow = linkWindowRefs.stream().filter(r -> withinUploadWindow(r.uploadedOn(), since))
-				.toList();
-		return new BrandWindow(index, inWindow, since, WINDOW_DAYS_FILTER);
+
+		// FE scope 강제(T3, 2026-08-30) - 모델이 뭐라 요청하든 scope 밖 데이터는 결과에 나타나지 않는다.
+		// scope의 날짜는 위에서 이미 계산한 링크 창/days 창과 별개로 한 번 더 걸어 교집합을 만든다
+		// (direct 게시물의 링크 창 면제와 달리 scope는 예외 없이 전부 적용된다).
+		List<PostRef> scoped = dateWindowRefs.stream().filter(r -> matchesScope(r, scope)).toList();
+		List<PostRef> inWindow = applyAuthorScope(scoped, scope);
+		return new BrandWindow(index, inWindow, since, windowKind);
+	}
+
+	/** null을 "제약 없음"으로 보는 더 늦은(제약이 더 센) 날짜 - scope.dateFrom과 기존 since 후보 중 결합. */
+	private static LocalDate laterOf(LocalDate a, LocalDate b) {
+		if (b == null) {
+			return a;
+		}
+		if (a == null) {
+			return b;
+		}
+		return a.isAfter(b) ? a : b;
+	}
+
+	/**
+	 * scope의 날짜(예외 없음)·미디어타입·소스·협찬 축 판정(T3) - 작성자 축(q·팔로워)은 배치 조회가
+	 * 필요해 {@link #applyAuthorScope}·{@link #authorMatchesScope}로 뺐다. scope가 null이면 전부 통과
+	 * (무필터, 기존 동작과 동일).
+	 */
+	private static boolean matchesScope(PostRef ref, AiScope scope) {
+		if (scope == null) {
+			return true;
+		}
+		if (scope.dateFrom() != null && (ref.uploadedOn() == null || ref.uploadedOn().isBefore(scope.dateFrom()))) {
+			return false;
+		}
+		if (scope.dateTo() != null && (ref.uploadedOn() == null || ref.uploadedOn().isAfter(scope.dateTo()))) {
+			return false;
+		}
+		if (scope.mediaType() != null && !scope.mediaType().equalsIgnoreCase(ref.contentType())) {
+			return false;
+		}
+		if (scope.source() != null && !scope.source().equals(ref.source())) {
+			return false;
+		}
+		if (scope.sponsorship() != null && !scope.sponsorship().equals(ref.sponsorship())) {
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * scope의 작성자 검색(q)·팔로워 범위 필터(T3) - author_username 배치 조회가 필요해 목록 단위로
+	 * 뺐다. q·팔로워 조건이 전혀 없으면(가장 흔한 경우) 조회 자체를 생략한다. 작성자 정보가 없는
+	 * (authorUsername null 또는 프로필 미수집) 게시물은 필터가 걸려 있으면 제외한다(설계 §요구).
+	 */
+	private List<PostRef> applyAuthorScope(List<PostRef> refs, AiScope scope) {
+		if (scope == null || (scope.q() == null && scope.followerMin() == null && scope.followerMax() == null)) {
+			return refs;
+		}
+		Set<String> usernames = refs.stream().map(PostRef::authorUsername).filter(Objects::nonNull)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		if (usernames.isEmpty()) {
+			return List.of();
+		}
+		Map<String, AuthorRow> byUsername = brandReadRepository.findAuthorsByUsername(usernames).stream()
+				.collect(Collectors.toMap(AuthorRow::username, Function.identity(), (a, b) -> a));
+		List<PostRef> out = new ArrayList<>();
+		for (PostRef ref : refs) {
+			if (ref.authorUsername() == null) {
+				continue;
+			}
+			AuthorRow author = byUsername.get(ref.authorUsername());
+			if (author != null && matchesAuthorScope(author, scope)) {
+				out.add(ref);
+			}
+		}
+		return out;
+	}
+
+	/** {@link #applyAuthorScope}의 단건 버전 - get_post·get_comments(hydrateOwnedPost)는 shortCode 1건뿐이라 배치가 필요 없다. */
+	private boolean authorMatchesScope(PostRef ref, AiScope scope) {
+		if (scope == null || (scope.q() == null && scope.followerMin() == null && scope.followerMax() == null)) {
+			return true;
+		}
+		if (ref.authorUsername() == null) {
+			return false;
+		}
+		List<AuthorRow> rows = brandReadRepository.findAuthorsByUsername(List.of(ref.authorUsername()));
+		return !rows.isEmpty() && matchesAuthorScope(rows.get(0), scope);
+	}
+
+	private static boolean matchesAuthorScope(AuthorRow author, AiScope scope) {
+		if (scope.q() != null) {
+			String lowerQ = scope.q().toLowerCase(Locale.ROOT);
+			String username = author.username() == null ? "" : author.username().toLowerCase(Locale.ROOT);
+			String fullName = author.fullName() == null ? "" : author.fullName().toLowerCase(Locale.ROOT);
+			if (!username.contains(lowerQ) && !fullName.contains(lowerQ)) {
+				return false;
+			}
+		}
+		Long followers = author.followers();
+		if (scope.followerMin() != null && (followers == null || followers < scope.followerMin())) {
+			return false;
+		}
+		if (scope.followerMax() != null && (followers == null || followers > scope.followerMax())) {
+			return false;
+		}
+		return true;
 	}
 
 	/**
@@ -550,7 +697,7 @@ public class BrandAiToolbox {
 	 * 조회자 본인 태그 원장 교집합 필터·조회자 스코프 brandPostId를 전부 강제한다. 이 메서드는 모델
 	 * 요청 창(days)만 얹어 자른다.
 	 */
-	private AiToolResult listHashtagPosts(long userId, JsonNode args) {
+	private AiToolResult listHashtagPosts(ToolSession session, long userId, JsonNode args) {
 		Optional<BrandLinkRow> linkOpt = ownedBrand(userId, args.path("brandId").asLong(0));
 		if (linkOpt.isEmpty()) {
 			return error("그 브랜드는 이 사용자의 모니터링 목록에 없거나 접근 권한이 없습니다. list_brands로 확인하세요.");
@@ -559,8 +706,12 @@ public class BrandAiToolbox {
 		List<BrandHashtagPostResponse> all = hashtagPostAssembler.assembleForBrand(userId, link.brandId());
 
 		LocalDate cutoff = cutoffDateFor(link, args);
+		AiScope scope = session.scope();
 		List<BrandHashtagPostResponse> page = all.stream()
 				.filter(row -> row.takenAt() != null && !OffsetDateTime.parse(row.takenAt()).toLocalDate().isBefore(cutoff))
+				// FE scope 강제(T3, 2026-08-30) - 해시태그 발견 게시물은 브랜드 계정 스코프 데이터가
+				// 아니라(source·sponsorship·mediaType 판정이 없다) 날짜 축만 적용한다.
+				.filter(row -> withinScopeDate(row, scope))
 				.sorted(Comparator.comparing(BrandHashtagPostResponse::takenAt,
 						Comparator.nullsLast(Comparator.reverseOrder())))
 				.limit(MAX_HASHTAG_POSTS)
@@ -629,6 +780,7 @@ public class BrandAiToolbox {
 			return Optional.empty();
 		}
 		LocalDate today = LocalDate.ofInstant(clock.instant(), KstTimestamps.KST);
+		AiScope scope = session.scope();
 		for (BrandLinkRow link : linkRepository.findAllActiveByUser(userId)) {
 			Optional<BrandAccountRow> accountOpt = brandReadRepository.findAccount(link.brandId());
 			if (accountOpt.isEmpty()) {
@@ -636,9 +788,13 @@ public class BrandAiToolbox {
 			}
 			LocalDate windowStart = today.minusMonths(link.collectionMonths());
 			BrandPostIndex index = indexFor(session, userId, accountOpt.get(), false);
-			boolean present = index.refs().stream()
-					.anyMatch(r -> r.shortcode().equals(shortCode) && withinLinkWindow(r, windowStart));
-			if (!present) {
+			// FE scope 강제(T3, 2026-08-30) - 상세 접근은 링크 창 판정만 타지만(N1), scope는 화면 필터라
+			// 예외 없이 여기서도 걸린다. scope 밖 shortCode는 "범위 밖"으로 취급해 아래와 같은 실패
+			// 결과가 나가게 존재하지 않는 것처럼 건너뛴다(호출부가 이미 "없거나 권한 없음" 메시지를 쓴다).
+			Optional<PostRef> refOpt = index.refs().stream()
+					.filter(r -> r.shortcode().equals(shortCode) && withinLinkWindow(r, windowStart))
+					.findFirst();
+			if (refOpt.isEmpty() || !matchesScope(refOpt.get(), scope) || !authorMatchesScope(refOpt.get(), scope)) {
 				continue;
 			}
 			List<BrandPostResponse> found = postAssembler.hydrate(userId, accountOpt.get(), link.accountType(),
@@ -680,6 +836,18 @@ public class BrandAiToolbox {
 	 */
 	private static boolean withinUploadWindow(LocalDate uploadedOn, LocalDate since) {
 		return uploadedOn != null && !uploadedOn.isBefore(since);
+	}
+
+	/** {@link #listHashtagPosts} 전용 scope 날짜 판정 - row.takenAt()이 이미 non-null임을 호출부가 보장한다. */
+	private static boolean withinScopeDate(BrandHashtagPostResponse row, AiScope scope) {
+		if (scope == null || (scope.dateFrom() == null && scope.dateTo() == null)) {
+			return true;
+		}
+		LocalDate date = OffsetDateTime.parse(row.takenAt()).toLocalDate();
+		if (scope.dateFrom() != null && date.isBefore(scope.dateFrom())) {
+			return false;
+		}
+		return scope.dateTo() == null || !date.isAfter(scope.dateTo());
 	}
 
 	/**

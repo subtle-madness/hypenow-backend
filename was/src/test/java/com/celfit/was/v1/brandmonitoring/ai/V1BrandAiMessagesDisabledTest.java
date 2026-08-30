@@ -23,11 +23,11 @@ import org.springframework.test.web.servlet.MockMvc;
  * 표면 자체가 없다(404). AD_DISCLOSURE_EXPOSE와 달리 "중립값"이 아니라 "표면 부재"인 이유:
  * 어시스턴트는 값 하나가 아니라 기능 전체라 끄면 사라지는 게 맞다.
  */
-@WebMvcTest(controllers = V1BrandAiChatController.class,
+@WebMvcTest(controllers = V1BrandAiMessagesController.class,
 		properties = {"was.cors.allowed-origins=http://localhost:3000", "monitoring.enabled=true",
 				"monitoring.brand.ai.enabled=false"})
 @Import({V1ExceptionAdvice.class, SecurityConfig.class})
-class V1BrandAiChatDisabledTest {
+class V1BrandAiMessagesDisabledTest {
 
 	@Autowired
 	MockMvc mockMvc;
@@ -43,9 +43,9 @@ class V1BrandAiChatDisabledTest {
 		AppUserDetails principal = new AppUserDetails(new AppUser(7L, "user@example.com", "hash",
 				"USER", OffsetDateTime.parse("2026-06-01T00:00:00Z")));
 
-		mockMvc.perform(post("/v1/brand-monitoring/ai/chat").with(user(principal)).with(csrf())
+		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal)).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON)
-						.content("{\"messages\":[{\"role\":\"user\",\"content\":\"안녕\"}]}"))
+						.content("{\"accountIds\":[\"1\"],\"text\":\"안녕\"}"))
 				.andExpect(status().isNotFound());
 	}
 }

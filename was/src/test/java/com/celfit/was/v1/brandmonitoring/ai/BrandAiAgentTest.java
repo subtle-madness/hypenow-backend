@@ -303,5 +303,91 @@ class BrandAiAgentTest {
 
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_BLOCKED);
 		assertThat(outcome.answer()).contains("답변을 만들지 못했어요");
+		assertThat(outcome.answered()).isFalse();
+	}
+
+	// ---------- FE 변경요청서 2026-08-28 T3(scope 배선)·T7(references) ----------
+
+	/** 기존 2-인자 run()은 scope 없음(무필터)과 동일해야 한다 - 위 테스트 전체가 이 보장 위에 서 있다. */
+	@Test
+	void 기존_2인자_run은_answered_true와_함께_동작한다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(List.of(textAnswer("답변입니다")), captured, toolbox);
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "알려줘")));
+
+		assertThat(outcome.answered()).isTrue();
+	}
+
+	/** extraSystemPrompt(scope 요약·프리셋 지시문, T3·T4)는 시스템 프롬프트 뒤에 그대로 이어붙는다. */
+	@Test
+	void extraSystemPrompt는_시스템_프롬프트_뒤에_붙는다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(List.of(textAnswer("답변")), captured, toolbox);
+
+		agent.run(1L, List.of(new AiChatMessage("user", "알려줘")), null, "\n\n[프리셋] 힌트 문구");
+
+		JsonNode body = om.readTree(captured.get(0));
+		assertThat(body.path("systemInstruction").path("parts").path(0).path("text").asString())
+				.contains("[프리셋] 힌트 문구");
+	}
+
+	/** scope는 툴 실행 세션에 실려 {@link BrandAiToolbox#execute}로 그대로 전달돼야 한다(T3). */
+	@Test
+	void scope는_툴_세션에_실려_전달된다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.ok("{}", 0, List.of()));
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(
+				List.of(functionCall("list_brands", "{}"), textAnswer("답변")), captured, toolbox);
+		AiScope scope = new AiScope(null, null, "reels", null, null, null, null, null);
+
+		agent.run(1L, List.of(new AiChatMessage("user", "알려줘")), scope, "");
+
+		var sessionCaptor = org.mockito.ArgumentCaptor.forClass(BrandAiToolbox.ToolSession.class);
+		org.mockito.Mockito.verify(toolbox).execute(sessionCaptor.capture(), anyLong(), anyString(), any());
+		assertThat(sessionCaptor.getValue().scope()).isEqualTo(scope);
+	}
+
+	/**
+	 * references(FE §7) - 툴박스가 mock이라 {@link BrandAiToolbox.ToolSession}의 인덱스 캐시는 비어
+	 * 있다(real indexFor를 타지 않음). 이 경우 라벨은 최소 폴백("게시물 {shortCode}")이어야 한다 -
+	 * 캐시가 채워진 실제 라벨 조립은 {@code BrandAiToolboxIntegrationTest}가 검증한다.
+	 */
+	@Test
+	void references는_캐시에_없는_shortCode에_최소_폴백_라벨을_쓴다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.ok("{\"posts\":[]}", 3, List.of("ABC")));
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(
+				List.of(functionCall("list_posts", "{\"brandId\":7}"), textAnswer("ABC 게시물이에요")),
+				captured, toolbox);
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "알려줘")));
+
+		assertThat(outcome.references()).hasSize(1);
+		assertThat(outcome.references().get(0).shortCode()).isEqualTo("ABC");
+		assertThat(outcome.references().get(0).label()).isEqualTo("게시물 ABC");
+	}
+
+	/** 답변에 언급 안 된 코드는 referencedShortCodes와 마찬가지로 references에도 남지 않는다. */
+	@Test
+	void references는_답변에_인용되지_않은_코드는_담지_않는다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.ok("{\"totalMatches\":85}", 85, List.of("ABC", "DEF")));
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(
+				List.of(functionCall("search_posts", "{\"brandId\":7,\"query\":\"세럼\"}"),
+						textAnswer("최근 30일 동안 총 85건 언급됐어요")),
+				captured, toolbox);
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "몇 번 언급됐어?")));
+
+		assertThat(outcome.references()).isEmpty();
 	}
 }

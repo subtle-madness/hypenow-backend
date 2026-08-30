@@ -125,7 +125,8 @@ class V1BrandPostsControllerTest {
 						BrandPostMetaRow m = metaByCode.get(r.shortCode());
 						return new BrandReadRepository.BrandPostIndexRow(r.shortCode(), r.takenAt(),
 								r.tagDetectedAt(), r.directRegisteredAt(),
-								m == null ? null : m.isPaidPartnership(), m == null ? null : m.caption());
+								m == null ? null : m.isPaidPartnership(), m == null ? null : m.caption(),
+								m == null ? null : m.contentType(), r.authorUsername());
 					})
 					.toList();
 		});

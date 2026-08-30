@@ -1083,9 +1083,12 @@ class BrandPostAssemblerTest {
 	/** 인덱스 행 빌더 — 판정 입력 6컬럼(2026-08-27 단일 쿼리 인덱스, findBrandPostIndex 셰이프). */
 	private static BrandReadRepository.BrandPostIndexRow indexRow(String code, String takenAt,
 			String tagDetectedAt, String directRegisteredAt, Boolean paid, String caption) {
+		// contentType·authorUsername(2026-08-30 AI scope 필터 컬럼 추가)은 이 테스트 스위트가 검증하는
+		// 판정(source·sponsorship·uploadedOn·latestViews)과 무관해 null로 둔다.
 		return new BrandReadRepository.BrandPostIndexRow(code, OffsetDateTime.parse(takenAt),
 				tagDetectedAt == null ? null : OffsetDateTime.parse(tagDetectedAt),
-				directRegisteredAt == null ? null : OffsetDateTime.parse(directRegisteredAt), paid, caption);
+				directRegisteredAt == null ? null : OffsetDateTime.parse(directRegisteredAt), paid, caption,
+				null, null);
 	}
 
 	/** 범용 row 빌더 — tagDetectedAt·directRegisteredAt을 직접 지정해 source 파생을 검증한다. */

@@ -69,6 +69,28 @@ public class GeminiChatClient {
 		return parse(transport.post(body.toString()));
 	}
 
+	/**
+	 * 구조화 출력 1회 호출(설계 밖 보조 호출, FE 변경요청서 §3.3 followUps 생성 전용) - 도구·대화이력
+	 * 없이 시스템+유저 텍스트 한 쌍만 보내고 {@code responseSchema}로 출력 형태를 강제한다
+	 * ({@code monitoring.llm.BrandMentionJudge}와 같은 관용구). generate()와 달리 tools를 전혀 싣지
+	 * 않는다 - 이 호출은 답변 텍스트를 재료로 다음 질문을 뽑아내는 것뿐이라 툴 콜링이 필요 없다.
+	 */
+	public String generateStructured(String systemPrompt, String userText, JsonNode responseSchema,
+			int maxOutputTokens) {
+		ObjectNode body = objectMapper.createObjectNode();
+		body.putObject("systemInstruction").putArray("parts").addObject().put("text", systemPrompt);
+		ObjectNode content = body.putArray("contents").addObject();
+		content.put("role", "user");
+		content.putArray("parts").addObject().put("text", userText);
+		ObjectNode generation = body.putObject("generationConfig");
+		generation.put("temperature", 0.4);
+		generation.put("maxOutputTokens", maxOutputTokens);
+		generation.put("responseMimeType", "application/json");
+		generation.set("responseSchema", responseSchema);
+		generation.putObject("thinkingConfig").put("thinkingBudget", 0);
+		return transport.post(body.toString());
+	}
+
 	public JsonNode userContent(String text) {
 		return textContent("user", text);
 	}

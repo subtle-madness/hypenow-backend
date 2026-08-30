@@ -122,9 +122,12 @@ public class BrandPostAssembler {
 	 *
 	 * @param latestViews performance 정렬 키(피드는 null — {@link #snapshotOf} 서빙 규칙 동형).
 	 *                    {@code withViews=false} 인덱스에서는 항상 null이다.
+	 * @param contentType "reels"/"feed"(2026-08-30, AI scope 필터 전용) — 카드 조립과 같은 함수
+	 *                    ({@link #contentTypeOf})로 정규화해 화면 판정과 어긋나지 않는다.
+	 * @param authorUsername 게시자 계정명(2026-08-30, AI scope 작성자 검색·팔로워 필터 전용) — 미상이면 null.
 	 */
 	public record PostRef(String shortcode, String source, String sponsorship, LocalDate uploadedOn,
-			Long latestViews) {
+			Long latestViews, String contentType, String authorUsername) {
 	}
 
 	/**
@@ -192,12 +195,14 @@ public class BrandPostAssembler {
 							ownedShortCodes.contains(row.shortCode())),
 					BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.caption()),
 					KstTimestamps.toKstDate(row.takenAt()),
-					viewsByCode.get(row.shortCode())));
+					viewsByCode.get(row.shortCode()),
+					contentTypeOf(row.contentType()),
+					row.authorUsername()));
 		}
 		for (BrandPostResponse legacy : legacyByCode.values()) {
 			TrackingItemResponse.SnapshotResponse latest = legacy.latestSnapshot();
 			refs.add(new PostRef(legacy.shortcode(), legacy.source(), legacy.sponsorship(), uploadedOn(legacy),
-					latest == null ? null : latest.views()));
+					latest == null ? null : latest.views(), legacy.contentType(), legacy.authorUsername()));
 		}
 		return new BrandPostIndex(List.copyOf(refs), poolByCode.keySet(), legacyByCode, ownedShortCodes);
 	}
