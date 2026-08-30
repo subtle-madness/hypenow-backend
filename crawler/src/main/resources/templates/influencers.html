@@ -33,7 +33,7 @@
                onchange="this.form.submit()"/>
         <span class="badge" th:classappend="${bf.badge()}" th:text="${bf.label()}"></span>
     </label>
-    <!-- F&B 판정 필터 — 뷰티 필터와 동시 선택 시 뷰티가 이긴다(두 축 교차 조합 미지원) -->
+    <!-- F&B 판정 필터 — 뷰티 필터와 동시 선택 시 뷰티가 이긴다(축 교차 조합 미지원) -->
     <span class="filter-sep" th:unless="${companyView}"></span>
     <label class="check" th:unless="${companyView}" th:each="ff : ${fnbFilters}">
         <input type="checkbox" name="fnb" th:value="${ff.key()}"
@@ -41,11 +41,19 @@
                onchange="this.form.submit()"/>
         <span class="badge" th:classappend="${ff.badge()}" th:text="${'F&B: ' + ff.label()}"></span>
     </label>
+    <!-- 홈/리빙 판정 필터 — 우선순위는 뷰티 > F&B > 홈/리빙(축 교차 조합 미지원) -->
+    <span class="filter-sep" th:unless="${companyView}"></span>
+    <label class="check" th:unless="${companyView}" th:each="hf : ${homeLivingFilters}">
+        <input type="checkbox" name="homeLiving" th:value="${hf.key()}"
+               th:checked="${homeLiving != null && homeLiving.contains(hf.key())}"
+               onchange="this.form.submit()"/>
+        <span class="badge" th:classappend="${hf.badge()}" th:text="${'홈리빙: ' + hf.label()}"></span>
+    </label>
     <span class="hint">체크 없음 = 판정 완료 전체</span>
 </form>
 
 <table class="data">
-    <tr><th>id</th><th>username</th><th>상태</th><th>팔로워</th><th>뷰티</th><th>F&amp;B</th>
+    <tr><th>id</th><th>username</th><th>상태</th><th>팔로워</th><th>뷰티</th><th>F&amp;B</th><th>홈/리빙</th>
         <th>발굴 키워드</th><th>발굴일</th><th>최근 수집</th></tr>
     <tr th:each="row : ${page.content}">
         <td th:text="${row.influencer.id}"></td>
@@ -74,6 +82,7 @@
                 <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
                 <input type="hidden" th:each="b : ${beauty}" name="beauty" th:value="${b}"/>
                 <input type="hidden" th:each="f : ${fnb}" name="fnb" th:value="${f}"/>
+                <input type="hidden" th:each="h : ${homeLiving}" name="homeLiving" th:value="${h}"/>
                 <input type="hidden" name="beautyClass" th:value="${target.name()}"/>
                 <button type="submit"
                         th:text="${target.name() == 'INFLUENCER'} ? '뷰티' : (${target.name() == 'COMPANY'} ? '회사' : (${target.name() == 'BEAUTY_SERVICE'} ? '시술' : (${target.name() == 'FOREIGN_INFLUENCER'} ? '외국인' : '아님')))"></button>
@@ -93,9 +102,30 @@
                 <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
                 <input type="hidden" th:each="b : ${beauty}" name="beauty" th:value="${b}"/>
                 <input type="hidden" th:each="f : ${fnb}" name="fnb" th:value="${f}"/>
+                <input type="hidden" th:each="h : ${homeLiving}" name="homeLiving" th:value="${h}"/>
                 <input type="hidden" name="fnbClass" th:value="${target.name()}"/>
                 <button type="submit"
                         th:text="${target.name() == 'INFLUENCER'} ? 'F&B' : (${target.name() == 'COMPANY'} ? '회사' : (${target.name() == 'SERVICE'} ? '매장' : (${target.name() == 'FOREIGN_INFLUENCER'} ? '외국인' : '아님')))"></button>
+            </form>
+        </td>
+        <td th:with="hcls=${row.influencer.homeLivingClass != null ? row.influencer.homeLivingClass.name() : null}">
+            <!-- 홈/리빙 축 5분류 배지 — 배지 색상 클래스는 뷰티 것 재사용(색 의미 동일) -->
+            <span th:if="${hcls != null}" class="badge"
+                  th:classappend="${hcls == 'INFLUENCER'} ? 'BEAUTY' : (${hcls == 'COMPANY'} ? 'BEAUTY_COMPANY' : (${hcls == 'SERVICE'} ? 'BEAUTY_SERVICE' : (${hcls == 'FOREIGN_INFLUENCER'} ? 'FOREIGN_INFLUENCER' : 'NOT_BEAUTY')))"
+                  th:text="${hcls == 'INFLUENCER'} ? '홈/리빙' : (${hcls == 'COMPANY'} ? '홈/리빙 회사' : (${hcls == 'SERVICE'} ? '서비스' : (${hcls == 'FOREIGN_INFLUENCER'} ? '홈/리빙 외국인' : '홈/리빙 아님')))"
+                  th:title="${row.influencer.homeLivingReason}"></span>
+            <span th:if="${hcls == null}">—</span>
+            <form method="post" th:action="@{|/ui/influencers/${row.influencer.id}/homeLiving|}"
+                  style="display:inline" th:each="target : ${homeLivingClasses}"
+                  th:unless="${hcls == target.name()}">
+                <input type="hidden" name="page" th:value="${page.number}"/>
+                <input type="hidden" th:each="s : ${status}" name="status" th:value="${s}"/>
+                <input type="hidden" th:each="b : ${beauty}" name="beauty" th:value="${b}"/>
+                <input type="hidden" th:each="f : ${fnb}" name="fnb" th:value="${f}"/>
+                <input type="hidden" th:each="h : ${homeLiving}" name="homeLiving" th:value="${h}"/>
+                <input type="hidden" name="homeLivingClass" th:value="${target.name()}"/>
+                <button type="submit"
+                        th:text="${target.name() == 'INFLUENCER'} ? '홈리빙' : (${target.name() == 'COMPANY'} ? '회사' : (${target.name() == 'SERVICE'} ? '서비스' : (${target.name() == 'FOREIGN_INFLUENCER'} ? '외국인' : '아님')))"></button>
             </form>
         </td>
         <td th:text="${row.discoveredKeyword != null ? row.discoveredKeyword : '—'}"></td>
@@ -105,10 +135,10 @@
 </table>
 <p class="pager">
     <a th:if="${page.hasPrevious()}"
-       th:href="@{/ui/influencers(status=${status}, beauty=${beauty}, fnb=${fnb}, page=${page.number - 1}, company=${companyView})}">이전</a>
+       th:href="@{/ui/influencers(status=${status}, beauty=${beauty}, fnb=${fnb}, homeLiving=${homeLiving}, page=${page.number - 1}, company=${companyView})}">이전</a>
     <span th:text="${page.number + 1} + ' / ' + ${page.totalPages}"></span>
     <a th:if="${page.hasNext()}"
-       th:href="@{/ui/influencers(status=${status}, beauty=${beauty}, fnb=${fnb}, page=${page.number + 1}, company=${companyView})}">다음</a>
+       th:href="@{/ui/influencers(status=${status}, beauty=${beauty}, fnb=${fnb}, homeLiving=${homeLiving}, page=${page.number + 1}, company=${companyView})}">다음</a>
 </p>
 </main>
 </body>

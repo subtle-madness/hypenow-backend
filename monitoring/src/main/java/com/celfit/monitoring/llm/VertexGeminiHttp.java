@@ -5,7 +5,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * {@link GeminiHttp} seam의 Vertex 구현(2026-08-18 전환) — 호출부({@link BrandMentionJudge}·
+ * {@link GeminiHttp} seam의 Vertex 구현(2026-08-18 전환) — 호출부(
  * {@link com.celfit.monitoring.ad.AdDisclosureExtractorGemini})는 AI Studio 경로
  * ("/v1beta/models/{model}:generateContent")를 그대로 넘기므로, 여기서 Vertex 경로
  * (projects/{p}/locations/{loc}/publishers/google/models/{m}:{action})로 변환한 뒤

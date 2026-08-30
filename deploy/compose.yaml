@@ -243,6 +243,12 @@ services:
       REDIS_HOST: redis
       # 이메일 인증 발송(Resend) — 서버 .env에 등록. 미설정 시 로깅 폴백(기동 WARN, 실발송 없음)
       RESEND_API_KEY: ${RESEND_API_KEY:-}
+      WEB_BASE_URL: ${WEB_BASE_URL:-https://www.hypenow.io}   # 주간 리포트 메일 딥링크 기준 주소
+      # 주간 다이제스트 생성·발송 크론(README §13-5-3) — 기본 매주 월요일 09:00 KST + 따라잡기
+      # 09:10~23:50 10분 간격. 임시 중단은 둘 다 "-"로 덮어 재기동(README 참조, 하나만 끄면
+      # 따라잡기가 10분 안에 되살린다).
+      MONITORING_DIGEST_WEEKLY_CRON: "${MONITORING_DIGEST_WEEKLY_CRON:-0 0 9 * * MON}"
+      MONITORING_DIGEST_WEEKLY_CATCHUP_CRON: "${MONITORING_DIGEST_WEEKLY_CATCHUP_CRON:-0 10,20,30,40,50 9-23 * * *}"
       # 어드민 가입 코드 일괄 적재(POST /admin/signup-codes) 정적 토큰 — 서버 .env에 등록. 미설정 시 엔드포인트 fail-closed(503)
       CODES_API_KEY: ${CODES_API_KEY:-}
       # 모니터링 v3 조회 개통(was 계약 §1) — 기본 off. 개통은 .env의 MONITORING_ENABLED=true +
@@ -324,16 +330,7 @@ services:
       # 서버 override가 02:00으로 운영돼 왔고 08-12에 02:00을 정본으로 수용(캠페인 스윕과 동시 실행).
       # was.brand.sweep-hour-kst(nextScheduledAt 표기)와 반드시 함께 움직일 것.
       MONITORING_BRAND_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
-      # 알람 발송(07-31 개통) — 5분 간격. 개통 절차는 README §13-5
-      # 수신자는 .env의 ALARM_ALLOWED_RECIPIENTS 허용목록으로 제한한다(fail-OPEN이므로 비우면 전원 발송).
-      MONITORING_ALARM_DISPATCH_CRON: "0 */5 * * * *"
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
-      # 수신자 해석용 analysis DB 읽기 전용(두 객체만 GRANT — 계약 v2 §6)
-      MONITORING_ALARM_READER_URL: jdbc:postgresql://postgres:5432/analysis
-      MONITORING_ALARM_READER_USERNAME: alarm_reader
-      MONITORING_ALARM_READER_PASSWORD: ${ALARM_READER_PASSWORD:-}
-      # 수신자 허용목록 안전판(비어있으면 무제한 — 운영 기본). 07-30 test 스택 검증용으로 추가, 운영은 미사용 전제
-      MONITORING_ALARM_ALLOWED_RECIPIENTS: ${ALARM_ALLOWED_RECIPIENTS:-}
+      # 알람 메일 발송은 2026-08-27 주간 개편으로 was(주간 리포트)로 이관됐다 - monitoring은 alarm_event 적재만 한다.
       # 힙 512m(08-12 OOM 후속): 백필 core 2병렬 대비 — 힙 예산은 동시 콜 13 × ~10MB + 상주분
       # (08-13 보강 워커 6→10 상향 반영: 워커 10 + 스윕 core 1 + 등록 core 2가 최악값).
       # ExitOnOOM: OOM 후 반쯤 죽은 채 버티지 않고 즉시 종료 → restart 정책으로 깨끗하게 복귀.

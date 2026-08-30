@@ -132,9 +132,57 @@ public class V1BrandAccountService {
 			compensate(registered.brandId(), username);
 			throw e;
 		}
+		// 태그 시딩(2026-08-27 해시태그 직접 수집 설계 §4, 2026-08-28 monitoring push 추가) — 신규
+		// 링크에만 건다. 멱등 재-POST는 위 alreadyLinked 분기에서 이미 반환됐으므로 여기 도달하지
+		// 않는다(지운 태그 부활 방지). 개명 재등록(precheck가 옛 계정명 기준이라 미스 나고 위
+		// link()가 기존 brandId로 접히는 경우, 128행 주석 참고)은 이 경로를 그대로 지나간다 — 새
+		// 계정명 유도 태그를 더할 뿐 기존 태그를 지우지 않으므로 "지운 태그 부활" 위험이 없어
+		// 의도적으로 허용한다.
+		seedLedgerTagsSafely(userId, registered.brandId(), username);
 		// 등록 응답의 status는 monitoring이 "ACTIVE"로 하드코딩해 보내므로 준비 상태 판정에 쓸 수 없다 —
 		// 상태는 항상 brand_account 조회가 정본이다(§5-2).
 		return get(userId, registered.brandId());
+	}
+
+	/**
+	 * 신규 링크 태그 시딩(2026-08-27 해시태그 직접 수집 설계 §4, <b>2026-08-28 태그 생성 권한 was
+	 * 일원화</b>) — 계정명 유도 태그({@link BrandHashtagTags#derive})를 이 사용자의 장부에 남기고,
+	 * <b>monitoring에도 일반 태그 add로 push</b>한다. 과거엔 monitoring
+	 * {@code BrandRegistrationService.seedHashtagsSafely}가 등록·replay 양쪽에서 독립적으로
+	 * {@code brand_hashtag}에 같은 태그를 심었다 — 태그 생성 권한이 두 시스템에 분산돼 있었다는
+	 * 뜻이다. 그 자가 시드를 제거하고(monitoring 쪽 결정 기록 참조) was가 유일한 작성자가 되도록
+	 * 이 메서드가 두 쓰기를 모두 담당한다.
+	 *
+	 * <p>push는 <b>일반 태그 add와 완전히 같은 경로</b>({@link MonitoringCommandClient#addHashtagTags})
+	 * 다 — tombstone 재활성 의미론까지 포함한다. 즉 어떤 사용자가 이 브랜드에 새로 연결하면, 이전에
+	 * 다른 사용자가 지웠던 자동 태그라도 이 사용자의 연결 의도(장부에 태그가 있어야 한다)를 따라
+	 * 되살아난다 — 반면 그 태그를 지운 사용자 본인은 자기 장부에서 여전히 빠져 있으므로(사용자
+	 * 스코프 격리) 계속 보호된다.
+	 *
+	 * <p>두 쓰기 모두 best-effort로 격리한다(등록 자체를 절대 실패시키지 않는다): monitoring push를
+	 * 먼저 시도한다(태그 관리 API의 "monitoring 먼저" 관용구와 동형, {@link #putHashtagTags} 등
+	 * 참조) — push가 실패해도 장부 쓰기는 <b>그대로 진행</b>한다. 링크는 이미 커밋됐고, 여기서
+	 * 던지면 재시도가 멱등 경로(시딩 없음)로 접혀 그 사용자의 장부가 <b>영구히</b> 비어 버린다.
+	 * 장부만 채워진 상태(push 실패)는 다음 사용자의 등록이 같은 태그를 다시 push하거나, 태그 관리
+	 * API로 수동 추가하면 자연히 복구된다(장부 자체는 이미 정확하므로 "이 사용자에게 해시태그
+	 * 게시물이 안 보임" 피해는 없다 — monitoring 스윕 대상에서만 빠질 뿐).
+	 */
+	private void seedLedgerTagsSafely(long userId, long brandId, String username) {
+		List<String> derived = List.copyOf(BrandHashtagTags.derive(username));
+		if (derived.isEmpty()) {
+			return;
+		}
+		try {
+			commandClient.addHashtagTags(username, derived);
+		} catch (RuntimeException e) {
+			log.warn("해시태그 자동 시드 monitoring push 실패(격리) — userId={}, brandId={}, username={}",
+					userId, brandId, username, e);
+		}
+		try {
+			hashtagTagRepository.addTags(userId, brandId, derived);
+		} catch (RuntimeException e) {
+			log.warn("해시태그 태그 장부 시딩 실패(격리) — userId={}, brandId={}", userId, brandId, e);
+		}
 	}
 
 	/**
@@ -292,20 +340,35 @@ public class V1BrandAccountService {
 	}
 
 	/**
-	 * 최초 시딩(08-19) — 이 브랜드에 원장 행이 하나도 없으면(=이 기능 출시 이후 아직 아무도 태그
-	 * 관리 API를 안 건드림) monitoring의 현재 태그 전체를 이 유저에게 귀속시킨다. 이 기능 출시
-	 * 이전부터 있던 브랜드 단위 태그(자동 유도 계정명 태그 포함)는 원래 아무에게도 귀속돼 있지
-	 * 않으므로, 최초로 태그 관리를 조작하는 유저가 물려받는다 — 그래야 이후 PUT·삭제의 합집합·
-	 * "다른 소유자 없음" 판정이 기존 태그를 놓치지 않는다(별도 백필 마이그레이션 잡 불필요 —
-	 * 오프라인 배치 대신 최초 쓰기 시점에 자연히 수렴).
+	 * 무주 태그 승계(08-19 최초 시딩 → <b>2026-08-27 diff 개정</b>) — monitoring의 브랜드 단위 태그
+	 * 중 <b>아무 사용자에게도 귀속되지 않은 것만</b> 조작 사용자에게 귀속시킨다.
+	 *
+	 * <p>구 규칙("이 브랜드 원장이 완전히 비었으면 monitoring 태그 전체 승계")은 태그 장부 백필
+	 * (2026-08-27 설계 §4) 이후 <b>영영 발동하지 않는다</b> — 모든 활성 링크에 원장 행이 생기기
+	 * 때문이다. 그러면 격리 개정 이전부터 monitoring에만 있던 무주 태그가 영구히 무주로 남아, 어느
+	 * 사용자의 GET에도 나타나지 않고 관리도 불가능한 좀비가 된다. 조건을 "원장 비었나"에서 "이
+	 * 태그의 소유자가 있나"로 좁히면 백필 뒤에도 08-19의 최초 조작자 승계 정책이 그대로 성립한다.
+	 *
+	 * <p>승계된 태그는 그 시점부터 조작 사용자의 태그이므로, 진행 중인 조작 자체의 대상이 된다 —
+	 * {@link #putHashtagTags} 전체 교체·전체 삭제에 포함되는 것은 구 전량 승계와 동형이며 의도된
+	 * 동작이다. 무주 태그가 PUT 전체 교체에서 monitoring으로부터 사라질 수 있는 것은 승계 방식과
+	 * 무관한 08-19 계약(PUT=내 태그 전체 교체) 자체의 성질이다. 동시 쓰기 경합으로 같은 무주 태그가
+	 * 두 사용자에게 이중 귀속될 수 있으나, 두 사용자가 각자 수동 추가한 것과 동일한 상태라
+	 * 무해하다(과잉 귀속일 뿐 유실 없음).
+	 *
+	 * <p>대가로 태그 관리 쓰기 경로마다 monitoring GET이 1콜 나간다(구 구조는 원장이 있으면
+	 * 건너뛰었다) — 사람이 누르는 저빈도 조작이라 수용한다. monitoring 태그가 0건이면 원장 조회도
+	 * 하지 않는다.
 	 */
 	private void ensureSeeded(long userId, long brandId, String username) {
-		if (hashtagTagRepository.existsForBrand(brandId)) {
+		List<String> current = normalizeTags(commandClient.getHashtagTags(username));
+		if (current.isEmpty()) {
 			return;
 		}
-		List<String> current = commandClient.getHashtagTags(username);
-		if (!current.isEmpty()) {
-			hashtagTagRepository.addTags(userId, brandId, normalizeTags(current));
+		Set<String> owned = hashtagTagRepository.unionByBrand(brandId);
+		List<String> unowned = current.stream().filter(tag -> !owned.contains(tag)).toList();
+		if (!unowned.isEmpty()) {
+			hashtagTagRepository.addTags(userId, brandId, unowned);
 		}
 	}
 
