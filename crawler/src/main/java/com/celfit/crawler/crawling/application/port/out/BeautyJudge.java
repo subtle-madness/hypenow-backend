@@ -13,14 +13,17 @@ public interface BeautyJudge {
                        List<String> captions) {}
 
     /**
-     * 2축 판정 결과 — beauty(뷰티 제품)·fnb(식품/음료 제품) 축을 독립 판정한다(스펙 2026-08-23 §2).
-     * 축별 class는 모델 응답이 무효·누락이면 null — 호출자는 null 아닌 축만 적용한다(해당 축은
-     * 미판정으로 남아 다음 실행 재시도). 파생 boolean은 각 enum 규칙에 위임.
+     * 3축 판정 결과 — beauty(뷰티 제품)·fnb(식품/음료 제품)·homeLiving(홈/리빙) 축을 독립
+     * 판정한다(스펙 2026-08-23 §2, 2026-08-27 홈/리빙 §2). 축별 class는 모델 응답이 무효·누락이면
+     * null — 호출자는 null 아닌 축만 적용한다(해당 축은 미판정으로 남아 다음 실행 재시도).
+     * 파생 boolean은 각 enum 규칙에 위임.
      */
     record Verdict(String username, com.celfit.crawler.crawling.domain.BeautyClass beautyClass,
                    String reason, String basis,
                    com.celfit.crawler.crawling.domain.CategoryClass fnbClass,
-                   String fnbReason, String fnbBasis) {
+                   String fnbReason, String fnbBasis,
+                   com.celfit.crawler.crawling.domain.CategoryClass homeLivingClass,
+                   String homeLivingReason, String homeLivingBasis) {
         public boolean beauty() {
             return beautyClass != null && beautyClass.beauty();
         }

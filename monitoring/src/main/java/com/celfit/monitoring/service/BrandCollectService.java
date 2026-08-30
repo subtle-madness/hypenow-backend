@@ -355,8 +355,11 @@ public class BrandCollectService {
 	/**
 	 * 브랜드별 수집 창 컷 — KST 캘린더 개월(요청서 "게시물 taken_at 기준 최근 N개월").
 	 * 열거 깊이(백필)와 편입 필터가 같은 컷을 쓴다 — 창 밖 소급 태그가 편입되지 않게.
+	 *
+	 * <p>package-private인 이유(2026-08-27): 해시태그 수집({@link BrandHashtagCollectService})도
+	 * 같은 컷을 써야 한다(설계 §2-2 — 구 windowDays=90 고정 폐기). 사본을 두면 반드시 갈린다.
 	 */
-	private static Instant collectionCutoff(BrandRow brand, Instant now) {
+	static Instant collectionCutoff(BrandRow brand, Instant now) {
 		return ZonedDateTime.ofInstant(now, KST).minusMonths(brand.collectionMonths()).toInstant();
 	}
 

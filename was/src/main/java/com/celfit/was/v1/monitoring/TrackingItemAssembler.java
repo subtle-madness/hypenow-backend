@@ -10,6 +10,7 @@ import com.celfit.was.monitoring.PostCommentRow;
 import com.celfit.was.monitoring.PostMetaRow;
 import com.celfit.was.monitoring.ProfileMetaRow;
 import com.celfit.was.monitoring.ProfileSnapshotBatchRow;
+import com.celfit.was.monitoring.TargetDetailRow;
 import com.celfit.was.monitoring.TargetRow;
 import com.celfit.was.monitoring.TrackedSnapshotRow;
 import com.celfit.was.v1.common.KstTimestamps;
@@ -58,7 +59,14 @@ public class TrackingItemAssembler {
 		this.objectMapper = objectMapper;
 	}
 
-	/** GET /v1/monitoring/items(6.26) — 유저 전량 조회 + meta(lastCollectedAt·today). */
+	/**
+	 * GET /v1/monitoring/items(6.26) — 유저 전량 조회 + meta(lastCollectedAt·today).
+	 *
+	 * <p>monitoring 왕복은 3회(통합 조회 + 스냅샷 + 댓글) — 2026-08-27 풀 대기 진단(31행 max()가
+	 * 커넥션 대기로 2.4초까지 부풂)의 수리로, target·post_meta·profile_meta·팔로워·last sweep 5개
+	 * 왕복을 {@link MonitoringReadRepository#findTargetDetails}가 한 SQL로 접는다. 스냅샷·댓글은
+	 * 행 수가 많아(게시물당 D일·45건) 별도 왕복 유지.
+	 */
 	public AssembledList assembleList(long userId) {
 		List<MonitoringItemRow> items = itemRepository.findByUser(userId);
 		Map<Long, CampaignRow> campaignsById = campaignRepository.findByUser(userId).stream()
@@ -66,18 +74,20 @@ public class TrackingItemAssembler {
 
 		Set<Long> targetIds = items.stream().map(MonitoringItemRow::targetId).filter(Objects::nonNull)
 				.collect(Collectors.toSet());
-		Map<Long, TargetRow> targetsById = readRepository.map(repo -> repo.findTargets(targetIds))
-				.orElseGet(List::of).stream().collect(Collectors.toMap(TargetRow::id, t -> t));
+		List<TargetDetailRow> details = readRepository.map(repo -> repo.findTargetDetails(targetIds))
+				.orElseGet(List::of);
+		Map<Long, TargetRow> targetsById = details.stream()
+				.collect(Collectors.toMap(TargetDetailRow::id, TargetDetailRow::toTargetRow));
 
-		OffsetDateTime lastCollectedAt = readRepository.map(MonitoringReadRepository::lastSuccessfulSweepAt)
-				.orElse(null);
+		// last_completed_at은 통합 조회의 비상관 스칼라(전 행 동일) — 추적 행이 0개면 폴백 왕복.
+		OffsetDateTime lastCollectedAt = details.isEmpty()
+				? readRepository.map(MonitoringReadRepository::lastSuccessfulSweepAt).orElse(null)
+				: details.get(0).lastCompletedAt();
 		LocalDate lastCollectedDate = KstTimestamps.toKstDate(lastCollectedAt);
 
 		Set<String> shortCodes = targetsById.values().stream().map(TargetRow::trackedShortCode)
 				.filter(Objects::nonNull).collect(Collectors.toSet());
-		Set<String> usernames = targetsById.values().stream().map(TargetRow::username)
-				.filter(Objects::nonNull).collect(Collectors.toSet());
-		PostBundle bundle = fetchPostBundle(shortCodes, usernames, lastCollectedDate);
+		PostBundle bundle = buildListBundle(details, shortCodes, lastCollectedDate);
 
 		// meta.today와 pending 만료 판정이 같은 날짜를 봐야 자정 경계에서 어긋나지 않는다.
 		LocalDate today = LocalDate.now(KstTimestamps.KST);
@@ -284,6 +294,38 @@ public class TrackingItemAssembler {
 			return OffsetDateTime.now(KstTimestamps.KST).plusMinutes(5);
 		}
 		return null;
+	}
+
+	/**
+	 * 목록 조립용 번들 — 표시 부속(post_meta·profile_meta·팔로워)은 통합 조회 결과에서 뽑고, 행 수가
+	 * 많은 스냅샷·댓글만 배치 왕복한다. 같은 username·shortCode를 공유하는 target이 여럿이면(계정+게시물
+	 * 동시 추적 등) 값이 동일하므로 먼저 온 것을 유지한다(merge (a, b) -> a).
+	 */
+	private PostBundle buildListBundle(List<TargetDetailRow> details, Set<String> shortCodes,
+			LocalDate lastCollectedDate) {
+		Map<String, PostMetaRow> postMetaByCode = details.stream()
+				.map(TargetDetailRow::toPostMetaRow).filter(Objects::nonNull)
+				.collect(Collectors.toMap(PostMetaRow::shortCode, r -> r, (a, b) -> a));
+		Map<String, ProfileMetaRow> profileMetaByUsername = details.stream()
+				.map(TargetDetailRow::toProfileMetaRow).filter(Objects::nonNull)
+				.collect(Collectors.toMap(ProfileMetaRow::username, r -> r, (a, b) -> a));
+		// followers null(스냅샷 부재 또는 값 결손)은 맵 미포함 = 응답 null — 기존 findLatestProfileSnapshots
+		// 미포함과 동일 의미(값 결손이 NPE였던 구 동작은 이 경로에선 null 강등으로 흡수).
+		Map<String, Long> followersByUsername = details.stream()
+				.filter(d -> d.followers() != null)
+				.collect(Collectors.toMap(TargetDetailRow::username, TargetDetailRow::followers, (a, b) -> a));
+
+		if (readRepository.isEmpty()) {
+			return new PostBundle(postMetaByCode, Map.of(), Map.of(), profileMetaByUsername, followersByUsername);
+		}
+		MonitoringReadRepository repo = readRepository.get();
+		Map<String, List<TrackedSnapshotRow>> snapshotsByCode = lastCollectedDate == null ? Map.of()
+				: repo.findSnapshots(shortCodes, lastCollectedDate).stream()
+						.collect(Collectors.groupingBy(TrackedSnapshotRow::shortCode));
+		Map<String, List<PostCommentRow>> commentsByCode = repo.findComments(shortCodes, COMMENT_LIMIT).stream()
+				.collect(Collectors.groupingBy(PostCommentRow::shortCode));
+		return new PostBundle(postMetaByCode, snapshotsByCode, commentsByCode, profileMetaByUsername,
+				followersByUsername);
 	}
 
 	private PostBundle fetchPostBundle(Set<String> shortCodes, Set<String> usernames, LocalDate lastCollectedDate) {

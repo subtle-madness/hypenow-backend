@@ -1,211 +1,143 @@
 package com.celfit.was.v1.brandmonitoring;
 
-import com.celfit.was.monitoring.BrandDirectPostRepository;
-import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
-import com.celfit.was.monitoring.BrandReadRepository.BrandHashtagPostRow;
-import com.celfit.was.monitoring.BrandReadRepository.BrandPoolStatusRow;
+import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.BrandReadRepository.MatchedTagRow;
-import com.celfit.was.v1.common.KstTimestamps;
-import java.util.Collections;
+import com.celfit.was.v1.monitoring.TrackingItemResponse;
+import java.time.LocalDate;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * 해시태그 발견 게시물 전용 조립(스펙 §8, 별도 탭 결정 2026-08-12) — {@code brand_hashtag_post}
- * (RELEVANT만)를 {@link BrandHashtagPostResponse} 슬림 셰이프로 옮긴다.
+ * 구 해시태그 전용 목록의 <b>리라우팅</b> 조립(2026-08-27 해시태그 직접 수집 설계 §3) —
+ * {@code GET /v1/brand-monitoring/accounts/{accountId}/hashtag-posts}의 응답 셰이프
+ * ({@link BrandHashtagPostResponse})는 그대로 두고, 데이터 산지만 구 감지 테이블
+ * ({@code brand_hashtag_post})에서 <b>통합 풀</b>로 옮긴다. FE가 새 통합 목록으로 전환하기 전에도
+ * 화면이 낡지 않게 하는 전환기 장치이고, <b>다음 릴리스에 이 클래스와 엔드포인트를 함께 제거</b>한다.
  *
- * <p>{@link BrandPostAssembler}(브랜드 풀)와는 완전히 분리된 표면이다 — 병합·필터·정렬·
- * counts를 공유하지 않는다(2026-08-12 결정: 처음엔 §6-1 목록에 {@code source: "hashtag"}로
- * 합류시켰으나, 스냅샷·댓글·팔로워 보강이 없는 별개 성격의 데이터를 같은 계약에 끼워 맞추면
- * null 필드만 늘어난다는 FE 판단으로 전용 API로 분리했다). 컷 정책({@link BrandPostAssembler#windowCutoff})만
- * 그대로 재사용한다 — 같은 브랜드 화면 시간창 기준을 유지하기 위해서다.
+ * <p>구현은 {@link BrandPostAssembler#assembleBrandPosts} 결과의 {@code source=hashtag} 부분집합을
+ * 구 셰이프로 옮기는 것뿐이다 — 사용자 격리·정산 게이트·정렬을 사본으로 다시 구현하지 않으므로
+ * 본 목록과 이 탭이 갈릴 수 없다(구 구조는 그 판정을 각자 갖고 있어 실제로 갈렸다). 개수만 필요한
+ * 호출({@link #countForBrand}, P2 — 2026-08-27 develop 도입)은 같은 이유로 전량 하이드레이트를
+ * 태우지 않는 경량 인덱스 산지({@link BrandPostAssembler#indexForBrand})를 공유한다.
  *
- * <p>조립 규칙({@link #toResponse})은 순수 정적 함수라 DB 없이 단위 테스트한다. 인스턴스 메서드는
- * 배치 조회 배선만 담당한다 — 발견 게시물 자체는 보강이 없어 단일 SQL 왕복이지만, brandPostId
- * 판정(2026-08-17)에 브랜드 풀 상태만 보는 경량 조회 1종이 더해졌다.
+ * <p><b>구 규칙과의 차이(의도됨)</b>:
+ * <ul>
+ *   <li>tagged·direct 성분이 붙은 겹침 행은 이 탭에서 빠진다 — 그런 행은 이제 본 목록에 제대로
+ *       실린다(구 규칙도 tagged 겹침은 제외였다).</li>
+ *   <li>{@code brandPostId}는 항상 shortcode다 — 해시태그 게시물이 전부 성과 측정 풀 소속이 됐다.</li>
+ *   <li>{@code likes}·{@code comments}는 최신 스냅샷 값이다(구 "발견 시점 관측값"보다 신선하다).</li>
+ * </ul>
  */
 @Component
 @ConditionalOnProperty(name = "monitoring.enabled", havingValue = "true")
 public class BrandHashtagPostAssembler {
 
 	/**
-	 * 해시태그 발견분 서빙 상한 — SQL 단계에서 자른다(tagged와 달리 등록 시점 검증이 없어 폭주
-	 * 가능성이 더 크다, 스펙 §5). 브랜드 게시물 목록의 폭주 방어 상한(POST_LIMIT)과 같은 값.
+	 * 서빙 상한 — 본 목록의 {@code POST_LIMIT}과 같은 값. 편입 상한(브랜드당 1,000)이 이미 모수를
+	 * 제한하지만, 폭주 방어 상한은 표시 표면마다 두는 것이 이 저장소의 관용구다.
 	 */
 	static final int HASHTAG_POST_LIMIT = 2000;
 
-	private static final String CONTENT_TYPE_REELS = "REELS";
-	private static final String REELS = "reels";
-	private static final String FEED = "feed";
 	private static final String PROFILE_URL_PREFIX = "https://www.instagram.com/";
 
+	private final BrandPostAssembler brandPostAssembler;
 	private final BrandReadRepository brandReadRepository;
-	private final BrandDirectPostRepository directPostRepository;
-	private final BrandHashtagTagRepository hashtagTagRepository;
 
-	public BrandHashtagPostAssembler(BrandReadRepository brandReadRepository,
-			BrandDirectPostRepository directPostRepository, BrandHashtagTagRepository hashtagTagRepository) {
+	public BrandHashtagPostAssembler(BrandPostAssembler brandPostAssembler,
+			BrandReadRepository brandReadRepository) {
+		this.brandPostAssembler = brandPostAssembler;
 		this.brandReadRepository = brandReadRepository;
-		this.directPostRepository = directPostRepository;
-		this.hashtagTagRepository = hashtagTagRepository;
 	}
 
 	/**
-	 * 브랜드 1계정의 해시태그 발견 게시물(RELEVANT만) — 최신순, 병합·필터·정렬 없이 전량이되,
-	 * <b>tagged 겹침 행은 제외</b>한다(2026-08-18 정정, direct 통합 §2-5로 판정 산지만 이동 — 규칙의
-	 * 의미는 불변). 이 화면은 "태그 안 된 게시물"인데 이미 tagged로 측정 중인 shortcode가 뜨는 건
-	 * 화면 정의와 모순이다 — 사진 태그(캡션에 안 보임)와 해시태그를 동시에 단 게시물이 실제로 이
-	 * 겹침을 만든다(캡션 멘션 자체는 수집 시점 DIRECT_TAGGED 판정으로 이미 걸러진다). 단,
-	 * <b>direct 매핑이 살아 있는 행은 tagged 여부와 무관하게 유지</b>한다(승격분 dim 잔존 계약 —
-	 * direct가 우선).
+	 * 브랜드 1계정의 해시태그 게시물(구 셰이프) — 최신순, 본 목록과 <b>같은</b> 격리·정산·창 판정을
+	 * 거친 결과다.
 	 *
-	 * <p>제외 문자열 기능은 전면 폐기됐다(2026-08-17 협의 확정 — "감지는 감지 해시태그만으로
-	 * 수행하고 제외는 적용하지 않는다") — monitoring 관리 API 5종·was 프록시 API 4종이 모두
-	 * 제거됐고 조회 시점 필터도 함께 없앤다. 남겨두면 과거 시드(브랜드 계정명 루트 등)가 유저가
-	 * 조회·삭제할 수 없는 "유령 필터"로 영구 동작해 계정명을 포함한 정상 작성자(예: 스태프
-	 * 부계정)의 발견 게시물이 이유 없이 숨는다. verdict(SELF 등) 기반 필터링은 수집 시점 판정이라
-	 * 이 변경과 별개다.
-	 *
-	 * <p>{@code brandPostId}(2026-08-17 승격 상태 필드)는 direct 등록에만 채워진다 — tagged 겹침
-	 * 행은 이미 목록에서 빠지므로 tagged로만 채워지는 경로가 없다. <b>2026-08-18 direct 통합 이후
-	 * 판정 산지가 바뀌었다</b>: {@code app.brand_direct_posts}(유저 스코프 매핑) + tagged 존재 판정
-	 * 2회 조회 대신, monitoring 브랜드 풀 상태({@code BrandReadRepository.findBrandPoolStatus})
-	 * 1회 조회로 both를 판정한다(제외: {@code tag_detected AND NOT direct_registered}).
-	 *
-	 * <p><b>brandPostId는 조회자 스코프다(요구사항, 08-19 개정 — 구 §1-1 "브랜드 스코프 판정" 중
-	 * 상호작용 부분 폐기)</b>: {@code direct_registered_at}은 브랜드 단위 컬럼이라 "누군가 수집했다"만
-	 * 알 뿐 "누가 했는지"는 모른다 — 그래서 등록자 원장({@code app.brand_direct_posts},
-	 * {@link BrandDirectPostRepository#shortCodesByUser})을 한 번 더 조회해 <b>이 유저가 등록한</b>
-	 * shortcode에만 배지를 채운다. 남이 수집한 게시물은 이 유저에게 "미수집"으로 보이고(공동 수집
-	 * 허용 — {@code V1BrandDirectPostService#register}가 사용자 스코프 중복 판정으로 실제 등록도
-	 * 받아준다), 이 유저가 수집하면 이 유저에게만 배지가 켜진다.
-	 *
-	 * <p><b>발견 목록 행 자체(해시태그 감지 데이터)는 여전히 브랜드 공유</b>다 — {@code
-	 * brand_hashtag_post}는 해시태그 스윕(캡션 매칭) 전용 테이블이라 direct 등록 경로가 그 테이블에
-	 * 행을 쓰는 일이 없다(제외·배지 판정 둘 다 {@code brand_tagged_post} 크로스 조회일 뿐, 그 행이
-	 * 목록에 실리느냐는 오직 해시태그 매칭 여부로만 결정된다). 그래서 이 메서드는 userId를 받지만
-	 * 필터(제외 조건)는 여전히 브랜드 스코프이고, badge 파생에만 쓰인다.
-	 *
-	 * <p><b>내 태그 매칭 필터(요구사항, 08-19 확장)</b> — 조회자가 관리하는 활성 태그
-	 * ({@code app.brand_hashtag_tags})와 게시물의 매칭 태그 전체({@code
-	 * brand_hashtag_post_matched_tags}, {@link BrandReadRepository#findMatchedTags})의 교집합이 있을
-	 * 때만 노출한다. 매칭 기록이 아예 없는 행(마이그레이션 백필 이전 데이터 등)은 <b>fail-open</b>
-	 * (전원 노출) — 새 테이블의 완결성이 기존 데이터의 표시 여부를 볼모로 잡으면 안 된다.
-	 *
-	 * <p><b>시딩 전 정합성</b>: 조회자 본인의 태그 원장이 이 브랜드에 대해 <b>비어 있으면 필터 자체를
-	 * 건너뛴다</b>(전원 노출) — 이 기능 출시 직후처럼 이 유저가 태그 관리 API를 아직 한 번도 건드리지
-	 * 않은 상태(원장 미시딩)에서 "내 태그가 0개니까 교집합도 0개"로 몰아 전부 숨기면, 기존에 보이던
-	 * 발견 목록이 이 기능 출시와 동시에 전부 사라지는 회귀가 된다. 원장이 비어 있다는 신호는 "아직
-	 * 개인화하지 않았다"로 해석해 브랜드 전체를 보여주는 쪽을 기본값으로 삼는다 — 다른 유저가 이미
-	 * 태그를 관리하기 시작했는지 여부와 무관하게, 오직 <b>이 조회자 본인</b>의 원장만 본다.
+	 * @param windowStart 조회자의 링크 표시 창 하한(본 목록과 같은 컷) — 두 화면의 모수가 어긋나면
+	 *                    "탭에는 있는데 목록에는 없는" 게시물이 생긴다.
 	 */
-	public List<BrandHashtagPostResponse> assembleForBrand(long userId, long brandId) {
-		List<BrandHashtagPostRow> rows = brandReadRepository.findHashtagPosts(brandId,
-				BrandPostAssembler.windowCutoff(), HASHTAG_POST_LIMIT);
-		if (rows.isEmpty()) {
+	public List<BrandHashtagPostResponse> assembleForBrand(long userId, BrandAccountRow account,
+			String viewerAccountType, LocalDate windowStart) {
+		List<BrandPostResponse> hashtagPosts = brandPostAssembler
+				.assembleBrandPosts(userId, account, false, BrandPostAssembler.BrandPostScope.ENRICHED_ONLY,
+						false, viewerAccountType)
+				.stream()
+				.filter(p -> BrandPostAssembler.SOURCE_HASHTAG.equals(p.source()))
+				.filter(p -> withinWindow(p, windowStart))
+				.limit(HASHTAG_POST_LIMIT)
+				.toList();
+		if (hashtagPosts.isEmpty()) {
 			return List.of();
 		}
-
-		Set<String> shortCodes = rows.stream().map(BrandHashtagPostRow::shortCode)
+		Set<String> codes = hashtagPosts.stream().map(BrandPostResponse::shortcode)
 				.collect(Collectors.toCollection(LinkedHashSet::new));
-		Map<String, BrandPoolStatusRow> poolStatus = brandReadRepository.findBrandPoolStatus(brandId, shortCodes)
-				.stream().collect(Collectors.toMap(BrandPoolStatusRow::shortCode, Function.identity(), (a, b) -> a));
-		// direct 등록 행이 하나도 없으면 원장 조회를 생략한다(불필요한 조회 방지 — BrandPostAssembler와
-		// 같은 관용구).
-		boolean hasAnyDirectRegistered = poolStatus.values().stream().anyMatch(BrandPoolStatusRow::directRegistered);
-		Set<String> ownedShortCodes = hasAnyDirectRegistered ? directPostRepository.shortCodesByUser(userId)
-				: Set.of();
-
-		List<BrandHashtagPostRow> visible = rows.stream()
-				.filter(row -> !isTaggedOnly(poolStatus.get(row.shortCode())))
-				.toList();
-		visible = filterByMyTags(userId, brandId, visible);
-
-		return visible.stream()
-				.map(row -> toResponse(row,
-						brandPostIdOf(poolStatus.get(row.shortCode()), row.shortCode(), ownedShortCodes)))
+		// 매칭 태그가 여럿이면 "#태그로 발견" 배지에 하나만 실린다 — 구 matched_tag(단일 컬럼)와 같은
+		// 계약이라 첫 값을 쓴다. 이 필드는 엔드포인트와 함께 다음 릴리스에 사라진다.
+		Map<String, String> matchedTagByCode = brandReadRepository.findMatchedTags(account.id(), codes).stream()
+				.collect(Collectors.toMap(MatchedTagRow::shortCode, MatchedTagRow::tag, (a, b) -> a));
+		return hashtagPosts.stream()
+				.map(p -> toResponse(p, matchedTagByCode.get(p.shortcode())))
 				.toList();
 	}
 
 	/**
-	 * 내 태그 매칭 필터(요구사항, 08-19) — 클래스 javadoc의 "내 태그 매칭 필터"·"시딩 전 정합성"
-	 * 참조. 내 태그 원장이 비어 있으면 필터를 건너뛴다(원장 조회 자체는 이미 했으므로 재조회 없음).
+	 * 해시태그 발견 게시물 개수만(P2, 2026-08-27 develop 도입 → <b>해시태그 직접 수집 전환 이후
+	 * 재구현</b>) — FE 탭 뱃지처럼 목록 본문이 필요 없는 호출용이다(전량 하이드레이트·전송을 태우지
+	 * 않는 슬림 경로). {@link #assembleForBrand}와 <b>같은 판정 산지</b>를 탄다: 노출 필터(등록자 전용
+	 * 노출 + 해시태그 격리)는 {@link BrandPostAssembler#indexForBrand}가 이미 끝낸
+	 * {@link BrandPostAssembler.PostRef} 목록 위에서 source=hashtag·링크 창만 걸러 센다 — 판정을
+	 * 복제하면 뱃지 숫자와 목록 길이가 조용히 갈라진다.
+	 *
+	 * <p>인덱스는 스냅샷·표시 메타·게시자 배치 조회가 전혀 없는 경량 패스라(리포지토리 주석 참조),
+	 * 목록 조회처럼 매번 풀 카드를 조립하지 않는다 — 배지(brandPostId) 파생도 셀 때는 쓸 데가 없어
+	 * 등록자 원장을 따로 조회하지 않는다({@code indexForBrand}가 이미 노출 필터에 쓴 값을 재사용한다).
+	 *
+	 * @param windowStart {@link #assembleForBrand}와 같은 링크 표시 창 하한 — 어긋나면 뱃지 숫자와
+	 *                    탭 목록 길이가 갈라진다.
 	 */
-	private List<BrandHashtagPostRow> filterByMyTags(long userId, long brandId, List<BrandHashtagPostRow> rows) {
-		if (rows.isEmpty()) {
-			return rows;
-		}
-		Set<String> myTags = hashtagTagRepository.findByUserAndBrand(userId, brandId);
-		if (myTags.isEmpty()) {
-			return rows;   // 시딩 전(또는 전체 삭제 후) — 필터 없이 전원 노출.
-		}
-		Set<String> shortCodes = rows.stream().map(BrandHashtagPostRow::shortCode)
-				.collect(Collectors.toCollection(LinkedHashSet::new));
-		Map<String, Set<String>> matchedTagsByCode = brandReadRepository.findMatchedTags(brandId, shortCodes).stream()
-				.collect(Collectors.groupingBy(MatchedTagRow::shortCode,
-						Collectors.mapping(MatchedTagRow::tag, Collectors.toSet())));
-		return rows.stream()
-				.filter(row -> matchesMyTags(matchedTagsByCode.get(row.shortCode()), myTags))
-				.toList();
+	public long countForBrand(long userId, BrandAccountRow account, LocalDate windowStart) {
+		BrandPostAssembler.BrandPostIndex index = brandPostAssembler.indexForBrand(userId, account, false);
+		return index.refs().stream()
+				.filter(ref -> BrandPostAssembler.SOURCE_HASHTAG.equals(ref.source()))
+				.filter(ref -> BrandPostWindows.withinLinkWindow(ref, windowStart))
+				.count();
 	}
 
-	/** 매칭 기록이 없으면(레거시·미백필) fail-open, 있으면 내 태그와 교집합이 있어야 통과. */
-	private static boolean matchesMyTags(Set<String> postTags, Set<String> myTags) {
-		return postTags == null || postTags.isEmpty() || !Collections.disjoint(postTags, myTags);
-	}
-
-	/** 제외 조건 — tag_detected AND NOT direct_registered(2026-08-18 direct 통합 §2-5, 브랜드 공유 유지). */
-	private static boolean isTaggedOnly(BrandPoolStatusRow status) {
-		return status != null && status.tagDetected() && !status.directRegistered();
-	}
-
-	/** 이 유저가 direct 등록했으면 shortcode를, 아니면 null(tagged-only 행은 이미 제외됐다). */
-	private static String brandPostIdOf(BrandPoolStatusRow status, String shortCode, Set<String> ownedShortCodes) {
-		return status != null && status.directRegistered() && ownedShortCodes.contains(shortCode) ? shortCode : null;
-	}
-
-	/** {@code brandPostId} 없는 호출부(단위 테스트 등)를 위한 편의 오버로드 — null로 접는다. */
-	static BrandHashtagPostResponse toResponse(BrandHashtagPostRow row) {
-		return toResponse(row, null);
+	/** 업로드일 기준 창 판정 — 본 목록의 {@code withinUploadWindow}와 같은 규칙(업로드일 미상은 제외). */
+	private static boolean withinWindow(BrandPostResponse post, LocalDate windowStart) {
+		LocalDate uploadedOn = BrandPostAssembler.uploadedOn(post);
+		return uploadedOn != null && !uploadedOn.isBefore(windowStart);
 	}
 
 	/**
-	 * 해시태그 발견 1건 조립 — 열거 시점 관측값을 그대로 옮긴다(보강 없음, 스펙 §5 보류).
-	 * 협찬 판정은 유료협찬 관측 자체가 없어(열거 응답에 그 필드가 없다) 캡션 키워드만으로 한다.
+	 * 통합 풀 응답 → 구 슬림 셰이프. {@code postUrl}은 콘텐츠 타입과 무관하게 항상 {@code /p/}다
+	 * (Instagram이 reels도 {@code /p/}를 {@code /reel/}로 리다이렉트한다 — 구 계약 유지).
 	 */
-	static BrandHashtagPostResponse toResponse(BrandHashtagPostRow row, String brandPostId) {
-		String contentType = contentTypeOf(row.contentType());
+	static BrandHashtagPostResponse toResponse(BrandPostResponse post, String matchedTag) {
+		TrackingItemResponse.SnapshotResponse latest = post.latestSnapshot();
 		return new BrandHashtagPostResponse(
-				row.shortCode(),
-				// 콘텐츠 타입과 무관하게 /p/ 고정 — Instagram이 reels도 /p/를 /reel/로 리다이렉트한다.
-				PROFILE_URL_PREFIX + "p/" + row.shortCode() + "/",
-				row.matchedTag(),
-				KstTimestamps.toKstIso(row.takenAt()),
-				row.caption(),
-				contentType,
-				// 아카이브 사본(/img/ Vercel rewrite) 우선, 미아카이브는 원본 CDN URL 폴백 —
-				// 원본은 인스타 서명 URL이라 며칠~2주면 만료된다(BrandPostAssembler.resolveImageUrl 동형).
-				BrandPostAssembler.resolveImageUrl(row.imageObjectPath(), row.thumbnailUrl()),
-				row.authorUsername(),
-				row.authorFullName(),
-				// 게시자 프로필 사진도 이제 아카이브 사본 우선 서빙(2026-08-17 작성자 이미지 아카이브 잡 신설).
-				BrandPostAssembler.resolveImageUrl(row.authorImageObjectPath(), row.authorProfilePicUrl()),
-				row.authorUsername() == null ? null : PROFILE_URL_PREFIX + row.authorUsername() + "/",
-				row.likes(),
-				row.comments(),
-				BrandSponsorshipClassifier.classify(null, row.caption()),
-				KstTimestamps.toKstIso(row.firstSeenAt()),
-				brandPostId);
-	}
-
-	private static String contentTypeOf(String raw) {
-		return CONTENT_TYPE_REELS.equalsIgnoreCase(raw) ? REELS : FEED;
+				post.shortcode(),
+				PROFILE_URL_PREFIX + "p/" + post.shortcode() + "/",
+				matchedTag,
+				post.takenAt(),
+				post.caption(),
+				post.contentType(),
+				post.thumbnailUrl(),
+				post.authorUsername(),
+				post.authorFullName(),
+				post.authorProfilePicUrl(),
+				post.authorProfileUrl(),
+				latest == null ? null : latest.likes(),
+				latest == null ? null : latest.comments(),
+				post.sponsorship(),
+				post.createdAt(),
+				// 해시태그 게시물은 이제 전부 성과 측정 풀 소속이다 — 배지는 항상 켜진다.
+				post.shortcode());
 	}
 }

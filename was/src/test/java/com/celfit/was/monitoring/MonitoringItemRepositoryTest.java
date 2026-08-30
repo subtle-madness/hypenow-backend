@@ -275,4 +275,53 @@ class MonitoringItemRepositoryTest extends IntegrationTest {
 
 		assertThat(repository.findCampaignLinkedAccountHandles(userId)).isEmpty();
 	}
+
+	// ---------- findCampaignNamesByTargetIds(캠페인 이름 문맥 조회, 2026-08-27 주간 다이제스트) ----------
+
+	/** 캠페인 이름 문맥 조회 전용 헬퍼 — 아래 테스트 3개에서만 쓴다. */
+	private long 이름있는_캠페인(long ownerId, String name) {
+		return campaignRepository.insert(ownerId, name, null, null, null, null, null, null).id();
+	}
+
+	private void 추적행_시드(long ownerId, Long campaignId, long targetId, String inputValue) {
+		long itemId = repository.insertPending(ownerId, "url", UUID.randomUUID(), campaignId, inputValue,
+				"https://instagram.com/p/" + inputValue, null, 30, LocalDate.of(2026, 8, 19));
+		repository.confirmTarget(itemId, targetId);
+	}
+
+	@Test
+	void 캠페인_이름은_이름순_중복_제거로_돌아온다() {
+		long summer = 이름있는_캠페인(userId, "여름 캠페인");
+		long winter = 이름있는_캠페인(userId, "겨울 캠페인");
+		추적행_시드(userId, summer, 8001L, "camp01");
+		추적행_시드(userId, summer, 8002L, "camp02");
+		추적행_시드(userId, winter, 8003L, "camp03");
+
+		assertThat(repository.findCampaignNamesByTargetIds(userId, List.of(8001L, 8002L, 8003L)))
+				.containsExactly("겨울 캠페인", "여름 캠페인");
+	}
+
+	@Test
+	void 캠페인이_없는_추적_행은_이름을_만들지_않는다() {
+		추적행_시드(userId, null, 8010L, "camp10");
+
+		assertThat(repository.findCampaignNamesByTargetIds(userId, List.of(8010L))).isEmpty();
+	}
+
+	@Test
+	void 빈_target_목록은_조회하지_않고_빈_리스트() {
+		assertThat(repository.findCampaignNamesByTargetIds(userId, List.of())).isEmpty();
+	}
+
+	@Test
+	void 남의_추적_행은_캠페인_이름을_노출하지_않는다() {
+		long other = jdbcClient
+				.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
+				.param("email", "mon-item-other-" + UUID.randomUUID() + "@test.io")
+				.query(Long.class).single();
+		long campaignId = 이름있는_캠페인(userId, "남의 캠페인");
+		추적행_시드(userId, campaignId, 8020L, "camp20");
+
+		assertThat(repository.findCampaignNamesByTargetIds(other, List.of(8020L))).isEmpty();
+	}
 }

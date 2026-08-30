@@ -35,17 +35,6 @@ public class BrandHashtagRepository {
 	}
 
 	/**
-	 * 등록·replay 자동 시드 전용 — ON CONFLICT DO NOTHING이라 유저가 지운(tombstone, deleted_at
-	 * 채워짐) 태그는 되살아나지 않는다. 되살리려면 {@link #replaceTags}(재활성 UPSERT)를 쓸 것.
-	 */
-	public void insertTags(long brandId, Collection<String> tags) {
-		for (String tag : tags) {
-			db.update("INSERT INTO brand_hashtag (brand_id, tag) VALUES (?, ?) ON CONFLICT DO NOTHING",
-					brandId, tag);
-		}
-	}
-
-	/**
 	 * 태그 셋 전체 교체(유저 관리 API, 2026-08-12) — tombstone 의미론. 새 목록에 없는 기존 활성
 	 * 태그는 deleted_at을 채워 비활성화(행은 남아 자동 시드가 못 되살림), 새 목록의 태그는
 	 * UPSERT로 삽입하거나 tombstone을 해제(deleted_at = NULL)해 재활성한다. 빈 목록도 허용

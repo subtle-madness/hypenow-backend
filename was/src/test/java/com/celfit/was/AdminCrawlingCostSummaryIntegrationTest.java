@@ -41,8 +41,8 @@ import org.springframework.test.web.servlet.MvcResult;
  * crawl_call_daily는 analytics 모듈 Flyway 소관이라 was 테스트 DB에 없다 — 여기서 만든다.
  */
 @AutoConfigureMockMvc
-@TestPropertySource(properties = {"monitoring.enabled=true", "monitoring.digest.cron=-",
-		"monitoring.digest.catchup-cron=-", "monitoring.recover.cron=-",
+@TestPropertySource(properties = {"monitoring.enabled=true", "monitoring.digest.weekly-cron=-",
+		"monitoring.digest.weekly-catchup-cron=-", "monitoring.recover.cron=-",
 		"was.rate-limit.per-minute=100"})
 class AdminCrawlingCostSummaryIntegrationTest extends IntegrationTest {
 

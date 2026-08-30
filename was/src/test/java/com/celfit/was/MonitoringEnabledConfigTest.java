@@ -2,8 +2,8 @@ package com.celfit.was;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.celfit.was.monitoring.DigestJob;
 import com.celfit.was.monitoring.MonitoringConfig;
+import com.celfit.was.monitoring.WeeklyDigestJob;
 import com.celfit.was.v1.brandmonitoring.V1BrandAccountService;
 import com.celfit.was.v1.brandmonitoring.V1BrandAccountsController;
 import com.celfit.was.v1.monitoring.MonitoringRegistrationExecutor;
@@ -24,11 +24,12 @@ import org.springframework.test.context.TestPropertySource;
  *
  * <p>digest·recover 크론은 "-"로 봉인한다(#183 관례, monitoring.alarm.dispatch-cron과 동일 —
  * Spring @Scheduled cron="-"는 비활성). 봉인하지 않으면 이 테스트 클래스가 살아있는 동안 실제
- * cron이 등록돼(기본값 09:00 KST·10분 간격) 다른 테스트와 타이밍이 우연히 겹칠 여지가 생긴다 —
- * 이 클래스는 빈 배선만 검증하고, run() 자체는 DigestJobTest가 직접 호출해 결정론적으로 검증한다.
+ * cron이 등록돼(기본값 월요일 09:00 KST·10분 간격) 다른 테스트와 타이밍이 우연히 겹칠 여지가
+ * 생긴다 — 이 클래스는 빈 배선만 검증하고, run() 자체는 WeeklyDigestJobTest가 직접 호출해
+ * 결정론적으로 검증한다.
  */
-@TestPropertySource(properties = { "monitoring.enabled=true", "monitoring.digest.cron=-",
-		"monitoring.digest.catchup-cron=-", "monitoring.recover.cron=-" })
+@TestPropertySource(properties = { "monitoring.enabled=true", "monitoring.digest.weekly-cron=-",
+		"monitoring.digest.weekly-catchup-cron=-", "monitoring.recover.cron=-" })
 class MonitoringEnabledConfigTest extends IntegrationTest {
 
 	@DynamicPropertySource
@@ -84,7 +85,7 @@ class MonitoringEnabledConfigTest extends IntegrationTest {
 
 	@Test
 	void 활성이면_다이제스트_크론과_복구_크론이_뜬다() {
-		assertThat(context.getBeanNamesForType(DigestJob.class)).hasSize(1);
+		assertThat(context.getBeanNamesForType(WeeklyDigestJob.class)).hasSize(1);
 		assertThat(context.getBeanNamesForType(RecoverStalePendingScheduler.class)).hasSize(1);
 	}
 }

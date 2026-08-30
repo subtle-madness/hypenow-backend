@@ -28,7 +28,6 @@ import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.AuthorRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandCommentRow;
-import com.celfit.was.monitoring.BrandReadRepository.BrandHashtagPostRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
@@ -65,7 +64,7 @@ import org.springframework.test.web.servlet.MockMvc;
  */
 @WebMvcTest(controllers = V1BrandPostsController.class,
 		properties = {"was.cors.allowed-origins=http://localhost:3000", "monitoring.enabled=true"})
-@Import({BrandPostAssembler.class, BrandHashtagPostAssembler.class, V1ExceptionAdvice.class, SecurityConfig.class})
+@Import({BrandPostAssembler.class, BrandIndexCache.class, BrandHashtagPostAssembler.class, V1ExceptionAdvice.class, SecurityConfig.class})
 class V1BrandPostsControllerTest {
 
 	@Autowired
@@ -96,6 +95,13 @@ class V1BrandPostsControllerTest {
 	V1BrandDirectPostService directPostService;
 	@MockitoBean
 	Clock clock;
+	/** 인덱스 캐시({@link BrandIndexCache})의 무효화 키 산지 — 캐시 자체는 실 빈으로 붙인다. */
+	@MockitoBean
+	com.celfit.was.v1.perfdashboard.DashboardVersion dashboardVersion;
+
+	/** 테스트 간 캐시 격리용 버전키 시퀀스({@link #stubOwnedBrand} 참조). */
+	private static final java.util.concurrent.atomic.AtomicLong VERSION_SEQ =
+			new java.util.concurrent.atomic.AtomicLong();
 
 	private static final String POST_URL = "https://www.instagram.com/reel/DEF/";
 
@@ -106,26 +112,64 @@ class V1BrandPostsControllerTest {
 
 	@BeforeEach
 	void ownedBrand() {
+		stubOwnedBrand(clock, linkRepository, brandReadRepository, dashboardVersion);
+	}
+
+	/**
+	 * 공통 시드 배선 — 광고 표기 노출 토글만 다른 중첩 컨텍스트({@link AdRiskExposedTest})가 같은
+	 * 배선을 그대로 재사용해야 해서 정적 헬퍼로 뽑았다(스텁이 두 벌이 되면 두 컨텍스트의 시드가
+	 * 조용히 어긋난다).
+	 */
+	private static void stubOwnedBrand(Clock clock, BrandLinkRepository linkRepository,
+			BrandReadRepository brandReadRepository,
+			com.celfit.was.v1.perfdashboard.DashboardVersion dashboardVersion) {
 		// 링크 창 컷의 기준 시각 고정 — 고정하지 않으면 2026-08-xx 고정 날짜 데이터가 시간이 지나며
 		// 창 밖으로 밀려 테스트 전체가 시한부가 된다. KST 2026-08-08 21:00.
 		given(clock.instant()).willReturn(Instant.parse("2026-08-08T12:00:00Z"));
+		// 인덱스 캐시({@link BrandIndexCache})의 무효화 키 — 호출마다 고유값을 준다. Spring 테스트
+		// 컨텍스트가 클래스 전체에서 재사용돼 캐시 빈도 공유되므로, 고정 키면 앞 테스트의 모수가 뒤
+		// 테스트로 샌다(시드를 갈아끼워도 캐시가 옛 모수를 돌려준다). 캐시 적중 계약 자체는
+		// BrandIndexCacheTest가 본다.
+		given(dashboardVersion.compute(anyLong())).willAnswer(inv -> "v" + VERSION_SEQ.incrementAndGet());
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link()));
 		given(linkRepository.findAllActiveByUser(7L)).willReturn(List.of(link()));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(account()));
 		// 인덱스 패스 경량 프로젝션(2026-08-27 목록 타임아웃 해소)은 기존 시드 관용구(givenTagged의
 		// findBrandPostsInWindow + findPostMeta·findSnapshots 고정)에서 파생시킨다 — 시드를 그대로
 		// 재사용하고, 두 산지의 값이 어긋나 counts·정렬이 풀 조립과 불일치하는 시드 실수도 원천 차단한다.
-		given(brandReadRepository.findBrandPostIndex(anyLong(), any(), anyBoolean())).willAnswer(inv -> {
+		given(brandReadRepository.findBrandPostIndex(anyLong(), any(), anyBoolean(), any())).willAnswer(inv -> {
 			var metaByCode = new java.util.LinkedHashMap<String, BrandPostMetaRow>();
 			for (BrandPostMetaRow m : brandReadRepository.findPostMeta(List.of())) {
 				metaByCode.putIfAbsent(m.shortCode(), m);
 			}
+			// author_profile LEFT JOIN 재현 — 게시자 시드(findAuthors)도 한 산지에서 파생시킨다.
+			var authorByIgUserId = new java.util.LinkedHashMap<String, AuthorRow>();
+			for (AuthorRow a : brandReadRepository.findAuthors(List.of())) {
+				authorByIgUserId.putIfAbsent(a.igUserId(), a);
+			}
 			return brandReadRepository.findBrandPostsInWindow(0L, null, true).stream()
 					.map(r -> {
 						BrandPostMetaRow m = metaByCode.get(r.shortCode());
+						AuthorRow a = r.authorIgUserId() == null ? null
+								: authorByIgUserId.get(r.authorIgUserId());
+						// 캡션 원문 대신 SQL이 계산한 마커 매치를 싣는 슬림 셰이프(2026-08-27 P0) —
+						// 같은 시드 캡션을 자바 판정기로 접어 SQL과 같은 값을 만든다. 매체·광고 판정·
+						// 게시자도 같은 시드(meta·author_profile)에서 파생시킨다 — 두 산지의 값이
+						// 어긋나 필터·패싯이 풀 조립과 불일치하는 시드 실수를 원천 차단한다.
+						String caption = m == null ? null : m.caption();
 						return new BrandReadRepository.BrandPostIndexRow(r.shortCode(), r.takenAt(),
-								r.tagDetectedAt(), r.directRegisteredAt(),
-								m == null ? null : m.isPaidPartnership(), m == null ? null : m.caption());
+								r.tagDetectedAt(), r.directRegisteredAt(), r.hashtagDetectedAt(),
+								r.unavailableAt(), r.authorUsername(), r.authorIgUserId(),
+								m == null ? null : m.isPaidPartnership(),
+								caption != null
+										&& BrandSponsorshipClassifier.containsSponsorshipMarker(caption),
+								m == null ? null : m.contentType(),
+								m == null ? null : m.adVerdict(),
+								a == null ? null : a.username(),
+								a == null ? null : a.fullName(),
+								a == null ? null : a.profilePicUrl(),
+								a == null ? null : a.imageObjectPath(),
+								a == null ? null : a.followers());
 					})
 					.toList();
 		});
@@ -135,13 +179,14 @@ class V1BrandPostsControllerTest {
 					.filter(r -> codes.contains(r.shortCode()))
 					.toList();
 		});
-		given(brandReadRepository.findLatestViewsForBrand(anyLong(), any(), anyBoolean())).willAnswer(inv -> {
+		given(brandReadRepository.findLatestSnapshotsForBrand(anyLong(), any(), anyBoolean())).willAnswer(inv -> {
 			var latest = new java.util.LinkedHashMap<String, BrandSnapshotRow>();
 			for (BrandSnapshotRow row : brandReadRepository.findSnapshots(List.of())) {
 				latest.merge(row.shortCode(), row, (a, b) -> b.capturedOn().isAfter(a.capturedOn()) ? b : a);
 			}
 			return latest.values().stream()
-					.map(r -> new BrandReadRepository.LatestViewsRow(r.shortCode(), r.contentType(), r.views()))
+					.map(r -> new BrandReadRepository.LatestSnapshotRow(r.shortCode(), r.capturedOn(),
+							r.contentType(), r.views(), r.likes(), r.likesHidden(), r.comments()))
 					.toList();
 		});
 	}
@@ -166,6 +211,46 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.length()").value(250))
 				.andExpect(jsonPath("$.meta.total").value(250));
+	}
+
+	@Test
+	void total과_facets는_수집_상한_2000_모수로_통일된다() throws Exception {
+		// FE 요청 2026-08-27 ③ — 목록은 상한(2000)까지만 서빙하는데 total·facets가 상한 없는 전량을
+		// 말하면 화면 숫자가 조회 가능한 데이터와 어긋난다(실측: total 2000 vs facets.all 4256).
+		// 모수를 최신순 2000으로 선컷해 모든 숫자(total·counts·facets·influencerCount)가 같은 모수를
+		// 보게 하고, 상한 도달은 meta.collectionCapped로 구분한다("정확히 2000건"과의 구분).
+		var tagged = new BrandTaggedPostRow[2005];
+		var metas = new java.util.ArrayList<BrandPostMetaRow>(2005);
+		for (int i = 0; i < 2005; i++) {
+			String code = "P%04d".formatted(i);
+			tagged[i] = taggedRow(code, OffsetDateTime.parse("2026-08-01T00:00:00Z").minusMinutes(i).toString());
+			// 최신 2000은 릴스, 상한 밖으로 밀리는 가장 오래된 5건만 피드 — 모수 컷을 매체 축으로 관측.
+			metas.add(meta(code, i < 2000 ? "REELS" : "FEED", null));
+		}
+		givenTagged(tagged);
+		given(brandReadRepository.findPostMeta(any())).willReturn(metas);
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?limit=1").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.meta.total").value(2000))
+				.andExpect(jsonPath("$.meta.counts.all").value(2000))
+				.andExpect(jsonPath("$.meta.facets.contentType.all").value(2000))
+				.andExpect(jsonPath("$.meta.facets.contentType.reels").value(2000))
+				// 상한 밖 5건(피드)은 모수 자체에서 빠진다 — 필터로도 나올 수 없는 게시물이 칩 숫자로
+				// 노출되면 안 된다.
+				.andExpect(jsonPath("$.meta.facets.contentType.feed").value(0))
+				.andExpect(jsonPath("$.meta.collectionCapped").value(true));
+	}
+
+	@Test
+	void 상한_미달이면_collectionCapped는_false다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.meta.total").value(1))
+				.andExpect(jsonPath("$.meta.collectionCapped").value(false));
 	}
 
 	@Test
@@ -444,30 +529,52 @@ class V1BrandPostsControllerTest {
 	}
 
 	/**
-	 * 회귀 케이스(2026-08-12 별도 탭 결정) — 해시태그 발견분은 더 이상 §6-1 목록에 섞이지 않는다.
-	 * repository가 tagged·hashtag 둘 다 갖고 있어도 posts 응답은 tagged만 보이고, source 화이트리스트·
-	 * meta.counts에서도 hashtag 어휘가 완전히 빠져야 한다(예전엔 여기 있었다 — Task 11 되돌림).
+	 * 해시태그 게시물은 통합 목록에 {@code source=hashtag}로 합류한다(2026-08-27 설계 §3, 08-12
+	 * 별도 탭 결정 폐기). counts에 hashtag 키가 생기고 source 화이트리스트도 그 값을 받는다.
 	 */
 	@Test
-	void 게시물_목록_API는_해시태그_발견분을_더이상_병합하지_않는다() throws Exception {
-		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"));
+	void 게시물_목록은_해시태그_게시물을_source_hashtag로_합류시킨다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"),
+				hashtagOnlyRow("HHH", "2026-08-05T01:00:00Z"));
 		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
-		givenHashtag(hashtagRow("HHH", "2026-08-05T01:00:00Z"));
+		givenMyTagMatch("HHH");
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.length()").value(1))
-				.andExpect(jsonPath("$.data[0].shortcode").value("AAA"))
-				.andExpect(jsonPath("$.meta.counts", Matchers.not(Matchers.hasKey("hashtag"))));
-
-		then(brandReadRepository).should(never()).findHashtagPosts(anyLong(), any(), anyInt());
+				.andExpect(jsonPath("$.data.length()").value(2))
+				.andExpect(jsonPath("$.data[?(@.shortcode=='HHH')].source")
+						.value(Matchers.contains("hashtag")))
+				.andExpect(jsonPath("$.meta.counts.hashtag").value(1))
+				.andExpect(jsonPath("$.meta.counts.tagged").value(1));
 	}
 
 	@Test
-	void source_필터에_hashtag를_주면_400이다() throws Exception {
+	void source_필터는_hashtag만_남긴다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"),
+				hashtagOnlyRow("HHH", "2026-08-05T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
+		givenMyTagMatch("HHH");
+
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?source=hashtag").with(user(principal())))
-				.andExpect(status().isBadRequest())
-				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].shortcode").value("HHH"))
+				// counts는 필터 전 전량 기준이라 흔들리지 않는다.
+				.andExpect(jsonPath("$.meta.counts.tagged").value(1));
+	}
+
+	/** 내 장부 태그와 겹치지 않는 해시태그 게시물은 목록에도 counts에도 없다(격리, fail-open 폐기). */
+	@Test
+	void 내_태그와_겹치지_않는_해시태그_게시물은_목록에_없다() throws Exception {
+		givenTagged(hashtagOnlyRow("HHH", "2026-08-05T01:00:00Z"));
+		given(hashtagTagRepository.findByUserAndBrand(7L, 100L)).willReturn(Set.of("내태그"));
+		given(brandReadRepository.findMatchedTags(eq(100L), any())).willReturn(List.of(
+				new BrandReadRepository.MatchedTagRow("HHH", "남의태그")));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(0))
+				.andExpect(jsonPath("$.meta.counts.hashtag").value(0));
 	}
 
 	@Test
@@ -481,6 +588,185 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.length()").value(1))
 				.andExpect(jsonPath("$.data[0].shortcode").value("AAA"));
+	}
+
+	// ---------- 서버 필터 5종 + 패싯(2026-08-27 서버 필터·패싯 설계) ----------
+
+	@Test
+	void 유형_필터는_릴스만_남기고_counts는_그대로다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("AAA", "REELS", null), meta("BBB", "FEED", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?contentType=reels").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("AAA")))
+				.andExpect(jsonPath("$.meta.total").value(1))
+				// counts는 필터 전 전량 그대로(하위 호환) — 탭 뱃지가 자기 필터로 흔들리면 안 된다.
+				.andExpect(jsonPath("$.meta.counts.all").value(2));
+	}
+
+	@Test
+	void 팔로워_구간_필터는_하한_포함_상한_미포함이다() throws Exception {
+		givenTagged(taggedRowBy("A29", "2026-08-06T01:00:00Z", "u2999", "1"),
+				taggedRowBy("B30", "2026-08-05T01:00:00Z", "u3000", "2"),
+				taggedRowBy("C99", "2026-08-04T01:00:00Z", "u9999", "3"),
+				taggedRowBy("D10", "2026-08-03T01:00:00Z", "u10000", "4"),
+				taggedRowBy("ENL", "2026-08-02T01:00:00Z", "unull", "5"));
+		givenAuthors(author("1", "u2999", "이천구백구십구", 2999L),
+				author("2", "u3000", "삼천", 3000L),
+				author("3", "u9999", "구천구백구십구", 9999L),
+				author("4", "u10000", "만", 10000L),
+				author("5", "unull", "미상", null));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("A29", "REELS", null), meta("B30", "REELS", null), meta("C99", "REELS", null),
+				meta("D10", "REELS", null), meta("ENL", "REELS", null)));
+
+		// 경계: 2999 제외 · 3000 포함 · 9999 포함 · 10000 제외 · followers null 제외.
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?follower=3k-10k").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("B30", "C99")))
+				.andExpect(jsonPath("$.meta.total").value(2))
+				.andExpect(jsonPath("$.meta.counts.all").value(5));
+
+		// 5토큰 전량이 FE BRAND_FOLLOWER_RANGES와 같은 경계를 쓴다 — 상단·하단 토큰까지 고정한다.
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?follower=0-3k").with(user(principal())))
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("A29")));
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?follower=10k-30k").with(user(principal())))
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("D10")));
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?follower=30k-50k").with(user(principal())))
+				.andExpect(jsonPath("$.data.length()").value(0));
+		// "50k+"는 URL 템플릿에 그대로 못 싣는다(+ 인코딩) — param()으로 디코딩된 값을 직접 준다.
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").param("follower", "50k+")
+						.with(user(principal())))
+				.andExpect(jsonPath("$.data.length()").value(0));
+	}
+
+	@Test
+	void 팔로워_50k_토큰은_상한이_없다() throws Exception {
+		givenTagged(taggedRowBy("BIG", "2026-08-06T01:00:00Z", "u50000", "1"),
+				taggedRowBy("SML", "2026-08-05T01:00:00Z", "u49999", "2"));
+		givenAuthors(author("1", "u50000", "오만", 50000L), author("2", "u49999", "사만구천", 49999L));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("BIG", "REELS", null), meta("SML", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").param("follower", "50k+")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("BIG")));
+	}
+
+	@Test
+	void 키워드_필터는_username과_fullName_부분일치이고_대소문자를_무시한다() throws Exception {
+		givenTagged(taggedRowBy("K1", "2026-08-06T01:00:00Z", "beauty_kim", "1"),
+				taggedRowBy("K2", "2026-08-05T01:00:00Z", "daily_lee", "2"));
+		givenAuthors(author("1", "beauty_kim", "뷰티김", 5000L), author("2", "daily_lee", "이일상", 5000L));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("K1", "REELS", null), meta("K2", "REELS", null)));
+
+		// fullName 부분 일치(포함) — 불일치 K2는 제외(양방향 단언).
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?keyword=뷰티").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("K1")));
+		// username 부분 일치 + 대소문자 무시.
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?keyword=BEAUTY").with(user(principal())))
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("K1")));
+		// 반대편도 실값으로 갈린다 — "전부 제외"라 통과하는 공허한 경로가 아님을 고정.
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?keyword=일상").with(user(principal())))
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("K2")));
+	}
+
+	@Test
+	void 작성자_필터는_그_작성자만_남긴다() throws Exception {
+		givenTagged(taggedRowBy("K1", "2026-08-06T01:00:00Z", "beauty_kim", "1"),
+				taggedRowBy("K2", "2026-08-05T01:00:00Z", "daily_lee", "2"));
+		givenAuthors(author("1", "beauty_kim", "뷰티김", 5000L), author("2", "daily_lee", "이일상", 5000L));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("K1", "REELS", null), meta("K2", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?authorUsername=daily_lee")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("K2")))
+				.andExpect(jsonPath("$.meta.total").value(1))
+				.andExpect(jsonPath("$.meta.counts.all").value(2));
+	}
+
+	/**
+	 * 광고 표기 노출 게이트가 닫힌 조회자(테스트 기본 — expose 프로퍼티 false)에겐 adRisk가 화면에
+	 * 없는 값이다. 그 상태로 필터가 먹으면 "빈 목록"이 정답처럼 보이므로 판정 자체를 항상 false로 둔다.
+	 */
+	@Test
+	void 노출_게이트가_닫히면_adRisk_필터는_전부_제외하고_패싯도_0이다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("AAA", "REELS", true, "NOT_DISCLOSED")));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?adRisk=true").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(0))
+				.andExpect(jsonPath("$.meta.total").value(0))
+				.andExpect(jsonPath("$.meta.facets.adRisk").value(0))
+				.andExpect(jsonPath("$.meta.counts.all").value(1));
+	}
+
+	@Test
+	void 패싯은_그_축만_해제하고_나머지_필터는_유지한다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"),
+				taggedRow("CCC", "2026-08-04T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("AAA", "REELS", true), meta("BBB", "FEED", true), meta("CCC", "REELS", false)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?contentType=reels").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("AAA", "CCC")))
+				// 유형 축은 해제 — 피드 1건이 그대로 보인다(칩을 눌러도 다른 칩 숫자가 안 죽는다).
+				.andExpect(jsonPath("$.meta.facets.contentType.all").value(3))
+				.andExpect(jsonPath("$.meta.facets.contentType.reels").value(2))
+				.andExpect(jsonPath("$.meta.facets.contentType.feed").value(1))
+				// 협찬 축은 유형 필터가 걸린 상태 — "릴스 중" 협찬 1건·일반 1건.
+				.andExpect(jsonPath("$.meta.facets.sponsorship.all").value(2))
+				.andExpect(jsonPath("$.meta.facets.sponsorship.sponsored").value(1))
+				.andExpect(jsonPath("$.meta.facets.sponsorship.organic").value(1))
+				// FE 키 부재 방어 — 0건 값도 키가 있어야 한다.
+				.andExpect(jsonPath("$.meta.facets.sponsorship.unknown").value(0))
+				.andExpect(jsonPath("$.meta.facets.source.all").value(2))
+				.andExpect(jsonPath("$.meta.facets.source.tagged").value(2))
+				.andExpect(jsonPath("$.meta.facets.source.direct").value(0))
+				.andExpect(jsonPath("$.meta.facets.adRisk").value(0));
+	}
+
+	@Test
+	void influencerCount는_필터와_무관하게_창_기간_기준_고유_작성자다() throws Exception {
+		givenTagged(taggedRowBy("R1", "2026-08-06T01:00:00Z", "beauty_kim", "1"),
+				taggedRowBy("F1", "2026-08-05T01:00:00Z", "daily_lee", "2"),
+				taggedRowBy("R2", "2026-08-04T01:00:00Z", "beauty_kim", "1"),
+				taggedRowBy("NUL", "2026-08-03T01:00:00Z", null, null));
+		givenAuthors(author("1", "beauty_kim", "뷰티김", 5000L), author("2", "daily_lee", "이일상", 5000L));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("R1", "REELS", null), meta("F1", "FEED", null), meta("R2", "REELS", null),
+				meta("NUL", "REELS", null)));
+
+		// 유형 필터로 daily_lee의 피드가 빠져도 인플루언서 수는 창 전량 기준(작성자 미상 제외 → 2).
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?contentType=reels").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(3))
+				.andExpect(jsonPath("$.meta.influencerCount").value(2));
+
+		// 단 기간은 적용된다 — 8/6만 남기면 beauty_kim 1명.
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?uploadedFrom=2026-08-06")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.meta.influencerCount").value(1));
+	}
+
+	@Test
+	void 새_필터의_잘못된_값은_400이다() throws Exception {
+		for (String query : List.of("contentType=story", "follower=1k-2k", "adRisk=maybe")) {
+			mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?" + query).with(user(principal())))
+					.andExpect(status().isBadRequest())
+					.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
+		}
 	}
 
 	@Test
@@ -596,72 +882,22 @@ class V1BrandPostsControllerTest {
 
 	// ---------- 해시태그 발견 게시물 전용 API(스펙 §8, 별도 탭 결정 2026-08-12) ----------
 
+	/**
+	 * 리라우팅(2026-08-27 설계 §3) — 구 엔드포인트가 통합 풀의 {@code source=hashtag} 행을 구
+	 * 셰이프로 내려준다. 격리(내 태그 매칭)도 본 목록과 같은 판정을 그대로 탄다.
+	 */
 	@Test
-	void 해시태그_발견_게시물_목록은_열거_필드를_그대로_내려준다() throws Exception {
-		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
+	void 해시태그_목록은_통합_풀에서_구_셰이프로_서빙된다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"),
+				hashtagOnlyRow("HHH", "2026-08-05T01:00:00Z"));
+		givenMyTagMatch("HHH");
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.length()").value(1))
 				.andExpect(jsonPath("$.data[0].shortcode").value("HHH"))
 				.andExpect(jsonPath("$.data[0].postUrl").value("https://www.instagram.com/p/HHH/"))
-				.andExpect(jsonPath("$.data[0].matchedTag").value("#브랜드명"))
-				.andExpect(jsonPath("$.data[0].takenAt").value("2026-08-06T10:00:00+09:00"))
-				.andExpect(jsonPath("$.data[0].caption").value("해시태그 캡션"))
-				.andExpect(jsonPath("$.data[0].contentType").value("reels"))
-				.andExpect(jsonPath("$.data[0].thumbnailUrl").value("https://cdn/hashtag-thumb.jpg"))
-				.andExpect(jsonPath("$.data[0].authorUsername").value("hashtag_influencer"))
-				.andExpect(jsonPath("$.data[0].authorFullName").value("해시태그 인플루언서"))
-				.andExpect(jsonPath("$.data[0].authorProfilePicUrl").value("https://cdn/hashtag-author.jpg"))
-				.andExpect(jsonPath("$.data[0].authorProfileUrl")
-						.value("https://www.instagram.com/hashtag_influencer/"))
-				.andExpect(jsonPath("$.data[0].likes").value(20))
-				.andExpect(jsonPath("$.data[0].comments").value(3))
-				.andExpect(jsonPath("$.data[0].sponsorship").value("unknown"))
-				.andExpect(jsonPath("$.data[0].firstSeenAt").value("2026-08-06T11:00:00+09:00"));
-	}
-
-	@Test
-	void 해시태그_발견_게시물_협찬은_캡션_확정_키워드로만_판정한다() throws Exception {
-		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z", "오늘의 #협찬 후기"),
-				hashtagRow("III", "2026-08-05T01:00:00Z", "그냥 일상"));
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data[?(@.shortcode=='HHH')].sponsorship").value(Matchers.contains("sponsored")))
-				.andExpect(jsonPath("$.data[?(@.shortcode=='III')].sponsorship").value(Matchers.contains("unknown")));
-	}
-
-	/**
-	 * 등록자 스코프 배지(요구사항, 08-19) — 남이 direct 등록(수집)한 발견 게시물은 내 목록에서
-	 * brandPostId가 null(미수집)이어야 한다. 해시태그 감지 데이터(행 자체)는 여전히 보인다.
-	 */
-	@Test
-	void 남이_수집한_발견_게시물은_내게_미수집으로_보인다() throws Exception {
-		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
-		given(brandReadRepository.findBrandPoolStatus(eq(100L), any())).willReturn(List.of(
-				new BrandReadRepository.BrandPoolStatusRow("HHH", false, true,
-						OffsetDateTime.parse("2026-08-06T01:00:00Z"))));
-		// directPostRepository.shortCodesByUser(7L) 미스텁 — Mockito 기본값 empty(내가 등록 안 함).
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.length()").value(1))
-				.andExpect(jsonPath("$.data[0].shortcode").value("HHH"))
-				.andExpect(jsonPath("$.data[0].brandPostId").value(org.hamcrest.Matchers.nullValue()));
-	}
-
-	/** 내가 직접 등록(수집)한 발견 게시물은 brandPostId가 채워진다. */
-	@Test
-	void 내가_수집한_발견_게시물은_brandPostId가_채워진다() throws Exception {
-		givenHashtag(hashtagRow("HHH", "2026-08-06T01:00:00Z"));
-		given(brandReadRepository.findBrandPoolStatus(eq(100L), any())).willReturn(List.of(
-				new BrandReadRepository.BrandPoolStatusRow("HHH", false, true,
-						OffsetDateTime.parse("2026-08-06T01:00:00Z"))));
-		given(directPostRepository.shortCodesByUser(7L)).willReturn(Set.of("HHH"));
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
-				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].matchedTag").value("끌리메"))
 				.andExpect(jsonPath("$.data[0].brandPostId").value("HHH"));
 	}
 
@@ -681,7 +917,7 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
 
-		then(brandReadRepository).should(never()).findHashtagPosts(anyLong(), any(), anyInt());
+		then(brandReadRepository).should(never()).findMatchedTags(anyLong(), any());
 	}
 
 	@Test
@@ -698,6 +934,61 @@ class V1BrandPostsControllerTest {
 	void 해시태그_목록_인증이_없으면_401이다() throws Exception {
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts"))
 				.andExpect(status().isUnauthorized());
+	}
+
+	// ---------- 해시태그 발견 게시물 count 전용(P2, 2026-08-27) ----------
+
+	/**
+	 * count는 목록과 같은 인덱스 산지({@code indexForBrand})를 슬림 경로 위에서 태운 값이다 — 여기선
+	 * 표면 계약(200·셰이프)만 보고, 목록과의 동치(판정 공유)는 {@code BrandHashtagPostAssemblerTest}가
+	 * 봉인한다. tagged 성분이 있는 AAA는 source=tagged라 제외되고, hashtag-only인 HHH만 센다.
+	 */
+	@Test
+	void 해시태그_발견_게시물_count는_판정_후_개수를_내려준다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"),
+				hashtagOnlyRow("HHH", "2026-08-05T01:00:00Z"));
+		givenMyTagMatch("HHH");
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts/count").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.success").value(true))
+				.andExpect(jsonPath("$.data.count").value(1));
+	}
+
+	@Test
+	void 해시태그_발견분이_없으면_count는_0이다() throws Exception {
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts/count").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.count").value(0));
+	}
+
+	@Test
+	void 남의_계정_해시태그_count는_403이고_조회하지_않는다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/999/hashtag-posts/count").with(user(principal())))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+		then(brandReadRepository).should(never()).findBrandPostIndex(anyLong(), any(), anyBoolean(), any());
+	}
+
+	@Test
+	void 없는_브랜드_계정의_해시태그_count는_404다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link()));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.empty());
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts/count").with(user(principal())))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+	}
+
+	/** accountId가 숫자가 아니면 존재할 수 없는 id → 404(목록과 같은 관용구). */
+	@Test
+	void 문자_accountId의_해시태그_count는_404다() throws Exception {
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/abc/hashtag-posts/count").with(user(principal())))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
 	}
 
 	// ---------- 상세 ----------
@@ -863,12 +1154,35 @@ class V1BrandPostsControllerTest {
 	 * findBrandPostsInWindow(전량)로 되돌아가면 이 클래스 전체가 빈 목록으로 떨어져 바로 드러난다.
 	 */
 	private void givenTagged(BrandTaggedPostRow... rows) {
-		given(brandReadRepository.findBrandPostsInWindow(anyLong(), any(), org.mockito.ArgumentMatchers.eq(true)))
-				.willReturn(List.of(rows));
+		stubTagged(brandReadRepository, rows);
 	}
 
-	private void givenHashtag(BrandHashtagPostRow... rows) {
-		given(brandReadRepository.findHashtagPosts(anyLong(), any(), anyInt())).willReturn(List.of(rows));
+	/**
+	 * 시드 행 + 그 행들의 <b>게시자 프로필</b>을 함께 깐다(2026-08-27 서버 필터). 프로필을 안 깔면
+	 * ref의 게시자 필드가 전부 null이라 팔로워·키워드 필터가 "아무것도 일치하지 않아 전량 제외"라는
+	 * 공허한 경로로 통과한다 — 필터 단언이 실제로 값을 보고 갈리게 하려면 기본 시드에 있어야 한다.
+	 * 값을 갈라야 하는 테스트는 {@code givenAuthors}로 덮어쓴다.
+	 */
+	private static void stubTagged(BrandReadRepository brandReadRepository, BrandTaggedPostRow... rows) {
+		given(brandReadRepository.findBrandPostsInWindow(anyLong(), any(), org.mockito.ArgumentMatchers.eq(true)))
+				.willReturn(List.of(rows));
+		var authors = new java.util.LinkedHashMap<String, AuthorRow>();
+		for (BrandTaggedPostRow row : rows) {
+			if (row.authorIgUserId() != null) {
+				authors.putIfAbsent(row.authorIgUserId(),
+						author(row.authorIgUserId(), row.authorUsername(), "글로우딥", 12345L));
+			}
+		}
+		given(brandReadRepository.findAuthors(any())).willReturn(List.copyOf(authors.values()));
+	}
+
+	/** 게시자 프로필을 명시 시드 — 팔로워·키워드가 행마다 갈려야 하는 필터 테스트 전용. */
+	private void givenAuthors(AuthorRow... rows) {
+		given(brandReadRepository.findAuthors(any())).willReturn(List.of(rows));
+	}
+
+	private static AuthorRow author(String igUserId, String username, String fullName, Long followers) {
+		return new AuthorRow(igUserId, username, fullName, followers, "https://cdn/author.jpg", true, null);
 	}
 
 	/**
@@ -897,10 +1211,33 @@ class V1BrandPostsControllerTest {
 				12, OffsetDateTime.parse("2026-08-01T00:00:00Z"), false, null);
 	}
 
+	/** hashtag-only 행 — hashtag_detected_at만 채워진다(source=hashtag, 사용자 격리 대상). */
+	private static BrandTaggedPostRow hashtagOnlyRow(String code, String takenAt) {
+		OffsetDateTime firstSeenAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
+		return new BrandTaggedPostRow(code, "hashtag_influencer", "9002", OffsetDateTime.parse(takenAt),
+				firstSeenAt, 0L, firstSeenAt, null, null, null, firstSeenAt);
+	}
+
+	/** 조회자(7L)의 장부 태그와 게시물 매칭 태그가 겹치도록 스텁 — 해시태그 격리 통과 조건. */
+	private void givenMyTagMatch(String... shortCodes) {
+		given(hashtagTagRepository.findByUserAndBrand(7L, 100L)).willReturn(Set.of("끌리메"));
+		given(brandReadRepository.findMatchedTags(eq(100L), any())).willReturn(
+				java.util.Arrays.stream(shortCodes)
+						.map(code -> new BrandReadRepository.MatchedTagRow(code, "끌리메"))
+						.toList());
+	}
+
 	private static BrandTaggedPostRow taggedRow(String code, String takenAt) {
 		OffsetDateTime firstSeenAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
 		return new BrandTaggedPostRow(code, "glowdeep_92", "9001", OffsetDateTime.parse(takenAt), firstSeenAt, 7L,
-				firstSeenAt, firstSeenAt, null, null);
+				firstSeenAt, firstSeenAt, null, null, null);
+	}
+
+	/** 게시자를 갈아 끼운 tagged 행 — 팔로워·키워드·작성자 필터가 실값으로 갈리려면 시드가 갈려야 한다. */
+	private static BrandTaggedPostRow taggedRowBy(String code, String takenAt, String username, String igUserId) {
+		OffsetDateTime firstSeenAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
+		return new BrandTaggedPostRow(code, username, igUserId, OffsetDateTime.parse(takenAt), firstSeenAt, 7L,
+				firstSeenAt, firstSeenAt, null, null, null);
 	}
 
 	/** direct 등록 행 — direct_registered_at만 채워지고 tag_detected_at은 null(direct-only, source=direct). */
@@ -908,7 +1245,7 @@ class V1BrandPostsControllerTest {
 		OffsetDateTime firstSeenAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
 		OffsetDateTime registeredAt = OffsetDateTime.parse("2026-08-07T02:00:00Z");
 		return new BrandTaggedPostRow(code, "glowdeep_92", "9001", OffsetDateTime.parse(takenAt), firstSeenAt, 0L,
-				registeredAt, null, registeredAt, null);
+				registeredAt, null, registeredAt, null, null);
 	}
 
 	/** 겹침 행 — tag_detected_at·direct_registered_at 둘 다 채워짐(해시태그 감지 + 누군가의 direct 등록). */
@@ -916,27 +1253,108 @@ class V1BrandPostsControllerTest {
 		OffsetDateTime firstSeenAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
 		OffsetDateTime registeredAt = OffsetDateTime.parse("2026-08-07T02:00:00Z");
 		return new BrandTaggedPostRow(code, "glowdeep_92", "9001", OffsetDateTime.parse(takenAt), firstSeenAt, 7L,
-				registeredAt, firstSeenAt, registeredAt, null);
-	}
-
-	private static BrandHashtagPostRow hashtagRow(String code, String takenAt) {
-		return hashtagRow(code, takenAt, "해시태그 캡션");
-	}
-
-	private static BrandHashtagPostRow hashtagRow(String code, String takenAt, String caption) {
-		return new BrandHashtagPostRow(code, "#브랜드명", "hashtag_influencer", "해시태그 인플루언서",
-				"https://cdn/hashtag-author.jpg", OffsetDateTime.parse(takenAt), caption, "REELS",
-				"https://cdn/hashtag-thumb.jpg", 20L, 3L, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null);
+				registeredAt, firstSeenAt, registeredAt, null, null);
 	}
 
 	private static BrandPostMetaRow meta(String code, String contentType, Boolean paid) {
+		return meta(code, contentType, paid, null);
+	}
+
+	/** 광고 표기 판정(adVerdict)까지 실은 메타 — adRisk 필터·패싯 시드 전용. */
+	private static BrandPostMetaRow meta(String code, String contentType, Boolean paid, String adVerdict) {
 		return new BrandPostMetaRow(code, "glowdeep_92", contentType, LocalDate.of(2026, 8, 6),
 				"캡션 원문", "https://cdn/thumb.jpg", "https://cdn/video.mp4", 15.5, paid, null,
-				null, null, null);
+				adVerdict, null, null);
 	}
 
 	private static BrandSnapshotRow snapshotRow(String code, int day, Long views) {
 		return new BrandSnapshotRow(code, LocalDate.of(2026, 8, day), "REELS", 10L, false, 12L, views,
 				5L, 7L, false, 3L);
+	}
+
+	// ---------- 광고 표기 노출 토글 ON 컨텍스트(스펙 §10-2) ----------
+
+	/**
+	 * adRisk 필터·패싯의 본체 계약 — 노출 게이트가 열린 조회자에서만 판정이 산다. 토글이 어셈블러
+	 * 생성자 주입 boolean이라 프로퍼티가 다른 별도 컨텍스트가 필요해 정적 중첩 클래스로 둔다(같은
+	 * 시드 배선을 정적 헬퍼로 공유한다 — 스텁이 두 벌이 되면 두 컨텍스트가 조용히 어긋난다).
+	 */
+	@WebMvcTest(controllers = V1BrandPostsController.class,
+			properties = {"was.cors.allowed-origins=http://localhost:3000", "monitoring.enabled=true",
+					"monitoring.brand.ad-disclosure.expose=true"})
+	@Import({BrandPostAssembler.class, BrandIndexCache.class, BrandHashtagPostAssembler.class, V1ExceptionAdvice.class, SecurityConfig.class})
+	static class AdRiskExposedTest {
+
+		@Autowired
+		MockMvc mockMvc;
+
+		@MockitoBean
+		BrandLinkRepository linkRepository;
+		@MockitoBean
+		BrandReadRepository brandReadRepository;
+		@MockitoBean
+		BrandPostCampaignRepository postCampaignRepository;
+		@MockitoBean
+		BrandDirectPostRepository directPostRepository;
+		@MockitoBean
+		BrandHashtagTagRepository hashtagTagRepository;
+		@MockitoBean
+		TrackingItemAssembler trackingItemAssembler;
+		@MockitoBean
+		MonitoringItemRepository monitoringItemRepository;
+		@MockitoBean
+		V1BrandDirectPostService directPostService;
+		@MockitoBean
+		Clock clock;
+		@MockitoBean
+		com.celfit.was.v1.perfdashboard.DashboardVersion dashboardVersion;
+
+		@BeforeEach
+		void ownedBrand() {
+			stubOwnedBrand(clock, linkRepository, brandReadRepository, dashboardVersion);
+			// 협찬 미표기 2종(NOT_DISCLOSED·INSUFFICIENT)만 위험 — 표기 완료·비협찬은 대조군이다.
+			stubTagged(brandReadRepository, taggedRow("SND", "2026-08-06T01:00:00Z"),
+					taggedRow("SIN", "2026-08-05T01:00:00Z"),
+					taggedRow("SDI", "2026-08-04T01:00:00Z"),
+					taggedRow("OND", "2026-08-03T01:00:00Z"));
+			given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+					meta("SND", "REELS", true, "NOT_DISCLOSED"),
+					meta("SIN", "REELS", true, "INSUFFICIENT"),
+					meta("SDI", "REELS", true, "DISCLOSED"),
+					meta("OND", "REELS", false, "NOT_DISCLOSED")));
+		}
+
+		@Test
+		void adRisk_필터는_협찬_미표기만_남긴다() throws Exception {
+			mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?adRisk=true").with(user(principal())))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.data[*].shortcode").value(Matchers.contains("SND", "SIN")))
+					.andExpect(jsonPath("$.meta.total").value(2))
+					.andExpect(jsonPath("$.meta.counts.all").value(4));
+		}
+
+		@Test
+		void adRisk_패싯은_자기_축을_해제하고_센다() throws Exception {
+			// 필터가 걸린 상태에서도 adRisk 축은 해제 — 칩을 눌러도 자기 숫자가 2로 유지된다.
+			mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?adRisk=true").with(user(principal())))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.meta.facets.adRisk").value(2))
+					.andExpect(jsonPath("$.meta.facets.contentType.reels").value(2));
+		}
+
+		@Test
+		void adRisk_필터를_안_걸면_전량이_보인다() throws Exception {
+			mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.data.length()").value(4))
+					.andExpect(jsonPath("$.meta.facets.adRisk").value(2));
+		}
+
+		@Test
+		void adRisk_false는_필터하지_않는다() throws Exception {
+			mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?adRisk=false").with(user(principal())))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.data.length()").value(4));
+		}
 	}
 }

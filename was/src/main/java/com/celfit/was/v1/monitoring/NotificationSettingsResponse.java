@@ -1,13 +1,8 @@
 package com.celfit.was.v1.monitoring;
 
-import java.util.Map;
-
 /**
- * GET·PATCH /v1/notification-settings 응답(스펙 6.33). content 하위에 이벤트 유형 4종 키가
- * 항상 전부 존재해야 한다(순서는 MonitoringEventTypes.EVENT_TYPES 고정 — LinkedHashMap으로 보존).
+ * GET·PATCH /v1/notification-settings 응답(2026-08-27 주간 개편 §5) — 주간 리포트 메일 수신
+ * 여부 한 개. 이벤트 종류별 4토글 매트릭스는 폐지됐다(FE 통지 필요).
  */
-public record NotificationSettingsResponse(Map<String, EventSetting> content) {
-
-	public record EventSetting(boolean email) {
-	}
+public record NotificationSettingsResponse(boolean weeklyEmail) {
 }

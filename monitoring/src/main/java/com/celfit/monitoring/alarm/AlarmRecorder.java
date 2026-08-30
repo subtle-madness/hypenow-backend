@@ -46,15 +46,12 @@ public class AlarmRecorder {
 		this.snapshots = snapshots;
 	}
 
-	/** 게시물 직접 등록 — 사용자가 방금 누른 행동이라 즉시 레인(스펙 §1-5). */
-	public void collectionStartedImmediate(long targetId, Long userId, String username, String shortCode) {
-		Instant now = Instant.now();
-		record(targetId, userId, AlarmEventType.COLLECTION_STARTED,
-				basePayload(username, shortCode), now, DispatchLane.immediate(now));
-	}
-
-	/** 스윕 첫 감지 자동 전환 — 새벽에 일어난 일이라 아침 레인. */
-	public void collectionStartedScheduled(long targetId, Long userId, String username, String shortCode) {
+	/**
+	 * 수집 시작 적재 — 직접 등록발이든 스윕 첫 감지 자동 전환이든 같은 아침 레인이다.
+	 * 즉시 레인은 2026-08-27 주간 개편에서 폐지됐다(설계 §2): 소비가 주간 다이제스트 하나뿐이라
+	 * 레인 구분이 의미를 잃었고, 직접 등록 즉시 알림은 등록 처리 내역(acknowledged) 표면과 중복이었다.
+	 */
+	public void collectionStarted(long targetId, Long userId, String username, String shortCode) {
 		Instant now = Instant.now();
 		record(targetId, userId, AlarmEventType.COLLECTION_STARTED,
 				basePayload(username, shortCode), now, DispatchLane.morning(now));

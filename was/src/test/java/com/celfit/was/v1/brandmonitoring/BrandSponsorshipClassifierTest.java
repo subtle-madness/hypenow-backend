@@ -72,4 +72,49 @@ class BrandSponsorshipClassifierTest {
 		assertThat(BrandSponsorshipClassifier.classify(false, "この動画は広告です")).isEqualTo("sponsored");
 		assertThat(BrandSponsorshipClassifier.classify(false, "業配影片分享")).isEqualTo("sponsored");
 	}
+
+	@Test
+	void 오버로드_classify는_캡션_판정_결과와_같은_트리를_탄다() {
+		// (isPaidPartnership, captionMarker) 조합 6칸 전부
+		assertThat(BrandSponsorshipClassifier.classify(Boolean.TRUE, false)).isEqualTo("sponsored");
+		assertThat(BrandSponsorshipClassifier.classify(Boolean.TRUE, true)).isEqualTo("sponsored");
+		assertThat(BrandSponsorshipClassifier.classify(null, true)).isEqualTo("sponsored");
+		assertThat(BrandSponsorshipClassifier.classify(Boolean.FALSE, true)).isEqualTo("sponsored");
+		assertThat(BrandSponsorshipClassifier.classify(Boolean.FALSE, false)).isEqualTo("organic");
+		assertThat(BrandSponsorshipClassifier.classify(null, false)).isEqualTo("unknown");
+	}
+
+	@Test
+	void 캡션_classify는_마커_오버로드에_위임한다() {
+		// 기존 caption 경로와 오버로드 경로가 같은 답을 내는지 — 대표 케이스만(전수 대조는 SQL 골든 코퍼스)
+		assertThat(BrandSponsorshipClassifier.classify(null, "#광고 후기"))
+				.isEqualTo(BrandSponsorshipClassifier.classify(null,
+						BrandSponsorshipClassifier.containsSponsorshipMarker("#광고 후기")));
+	}
+
+	@Test
+	void SQL_골든_코퍼스의_경계_사례는_Java_기대값이_고정이다() {
+		// SQL 동치성 테스트(BrandSponsorshipSqlEquivalenceTest)는 두 구현의 "일치"만 단언해서
+		// 둘이 함께 틀리면 통과한다. 코퍼스 주석이 기대값을 적어 둔 경계 사례는 여기서 절대값으로 못박는다.
+		// "an ad for" — 해시태그도 아니고 선두도 아니다
+		assertThat(BrandSponsorshipClassifier.containsSponsorshipMarker("This is an ad for fun")).isFalse();
+		assertThat(BrandSponsorshipClassifier.classify(null, "This is an ad for fun")).isEqualTo("unknown");
+		// 태그 토큰 불일치 — "#ad한글"은 #ad가 아니다([:alnum:] 유니코드 인식 경계)
+		assertThat(BrandSponsorshipClassifier.containsSponsorshipMarker("#ad한글")).isFalse();
+		assertThat(BrandSponsorshipClassifier.classify(null, "#ad한글")).isEqualTo("unknown");
+		// reklam 단어 중간 — 앞이 한글(문자)이라 단어 접두가 아니다
+		assertThat(BrandSponsorshipClassifier.containsSponsorshipMarker("한글reklam")).isFalse();
+		assertThat(BrandSponsorshipClassifier.classify(null, "한글reklam")).isEqualTo("unknown");
+		// 대조군 — "#광고" 부분 문자열에 걸려 매치가 기대값(비매치 3건과 같은 코퍼스 줄)
+		assertThat(BrandSponsorshipClassifier.containsSponsorshipMarker("#광고태그중간ad")).isTrue();
+		assertThat(BrandSponsorshipClassifier.classify(null, "#광고태그중간ad")).isEqualTo("sponsored");
+	}
+
+	@Test
+	void 정규식_빌더는_비어있지_않은_ARE를_만든다() {
+		String regex = BrandSponsorshipClassifier.postgresMarkerRegex();
+		assertThat(regex).contains("#(?:").contains("reklam").contains("광고");
+		// Java에서도 컴파일 가능한 부분집합만 쓰는지 스모크(ARE와 100% 동형은 아님 — 실검증은 SQL 코퍼스)
+		assertThat(regex).doesNotContain("(?<").doesNotContain("(?=");
+	}
 }
