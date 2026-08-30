@@ -67,6 +67,56 @@ class BrandAiFollowUpGeneratorTest {
 		assertThat(result).isEmpty();
 	}
 
+	/** F4(2026-08-30 리뷰) - 모델이 스키마·프롬프트 규칙을 어기고 kind에 미지 값을 넣어도 그 항목만
+	 * 버려지고 나머지는 살아남는다(서버측 계약 강제). */
+	@Test
+	void kind가_deepen_action이_아니면_그_항목만_제외한다() {
+		GeminiChatClient client = new GeminiChatClient(body -> followUpsResponse(
+				"[{\"text\":\"정상 질문\",\"kind\":\"deepen\"},{\"text\":\"이상한 질문\",\"kind\":\"unknown\"}]"), om);
+		BrandAiFollowUpGenerator generator = new BrandAiFollowUpGenerator(client, om);
+
+		List<AiMessagesResponse.FollowUp> result = generator.generate("질문", "답변");
+
+		assertThat(result).hasSize(1);
+		assertThat(result.get(0).text()).isEqualTo("정상 질문");
+	}
+
+	/** F4 - 모델이 규칙(정확히 2개)을 어기고 3개 이상 만들어도 서버가 앞에서부터 2개로 자른다. */
+	@Test
+	void 결과가_3개_이상_생성돼도_2개로_절단한다() {
+		GeminiChatClient client = new GeminiChatClient(body -> followUpsResponse(
+				"[{\"text\":\"질문1\",\"kind\":\"deepen\"},{\"text\":\"질문2\",\"kind\":\"action\"},"
+						+ "{\"text\":\"질문3\",\"kind\":\"deepen\"}]"), om);
+		BrandAiFollowUpGenerator generator = new BrandAiFollowUpGenerator(client, om);
+
+		List<AiMessagesResponse.FollowUp> result = generator.generate("질문", "답변");
+
+		assertThat(result).hasSize(2);
+		assertThat(result).extracting(AiMessagesResponse.FollowUp::text).containsExactly("질문1", "질문2");
+	}
+
+	/**
+	 * F3(2026-08-30 리뷰) - 컨트롤러가 넘긴 남은 예산이 5초보다 짧으면 그 예산 안에서만 기다린다.
+	 * 전송이 예산보다 오래 걸리면 타임아웃으로 빈 배열로 접힌다(기존 실패 관용 경로와 동일 결과지만,
+	 * 원인이 "5초 타임아웃"이 아니라 "짧아진 예산 타임아웃"이라는 게 다르다).
+	 */
+	@Test
+	void 남은_예산이_짧으면_그_안에서만_기다리다_타임아웃으로_빈_배열을_접는다() {
+		GeminiChatClient client = new GeminiChatClient(body -> {
+			try {
+				Thread.sleep(500);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+			return followUpsResponse("[{\"text\":\"질문\",\"kind\":\"deepen\"}]");
+		}, om);
+		BrandAiFollowUpGenerator generator = new BrandAiFollowUpGenerator(client, om);
+
+		List<AiMessagesResponse.FollowUp> result = generator.generate("질문", "답변", 100L);
+
+		assertThat(result).isEmpty();
+	}
+
 	@Test
 	void 요청_본문에_질문과_답변이_실린다() {
 		java.util.concurrent.atomic.AtomicReference<String> sent = new java.util.concurrent.atomic.AtomicReference<>();

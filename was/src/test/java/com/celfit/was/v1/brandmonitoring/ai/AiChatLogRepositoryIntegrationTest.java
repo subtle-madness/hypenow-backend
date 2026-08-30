@@ -88,6 +88,19 @@ class AiChatLogRepositoryIntegrationTest extends IntegrationTest {
 	}
 
 	@Test
+	void countSince는_timeout_행을_포함한다() {
+		// F2(2026-08-30 리뷰) - 타임아웃도 토큰이 실제 소모된 채 끊긴 것이라 llm_failed와 달리 일일
+		// 상한 차감 대상에 포함한다. countSince의 제외 조건은 llm_failed 하나뿐이라 timeout은 별도
+		// 분기 없이 자동으로 카운트된다.
+		OffsetDateTime since = OffsetDateTime.now().minusHours(1);
+		repository.insert(logOf(userId));
+		repository.insert(new AiChatLogEntry(userId, null, "타임아웃난 질문", null, List.of(), 10, 0, 60_000L,
+				AiChatLogEntry.OUTCOME_TIMEOUT));
+
+		assertThat(repository.countSince(userId, since)).isEqualTo(2);
+	}
+
+	@Test
 	void 마이그레이션이_일일_상한_기준값_30을_시드한다() {
 		assertThat(jdbcClient.sql("SELECT value FROM app.app_setting WHERE key = 'ai.chat.daily-limit'")
 				.query(String.class).optional()).contains("30");

@@ -39,9 +39,19 @@ import tools.jackson.databind.ObjectMapper;
  * <p>보호 장치가 세 겹이다 - 분당 버스트는 {@link RateLimiter}, 하루 총량은 {@link AiChatQuota},
  * 동시 실행은 전용 풀(brandAiChatExecutor)의 거절이다. 셋 다 429로 수렴하되 code로 구분한다.
  *
- * <p>대화(§8)는 이 컨트롤러가 만들고 갱신한다 - conversationId가 없으면 질문 접수 시점(답변 성공·실패와
- * 무관하게)에 새 대화를 만들고, 있으면 소유·삭제 여부와 브랜드 일치를 검증한다. 이력은 프론트가 다시
- * 보내지 않는다 - {@link AiChatLogRepository#findByConversation}에서 최근 6행을 복원한다.
+ * <p><b>F10(2026-08-30 리뷰) 검증 순서</b> - 요청 형식·대화 참조 검증(400/404/409)을 rate limiter·
+ * 일일 상한보다 먼저 끝낸다. 그 두 판정은 분당·일일 버킷을 소모하지 않아야 한다 - 어차피 거부될
+ * 요청이 버킷만 축내면 진짜 요청이 억울하게 429를 맞는다.
+ *
+ * <p><b>F2(2026-08-30 리뷰) 대화 생성 시점</b> - conversationId 미지정(신규 대화) 요청은 실행 풀이
+ * 수용을 확정한 뒤에야 {@code app.ai_conversations} 행을 만든다({@link #messages}의 풀 제출 다음
+ * 줄). 풀이 거절하면(동시 실행 상한 초과) 그 시점엔 아직 아무 것도 안 만들어져 있으니 로그도 대화도
+ * 남기지 않는다 - 예전에는 대화부터 만들고 풀에 제출해서, 거절되면 빈 대화가 고아로 남았다.
+ *
+ * <p>대화(§8)는 이 컨트롤러가 만들고 갱신한다 - conversationId가 없으면 실행 풀 수용이 확정된
+ * 시점(F2, 답변 성공·실패와 무관)에 새 대화를 만들고, 있으면 소유·삭제 여부와 브랜드 일치를 미리
+ * 검증한다. 이력은 프론트가 다시 보내지 않는다 - {@link AiChatLogRepository#findByConversation}에서
+ * 최근 6행을 복원한다.
  */
 @RestController
 @RequestMapping("/v1/brand-monitoring/ai")
@@ -60,6 +70,9 @@ public class V1BrandAiMessagesController {
 	/** 이력 복원 상한(FE §8) - 질문+답변 1행이 한 턴이라 6행 = 최근 6턴. 토큰 예산 보호(설계 §요구). */
 	private static final int MAX_HISTORY_ROWS = 6;
 	private static final int HISTORY_TRUNCATE_LENGTH = 2_000;
+	/** followUps 생성을 아예 생략하는 남은 예산 하한(F3, 2026-08-30 리뷰) - 이보다 적게 남았으면 5초
+	 * 예산 중 대부분을 못 쓰고 끊길 게 뻔해 시도 자체를 생략한다(빈 배열). */
+	private static final long MIN_FOLLOW_UP_BUDGET_MILLIS = 1_000L;
 
 	private static final Logger log = LoggerFactory.getLogger(V1BrandAiMessagesController.class);
 
@@ -100,30 +113,53 @@ public class V1BrandAiMessagesController {
 		long userId = principal.getUserId();
 		Validated validated = validate(request, userId);
 
+		// F10 - 대화 참조 검증(400/404/409)까지 끝난 뒤에야 분당·일일 버킷을 건드린다.
+		ConversationRef conversationRef = resolveConversationRef(userId, request, validated.brandId());
+
 		if (!rateLimiter.tryAcquire("ai-chat:" + userId, perMinuteLimit())) {
 			throw V1ApiException.rateLimited();
 		}
 		quota.requireWithinDailyLimit(userId);
 
-		long conversationId = resolveConversationId(userId, request, validated.brandId());
-		List<AiChatMessage> contents = buildContents(conversationId, validated.text());
+		// 신규 대화는 아직 id가 없다 - history가 빈 상태와 동치이므로 DB 조회 없이 새 질문 1건만 담는다.
+		List<AiChatMessage> contents = conversationRef.isNew()
+				? List.of(new AiChatMessage(AiChatMessage.ROLE_USER, validated.text()))
+				: buildContents(conversationRef.existingId(), validated.text());
 		String extraPrompt = validated.scope().summaryLine() + BrandAiPresets.instructionFor(request.presetId());
 
 		long startedAt = System.nanoTime();
-		BrandAiAgent.AgentOutcome outcome;
+		CompletableFuture<BrandAiAgent.AgentOutcome> future;
 		try {
-			outcome = runWithTimeout(userId, contents, validated.scope(), extraPrompt);
-		} catch (RuntimeException e) {
-			logRepository.insert(new AiChatLogEntry(userId, validated.brandId(), validated.text(), null, List.of(),
-					0, 0, elapsedMillis(startedAt), AiChatLogEntry.OUTCOME_LLM_FAILED, conversationId,
-					request.presetId(), scopeJson(request), emptyArray(), emptyArray()));
-			conversationRepository.touch(conversationId);
-			throw e;
+			future = CompletableFuture.supplyAsync(
+					() -> agent.run(userId, contents, validated.brandId(), validated.scope(), extraPrompt), executor);
+		} catch (RejectedExecutionException e) {
+			// F2 - 접수 자체가 거절됐다. 아직 대화를 만들지 않았으니(신규든 기존 검증뿐이든) 로그도 대화
+			// 갱신도 하지 않는다 - 이 요청은 시스템에 아무 흔적도 남기지 않는다.
+			throw V1ApiException.rateLimited(BUSY_RETRY_AFTER_SECONDS);
 		}
 
-		List<AiMessagesResponse.FollowUp> followUps = outcome.answered()
-				? followUpGenerator.generate(validated.text(), outcome.answer())
-				: List.of();
+		// F2 - 풀 수용이 확정된 뒤에야 신규 대화를 만든다. 위에서 거절됐다면 여기 도달하지 않는다.
+		long conversationId = conversationRef.resolve(conversationRepository, userId, validated.brandId(),
+				validated.text());
+
+		BrandAiAgent.AgentOutcome outcome;
+		try {
+			outcome = awaitOutcome(future, userId);
+		} catch (ChatFailure failure) {
+			logRepository.insert(new AiChatLogEntry(userId, validated.brandId(), validated.text(), null, List.of(),
+					0, 0, elapsedMillis(startedAt), failure.outcome(), conversationId,
+					request.presetId(), scopeJson(request), emptyArray(), emptyArray()));
+			conversationRepository.touch(conversationId);
+			throw failure.apiException();
+		}
+
+		// F3 - followUps는 60초 응답 예산 안에서만 만든다. min(5초, 남은 예산)만 주고, 1초 미만 남았으면
+		// 생성 자체를 생략한다(빈 배열) - 완성된 답변을 followUps 때문에 더 늦게 돌려줄 이유가 없다.
+		long remainingBudgetMillis = RESPONSE_TIMEOUT_SECONDS * 1_000L - elapsedMillis(startedAt);
+		List<AiMessagesResponse.FollowUp> followUps =
+				outcome.answered() && remainingBudgetMillis >= MIN_FOLLOW_UP_BUDGET_MILLIS
+						? followUpGenerator.generate(validated.text(), outcome.answer(), remainingBudgetMillis)
+						: List.of();
 		List<AiMessagesResponse.Reference> references = outcome.references().stream()
 				.map(ref -> new AiMessagesResponse.Reference(AiMessagesResponse.Reference.TYPE_POST, ref.shortCode(),
 						ref.label()))
@@ -141,44 +177,73 @@ public class V1BrandAiMessagesController {
 	}
 
 	/**
-	 * 전용 풀에서 돌리고 60초에 끊는다(C2). {@code future.cancel(true)}는 실행 중인 작업을
+	 * 전용 풀에서 이미 돌고 있는 작업을 60초에 끊는다(C2). {@code future.cancel(true)}는 실행 중인 작업을
 	 * 인터럽트하지 <b>않는다</b> - {@link CompletableFuture}의 {@code cancel}은 명세상
 	 * {@code mayInterruptIfRunning}을 무시하고 항상 미래(future)만 예외적으로 완료시키므로, 이 호출
 	 * 뒤에도 작업 스레드는 계속 돈다(2 스레드 풀이라 반복되면 여전히 429 위험이 남는다는 한계가
 	 * 있다). 실질적인 방어는 여기가 아니라 에이전트 내부 벽시계 예산(BrandAiAgent, 55초)과 Vertex
 	 * 요청 타임아웃 단축(BrandAiConfig, 45초)이고, 이 60초 get()은 그 두 안전장치가 실패했을 때
 	 * 최소한 HTTP 응답만이라도 제때 끊어 사용자를 기다리게 하지 않는 최후 방어선이다.
+	 *
+	 * <p><b>F2(2026-08-30 리뷰) outcome 세분화</b> - 실패 원인별로 {@link ChatFailure}에 실린 outcome이
+	 * 갈린다: 타임아웃은 {@link AiChatLogEntry#OUTCOME_TIMEOUT}(토큰이 실제 소모됐으므로 일일 상한
+	 * 차감 대상에 포함 - {@link AiChatLogRepository#countSince}의 제외 조건이 llm_failed 하나뿐이라
+	 * 자동으로 포함된다), 그 외(인터럽트·LLM 전송 실패·쿼터 소진 등)는 전부
+	 * {@link AiChatLogEntry#OUTCOME_LLM_FAILED}(차감 제외)다. 실행 풀 거절
+	 * ({@link RejectedExecutionException})은 이 메서드 호출 전에 {@link #messages}가 이미 처리하므로
+	 * 여기 도달하지 않는다 - 로그를 아예 남기지 않는 유일한 실패 경로다.
 	 */
-	private BrandAiAgent.AgentOutcome runWithTimeout(long userId, List<AiChatMessage> contents, AiScope scope,
-			String extraPrompt) {
-		CompletableFuture<BrandAiAgent.AgentOutcome> future;
-		try {
-			future = CompletableFuture.supplyAsync(() -> agent.run(userId, contents, scope, extraPrompt), executor);
-		} catch (RejectedExecutionException e) {
-			throw V1ApiException.rateLimited(BUSY_RETRY_AFTER_SECONDS);
-		}
+	private BrandAiAgent.AgentOutcome awaitOutcome(CompletableFuture<BrandAiAgent.AgentOutcome> future,
+			long userId) {
 		try {
 			return future.get(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 		} catch (TimeoutException e) {
 			future.cancel(true);
 			log.warn("AI 챗 응답 시간 초과({}초) - userId={}", RESPONSE_TIMEOUT_SECONDS, userId);
 			// 코드는 FE 계약(변경요청서 §9.1)에 맞춰 AI_UNAVAILABLE로 통일한다 - 타임아웃도 결국 "지금은
-			// 답변을 못 받았다"는 같은 사용자 경험이라 LLM 실패 경로와 코드를 나눌 이유가 없다.
-			throw V1ApiException.badGateway("AI_UNAVAILABLE", "답변 생성이 너무 오래 걸렸어요. 잠시 후 다시 시도해 주세요.");
+			// 답변을 못 받았다"는 같은 사용자 경험이라 LLM 실패 경로와 코드를 나눌 이유가 없다(outcome은
+			// 나뉘지만 HTTP 응답 code는 그대로 하나다).
+			throw new ChatFailure(AiChatLogEntry.OUTCOME_TIMEOUT, V1ApiException.badGateway("AI_UNAVAILABLE",
+					"답변 생성이 너무 오래 걸렸어요. 잠시 후 다시 시도해 주세요."));
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
-			throw V1ApiException.badGateway("AI_UNAVAILABLE", "답변을 받지 못했어요. 잠시 후 다시 시도해 주세요.");
+			throw new ChatFailure(AiChatLogEntry.OUTCOME_LLM_FAILED,
+					V1ApiException.badGateway("AI_UNAVAILABLE", "답변을 받지 못했어요. 잠시 후 다시 시도해 주세요."));
 		} catch (ExecutionException e) {
 			Throwable cause = e.getCause();
 			if (cause instanceof V1ApiException v1) {
-				throw v1;
+				throw new ChatFailure(AiChatLogEntry.OUTCOME_LLM_FAILED, v1);
 			}
 			if (cause instanceof LlmQuotaExhaustedException) {
 				log.warn("AI 챗 Vertex 쿼터 소진 - userId={}", userId);
 			} else {
 				log.error("AI 챗 처리 실패 - userId={}", userId, cause);
 			}
-			throw V1ApiException.badGateway("AI_UNAVAILABLE", "답변을 받지 못했어요. 잠시 후 다시 시도해 주세요.");
+			throw new ChatFailure(AiChatLogEntry.OUTCOME_LLM_FAILED,
+					V1ApiException.badGateway("AI_UNAVAILABLE", "답변을 받지 못했어요. 잠시 후 다시 시도해 주세요."));
+		}
+	}
+
+	/**
+	 * {@link #awaitOutcome} 실패를 outcome 문자열과 함께 실어 나르는 unchecked 예외(F2, 2026-08-30
+	 * 리뷰) - 호출부({@link #messages})가 이 outcome을 그대로 로그에 적재한 뒤 apiException을 던진다.
+	 */
+	private static final class ChatFailure extends RuntimeException {
+		private final String outcome;
+		private final V1ApiException apiException;
+
+		ChatFailure(String outcome, V1ApiException apiException) {
+			super(apiException.getMessage());
+			this.outcome = outcome;
+			this.apiException = apiException;
+		}
+
+		String outcome() {
+			return outcome;
+		}
+
+		V1ApiException apiException() {
+			return apiException;
 		}
 	}
 
@@ -219,14 +284,16 @@ public class V1BrandAiMessagesController {
 	}
 
 	/**
-	 * 대화 해석(T2, FE §8) - conversationId 미지정이면 즉시 새 대화를 만든다(답변 성공·실패와 무관하게
-	 * 질문이 접수됐다는 뜻이다). 지정됐으면 소유·미삭제(없으면 404)와 브랜드 일치(다르면 409
-	 * CONVERSATION_SCOPE_MISMATCH)를 검증한다.
+	 * 대화 참조 해석(T2, F2·F10 2026-08-30 리뷰) - conversationId 미지정이면 새 대화를 뜻하지만, 실제
+	 * INSERT는 여기서 하지 않는다({@link ConversationRef#resolve} - 실행 풀이 수용을 확정한 뒤로 미뤄
+	 * 거절 시 빈 대화가 남는 사고를 막는다, F2). conversationId가 지정됐으면 소유·미삭제(없으면 404)와
+	 * 브랜드 일치(다르면 409 CONVERSATION_SCOPE_MISMATCH)를 여기서 전부 검증한다 - 이 검증까지 끝난
+	 * 뒤에만 분당 rate limiter를 소모하도록(F10) 컨트롤러가 이 메서드를 rate limiter보다 먼저 부른다.
 	 */
-	private long resolveConversationId(long userId, AiMessagesRequest request, long brandId) {
+	private ConversationRef resolveConversationRef(long userId, AiMessagesRequest request, long brandId) {
 		String rawId = request.conversationId();
 		if (rawId == null || rawId.isBlank()) {
-			return conversationRepository.create(userId, brandId, request.text());
+			return ConversationRef.NEW;
 		}
 		long conversationId;
 		try {
@@ -239,14 +306,34 @@ public class V1BrandAiMessagesController {
 		if (row.brandId() != brandId) {
 			throw V1ApiException.conflict("CONVERSATION_SCOPE_MISMATCH", "이 대화는 다른 브랜드에 속해 있어요.");
 		}
-		return conversationId;
+		return new ConversationRef(conversationId);
+	}
+
+	/**
+	 * 대화 참조(F2, 2026-08-30 리뷰) - {@code existingId == 0}이면 신규(아직 INSERT 전), 그 외면 이미
+	 * 검증을 마친 기존 대화 id다. bigserial 시작값이 1이라 0은 안전한 미생성 센티널이다
+	 * ({@link com.celfit.was.v1.brandmonitoring.ai.BrandAiToolbox}의 brandId 센티널 관용구와 동일).
+	 */
+	private record ConversationRef(long existingId) {
+		static final ConversationRef NEW = new ConversationRef(0L);
+
+		boolean isNew() {
+			return existingId == 0L;
+		}
+
+		/** 신규면 이 시점에 INSERT해 id를 얻는다(실행 풀 수용 확정 후에만 호출돼야 한다, F2). 기존이면
+		 * {@link #resolveConversationRef}가 이미 검증한 id를 그대로 돌려준다. */
+		long resolve(AiConversationRepository repository, long userId, long brandId, String text) {
+			return isNew() ? repository.create(userId, brandId, text) : existingId;
+		}
 	}
 
 	/**
 	 * 이력 복원(T2, FE §8) - 최근 {@value #MAX_HISTORY_ROWS}행(질문+답변 쌍)을 대화 로그에서 복원해
 	 * 새 질문 뒤에 붙인다. answer가 없는 행(진행 중 실패 등)은 user 발화만 넣는다. 각 content는
 	 * {@value #HISTORY_TRUNCATE_LENGTH}자로 절단한다(토큰 예산 보호) - 새 질문 자체는 이미 컨트롤러가
-	 * 길이 검증을 마쳤으니 절단하지 않는다.
+	 * 길이 검증을 마쳤으니 절단하지 않는다. 신규 대화(아직 id 없음)는 이 메서드를 타지 않는다 - 호출부가
+	 * 빈 이력과 동치인 새 질문 1건짜리 목록으로 대신한다.
 	 */
 	private List<AiChatMessage> buildContents(long conversationId, String newText) {
 		List<AiChatLogRepository.ConversationMessageRow> rows = logRepository.findByConversation(conversationId);

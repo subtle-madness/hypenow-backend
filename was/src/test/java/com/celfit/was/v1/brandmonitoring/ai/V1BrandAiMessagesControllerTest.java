@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -29,6 +30,9 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -60,9 +64,19 @@ class V1BrandAiMessagesControllerTest {
 	@TestConfiguration
 	static class TestSupportConfig {
 
+		/** F2(2026-08-30 리뷰) 풀 거절 재현용 스위치 - true면 다음 execute 호출이
+		 * {@link RejectedExecutionException}을 던진다. 기본은 동기 실행(Runnable::run)이라 대부분의
+		 * 테스트는 그대로 결정론을 유지한다. */
+		static final AtomicBoolean REJECT_NEXT = new AtomicBoolean(false);
+
 		@Bean("brandAiChatExecutor")
 		Executor brandAiChatExecutor() {
-			return Runnable::run;
+			return runnable -> {
+				if (REJECT_NEXT.get()) {
+					throw new RejectedExecutionException("테스트 강제 거절");
+				}
+				runnable.run();
+			};
 		}
 
 		@Bean
@@ -101,7 +115,13 @@ class V1BrandAiMessagesControllerTest {
 		given(settingRepository.findValue(anyString())).willReturn(Optional.empty());
 		given(linkRepository.findActiveByUserAndBrand(USER_ID, BRAND_ID)).willReturn(Optional.of(link()));
 		given(logRepository.findByConversation(anyLong())).willReturn(List.of());
-		given(followUpGenerator.generate(anyString(), anyString())).willReturn(List.of());
+		given(followUpGenerator.generate(anyString(), anyString(), anyLong())).willReturn(List.of());
+	}
+
+	@AfterEach
+	void resetExecutorSwitch() {
+		// 테스트 간 상태 누수 방지 - 풀 거절 테스트가 스위치를 켠 채로 남기면 뒤따르는 테스트가 전부 429가 된다.
+		TestSupportConfig.REJECT_NEXT.set(false);
 	}
 
 	private static BrandLinkRow link() {
@@ -125,9 +145,9 @@ class V1BrandAiMessagesControllerTest {
 	@Test
 	void 신규_대화를_만들고_messageId를_돌려준다() throws Exception {
 		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(123L);
-		given(agent.run(eq(USER_ID), any(), any(), anyString())).willReturn(okOutcome("3건이에요"));
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString())).willReturn(okOutcome("3건이에요"));
 		given(logRepository.insert(any())).willReturn(456L);
-		given(followUpGenerator.generate(anyString(), anyString()))
+		given(followUpGenerator.generate(anyString(), anyString(), anyLong()))
 				.willReturn(List.of(new AiMessagesResponse.FollowUp("더 볼까요?", "deepen"),
 						new AiMessagesResponse.FollowUp("DM 초안 만들까요?", "action")));
 
@@ -155,7 +175,7 @@ class V1BrandAiMessagesControllerTest {
 		given(conversationRepository.findOwnedActive(123L, USER_ID))
 				.willReturn(Optional.of(new AiConversationRepository.ConversationRow(123L, BRAND_ID, "제목",
 						OffsetDateTime.now())));
-		given(agent.run(eq(USER_ID), any(), any(), anyString())).willReturn(okOutcome("답변"));
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString())).willReturn(okOutcome("답변"));
 		given(logRepository.insert(any())).willReturn(789L);
 
 		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
@@ -188,6 +208,22 @@ class V1BrandAiMessagesControllerTest {
 						.content("{\"conversationId\":\"123\",\"accountIds\":[\"45\"],\"text\":\"이어서\"}"))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.error.code").value("CONVERSATION_SCOPE_MISMATCH"));
+
+		// F10(2026-08-30 리뷰) - 409로 끝난 요청은 분당 버킷을 소모하지 않는다(대화 참조 검증이
+		// rate limiter보다 먼저 온다).
+		then(rateLimiter).should(never()).tryAcquire(anyString(), anyInt());
+	}
+
+	/** F10(2026-08-30 리뷰) - 404(미소유 브랜드)도 마찬가지로 분당 버킷을 건드리지 않는다. */
+	@Test
+	void 미소유_브랜드_404도_분당_버킷을_소모하지_않는다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(USER_ID, 999L)).willReturn(Optional.empty());
+
+		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON).content(body("999", "알려줘")))
+				.andExpect(status().isNotFound());
+
+		then(rateLimiter).should(never()).tryAcquire(anyString(), anyInt());
 	}
 
 	@Test
@@ -235,7 +271,7 @@ class V1BrandAiMessagesControllerTest {
 	@Test
 	void 미등록_presetId는_무시되고_자유_질의로_처리된다() throws Exception {
 		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(123L);
-		given(agent.run(eq(USER_ID), any(), any(), anyString())).willReturn(okOutcome("답변"));
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString())).willReturn(okOutcome("답변"));
 		given(logRepository.insert(any())).willReturn(1L);
 
 		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
@@ -274,7 +310,7 @@ class V1BrandAiMessagesControllerTest {
 					om.createArrayNode(), om.createArrayNode(), OffsetDateTime.now()));
 		}
 		given(logRepository.findByConversation(123L)).willReturn(rows);
-		given(agent.run(eq(USER_ID), any(), any(), anyString())).willReturn(okOutcome("최종 답변"));
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString())).willReturn(okOutcome("최종 답변"));
 		given(logRepository.insert(any())).willReturn(1L);
 
 		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
@@ -284,7 +320,7 @@ class V1BrandAiMessagesControllerTest {
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<List<AiChatMessage>> contentsCaptor = ArgumentCaptor.forClass(List.class);
-		then(agent).should(times(1)).run(eq(USER_ID), contentsCaptor.capture(), any(), anyString());
+		then(agent).should(times(1)).run(eq(USER_ID), contentsCaptor.capture(), eq(BRAND_ID), any(), anyString());
 		List<AiChatMessage> contents = contentsCaptor.getValue();
 		// 8행 중 최근 6행(질문+답변 쌍 12건) + 새 질문 1건 = 13건. 가장 오래된 질문1·질문2는 빠진다.
 		assertThat(contents).hasSize(13);
@@ -295,7 +331,8 @@ class V1BrandAiMessagesControllerTest {
 	@Test
 	void LLM_실패는_502_재시도_안내이고_실패도_로그로_남는다() throws Exception {
 		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(123L);
-		given(agent.run(eq(USER_ID), any(), any(), anyString())).willThrow(new IllegalStateException("Vertex HTTP 500"));
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString()))
+				.willThrow(new IllegalStateException("Vertex HTTP 500"));
 
 		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
 						.contentType(MediaType.APPLICATION_JSON).content(body("45", "알려줘")))
@@ -308,5 +345,40 @@ class V1BrandAiMessagesControllerTest {
 		assertThat(captor.getValue().answer()).isNull();
 		assertThat(captor.getValue().conversationId()).isEqualTo(123L);
 		then(conversationRepository).should(times(1)).touch(123L);
+	}
+
+	/**
+	 * F2(2026-08-30 리뷰) - 실행 풀이 접수 자체를 거절하면(동시 실행 상한 초과) 429 BUSY 응답만 돌아가고,
+	 * 로그도 대화도 전혀 만들어지지 않는다 - 예전엔 대화를 먼저 만들고 풀에 제출해서, 거절되면 빈
+	 * 대화가 고아로 남는 사고가 있었다.
+	 */
+	@Test
+	void 실행_풀_거절은_로그와_대화를_전혀_만들지_않는다() throws Exception {
+		TestSupportConfig.REJECT_NEXT.set(true);
+
+		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON).content(body("45", "알려줘")))
+				.andExpect(status().isTooManyRequests());
+
+		then(conversationRepository).should(times(0)).create(anyLong(), anyLong(), anyString());
+		then(conversationRepository).should(times(0)).touch(anyLong());
+		then(logRepository).should(times(0)).insert(any());
+	}
+
+	/** F2 - 기존 대화를 이어가는 요청이 풀에서 거절돼도 그 대화의 touch조차 남기지 않는다. */
+	@Test
+	void 실행_풀_거절은_기존_대화도_건드리지_않는다() throws Exception {
+		given(conversationRepository.findOwnedActive(123L, USER_ID))
+				.willReturn(Optional.of(new AiConversationRepository.ConversationRow(123L, BRAND_ID, "제목",
+						OffsetDateTime.now())));
+		TestSupportConfig.REJECT_NEXT.set(true);
+
+		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"conversationId\":\"123\",\"accountIds\":[\"45\"],\"text\":\"이어서\"}"))
+				.andExpect(status().isTooManyRequests());
+
+		then(conversationRepository).should(times(0)).touch(anyLong());
+		then(logRepository).should(times(0)).insert(any());
 	}
 }

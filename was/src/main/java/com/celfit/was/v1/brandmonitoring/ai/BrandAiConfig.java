@@ -8,9 +8,11 @@ import com.celfit.was.setting.AppSettingRepository;
 import com.celfit.was.v1.brandmonitoring.BrandHashtagPostAssembler;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
 import java.time.Clock;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -108,11 +110,34 @@ public class BrandAiConfig {
 	 * 후속 질문 생성기(FE 변경요청서 §3.3, 2026-08-30) - 툴 콜링용 {@link GeminiChatClient} 빈을 그대로
 	 * 재사용한다(Vertex 자격증명·모델·재시도 배선이 동일해도 무방 - 구조화 출력 1콜뿐이라 별도 전송
 	 * 설정을 새로 둘 이유가 없다).
+	 *
+	 * <p>F3(2026-08-30 리뷰) - 전용 1스레드 실행기를 배선한다. 기본 ForkJoinPool commonPool을 쓰면
+	 * 타임아웃 이후에도(cancel이 인터럽트하지 않는다는 JDK 명세) 최대 45초까지 물려 있는 스레드가
+	 * 앱 전역이 공유하는 풀을 잠식한다 - 전용 스레드가 그 대가를 대신 지게 한다.
 	 */
 	@Bean
 	public BrandAiFollowUpGenerator brandAiFollowUpGenerator(GeminiChatClient brandAiChatClient,
-			ObjectMapper objectMapper) {
-		return new BrandAiFollowUpGenerator(brandAiChatClient, objectMapper);
+			ObjectMapper objectMapper, @Qualifier("brandAiFollowUpExecutor") Executor brandAiFollowUpExecutor) {
+		return new BrandAiFollowUpGenerator(brandAiChatClient, objectMapper, brandAiFollowUpExecutor);
+	}
+
+	/**
+	 * 후속 질문 생성 전용 실행기(F3, 2026-08-30 리뷰) - {@code brandAiChatExecutor}와 같은 이유로 큐 없는
+	 * 1스레드: 이미 쓰는 중이면 즉시 거절한다({@link RejectedExecutionException}은
+	 * {@link BrandAiFollowUpGenerator#generate}의 catch(RuntimeException)가 빈 배열로 접어 삼킨다 -
+	 * 후속 질문은 "기능 저해 금지"라 거절도 실패 관용 경로를 그대로 탄다).
+	 */
+	@Bean("brandAiFollowUpExecutor")
+	public ThreadPoolTaskExecutor brandAiFollowUpExecutor() {
+		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+		executor.setCorePoolSize(1);
+		executor.setMaxPoolSize(1);
+		executor.setQueueCapacity(0);
+		executor.setDaemon(true);
+		executor.setThreadNamePrefix("brand-ai-followup-");
+		executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+		executor.initialize();
+		return executor;
 	}
 
 	/**

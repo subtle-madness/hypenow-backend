@@ -40,8 +40,12 @@ public record AiChatLogEntry(long userId, Long brandId, String question, String 
 	/** LLM 호출 안전망(BrandAiAgent#MAX_LLM_CALLS, 12회)까지 도달한 병리적 경우(M2) - OUTCOME_TOOL_CAP과
 	 * 구분해 도달 시 반드시 남기는 warn 로그와 연결해 추적한다. 정상적으로는 도달하면 안 된다. */
 	public static final String OUTCOME_LLM_CALL_CAP = "llm_call_cap";
-	/** LLM 전송 실패(타임아웃·쿼터·5xx) - answer는 null. */
+	/** 순수 LLM 전송 실패(쿼터·5xx·자격 증명 등, 타임아웃 제외) - answer는 null(F2, 2026-08-30 리뷰). */
 	public static final String OUTCOME_LLM_FAILED = "llm_failed";
+	/** 컨트롤러 60초 응답 계약 초과(F2, 2026-08-30 리뷰) - llm_failed와 분리한다: 토큰이 실제로 소모된
+	 * 채 끊긴 경우라 일일 상한 차감 대상에 포함해야 한다({@link AiChatLogRepository#countSince}의
+	 * 제외 조건이 llm_failed 하나뿐이라 이 값은 자동으로 카운트에 잡힌다). answer는 null. */
+	public static final String OUTCOME_TIMEOUT = "timeout";
 	/** 안전 필터 차단 또는 thinking이 maxOutputTokens를 잠식한 MAX_TOKENS로 candidates가 비거나
 	 * 텍스트 없이 끝난 경우(I7) - 사용자에게는 정중한 안내 답변을 주고 OUTCOME_OK로 오분류하지 않는다. */
 	public static final String OUTCOME_BLOCKED = "blocked";

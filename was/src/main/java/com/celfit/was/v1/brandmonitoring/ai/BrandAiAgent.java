@@ -86,18 +86,31 @@ public class BrandAiAgent {
 		this.clock = clock;
 	}
 
-	/** 기존 2-인자 관용구 유지(호환) - scope 없음(무필터)·추가 프롬프트 없음과 동일하다. */
+	/** 기존 2-인자 관용구 유지(호환) - scope 없음(무필터)·brandId 제한 없음·추가 프롬프트 없음과 동일하다. */
 	public AgentOutcome run(long userId, List<AiChatMessage> messages) {
-		return run(userId, messages, null, "");
+		return run(userId, messages, null, null, "");
+	}
+
+	/** 기존 4-인자 관용구 유지(호환, F1 이전 호출부·단발 테스트 전용) - brandId 제한 없음과 동일하다. */
+	public AgentOutcome run(long userId, List<AiChatMessage> messages, AiScope scope, String extraSystemPrompt) {
+		return run(userId, messages, null, scope, extraSystemPrompt);
 	}
 
 	/**
+	 * @param sessionBrandId     대화가 스코프된 brandId(F1, 2026-08-30 리뷰) - 컨트롤러가 accountIds[0]을
+	 *                           검증해 얻은 값을 그대로 넘긴다. null이면 무제한(위 두 호환 오버로드
+	 *                           전용 경로). 툴 실행 세션에 실려 brandId를 인자로 받는 툴이 이 값과 다른
+	 *                           brandId를 요청하면 소유 여부와 무관하게 failed 결과로 막는다
+	 *                           ({@link BrandAiToolbox.ToolSession}·{@link BrandAiToolbox}). 로그용
+	 *                           {@code brandId}(모델이 실제로 조회한 브랜드, {@link AgentOutcome#brandId})
+	 *                           와는 별개다 - 이름이 같지 않게 구분한다.
 	 * @param scope              FE 화면 필터(T3, 2026-08-30) - null이면 무필터. 툴 실행 세션에 실려
 	 *                           게시물 계열 툴 전부에 강제된다({@link BrandAiToolbox.ToolSession}).
 	 * @param extraSystemPrompt  시스템 프롬프트 뒤에 이어붙일 문구(scope 요약 1줄 + 프리셋 지시문,
 	 *                           T3·T4) - 빈 문자열이면 기존 프롬프트와 동일하다.
 	 */
-	public AgentOutcome run(long userId, List<AiChatMessage> messages, AiScope scope, String extraSystemPrompt) {
+	public AgentOutcome run(long userId, List<AiChatMessage> messages, Long sessionBrandId, AiScope scope,
+			String extraSystemPrompt) {
 		List<JsonNode> contents = new ArrayList<>();
 		for (AiChatMessage message : messages) {
 			contents.add(AiChatMessage.ROLE_ASSISTANT.equals(message.role())
@@ -110,8 +123,10 @@ public class BrandAiAgent {
 		Map<String, Integer> failuresByTool = new HashMap<>();
 		// 요청 스코프 인덱스 캐시(N2) - 이 run() 호출 안에서만 재사용하고 절대 넘어 살지 않는다
 		// (BrandAiToolbox는 싱글턴 빈이라 캐시를 그쪽 인스턴스 필드에 두면 유저 간에 섞인다).
-		BrandAiToolbox.ToolSession toolSession = new BrandAiToolbox.ToolSession(scope);
+		BrandAiToolbox.ToolSession toolSession = new BrandAiToolbox.ToolSession(scope, sessionBrandId);
 		String basePrompt = BrandAiPrompt.SYSTEM + (extraSystemPrompt == null ? "" : extraSystemPrompt);
+		// 모델이 실제로 조회한 brandId(로그용, AgentOutcome#brandId) - 위 sessionBrandId(대화 스코프
+		// 강제용)와는 목적이 달라 별도 변수로 관리한다.
 		Long brandId = null;
 		int promptTokens = 0;
 		int outputTokens = 0;
