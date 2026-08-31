@@ -224,6 +224,9 @@ public class BrandReadRepository {
 	 * "숨김"을 호출부가 구분하기 위한 것이다(숨김을 0으로 뭉개면 정렬·집계가 거짓말을 한다).
 	 * 브랜드 창 스코프 조인인 이유는 {@link #findBrandPostIndex} 주석과 같다 — 창·정산 술어가
 	 * 인덱스와 동형이어야 지표가 목록 모수와 어긋나지 않는다.
+	 *
+	 * <p>매핑은 수동 람다다(2026-08-31) — 게시물당 1행이라도 창 안 전 게시물(운영 1.5만 행대)을
+	 * 싣는다. 근거는 {@link #findBrandPostIndex} 매핑 주석과 같다.
 	 */
 	public List<LatestSnapshotRow> findLatestSnapshotsForBrand(long brandId, OffsetDateTime cutoff,
 			boolean enrichedOnly) {
@@ -241,7 +244,14 @@ public class BrandReadRepository {
 				""")
 				.param("brandId", brandId)
 				.param("cutoff", cutoff)
-				.query(LatestSnapshotRow.class)
+				.query((rs, i) -> new LatestSnapshotRow(
+						rs.getString("short_code"),
+						rs.getObject("captured_on", LocalDate.class),
+						rs.getString("content_type"),
+						rs.getObject("views", Long.class),
+						rs.getObject("likes", Long.class),
+						rs.getBoolean("likes_hidden"),
+						rs.getObject("comments", Long.class)))
 				.list();
 	}
 
@@ -295,7 +305,11 @@ public class BrandReadRepository {
 				.list();
 	}
 
-	/** 게시자(인플루언서) 프로필 — 기본 경로. author_profile의 PK가 ig_user_id라 중복이 없다. */
+	/**
+	 * 게시자(인플루언서) 프로필 — 기본 경로. author_profile의 PK가 ig_user_id라 중복이 없다.
+	 *
+	 * <p>게시자 프로필 배치 조회 — 매핑은 수동 람다(2026-08-31, 근거는 {@link #findBrandPostIndex} 참조).
+	 */
 	public List<AuthorRow> findAuthors(Collection<String> igUserIds) {
 		if (igUserIds.isEmpty()) {
 			return List.of();
@@ -307,7 +321,14 @@ public class BrandReadRepository {
 				WHERE ig_user_id IN (:igUserIds)
 				""")
 				.param("igUserIds", igUserIds)
-				.query(AuthorRow.class)
+				.query((rs, i) -> new AuthorRow(
+						rs.getString("ig_user_id"),
+						rs.getString("username"),
+						rs.getString("full_name"),
+						rs.getObject("followers", Long.class),
+						rs.getString("profile_pic_url"),
+						rs.getObject("is_verified", Boolean.class),
+						rs.getString("image_object_path")))
 				.list();
 	}
 
