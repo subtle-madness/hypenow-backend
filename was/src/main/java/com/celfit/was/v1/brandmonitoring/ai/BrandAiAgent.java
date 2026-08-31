@@ -114,6 +114,15 @@ public class BrandAiAgent {
 	}
 
 	/**
+	 * 시스템 프롬프트 조립(스펙 §6) - 세션 brandId가 있으면 브랜드 컨텍스트를 선주입한다. 두 run()
+	 * 오버로드(완결·스트리밍)가 이 헬퍼를 공유해 조립 로직이 갈리지 않게 한다.
+	 */
+	private String buildBasePrompt(long userId, Long sessionBrandId, String extraSystemPrompt) {
+		String context = sessionBrandId == null ? "" : toolbox.brandContextLine(userId, sessionBrandId);
+		return BrandAiPrompt.SYSTEM + context + (extraSystemPrompt == null ? "" : extraSystemPrompt);
+	}
+
+	/**
 	 * @param sessionBrandId     대화가 스코프된 brandId(F1, 2026-08-30 리뷰) - 컨트롤러가 accountIds[0]을
 	 *                           검증해 얻은 값을 그대로 넘긴다. null이면 무제한(위 두 호환 오버로드
 	 *                           전용 경로). 툴 실행 세션에 실려 brandId를 인자로 받는 툴이 이 값과 다른
@@ -141,7 +150,7 @@ public class BrandAiAgent {
 		// 요청 스코프 인덱스 캐시(N2) - 이 run() 호출 안에서만 재사용하고 절대 넘어 살지 않는다
 		// (BrandAiToolbox는 싱글턴 빈이라 캐시를 그쪽 인스턴스 필드에 두면 유저 간에 섞인다).
 		BrandAiToolbox.ToolSession toolSession = new BrandAiToolbox.ToolSession(scope, sessionBrandId);
-		String basePrompt = BrandAiPrompt.SYSTEM + (extraSystemPrompt == null ? "" : extraSystemPrompt);
+		String basePrompt = buildBasePrompt(userId, sessionBrandId, extraSystemPrompt);
 		// 모델이 실제로 조회한 brandId(로그용, AgentOutcome#brandId) - 위 sessionBrandId(대화 스코프
 		// 강제용)와는 목적이 달라 별도 변수로 관리한다.
 		Long brandId = null;
@@ -274,7 +283,7 @@ public class BrandAiAgent {
 		LinkedHashSet<String> shortCodes = new LinkedHashSet<>();
 		Map<String, Integer> failuresByTool = new HashMap<>();
 		BrandAiToolbox.ToolSession toolSession = new BrandAiToolbox.ToolSession(scope, sessionBrandId);
-		String basePrompt = BrandAiPrompt.SYSTEM + (extraSystemPrompt == null ? "" : extraSystemPrompt);
+		String basePrompt = buildBasePrompt(userId, sessionBrandId, extraSystemPrompt);
 		Long brandId = null;
 		int promptTokens = 0;
 		int outputTokens = 0;

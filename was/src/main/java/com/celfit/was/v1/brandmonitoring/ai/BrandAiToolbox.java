@@ -208,6 +208,28 @@ public class BrandAiToolbox {
 	 * 불러도 되는 것처럼 오인할 여지를 준다. 세션에 brandId가 없으면(단발 테스트 등) 기존처럼 전체를
 	 * 돌려준다.
 	 */
+	/**
+	 * 브랜드 컨텍스트 선주입용 한 줄 요약(스펙 §6) - 컨트롤러가 이미 소유 검증한 brandId의 메타를
+	 * 시스템 프롬프트에 미리 실어, 질문 100%에서 발생하던 list_brands 첫 왕복을 없앤다. 툴이 아니라
+	 * 서버 내부 호출이라 툴 회수를 소모하지 않는다. 링크·계정이 없으면 빈 문자열(선주입 생략 -
+	 * 모델은 기존처럼 list_brands로 폴백한다).
+	 */
+	public String brandContextLine(long userId, long brandId) {
+		Optional<BrandLinkRow> linkOpt = linkRepository.findActiveByUserAndBrand(userId, brandId);
+		if (linkOpt.isEmpty()) {
+			return "";
+		}
+		BrandLinkRow link = linkOpt.get();
+		StringBuilder sb = new StringBuilder("\n\n[브랜드 컨텍스트] 이 대화의 브랜드: brandId=")
+				.append(link.brandId()).append(", username=@").append(link.username())
+				.append(", 구분=").append(link.accountType())
+				.append(", 수집 기간=").append(link.collectionMonths()).append("개월");
+		brandReadRepository.findAccount(link.brandId()).ifPresent(account -> sb.append(", 팔로워=")
+				.append(account.followers()).append(", 게시물 수=").append(account.mediaCount()));
+		sb.append(". 이 brandId로 바로 다른 툴을 호출하세요. list_brands 호출은 불필요합니다.");
+		return sb.toString();
+	}
+
 	private AiToolResult listBrands(ToolSession session, long userId) {
 		ArrayNode brands = objectMapper.createArrayNode();
 		Long sessionBrandId = session.brandId();

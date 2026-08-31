@@ -1152,4 +1152,18 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 		assertThat(payload.path("notFound")).hasSize(1);
 		assertThat(payload.path("notFound").get(0).asString()).isEqualTo("THEIRS1");
 	}
+
+	// ---------- 브랜드 컨텍스트 선주입(2026-08-31 툴·한계 재설계, 스펙 §6) ----------
+
+	@Test
+	void brandContextLine은_브랜드_메타를_한_줄로_요약한다() {
+		String line = toolbox.brandContextLine(userId, myBrandId);
+
+		assertThat(line).contains("brandId=" + myBrandId).contains("mybrand").contains("1000");
+	}
+
+	@Test
+	void brandContextLine은_링크가_없으면_빈_문자열이다() {
+		assertThat(toolbox.brandContextLine(otherUserId, myBrandId)).isEmpty();
+	}
 }

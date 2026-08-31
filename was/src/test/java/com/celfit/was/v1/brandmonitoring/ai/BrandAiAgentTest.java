@@ -359,6 +359,25 @@ class BrandAiAgentTest {
 		assertThat(outcome.answered()).isTrue();
 	}
 
+	/**
+	 * 브랜드 컨텍스트 선주입(2026-08-31 툴·한계 재설계, 스펙 §6) - 세션 brandId가 있으면
+	 * {@link BrandAiToolbox#brandContextLine}이 시스템 프롬프트에 미리 실려야 한다. list_brands 첫
+	 * 왕복 없이 바로 답할 수 있는지는 이 문구가 캡처된 systemInstruction에 있는지로 검증한다.
+	 */
+	@Test
+	void 세션_brandId가_있으면_시스템_프롬프트에_브랜드_컨텍스트가_선주입된다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.brandContextLine(1L, 7L)).willReturn("\n\n[브랜드 컨텍스트] 이 대화의 브랜드: brandId=7");
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(List.of(textAnswer("답변")), captured, toolbox);
+
+		agent.run(1L, List.of(new AiChatMessage("user", "알려줘")), 7L, null, "");
+
+		JsonNode body = om.readTree(captured.get(0));
+		assertThat(body.path("systemInstruction").path("parts").path(0).path("text").asString())
+				.contains("[브랜드 컨텍스트] 이 대화의 브랜드: brandId=7");
+	}
+
 	/** extraSystemPrompt(scope 요약·프리셋 지시문, T3·T4)는 시스템 프롬프트 뒤에 그대로 이어붙는다. */
 	@Test
 	void extraSystemPrompt는_시스템_프롬프트_뒤에_붙는다() {
