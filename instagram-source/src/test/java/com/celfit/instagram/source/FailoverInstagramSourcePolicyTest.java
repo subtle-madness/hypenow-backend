@@ -5,9 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.instagram.source.self.SelfCrawlException;
 import com.celfit.instagram.source.self.SelfErrorClass;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 /** 자체 1순위 + Hiker 폴백 + 에러 taxonomy 라우팅 정책 검증(스펙 §8-1). */
@@ -90,7 +92,7 @@ class FailoverInstagramSourcePolicyTest {
 				return hikerPost;
 			}
 		};
-		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, false);
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, () -> false);
 		assertThat(source.fetchPost("ABC")).isSameAs(hikerPost);
 	}
 
@@ -104,7 +106,7 @@ class FailoverInstagramSourcePolicyTest {
 			}
 		};
 		InstagramSource hiker = new ThrowingSource("hiker");
-		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, true);
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, () -> true);
 		assertThat(source.fetchPost("ABC")).isSameAs(selfPost);
 	}
 
@@ -123,7 +125,7 @@ class FailoverInstagramSourcePolicyTest {
 				return hikerPost;
 			}
 		};
-		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, true);
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, () -> true);
 		assertThat(source.fetchPost("ABC")).isSameAs(hikerPost);
 	}
 
@@ -136,7 +138,7 @@ class FailoverInstagramSourcePolicyTest {
 			}
 		};
 		InstagramSource hiker = new ThrowingSource("hiker");
-		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, true);
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, () -> true);
 		assertThatThrownBy(() -> source.fetchPost("ABC"))
 				.isInstanceOf(SubjectNotFoundException.class)
 				.hasMessage("게시물 부재 404");
@@ -157,7 +159,101 @@ class FailoverInstagramSourcePolicyTest {
 				return hikerPage;
 			}
 		};
-		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, true);
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, () -> true);
 		assertThat(source.fetchTaggedPage("123", null)).isSameAs(hikerPage);
+	}
+
+	@Test
+	void selfEnabled는_매_콜마다_재확인된다() {
+		PostInfo selfPost = post("SELF");
+		InstagramSource self = new ThrowingSource("self") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				return selfPost;
+			}
+		};
+		PostInfo hikerPost = post("HIKER");
+		InstagramSource hiker = new ThrowingSource("hiker") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				return hikerPost;
+			}
+		};
+		AtomicBoolean enabled = new AtomicBoolean(false);
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, enabled::get);
+
+		// 첫 콜: off → hiker
+		assertThat(source.fetchPost("ABC")).isSameAs(hikerPost);
+		// 런타임 토글 on → 재시작 없이 다음 콜부터 self
+		enabled.set(true);
+		assertThat(source.fetchPost("ABC")).isSameAs(selfPost);
+	}
+
+	/** 관측 훅 계약 — path·backend·outcome 3튜플을 그대로 기록한다. */
+	private static final class RecordingMetrics implements InstagramSourceMetrics {
+
+		final List<String> records = new ArrayList<>();
+
+		@Override
+		public void record(String path, String backend, String outcome) {
+			records.add(path + "|" + backend + "|" + outcome);
+		}
+	}
+
+	@Test
+	void self_성공은_self_ok로_관측된다() {
+		PostInfo selfPost = post("SELF");
+		InstagramSource self = new ThrowingSource("self") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				return selfPost;
+			}
+		};
+		RecordingMetrics metrics = new RecordingMetrics();
+		FailoverInstagramSource source =
+				new FailoverInstagramSource(self, new ThrowingSource("hiker"), () -> true, metrics);
+
+		source.fetchPost("ABC");
+
+		assertThat(metrics.records).containsExactly("fetchPost|self|ok");
+	}
+
+	@Test
+	void 폴백은_hiker_fallback_에러클래스로_관측된다() {
+		InstagramSource self = new ThrowingSource("self") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				throw new SelfCrawlException(SelfErrorClass.STRUCTURAL_400, "계정 버그 400");
+			}
+		};
+		InstagramSource hiker = new ThrowingSource("hiker") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				return post("HIKER");
+			}
+		};
+		RecordingMetrics metrics = new RecordingMetrics();
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, () -> true, metrics);
+
+		source.fetchPost("ABC");
+
+		assertThat(metrics.records).containsExactly("fetchPost|hiker|fallback:STRUCTURAL_400");
+	}
+
+	@Test
+	void NOT_FOUND는_self_notfound로_관측된다() {
+		InstagramSource self = new ThrowingSource("self") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				throw new SelfCrawlException(SelfErrorClass.NOT_FOUND, "게시물 부재 404");
+			}
+		};
+		RecordingMetrics metrics = new RecordingMetrics();
+		FailoverInstagramSource source =
+				new FailoverInstagramSource(self, new ThrowingSource("hiker"), () -> true, metrics);
+
+		assertThatThrownBy(() -> source.fetchPost("ABC")).isInstanceOf(SubjectNotFoundException.class);
+
+		assertThat(metrics.records).containsExactly("fetchPost|self|notfound");
 	}
 }
