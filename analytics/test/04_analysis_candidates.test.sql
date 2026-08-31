@@ -47,10 +47,26 @@ BEGIN
     'dummy_cl(창 어제 닫힘·제때)이 후보에서 빠짐';
   ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_analysis_candidates WHERE short_code = 'dummy_op'),
     'dummy_op(창이 오늘 — 아직 안 닫힘, 미성숙)이 후보에 있음';
+  -- 2026-08-31: 후보 뷰를 서빙 뷰(02)에서 분리 — F&B 단독 계정 콘텐츠가 후보에 든다.
+  -- 이게 이 트랙의 핵심이다. 구 04는 v_contents 위에 얹혀 뷰티 모수를 상속해 F&B가 0건이었다.
+  ASSERT EXISTS (SELECT 1 FROM analytics.v_analysis_candidates WHERE short_code = 'dummy_fb1'),
+    'F&B 단독 계정 콘텐츠가 분석 후보에 없음 — 04가 아직 서빙 모수를 상속 중';
+  -- in_window는 01(v_recent_content, 뷰티 게이트)이 아니라 소스 뷰가 자체 계산해야 한다 —
+  -- 위임한 채로 두면 F&B는 in_window가 영원히 false다(운영 백로그가 통째로 빠지는 급소).
+  ASSERT EXISTS (SELECT 1 FROM analytics.v_analysis_candidates
+                 WHERE short_code = 'dummy_fb1' AND NOT timely),
+    'F&B 콘텐츠가 in_window 경로로 안 들어옴 — recency_rank 자체 계산 확인';
+  -- 서빙은 불변 — F&B 단독 계정은 랭킹·최근창에 한 건도 없어야 한다.
+  ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_contents WHERE account_handle = 'dummy_fb'),
+    'F&B 계정이 서빙 뷰 v_contents에 노출됨 — 서빙 무변경 위반';
+  ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_recent_content WHERE owner_username = 'dummy_fb'),
+    'F&B 계정이 최근창 뷰에 노출됨 — 서빙 무변경 위반';
+  ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_accounts WHERE handle = 'dummy_fb'),
+    'F&B 계정이 서빙 계정 뷰에 노출됨 — 서빙 무변경 위반';
   -- 기본 후보 = f1·dummy_cl(timely) + r1·r2·ra1(백필, 윈도우 안) 5건 — 07-20 개정으로 2→4건,
-  -- 08-06 액터 분기 도입으로 +ra1(액터) → 5건.
-  ASSERT (SELECT count(*) FROM analytics.v_analysis_candidates WHERE account_handle LIKE 'dummy_%') = 5,
-    'date-guard 기본(slack=1) 후보 != 5 (f1·cl·r1·r2·ra1)';
+  -- 08-06 액터 분기 도입으로 +ra1(액터) → 5건, 08-31 F&B 모수 편입으로 +fb1 → 6건.
+  ASSERT (SELECT count(*) FROM analytics.v_analysis_candidates WHERE account_handle LIKE 'dummy_%') = 6,
+    'date-guard 기본(slack=1) 후보 != 6 (f1·cl·r1·r2·ra1·fb1)';
 END $$;
 
 -- 비-usable 가드: D+3 당일에 스냅이 있어도 지표 미완비면 timely=false. 07-20 개정으로 그 자체가

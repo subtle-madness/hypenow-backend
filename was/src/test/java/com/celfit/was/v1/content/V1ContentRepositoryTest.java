@@ -80,7 +80,8 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				CREATE TABLE beauty_distributors (
 				    name text PRIMARY KEY,
 				    sort int  NOT NULL,
-				    slug text NOT NULL UNIQUE
+				    slug text NOT NULL UNIQUE,
+				    axis text NOT NULL DEFAULT 'beauty'
 				)""");
 		// image_assets 사본 DDL (analytics 아카이브 잡이 채우는 테이블 — Task 2 DDL과 동일 형상)
 		jdbcTemplate.execute("""
@@ -100,9 +101,10 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				 ('makeup', '메이크업', '립메이크업', '립틴트', 3, 1, 1)
 				""");
 		jdbcTemplate.update("""
-				INSERT INTO beauty_distributors (name, sort, slug) VALUES
-				 ('올리브영', 1, 'oliveyoung'),
-				 ('다이소', 2, 'daiso')
+				INSERT INTO beauty_distributors (name, sort, slug, axis) VALUES
+				 ('올리브영', 1, 'oliveyoung', 'beauty'),
+				 ('다이소', 2, 'daiso', 'beauty'),
+				 ('GS25', 10, 'gs25', 'fnb')
 				""");
 
 		// 계정 2: alpha(5000) · beta(20000)
@@ -314,7 +316,9 @@ class V1ContentRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 유통사_옵션은_전체를_슬러그_오름차순으로_내린다() {
+	void 유통사_옵션은_뷰티축만_슬러그_오름차순으로_내린다() {
+		// 어휘 테이블은 F&B 유통사(편의점·마트)도 함께 담는다(2026-08-31). 축 필터가 없으면
+		// 뷰티 랭킹 화면의 유통사 드롭다운에 GS25가 뜬다 — 서빙 확장이 아니라 오염 차단이다.
 		List<Map<String, Object>> options = repository.findDistributorOptions();
 
 		assertThat(options).containsExactly(

@@ -74,6 +74,10 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 `analytics/views/NN_*.sql` 번호순 적용 컨벤션. 2026-07-18 신 crawler 스키마(V15) 기준으로
 전면 재구축 — base 층(00)이 raw 접촉을 격리하고, 서빙 모수는 뷰티 인플루언서
 (QUALIFIED ∧ beauty ∧ ¬beauty_company). 04는 LLM 캡션 선분석 후보 뷰(미러 안 함).
+**분석 모수와 서빙 모수는 서로 독립이다**(2026-08-31): 04는 서빙 뷰(02)가 아니라 자체
+소스 뷰 `v_analysis_source`(뷰티 ∪ F&B) 위에 얹힌다 — 미러가 `SELECT * FROM v_contents`라
+02를 넓히면 랭킹 API가 즉시 열리기 때문이다. 카테고리 축 소속은 어휘 테이블
+(`beauty_taxonomy.axis`)이 알고, `content_analyses.is_beauty`는 그 파생값이다.
 
 ### analysis DB
 
