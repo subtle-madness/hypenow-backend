@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -21,6 +22,7 @@ import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.TaggedPostRepository;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -181,6 +183,7 @@ class BrandControllerTest {
 	/** 태그 저장 스텁 — 조회 목록 주입 + 교체·추가·삭제 호출 인자 캡처. */
 	private static final class StubHashtagRepository extends BrandHashtagRepository {
 		List<String> tags = List.of();
+		List<BrandHashtagRepository.RunStateRow> runStates = List.of();
 		Long receivedTagsBrandId;
 		List<String> receivedTags;
 		Long addedTagsBrandId;
@@ -196,6 +199,11 @@ class BrandControllerTest {
 		@Override
 		public List<String> findTags(long brandId) {
 			return tags;
+		}
+
+		@Override
+		public List<BrandHashtagRepository.RunStateRow> findRunStates(long brandId) {
+			return runStates;
 		}
 
 		@Override
@@ -524,6 +532,33 @@ class BrandControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.tags[0]").value("cclime"))
 				.andExpect(jsonPath("$.tags[1]").value("끌리메"));
+	}
+
+	// ---------- 태그별 스윕 실행 상태(FE 요청, 2026-08-31) ----------
+
+	@Test
+	void 실행_상태_조회는_태그별_status를_계산해_돌려준다() throws Exception {
+		brands.row = new BrandRow(1L, "brandx", "ig1", BrandStatus.ACTIVE, null, 12, true);
+		OffsetDateTime finishedAt = OffsetDateTime.now().minusMinutes(5);
+		hashtags.runStates = List.of(
+				new BrandHashtagRepository.RunStateRow("cclime", null, finishedAt, 3, false),
+				new BrandHashtagRepository.RunStateRow("끌리메", null, null, null, false));
+
+		mvc.perform(get("/api/brands/brandx/hashtag-tags/run-state"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.tags[0].tag").value("cclime"))
+				.andExpect(jsonPath("$.tags[0].status").value("done"))
+				.andExpect(jsonPath("$.tags[0].lastFoundCount").value(3))
+				.andExpect(jsonPath("$.tags[1].tag").value("끌리메"))
+				.andExpect(jsonPath("$.tags[1].status").value("collecting"))
+				.andExpect(jsonPath("$.tags[1].lastRunAt").value(nullValue()));
+	}
+
+	@Test
+	void 실행_상태_조회는_미등록_브랜드면_404다() throws Exception {
+		mvc.perform(get("/api/brands/ghost/hashtag-tags/run-state"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 	}
 
 	@Test

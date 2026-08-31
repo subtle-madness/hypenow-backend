@@ -1227,18 +1227,31 @@ class V1BrandAccountsControllerTest {
 	// 표면 계약(소유권 403·200/204 셰이프)만 여기서 검증한다 — 합집합 계산·최초 시딩 같은 판정
 	// 로직은 V1BrandAccountServiceHashtagTagsTest가 담당한다(V1BrandDirectPostServiceTest와 같은 분리).
 
+	/**
+	 * 태그 목록은 원장에서 읽는다(정본은 여전히 원장, 08-19 사용자 스코프 개정) — 단 각 태그의 실행
+	 * 상태(status·lastRunAt·lastFoundCount)는 monitoring run-state를 병합한 값이다(2026-08-31 확장).
+	 * 태그 목록 조회 자체({@code getHashtagTags(String)})는 여전히 호출하지 않는다.
+	 */
 	@Test
-	void 태그_조회는_원장에서_읽고_monitoring을_호출하지_않는다() throws Exception {
+	void 태그_조회는_원장_태그에_monitoring_실행_상태를_병합한다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 		given(hashtagTagRepository.findByUserAndBrand(7L, 100L))
 				.willReturn(new java.util.LinkedHashSet<>(List.of("리즈다", "lizda")));
+		given(commandClient.getHashtagRunStates("lizda_official")).willReturn(List.of(
+				new MonitoringCommandClient.TagRunState("리즈다", "done",
+						java.time.OffsetDateTime.parse("2026-08-31T10:00:00Z"), 3),
+				new MonitoringCommandClient.TagRunState("lizda", "collecting", null, null)));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-tags").with(user(principal())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.tags.length()").value(2))
-				.andExpect(jsonPath("$.data.tags[0]").value("리즈다"))
-				.andExpect(jsonPath("$.data.tags[1]").value("lizda"));
+				.andExpect(jsonPath("$.data.tags[0].tag").value("리즈다"))
+				.andExpect(jsonPath("$.data.tags[0].status").value("done"))
+				.andExpect(jsonPath("$.data.tags[0].lastFoundCount").value(3))
+				.andExpect(jsonPath("$.data.tags[1].tag").value("lizda"))
+				.andExpect(jsonPath("$.data.tags[1].status").value("collecting"))
+				.andExpect(jsonPath("$.data.tags[1].lastRunAt").value(Matchers.nullValue()));
 
 		then(commandClient).should(never()).getHashtagTags(anyString());
 	}

@@ -158,4 +158,70 @@ class BrandHashtagRepositoryTest {
 		assertThat(codes).containsExactly("AAA", "BBB");
 	}
 
+	// ---------- 태그별 스윕 실행 상태(FE 요청, 2026-08-31) ----------
+
+	@Test
+	void 신규_태그의_실행_상태는_전부_비어있다() {
+		repo.addTags(brandId, List.of("cclime"));
+
+		List<BrandHashtagRepository.RunStateRow> states = repo.findRunStates(brandId);
+
+		assertThat(states).hasSize(1);
+		BrandHashtagRepository.RunStateRow row = states.get(0);
+		assertThat(row.tag()).isEqualTo("cclime");
+		assertThat(row.lastRunStartedAt()).isNull();
+		assertThat(row.lastRunFinishedAt()).isNull();
+		assertThat(row.lastRunFoundCount()).isNull();
+		assertThat(row.lastRunFailed()).isFalse();
+	}
+
+	@Test
+	void markRunStarted는_시작_시각만_채운다() {
+		repo.addTags(brandId, List.of("cclime"));
+
+		repo.markRunStarted(brandId, "cclime");
+
+		BrandHashtagRepository.RunStateRow row = repo.findRunStates(brandId).get(0);
+		assertThat(row.lastRunStartedAt()).isNotNull();
+		assertThat(row.lastRunFinishedAt()).isNull();
+	}
+
+	@Test
+	void markRunFinished는_종료_시각_건수_실패_여부를_채운다() {
+		repo.addTags(brandId, List.of("cclime"));
+		repo.markRunStarted(brandId, "cclime");
+
+		repo.markRunFinished(brandId, "cclime", 4, false);
+
+		BrandHashtagRepository.RunStateRow row = repo.findRunStates(brandId).get(0);
+		assertThat(row.lastRunFinishedAt()).isNotNull();
+		assertThat(row.lastRunFoundCount()).isEqualTo(4);
+		assertThat(row.lastRunFailed()).isFalse();
+	}
+
+	@Test
+	void markRunFinished_실패_기록은_failed를_true로_남긴다() {
+		repo.addTags(brandId, List.of("cclime"));
+		repo.markRunStarted(brandId, "cclime");
+
+		repo.markRunFinished(brandId, "cclime", 0, true);
+
+		BrandHashtagRepository.RunStateRow row = repo.findRunStates(brandId).get(0);
+		assertThat(row.lastRunFailed()).isTrue();
+		assertThat(row.lastRunFoundCount()).isEqualTo(0);
+	}
+
+	/** deleted_at 있는(tombstone) 태그는 findRunStates에서 빠진다 — findTags와 같은 필터. */
+	@Test
+	void 삭제된_태그는_실행_상태_조회에서_빠진다() {
+		repo.addTags(brandId, List.of("cclime", "끌리메"));
+		repo.markRunStarted(brandId, "cclime");
+		repo.markRunStarted(brandId, "끌리메");
+		repo.deleteTag(brandId, "끌리메");
+
+		List<BrandHashtagRepository.RunStateRow> states = repo.findRunStates(brandId);
+
+		assertThat(states).extracting(BrandHashtagRepository.RunStateRow::tag).containsExactly("cclime");
+	}
+
 }
