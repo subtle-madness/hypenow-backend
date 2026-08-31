@@ -26,7 +26,8 @@ SELECT analytics.refresh_snapshot_cache();
 DO $$
 BEGIN
   ASSERT (SELECT count(*) FROM analytics.v_landing_stats) = 1, 'landing_stats != 1행';
-  ASSERT (SELECT influencers_count FROM analytics.v_landing_stats) = 3, 'influencers_count != 3';
+  -- 08-31 서빙 개방 이후에도 랜딩 모수는 뷰티 유지(기본 화면) — dummy_fb(F&B 단독)가 끼면 4가 된다
+  ASSERT (SELECT influencers_count FROM analytics.v_landing_stats) = 3, 'influencers_count != 3 (F&B 제외)';
   ASSERT (SELECT followers500to3k FROM analytics.v_landing_stats) = 1, 'followers500to3k != 1';
   ASSERT (SELECT followers3k10k FROM analytics.v_landing_stats) = 1, 'followers3k10k != 1';
   ASSERT (SELECT followers10k30k FROM analytics.v_landing_stats) = 1, 'followers10k30k != 1';

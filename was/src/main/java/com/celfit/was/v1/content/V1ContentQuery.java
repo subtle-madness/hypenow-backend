@@ -1,6 +1,7 @@
 package com.celfit.was.v1.content;
 
 import com.celfit.was.v1.common.CacheKeys;
+import com.celfit.was.v1.common.MainCategories;
 import com.celfit.was.v1.common.V1ApiException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -22,8 +23,8 @@ public record V1ContentQuery(OffsetDateTime startInstant, OffsetDateTime endExcl
 	private static final Set<String> AD_TYPES = Set.of("organic", "sponsored");
 	private static final Set<String> SORTS = Set.of("hype", "latest", "views");
 	private static final Set<String> FOLLOWERS = Set.of("3k-10k", "10k-30k", "30k-50k");
-	private static final Set<String> MAIN_CATEGORIES =
-			Set.of("skincare", "suncare", "makeup", "cleansing", "haircare", "fragrance", "esthetic");
+	// 대분류 어휘는 공용 상수(MainCategories.ALL — 뷰티+F&B) — 2026-08-31 F&B 서빙 개방.
+	private static final Set<String> MAIN_CATEGORIES = MainCategories.ALL;
 
 	public static V1ContentQuery of(LocalDate startDate, LocalDate endDate, String contentType,
 			String mainCategory, String midCategory, String subCategory, String follower,
