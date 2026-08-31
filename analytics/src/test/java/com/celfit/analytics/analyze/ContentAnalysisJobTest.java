@@ -576,6 +576,30 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void 대상이_청크_상한을_넘으면_배치를_나눠_제출한다() {
+		// 백로그 일괄 개방(F&B 6만여 건) 대비. 구 버전은 대상 전량을 배치 1건으로 제출해
+		// sidecar_jsonl 한 컬럼에 수십 MB가 들어가고 Vertex 배치 파일 한도에도 걸렸다.
+		// 상한을 낮춰(2건) 경계 동작만 검증한다 — 실운영 기본값 검증이 아니다.
+		enableBatchTransport();
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.batch-chunk-size', '2')");
+		rewireJobWithBatch(fakeInsightPort(), fakeBatchApi());
+		// 기본 시드의 제출 대상은 post_a·post_b 2건 — 1건 더 얹어 3건(청크 2 + 1)으로 만든다.
+		db.update("""
+				INSERT INTO analytics.candidates_fixture VALUES
+				  ('post_d', true, now() - interval '5 hours', 'acct1', '캡션D', 'reels',
+				   'https://img/d.jpg', 9000, 400, 40, false)""");
+
+		JobResult result = job.run();
+
+		assertEquals(3, result.processed()); // 합계는 청크와 무관하게 전체 제출 건수
+		assertEquals(2, batchCreated.size()); // 청크 2개 = 배치 2건
+		assertEquals(2L, db.queryForObject("SELECT count(*) FROM content_batch_jobs", Long.class));
+		// 청크당 1행, submitted_count 합이 전체와 일치
+		assertEquals(3, db.queryForObject(
+				"SELECT sum(submitted_count)::int FROM content_batch_jobs", Integer.class));
+	}
+
+	@Test
 	void 배치_제출도_3종_제외_게이트가_동일_적용된다() {
 		enableBatchTransport();
 		rewireJobWithBatch(fakeInsightPort(), fakeBatchApi());

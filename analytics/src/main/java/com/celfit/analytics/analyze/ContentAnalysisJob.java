@@ -214,6 +214,27 @@ public class ContentAnalysisJob {
 			log.info("배치 제출 대상 없음 — 제출 생략 (timely={})", timely);
 			return new JobResult(0, 0, false);
 		}
+		// 청크 분할(2026-08-31): 대상 전량을 배치 1건으로 밀면 sidecar_jsonl 한 컬럼에 수십 MB가
+		// 들어가고 Vertex 배치 파일 한도에도 걸린다(백로그 일괄 개방 대비). 수거는 배치 행 단위라
+		// ContentBatchCollectJob은 무변경이다.
+		int chunkSize = settings.batchChunkSize();
+		int submitted = 0;
+		int chunks = 0;
+		for (int from = 0; from < targets.size(); from += chunkSize) {
+			List<Map<String, Object>> chunk =
+					targets.subList(from, Math.min(from + chunkSize, targets.size()));
+			submitOneChunk(timely, chunk, baselines);
+			submitted += chunk.size();
+			chunks++;
+		}
+		log.info("분석 배치 제출 완료 — 총 {}건, 청크 {}개(상한 {}), timely={}",
+				submitted, chunks, chunkSize, timely);
+		return new JobResult(submitted, 0, false);
+	}
+
+	/** 청크 1개를 배치 1건으로 제출하고 content_batch_jobs에 pending 행을 남긴다. */
+	private void submitOneChunk(boolean timely, List<Map<String, Object>> targets,
+			Baselines baselines) {
 		BeautyTaxonomy taxonomy = taxonomyLoader.get();
 		String system = GeminiContentAnalyzer.instructions(taxonomy);
 		String model = settings.activeLlmModel();
@@ -272,8 +293,7 @@ public class ContentAnalysisJob {
 		analysis.update("""
 				INSERT INTO content_batch_jobs (batch_name, timely, submitted_count, status, sidecar_jsonl)
 				VALUES (?, ?, ?, 'pending', ?)""", batchName, timely, targets.size(), sidecar.toString());
-		log.info("분석 배치 제출 완료 — batch={}, {}건, timely={}", batchName, targets.size(), timely);
-		return new JobResult(targets.size(), 0, false);
+		log.info("분석 배치 청크 제출 — batch={}, {}건, timely={}", batchName, targets.size(), timely);
 	}
 
 	private JobResult runOnline(boolean timely, List<Map<String, Object>> targets, Baselines baselines,
