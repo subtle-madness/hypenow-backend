@@ -21,7 +21,7 @@ import java.util.zip.GZIPInputStream;
  * HTTP/1.1 web_profile_info를 봇판정 429). gzip 수동 해제. IG의 401(WWW-Authenticate 부재)은
  * IOException으로 오는데, 이를 status 401로 복원해 호출자가 회복(로테이트·재시도)하게 한다.
  */
-public class SelfHttpClient {
+public class SelfHttpClient implements SelfTransport {
 
 	private static final String UA =
 			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -43,12 +43,14 @@ public class SelfHttpClient {
 		this.requestTimeout = proxy.requestTimeout() == null ? Duration.ofSeconds(15) : proxy.requestTimeout();
 	}
 
+	@Override
 	public SelfResponse get(String url, ProxyTier tier, Map<String, String> headers) {
 		HttpRequest.Builder b = baseRequest(url).GET();
 		headers.forEach(b::header);
 		return exchange(b.build(), tier);
 	}
 
+	@Override
 	public SelfResponse post(String url, String formBody, ProxyTier tier, Map<String, String> headers) {
 		HttpRequest.Builder b = baseRequest(url)
 				.header("Content-Type", "application/x-www-form-urlencoded")
