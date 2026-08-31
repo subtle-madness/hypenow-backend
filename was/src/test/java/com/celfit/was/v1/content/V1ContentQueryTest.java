@@ -44,6 +44,17 @@ class V1ContentQueryTest {
 	}
 
 	@Test
+	void FnB_대분류_6종은_검증을_통과한다() {
+		// 2026-08-31 F&B 서빙 개방 — allowlist 누락 시 400 회귀 방지 (에스테틱 테스트와 동일 취지)
+		for (String main : java.util.List.of("beverage", "alcohol", "convenience", "snack",
+				"health-food", "recipe")) {
+			V1ContentQuery query = V1ContentQuery.of(LocalDate.of(2026, 8, 22), LocalDate.of(2026, 8, 27),
+					null, main, null, null, null, null, null, null, null, null, null);
+			assertThat(query.mainCategory()).isEqualTo(main);
+		}
+	}
+
+	@Test
 	void next는_offset만_limit만큼_전진() {
 		V1ContentQuery next = q(50, 0).next();
 		assertThat(next.offset()).isEqualTo(50);
