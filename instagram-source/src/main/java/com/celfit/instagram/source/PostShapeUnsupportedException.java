@@ -1,4 +1,4 @@
-package com.celfit.monitoring.hiker;
+package com.celfit.instagram.source;
 
 /**
  * 단건 응답은 왔지만(200) 브랜드 direct 등록에 쓸 수 없는 셰이프 — 현재는 taken_at 미상 1종

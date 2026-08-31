@@ -1,9 +1,9 @@
 package com.celfit.monitoring.config;
 
+import com.celfit.instagram.source.HikerHttp;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.CountingHikerHttp;
 import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.HikerHttp;
 import com.celfit.monitoring.hiker.RecordingHikerHttp;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.hiker.TimedHikerHttp;

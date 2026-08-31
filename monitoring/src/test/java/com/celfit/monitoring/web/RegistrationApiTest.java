@@ -9,9 +9,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.celfit.monitoring.hiker.HikerFetchException;
-import com.celfit.monitoring.hiker.HikerHttp;
-import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.instagram.source.HikerFetchException;
+import com.celfit.instagram.source.HikerHttp;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.service.CollectService;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.io.IOException;

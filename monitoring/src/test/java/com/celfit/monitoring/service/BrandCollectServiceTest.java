@@ -5,15 +5,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.instagram.source.AuthorInfo;
 import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.HikerFetchException;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.ProfileInfo;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.ad.AdDisclosureJudgeService;
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.CountingHikerHttp;
 import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.HikerFetchException;
-import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCallCountRepository;

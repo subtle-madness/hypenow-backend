@@ -1,4 +1,4 @@
-package com.celfit.monitoring.hiker;
+package com.celfit.instagram.source;
 
 /**
  * Hiker HTTP 400 — 요청 형식 불량. 다른 5xx·IO 실패(HikerFetchException)와 구분해야

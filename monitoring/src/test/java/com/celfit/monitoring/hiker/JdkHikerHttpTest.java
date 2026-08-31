@@ -3,6 +3,9 @@ package com.celfit.monitoring.hiker;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.instagram.source.HikerBadRequestException;
+import com.celfit.instagram.source.HikerFetchException;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetAddress;

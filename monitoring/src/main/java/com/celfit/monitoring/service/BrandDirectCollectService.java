@@ -1,10 +1,10 @@
 package com.celfit.monitoring.service;
 
 import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.PostShapeUnsupportedException;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.PostShapeUnsupportedException;
-import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.TaggedPostRepository;
 import java.time.Instant;

@@ -26,7 +26,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * <b>Phase B(brand_hashtag_post, RELEVANT만)</b>: 만료 작성자마다 먼저 author_profile의 미만료
  * URL을 찾아 재사용하고(Phase A가 방금 갱신한 것 포함, Hiker 호출 0), 없으면 {@code
  * /v2/user/by/username} 재조회 결과로 그 작성자의 미아카이브 행 전부를 갱신한다. 비공개
- * 계정({@link com.celfit.monitoring.hiker.PrivateAccountException})은 깨진 이미지보다 없는 편이
+ * 계정({@link com.celfit.instagram.source.PrivateAccountException})은 깨진 이미지보다 없는 편이
  * 낫다(프론트 이니셜 placeholder)는 판단으로 조용히 skip한다.
  *
  * <p>{@code limit}은 이 실행에서 두 phase가 함께 쓰는 <b>Hiker 호출 총량 상한</b>이다(다운로드

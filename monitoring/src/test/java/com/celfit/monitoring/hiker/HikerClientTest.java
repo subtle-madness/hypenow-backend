@@ -5,9 +5,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.instagram.source.AuthorInfo;
 import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.HikerBadRequestException;
+import com.celfit.instagram.source.HikerFetchException;
+import com.celfit.instagram.source.HikerHttp;
 import com.celfit.instagram.source.MediaRef;
 import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.PrivateAccountException;
 import com.celfit.instagram.source.ProfileInfo;
+import com.celfit.instagram.source.ShareLinkUnresolvedException;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;

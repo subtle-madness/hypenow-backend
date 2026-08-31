@@ -1,4 +1,4 @@
-package com.celfit.monitoring.hiker;
+package com.celfit.instagram.source;
 
 /**
  * 인스타 숏코드 ↔ 미디어 pk 변환 — base64 유사 인코딩(알파벳 A-Za-z0-9-_, 최상위 자리부터).

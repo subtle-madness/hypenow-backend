@@ -1,5 +1,9 @@
 package com.celfit.monitoring.hiker;
 
+import com.celfit.instagram.source.HikerBadRequestException;
+import com.celfit.instagram.source.HikerFetchException;
+import com.celfit.instagram.source.HikerHttp;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;

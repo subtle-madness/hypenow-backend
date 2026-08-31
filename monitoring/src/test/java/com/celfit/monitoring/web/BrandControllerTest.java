@@ -9,9 +9,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.PostShapeUnsupportedException;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.PostShapeUnsupportedException;
-import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.service.BrandDirectCollectService;
 import com.celfit.monitoring.service.BrandRegistrationService;
 import com.celfit.monitoring.service.ValidationException;

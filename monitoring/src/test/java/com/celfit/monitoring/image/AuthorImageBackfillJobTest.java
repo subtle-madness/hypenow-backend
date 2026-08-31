@@ -2,9 +2,9 @@ package com.celfit.monitoring.image;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.instagram.source.HikerFetchException;
+import com.celfit.instagram.source.HikerHttp;
 import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.HikerFetchException;
-import com.celfit.monitoring.hiker.HikerHttp;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.testsupport.CdnUrls;
 import com.celfit.monitoring.testsupport.TestDb;

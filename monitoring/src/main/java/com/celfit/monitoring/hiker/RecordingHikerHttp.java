@@ -1,5 +1,6 @@
 package com.celfit.monitoring.hiker;
 
+import com.celfit.instagram.source.HikerHttp;
 import com.celfit.monitoring.store.RawPayloadRepository;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;

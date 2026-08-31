@@ -2,6 +2,7 @@ package com.celfit.monitoring.hiker;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.instagram.source.SubjectNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;

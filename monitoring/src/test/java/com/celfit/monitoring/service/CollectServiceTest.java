@@ -3,10 +3,10 @@ package com.celfit.monitoring.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.HikerFetchException;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.HikerFetchException;
 import com.celfit.monitoring.store.CommentRepository;
 import com.celfit.monitoring.store.SnapshotRepository;
 import java.time.LocalDate;
