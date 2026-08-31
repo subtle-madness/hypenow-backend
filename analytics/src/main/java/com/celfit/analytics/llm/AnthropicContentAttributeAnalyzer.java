@@ -49,26 +49,32 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 
 	static String instructions(BeautyTaxonomy taxonomy) {
 		return """
-				당신은 뷰티 콘텐츠 분석가다. 캡션(과 썸네일이 주어지면 썸네일)을 보고 다음을 추출하라.
+				당신은 브랜드 콘텐츠 분석가다. 캡션(과 썸네일이 주어지면 썸네일)을 보고 다음을 추출하라.
 				확신이 없는 항목은 null 또는 빈 배열로 두고 지어내지 마라. 한국어로.
 
-				- isBeauty: 이 콘텐츠가 뷰티 콘텐츠인가 (true/false). 뷰티 제품·시술·루틴·리뷰 등이면 true,
-				  뷰티 인플루언서라도 일상·여행·음식 등 뷰티와 무관하면 false. mainCategory와 독립적으로 반드시 판정하라.
+				- isRelevant: 이 콘텐츠가 분류표의 대분류 중 하나에 해당하는가 (true/false).
+				  제품·시술·루틴·리뷰·요리 등이면 true, 인플루언서가 뷰티·F&B라도 무관한
+				  일상·여행·반려동물 등이면 false. mainCategory와 독립적으로 반드시 판정하라.
 				- detectedBrands: 캡션·화면에서 확인되는 브랜드 {name, evidence(근거)} —
 				  브랜드를 특정할 수 없는 제품은 목록에서 제외하라 ("미상"/"불명확" 같은 표기 금지)
 				- sponsoredSignalLevel: 광고성 high|mid|low, sponsoredSignalReasons: 근거 나열
 				- adDisclosure: 광고 고지 여부 (예: "캡션 #협찬 표기 있음", 없으면 "표기 없음")
-				- mainCategory: 아래 분류표의 대분류 영문 값 중 하나
+				- mainCategory: 아래 분류표의 대분류 영문 값 중 하나. 분류표는 [축] 표기로 계열을 밝힌다.
+				  ※ 섭취하는 제품(건강기능식품·단백질·다이어트 식품·이너뷰티 포함)은 뷰티 목적이어도
+				    fnb 축으로 분류하라 — 제형이 아니라 섭취 여부가 기준이다.
 				- subCategories: 이 콘텐츠에 해당하는 중분류·소분류 라벨 전부 — 분류표의 표기 그대로
 				  (예: 립틴트 콘텐츠면 ["립메이크업","립틴트"])
 				- detectedProductCategories: 확인되는 제품들의 소분류 라벨 — 분류표의 표기 그대로
 				- detectedProducts: 확인되는 제품명 {name(상품명), brand(그 제품의 브랜드, 미상이면 null)}
-				- detectedDistributors: 확인되는 유통 채널 — %s 만, 그 외 상호는 제외
+				- detectedDistributors: 확인되는 유통 채널 — %s 만, 그 외 상호는 제외.
+				  괄호 안은 그 유통사가 속한 축이다 — mainCategory와 같은 축의 유통사만 답하라.
 				- vlmAttributes: {label, value} — 노출 제품 / 제품 노출 비중 / 후킹 요소 / 전환 장치 /
 				  콘텐츠 유형 / 무드 / 편집 스타일 순 (썸네일 없이 판단 불가한 항목은 제외)
 				- adType: organic|sponsored (캡션 표기+화면 종합 판정)
+				  ※ 공동구매(공구)는 인플루언서가 대가를 받고 판매하는 상업 콘텐츠다 —
+				    sponsored로 판정하라.
 
-				[분류표 — 대분류(한글): 중분류[소분류, …]]
+				[분류표 — [축] 대분류(한글): 중분류[소분류, …]]
 				%s""".formatted(taxonomy.distributorsPrompt(), taxonomy.promptTable());
 	}
 

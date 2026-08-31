@@ -39,7 +39,7 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 			  "vlmAttributes":{"type":"array","nullable":true,"items":{"type":"object",
 			    "properties":{"label":{"type":"string"},"value":{"type":"string"}},
 			    "required":["label","value"]}},
-			  "isBeauty":{"type":"boolean"},
+			  "isRelevant":{"type":"boolean"},
 			  "mainCategory":{"type":"string","nullable":true},
 			  "subCategories":{"type":"array","nullable":true,"items":{"type":"string"}},
 			  "detectedDistributors":{"type":"array","nullable":true,"items":{"type":"string"}},
@@ -50,11 +50,11 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 			  "commentAuthenticityGrade":{"type":"string"},
 			  "commentAuthenticityNote":{"type":"string"}},
 			 "required":["detectedBrands","sponsoredSignalLevel","sponsoredSignalReasons","adDisclosure",
-			  "detectedProductCategories","detectedProducts","vlmAttributes","isBeauty","mainCategory","subCategories",
+			  "detectedProductCategories","detectedProducts","vlmAttributes","isRelevant","mainCategory","subCategories",
 			  "detectedDistributors","adType","aiContentSummary","contentsPattern","aiCommentInsight",
 			  "commentAuthenticityGrade","commentAuthenticityNote"],
 			 "propertyOrdering":["detectedBrands","sponsoredSignalLevel","sponsoredSignalReasons","adDisclosure",
-			  "detectedProductCategories","detectedProducts","vlmAttributes","isBeauty","mainCategory","subCategories",
+			  "detectedProductCategories","detectedProducts","vlmAttributes","isRelevant","mainCategory","subCategories",
 			  "detectedDistributors","adType","aiContentSummary","contentsPattern","aiCommentInsight",
 			  "commentAuthenticityGrade","commentAuthenticityNote"]}""";
 
@@ -92,25 +92,30 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 	/** 통합 시스템 프롬프트 — 검증 통과본(unified_prompt.txt, 07-18 11건 검증) verbatim. */
 	public static String instructions(BeautyTaxonomy taxonomy) {
 		return """
-				당신은 뷰티 브랜드 마케터를 위한 인스타그램 콘텐츠 분석가다. 한 번의 분석에서
+				당신은 브랜드 마케터를 위한 인스타그램 콘텐츠 분석가다. 한 번의 분석에서
 				[파트 A] 캡션 속성 추출과 [파트 B] 성과 종합을 함께 수행한다. 한국어로 답한다.
 
 				[파트 A — 캡션 속성 추출]
 				캡션(과 썸네일이 주어지면 썸네일)에서 다음을 추출하라.
-				확신이 없는 항목은 null 또는 빈 배열로 두고 지어내지 마라. 뷰티와 무관한 콘텐츠면 mainCategory는 null이다.
+				확신이 없는 항목은 null 또는 빈 배열로 두고 지어내지 마라.
+				분류표의 어느 대분류에도 해당하지 않으면 mainCategory는 null이다.
 
-				- isBeauty: 이 콘텐츠가 뷰티 콘텐츠인가 (true/false). 뷰티 제품·시술·루틴·리뷰 등이면 true,
-				  뷰티 인플루언서라도 일상·여행·음식 등 뷰티와 무관하면 false. mainCategory와 독립적으로 반드시 판정하라.
+				- isRelevant: 이 콘텐츠가 분류표의 대분류 중 하나에 해당하는가 (true/false).
+				  제품·시술·루틴·리뷰·요리 등이면 true, 인플루언서가 뷰티·F&B라도 무관한
+				  일상·여행·반려동물 등이면 false. mainCategory와 독립적으로 반드시 판정하라.
 				- detectedBrands: 캡션·화면에서 확인되는 브랜드 {name, evidence(근거)} —
 				  브랜드를 특정할 수 없는 제품은 목록에서 제외하라 ("미상"/"불명확" 같은 표기 금지)
 				- sponsoredSignalLevel: 광고성 high|mid|low, sponsoredSignalReasons: 근거 나열
 				- adDisclosure: 광고 고지 여부 (예: "캡션 #협찬 표기 있음", 없으면 "표기 없음")
-				- mainCategory: 아래 분류표의 대분류 영문 값 중 하나
+				- mainCategory: 아래 분류표의 대분류 영문 값 중 하나. 분류표는 [축] 표기로 계열을 밝힌다.
+				  ※ 섭취하는 제품(건강기능식품·단백질·다이어트 식품·이너뷰티 포함)은 뷰티 목적이어도
+				    fnb 축으로 분류하라 — 제형이 아니라 섭취 여부가 기준이다.
 				- subCategories: 이 콘텐츠에 해당하는 중분류·소분류 라벨 전부 — 분류표의 표기 그대로
 				  (예: 립틴트 콘텐츠면 ["립메이크업","립틴트"])
 				- detectedProductCategories: 확인되는 제품들의 소분류 라벨 — 분류표의 표기 그대로
 				- detectedProducts: 확인되는 제품명 {name(상품명), brand(그 제품의 브랜드, 미상이면 null)}
-				- detectedDistributors: 확인되는 유통 채널 — %s 만, 그 외 상호는 제외
+				- detectedDistributors: 확인되는 유통 채널 — %s 만, 그 외 상호는 제외.
+				  괄호 안은 그 유통사가 속한 축이다 — mainCategory와 같은 축의 유통사만 답하라.
 				- vlmAttributes: {label, value} — 노출 제품 / 제품 노출 비중 / 후킹 요소 / 전환 장치 /
 				  콘텐츠 유형 / 무드 / 편집 스타일 순 (썸네일 없이 판단 불가한 항목은 제외)
 				- adType: organic|sponsored (캡션 표기+화면 종합 판정)
@@ -118,13 +123,15 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 				    이 경우 adType은 반드시 sponsored로 판정하라. 반대로 '없음'은 광고가 아니라는 뜻이 아니다
 				    (피드는 태그 기능 자체가 없고, 릴스도 캡션으로만 고지하는 경우가 많다) —
 				    '없음'·'해당 없음'이면 캡션·화면 근거로 평소대로 판단하라.
+				  ※ 공동구매(공구)는 인플루언서가 대가를 받고 판매하는 상업 콘텐츠다 —
+				    sponsored로 판정하라.
 
 				%s
 
 				[파트 B 절제 규칙 — 반드시 지켜라]
 				%s
 
-				[분류표 — 대분류(한글): 중분류[소분류, …]]
+				[분류표 — [축] 대분류(한글): 중분류[소분류, …]]
 				%s""".formatted(taxonomy.distributorsPrompt(), SYNTHESIS_RULES, LlmGuard.BODY, taxonomy.promptTable());
 	}
 
@@ -173,7 +180,7 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 		ContentAttributes attrs = AnthropicContentAttributeAnalyzer.sanitize(new ContentAttributes(
 				o.detectedBrands(), o.sponsoredSignalLevel(), o.sponsoredSignalReasons(), o.adDisclosure(),
 				o.detectedProductCategories(), o.detectedProducts(), o.vlmAttributes(), o.mainCategory(),
-				o.subCategories(), o.detectedDistributors(), o.adType(), o.isBeauty(), null), taxonomy);
+				o.subCategories(), o.detectedDistributors(), o.adType(), o.isRelevant(), null), taxonomy);
 		String grade = defendGrade(o.commentAuthenticityGrade());
 		return new ContentInsight(attrs, new Synthesis(o.aiContentSummary(), o.contentsPattern(),
 				o.aiCommentInsight(), grade, o.commentAuthenticityNote()));
@@ -198,7 +205,7 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 	record Output(List<ContentAttributes.Brand> detectedBrands, String sponsoredSignalLevel,
 			List<String> sponsoredSignalReasons, String adDisclosure,
 			List<String> detectedProductCategories, List<ContentAttributes.Product> detectedProducts,
-			List<ContentAttributes.Attribute> vlmAttributes, Boolean isBeauty, String mainCategory,
+			List<ContentAttributes.Attribute> vlmAttributes, Boolean isRelevant, String mainCategory,
 			List<String> subCategories, List<String> detectedDistributors, String adType,
 			String aiContentSummary, String contentsPattern, String aiCommentInsight,
 			String commentAuthenticityGrade, String commentAuthenticityNote) {}
