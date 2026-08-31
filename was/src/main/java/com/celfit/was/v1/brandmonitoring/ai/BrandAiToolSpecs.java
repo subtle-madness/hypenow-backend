@@ -63,15 +63,26 @@ public final class BrandAiToolSpecs {
 					},"required":["brandId","query"]}
 					"""),
 			new AiToolSpec(AGGREGATE_POSTS,
-					"브랜드 게시물의 게시물 수·좋아요/댓글/조회수 합계·평균을 지정한 기간(창) 안 전체를 대상으로 집계한다. "
-							+ "게시물 수·합계·평균·규모를 묻는 질문에는 list_posts 30건 표본이 아니라 이 툴을 쓴다. "
-							+ "조회수는 릴스 게시물만 집계한다(피드 게시물은 조회수가 항상 없다) - 좋아요·댓글은 "
-							+ "수집된 게시물만 대상이며 표본 수가 함께 온다. "
+					"브랜드 게시물의 수·좋아요/댓글/조회수 합계·평균을 지정한 기간(창) 안 전체를 대상으로 집계한다. "
+							+ "groupBy를 주면 작성자별·월별·주별·협찬여부별·미디어타입별로 묶어 그룹별 집계와 서버가 계산한 "
+							+ "파생 지표(author 축: followers·reachMultiple=릴스 평균 조회수÷팔로워·engagementRate=릴스 댓글 합÷조회수 합)를 "
+							+ "orderBy 기준 내림차순 정렬로 돌려준다. 작성자 랭킹·기간 비교·협찬 vs 오가닉 비교는 반드시 이 툴 "
+							+ "1회로 해결한다 - list_posts로 모아 get_author를 반복 호출하며 직접 계산하지 마라. "
+							+ "reachMultiple·engagementRate·totalGroups 등 숫자는 직접 재계산하지 말고 그대로 인용한다. "
+							+ "keyword를 주면 캡션에 그 키워드가 있는 게시물만 모수로 삼는다. "
+							+ "조회수·도달배수·참여율은 릴스만 집계한다(피드는 조회수가 항상 없다). "
+							+ "limit 초과분은 잘리고 totalGroups로 전체 수를 알려주니 '전체 N개 중 상위 M개 기준'을 답변에 명시하라. "
 							+ "days 생략 시 수집 기간 전체를 대상으로 한다. 사용자가 기간을 명시했을 때만 days를 넘겨라.",
 					"""
 					{"type":"object","properties":{
 					  "brandId":{"type":"integer","description":"list_brands가 돌려준 브랜드 id"},
-					  "days":{"type":"integer","description":"오늘부터 며칠 전까지 볼지. 생략하면 수집된 기간 전체, 최대 365일"}
+					  "days":{"type":"integer","description":"오늘부터 며칠 전까지 볼지. 생략하면 수집된 기간 전체, 최대 365일"},
+					  "keyword":{"type":"string","description":"캡션 필터 - 이 키워드가 캡션에 있는 게시물만 집계. 공백 유무는 흡수"},
+					  "groupBy":{"type":"string","enum":["author","month","week","sponsorship","mediaType"],
+					             "description":"묶는 축. author=작성자별, month/week=KST 달력 월/주별(기간 비교용), sponsorship=협찬여부별, mediaType=릴스/피드별. 생략하면 전체 하나로 집계"},
+					  "orderBy":{"type":"string","enum":["postCount","totalViews","avgViews","avgLikes","avgComments","reachMultiple","engagementRate"],
+					             "description":"그룹 정렬 기준(내림차순, 서버 정렬). 생략하면 postCount"},
+					  "limit":{"type":"integer","description":"돌려줄 그룹 상위 N. 생략하면 10, 최대 50. 사용자가 N명/N개를 명시하면 그 값을 그대로 넘겨라"}
 					},"required":["brandId"]}
 					"""),
 			new AiToolSpec(GET_POST,

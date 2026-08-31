@@ -19,6 +19,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -538,29 +539,7 @@ public class BrandAiToolbox {
 		BrandAccountRow account = accountOpt.get();
 		BrandWindow window = resolveWindow(session, userId, link, account, args, false);
 
-		List<PostRef> poolRefs = new ArrayList<>();
-		List<PostRef> legacyRefs = new ArrayList<>();
-		for (PostRef ref : window.inWindow()) {
-			(window.index().poolCodes().contains(ref.shortcode()) ? poolRefs : legacyRefs).add(ref);
-		}
-		Set<String> poolCodes = poolRefs.stream().map(PostRef::shortcode)
-				.collect(Collectors.toCollection(LinkedHashSet::new));
-		Set<String> matchedPoolCodes = brandReadRepository.findCaptionMatches(poolCodes, normalizedQuery);
-
-		String lowerQuery = normalizedQuery.toLowerCase(Locale.ROOT);
-		List<PostRef> matchedRefs = new ArrayList<>();
-		for (PostRef ref : poolRefs) {
-			if (matchedPoolCodes.contains(ref.shortcode())) {
-				matchedRefs.add(ref);
-			}
-		}
-		for (PostRef ref : legacyRefs) {
-			BrandPostResponse legacy = window.index().legacyByCode().get(ref.shortcode());
-			String caption = legacy == null ? null : legacy.caption();
-			if (caption != null && caption.replace(" ", "").toLowerCase(Locale.ROOT).contains(lowerQuery)) {
-				matchedRefs.add(ref);
-			}
-		}
+		List<PostRef> matchedRefs = captionMatchedRefs(window, normalizedQuery);
 
 		List<String> topCodes = matchedRefs.stream()
 				.sorted(Comparator.comparing(PostRef::uploadedOn, Comparator.nullsLast(Comparator.reverseOrder())))
@@ -600,16 +579,58 @@ public class BrandAiToolbox {
 		return AiToolResult.ok(payload.toString(), matchedRefs.size(), codesOut);
 	}
 
+	/** 창 안 refs 중 캡션이 normalizedQuery에 매칭되는 것만(2026-08-31 aggregate_posts keyword 필터 신설,
+	 * 스펙 §3-1) - searchPosts와 aggregatePosts가 공유한다. 풀 게시물은 SQL ILIKE({@link
+	 * BrandReadRepository#findCaptionMatches}), 과도기 레거시 카드는 인메모리 비교(기존 두 갈래 로직을
+	 * searchPosts에서 그대로 옮긴 것 - 동작 무변화, 기존 search_posts 테스트가 회귀 가드다). */
+	private List<PostRef> captionMatchedRefs(BrandWindow window, String normalizedQuery) {
+		List<PostRef> poolRefs = new ArrayList<>();
+		List<PostRef> legacyRefs = new ArrayList<>();
+		for (PostRef ref : window.inWindow()) {
+			(window.index().poolCodes().contains(ref.shortcode()) ? poolRefs : legacyRefs).add(ref);
+		}
+		Set<String> poolCodes = poolRefs.stream().map(PostRef::shortcode)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		Set<String> matchedPoolCodes = brandReadRepository.findCaptionMatches(poolCodes, normalizedQuery);
+		String lowerQuery = normalizedQuery.toLowerCase(Locale.ROOT);
+		List<PostRef> matched = new ArrayList<>();
+		for (PostRef ref : poolRefs) {
+			if (matchedPoolCodes.contains(ref.shortcode())) {
+				matched.add(ref);
+			}
+		}
+		for (PostRef ref : legacyRefs) {
+			BrandPostResponse legacy = window.index().legacyByCode().get(ref.shortcode());
+			String caption = legacy == null ? null : legacy.caption();
+			if (caption != null && caption.replace(" ", "").toLowerCase(Locale.ROOT).contains(lowerQuery)) {
+				matched.add(ref);
+			}
+		}
+		return matched;
+	}
+
 	/**
-	 * 집계(신설, 2026-08-28) - 게시물 수·합계·평균 질문을 SQL 집계로 낸다(list_posts 30건 표본으로
-	 * 어림잡지 않는다). 지표는 {@link BrandReadRepository#findLatestMetricsByShortCodes}로 인덱스가
-	 * 이미 좁혀 놓은 풀 shortcode만 배치 조회한다 - search_posts와 같은 이유로 창 안 전체를
-	 * hydrate하지 않는다. 과도기 폴백 카드는 소량이라 인메모리 값을 그대로 쓴다.
+	 * 집계(신설, 2026-08-28 / 일반화 2026-08-31 - 스펙 §3-1·§3-2) - 게시물 수·합계·평균 질문을 SQL 집계로
+	 * 낸다(list_posts 30건 표본으로 어림잡지 않는다). 지표는 {@link
+	 * BrandReadRepository#findLatestMetricsByShortCodes}로 인덱스가 이미 좁혀 놓은 풀 shortcode만 배치
+	 * 조회한다 - search_posts와 같은 이유로 창 안 전체를 hydrate하지 않는다. 과도기 폴백 카드는 소량이라
+	 * 인메모리 값을 그대로 쓴다.
 	 *
 	 * <p>조회수는 릴스만 분모·분자에 들어간다(피드는 항상 null) - payload의 viewsNote가 그 규칙을
 	 * 모델에게도 명시한다. 좋아요·댓글은 "수집된 것 기준"이라 스냅샷이 아예 없는(아직 미수집) 게시물은
 	 * 표본에서 빠지고, 그 표본 수를 각각 *SampleCount로 함께 싣는다.
+	 *
+	 * <p><b>2026-08-31 groupBy 일반화(스펙 §3-1)</b> - groupBy 생략은 단일 그룹 "all"로 이 메서드가 쓰는
+	 * {@link GroupAcc} 누산기를 그대로 태워 기존 스칼라 페이로드({@link #scalarAggregatePayload})로 나간다
+	 * (필드명·모양 완전 하위호환). groupBy가 있으면 그룹 페이로드({@link #groupedAggregatePayload})로
+	 * 나가며 author 축은 파생 지표(도달 배수·참여율, 스펙 §3-2)까지 서버가 계산해 싣는다.
 	 */
+	/** 집계 상수(2026-08-31 groupBy 일반화, 스펙 §3-1) - 그룹 행은 캡션 등 자유 텍스트가 없는 순수 숫자
+	 * 행(행당 60~80토큰)이라 list_posts 30건 상한보다 여유 있게 잡는다. */
+	private static final int DEFAULT_GROUP_LIMIT = 10;
+	private static final int MAX_GROUP_LIMIT = 50;
+	private static final Set<String> GROUP_BY_VALUES = Set.of("author", "month", "week", "sponsorship", "mediaType");
+
 	private AiToolResult aggregatePosts(ToolSession session, long userId, JsonNode args) {
 		long requestedBrandId = args.path("brandId").asLong(0);
 		Optional<AiToolResult> mismatch = scopeMismatch(session, requestedBrandId);
@@ -628,7 +649,19 @@ public class BrandAiToolbox {
 		BrandAccountRow account = accountOpt.get();
 		BrandWindow window = resolveWindow(session, userId, link, account, args, false);
 
-		Set<String> poolCodes = window.inWindow().stream().map(PostRef::shortcode)
+		JsonNode groupByNode = args.path("groupBy");
+		String groupBy = groupByNode.isMissingNode() || groupByNode.isNull() ? null : groupByNode.asString();
+		if (groupBy != null && !GROUP_BY_VALUES.contains(groupBy)) {
+			return error("groupBy는 author·month·week·sponsorship·mediaType 중 하나여야 합니다.");
+		}
+		String orderBy = args.path("orderBy").asString("postCount");
+		int groupLimit = Math.clamp(args.path("limit").asInt(DEFAULT_GROUP_LIMIT), 1, MAX_GROUP_LIMIT);
+
+		// keyword 필터(스펙 §3-1) - search_posts와 같은 정규화(공백 흡수)·같은 매칭 헬퍼를 공유한다.
+		String keyword = args.path("keyword").asString("").replace(" ", "");
+		List<PostRef> universe = keyword.isEmpty() ? window.inWindow() : captionMatchedRefs(window, keyword);
+
+		Set<String> poolCodes = universe.stream().map(PostRef::shortcode)
 				.filter(window.index().poolCodes()::contains)
 				.collect(Collectors.toCollection(LinkedHashSet::new));
 		Map<String, BrandReadRepository.LatestMetricsRow> metricsByCode = brandReadRepository
@@ -636,18 +669,15 @@ public class BrandAiToolbox {
 				.collect(Collectors.toMap(BrandReadRepository.LatestMetricsRow::shortCode, Function.identity(),
 						(a, b) -> a));
 
-		long reelsCount = 0;
-		long feedCount = 0;
-		long totalViews = 0;
-		long viewsSampleCount = 0;
-		long totalLikes = 0;
-		long likesSampleCount = 0;
-		long totalComments = 0;
-		long commentsSampleCount = 0;
-		String topShortCode = null;
-		Long topViews = null;
-
-		for (PostRef ref : window.inWindow()) {
+		Function<PostRef, String> keyFn = groupKeyFunction(groupBy);
+		Map<String, GroupAcc> groups = new LinkedHashMap<>();
+		long skippedNoKey = 0;
+		for (PostRef ref : universe) {
+			String key = keyFn.apply(ref);
+			if (key == null) {
+				skippedNoKey++;
+				continue;
+			}
 			String code = ref.shortcode();
 			String contentType;
 			Long views;
@@ -667,7 +697,51 @@ public class BrandAiToolbox {
 				likes = latest == null ? null : latest.likes();
 				comments = latest == null ? null : latest.comments();
 			}
+			groups.computeIfAbsent(key, GroupAcc::new).add(code, contentType, views, likes, comments);
+		}
 
+		// author 축 팔로워 join(스펙 §3-2) - 기존 배치 조회를 그대로 재사용한다.
+		if ("author".equals(groupBy) && !groups.isEmpty()) {
+			Map<String, AuthorRow> byUsername = findAuthorsByUsernameBatched(new LinkedHashSet<>(groups.keySet()))
+					.stream().collect(Collectors.toMap(AuthorRow::username, Function.identity(), (a, b) -> a));
+			for (GroupAcc acc : groups.values()) {
+				AuthorRow author = byUsername.get(acc.key);
+				acc.followers = author == null ? null : author.followers();
+			}
+		}
+
+		if (groupBy == null) {
+			return scalarAggregatePayload(link, window, keyword, groups, universe.size());
+		}
+		return groupedAggregatePayload(link, window, groupBy, orderBy, groupLimit, keyword, groups, universe.size(),
+				skippedNoKey);
+	}
+
+	/** 그룹 1개의 누산기(2026-08-31 groupBy 일반화, 스펙 §3-1·§3-2) - 스칼라 경로도 단일 그룹("all")로
+	 * 이 누산기를 쓴다. */
+	private static final class GroupAcc {
+		final String key;
+		long postCount;
+		long reelsCount;
+		long feedCount;
+		long totalViews;               // 릴스만(피드는 조회수 항상 null)
+		long viewsSampleCount;
+		long totalLikes;
+		long likesSampleCount;
+		long totalComments;
+		long commentsSampleCount;
+		long reelsComments;            // engagementRate 분자 - 릴스 게시물의 댓글 합(분모와 모수 일치)
+		long reelsCommentsSampleCount;
+		String topShortCode;
+		Long topViews;
+		Long followers;                // author 축 전용(배치 조회로 나중에 채움)
+
+		GroupAcc(String key) {
+			this.key = key;
+		}
+
+		void add(String shortCode, String contentType, Long views, Long likes, Long comments) {
+			postCount++;
 			boolean isReels = BrandPostAssembler.CONTENT_TYPE_REELS.equalsIgnoreCase(contentType);
 			if (isReels) {
 				reelsCount++;
@@ -679,8 +753,12 @@ public class BrandAiToolbox {
 				viewsSampleCount++;
 				if (topViews == null || views > topViews) {
 					topViews = views;
-					topShortCode = code;
+					topShortCode = shortCode;
 				}
+			}
+			if (isReels && comments != null) {
+				reelsComments += comments;
+				reelsCommentsSampleCount++;
 			}
 			if (likes != null) {
 				totalLikes += likes;
@@ -692,33 +770,159 @@ public class BrandAiToolbox {
 			}
 		}
 
+		Double avgViews() {
+			return viewsSampleCount == 0 ? null : (double) totalViews / viewsSampleCount;
+		}
+
+		Double avgLikes() {
+			return likesSampleCount == 0 ? null : (double) totalLikes / likesSampleCount;
+		}
+
+		Double avgComments() {
+			return commentsSampleCount == 0 ? null : (double) totalComments / commentsSampleCount;
+		}
+
+		/** 도달 배수(스펙 §3-2) = 릴스 평균 조회수 ÷ 팔로워. 팔로워 null·0이면 null(계산 불가 - 제외가
+		 * 아니라 유지, 정렬 시 nullsLast). */
+		Double reachMultiple() {
+			Double avg = avgViews();
+			return followers == null || followers <= 0 || avg == null ? null : avg / followers;
+		}
+
+		/** 참여율(스펙 §3-2) = 릴스 댓글 합 ÷ 릴스 조회수 합. 분모 0·표본 없음이면 null. */
+		Double engagementRate() {
+			return totalViews <= 0 || reelsCommentsSampleCount == 0 ? null : (double) reelsComments / totalViews;
+		}
+	}
+
+	/** groupBy 축별 그룹 키(스펙 §3-1) - null 반환은 "키를 정할 수 없는 게시물"(작성자·업로드일 미상)로,
+	 * 집계에서 빼고 skippedNoKey로 센다. 기간 버킷은 KST 달력 기준(월은 1일~말일, 주는 월요일 시작) -
+	 * "지난달"의 자연스러운 의미와 일치시키고 롤링 30일 해석을 배제한다(스펙 §3-1). {@link
+	 * PostRef#uploadedOn()}은 이미 KST 달력일 {@link LocalDate}다({@link
+	 * BrandPostAssembler#indexForBrand} 참조) - 별도 타임존 변환이 필요 없다. */
+	private static Function<PostRef, String> groupKeyFunction(String groupBy) {
+		if (groupBy == null) {
+			return ref -> "all";
+		}
+		return switch (groupBy) {
+			case "author" -> PostRef::authorUsername;
+			case "month" -> ref -> ref.uploadedOn() == null ? null
+					: String.format(Locale.ROOT, "%04d-%02d", ref.uploadedOn().getYear(),
+							ref.uploadedOn().getMonthValue());
+			case "week" -> ref -> ref.uploadedOn() == null ? null
+					: ref.uploadedOn().with(java.time.DayOfWeek.MONDAY).toString();
+			case "sponsorship" -> ref -> ref.sponsorship() == null ? "unknown" : ref.sponsorship();
+			case "mediaType" -> ref -> ref.contentType() == null ? "unknown"
+					: ref.contentType().toLowerCase(Locale.ROOT);
+			default -> throw new IllegalArgumentException("알 수 없는 groupBy: " + groupBy); // 호출부가 사전 검증
+		};
+	}
+
+	/** groupBy 없는 기존 스칼라 페이로드(하위호환 고정, 2026-08-28 신설 당시 필드명·모양 그대로) - 단일
+	 * GroupAcc("all")를 펴서 낸다. keyword가 있으면 모델이 "키워드 매칭 게시물 기준"임을 답변에 밝힐 수
+	 * 있게 명시한다. */
+	private AiToolResult scalarAggregatePayload(BrandLinkRow link, BrandWindow window, String keyword,
+			Map<String, GroupAcc> groups, int universeSize) {
+		GroupAcc acc = groups.getOrDefault("all", new GroupAcc("all"));
 		ObjectNode payload = objectMapper.createObjectNode();
 		payload.put("brandId", link.brandId());
 		payload.put("since", window.since().toString());
 		payload.put("window", window.windowKind());
-		payload.put("postCount", window.inWindow().size());
-		payload.put("reelsCount", reelsCount);
-		payload.put("feedCount", feedCount);
+		if (!keyword.isEmpty()) {
+			payload.put("keyword", keyword);
+		}
+		payload.put("postCount", universeSize);
+		payload.put("reelsCount", acc.reelsCount);
+		payload.put("feedCount", acc.feedCount);
 		payload.put("viewsNote", "피드 게시물은 조회수가 항상 null이라 조회수 집계·평균은 릴스만 대상입니다.");
-		payload.put("totalViews", totalViews);
-		payload.put("avgViews", viewsSampleCount == 0 ? null : (double) totalViews / viewsSampleCount);
-		payload.put("viewsSampleCount", viewsSampleCount);
-		payload.put("totalLikes", totalLikes);
-		payload.put("avgLikes", likesSampleCount == 0 ? null : (double) totalLikes / likesSampleCount);
-		payload.put("likesSampleCount", likesSampleCount);
-		payload.put("totalComments", totalComments);
-		payload.put("avgComments", commentsSampleCount == 0 ? null : (double) totalComments / commentsSampleCount);
-		payload.put("commentsSampleCount", commentsSampleCount);
+		payload.put("totalViews", acc.totalViews);
+		payload.put("avgViews", acc.avgViews());
+		payload.put("viewsSampleCount", acc.viewsSampleCount);
+		payload.put("totalLikes", acc.totalLikes);
+		payload.put("avgLikes", acc.avgLikes());
+		payload.put("likesSampleCount", acc.likesSampleCount);
+		payload.put("totalComments", acc.totalComments);
+		payload.put("avgComments", acc.avgComments());
+		payload.put("commentsSampleCount", acc.commentsSampleCount);
 		List<String> codes;
-		if (topShortCode != null) {
+		if (acc.topShortCode != null) {
 			ObjectNode topPost = payload.putObject("topPost");
-			topPost.put("shortCode", topShortCode);
-			topPost.put("views", topViews);
-			codes = List.of(topShortCode);
+			topPost.put("shortCode", acc.topShortCode);
+			topPost.put("views", acc.topViews);
+			codes = List.of(acc.topShortCode);
 		} else {
 			codes = List.of();
 		}
-		return AiToolResult.ok(payload.toString(), window.inWindow().size(), codes);
+		return AiToolResult.ok(payload.toString(), universeSize, codes);
+	}
+
+	/** groupBy가 있는 그룹 페이로드(스펙 §3-1·§3-2) - 정렬은 서버가 orderBy 기준 내림차순으로 하고
+	 * (nullsLast), limit은 반환 그룹 수만 자른다. totalGroups는 절단과 무관하게 전체 그룹 수를 그대로
+	 * 보고해 "전체 N개 중 상위 M개" 같은 조용한 절단을 막는다. */
+	private AiToolResult groupedAggregatePayload(BrandLinkRow link, BrandWindow window, String groupBy,
+			String orderBy, int groupLimit, String keyword, Map<String, GroupAcc> groups, int universeSize,
+			long skippedNoKey) {
+		Function<GroupAcc, Double> sortKey = switch (orderBy) {
+			case "totalViews" -> acc -> (double) acc.totalViews;
+			case "avgViews" -> GroupAcc::avgViews;
+			case "avgLikes" -> GroupAcc::avgLikes;
+			case "avgComments" -> GroupAcc::avgComments;
+			case "reachMultiple" -> GroupAcc::reachMultiple;
+			case "engagementRate" -> GroupAcc::engagementRate;
+			default -> acc -> (double) acc.postCount; // postCount 및 알 수 없는 값 폴백
+		};
+		List<GroupAcc> ordered = groups.values().stream()
+				.sorted(Comparator.comparing(sortKey, Comparator.nullsLast(Comparator.reverseOrder())))
+				.toList();
+		List<GroupAcc> page = ordered.stream().limit(groupLimit).toList();
+
+		ObjectNode payload = objectMapper.createObjectNode();
+		payload.put("brandId", link.brandId());
+		payload.put("since", window.since().toString());
+		payload.put("window", window.windowKind());
+		payload.put("groupBy", groupBy);
+		payload.put("orderBy", orderBy);
+		if (!keyword.isEmpty()) {
+			payload.put("keyword", keyword);
+		}
+		payload.put("postCount", universeSize);
+		payload.put("totalGroups", groups.size());
+		payload.put("returnedGroups", page.size());
+		if (skippedNoKey > 0) {
+			payload.put("skippedNoKey", skippedNoKey);
+		}
+		payload.put("viewsNote", "피드 게시물은 조회수가 항상 null이라 조회수·도달배수·참여율은 릴스만 대상입니다. "
+				+ "reachMultiple·engagementRate는 서버가 계산한 값이니 그대로 인용하세요.");
+		ArrayNode groupsNode = payload.putArray("groups");
+		List<String> codes = new ArrayList<>();
+		for (GroupAcc acc : page) {
+			ObjectNode node = groupsNode.addObject();
+			node.put("key", acc.key);
+			node.put("postCount", acc.postCount);
+			node.put("reelsCount", acc.reelsCount);
+			node.put("feedCount", acc.feedCount);
+			node.put("totalViews", acc.totalViews);
+			node.put("avgViews", acc.avgViews());
+			node.put("viewsSampleCount", acc.viewsSampleCount);
+			node.put("totalLikes", acc.totalLikes);
+			node.put("avgLikes", acc.avgLikes());
+			node.put("totalComments", acc.totalComments);
+			node.put("avgComments", acc.avgComments());
+			if ("author".equals(groupBy)) {
+				node.put("followers", acc.followers);
+				node.put("reachMultiple", acc.reachMultiple());
+				node.put("engagementRate", acc.engagementRate());
+			}
+			if (acc.topShortCode != null) {
+				node.put("topPostShortCode", acc.topShortCode);
+				if (codes.size() < MAX_GROUP_LIMIT) {
+					codes.add(acc.topShortCode);
+				}
+			}
+		}
+		// rowCount는 다른 툴과 달리 반환 그룹 수가 아니라 전체 그룹 수다 - search_posts의 totalMatches
+		// 관용구와 동일하게 "정확한 총 수"를 로그(app.ai_chat_logs.tool_calls[].rows)에도 남긴다.
+		return AiToolResult.ok(payload.toString(), groups.size(), codes);
 	}
 
 	/**

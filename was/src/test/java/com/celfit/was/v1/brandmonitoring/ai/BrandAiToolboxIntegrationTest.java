@@ -30,6 +30,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -927,5 +928,135 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 				args().put("brandId", myBrandId));
 
 		assertThat(result.failed()).isFalse();
+	}
+
+	// ---------- aggregate_posts 일반화(2026-08-31 툴·한계 재설계, 스펙 §3-1·§3-2) ----------
+
+	/**
+	 * 작성자별 집계·파생지표(스펙 §3-2) - author_a는 릴스 2건(조회수 1000·3000, 평균 2000) 팔로워
+	 * 100이라 reachMultiple=20.0, author_b는 릴스 1건(조회수 9000) 팔로워 9000이라 reachMultiple=1.0.
+	 * orderBy=reachMultiple이면 모델 암산이 아니라 서버 정렬로 author_a가 앞이어야 한다.
+	 */
+	@Test
+	void aggregate_posts_groupBy_author는_작성자별_집계와_파생지표를_서버가_계산해_정렬한다() throws Exception {
+		long brandId = insertBrand(monitoringJdbc, "groupauthorbrand");
+		linkRepository.insertLink(userId, brandId, "groupauthorbrand", BrandAccountType.OWN, 12);
+		insertMetricPost(brandId, "AREEL1", "author_a", NOW.minusSeconds(3600), "a1", "REELS", 1, 1, 1000L);
+		insertMetricPost(brandId, "AREEL2", "author_a", NOW.minusSeconds(7200), "a2", "REELS", 1, 1, 3000L);
+		insertMetricPost(brandId, "BREEL1", "author_b", NOW.minusSeconds(3600), "b1", "REELS", 1, 1, 9000L);
+		insertAuthorProfile("author_a", "author_a", "에이", 100L);
+		insertAuthorProfile("author_b", "author_b", "비", 9000L);
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", brandId).put("groupBy", "author").put("orderBy", "reachMultiple"));
+
+		assertThat(result.failed()).isFalse();
+		JsonNode payload = objectMapper.readTree(result.payloadJson());
+		assertThat(payload.path("totalGroups").asInt()).isEqualTo(2);
+		assertThat(payload.path("groups").get(0).path("key").asString()).isEqualTo("author_a");
+		assertThat(payload.path("groups").get(0).path("reachMultiple").asDouble()).isEqualTo(20.0);
+		assertThat(payload.path("groups").get(1).path("key").asString()).isEqualTo("author_b");
+		assertThat(payload.path("groups").get(1).path("reachMultiple").asDouble()).isEqualTo(1.0);
+	}
+
+	/** 팔로워 미상(author_profile 미수집)이면 reachMultiple은 null이고 정렬 시 뒤로 밀린다(계산 불가 - 제외가 아니라 유지). */
+	@Test
+	void aggregate_posts_groupBy_author는_팔로워_미상이면_reachMultiple이_null이고_뒤로_정렬된다() throws Exception {
+		long brandId = insertBrand(monitoringJdbc, "groupauthornullbrand");
+		linkRepository.insertLink(userId, brandId, "groupauthornullbrand", BrandAccountType.OWN, 12);
+		insertMetricPost(brandId, "KNOWN1", "known_author", NOW.minusSeconds(3600), "k1", "REELS", 1, 1, 1000L);
+		insertMetricPost(brandId, "UNKNOWN1", "unknown_author", NOW.minusSeconds(3600), "u1", "REELS", 1, 1, 5000L);
+		insertAuthorProfile("known_author", "known_author", "알려짐", 100L);
+		// unknown_author는 author_profile 미수집 - findAuthorsByUsernameBatched가 못 찾아 followers null.
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", brandId).put("groupBy", "author").put("orderBy", "reachMultiple"));
+
+		assertThat(result.failed()).isFalse();
+		JsonNode payload = objectMapper.readTree(result.payloadJson());
+		assertThat(payload.path("totalGroups").asInt()).isEqualTo(2);
+		assertThat(payload.path("groups").get(0).path("key").asString()).isEqualTo("known_author");
+		assertThat(payload.path("groups").get(0).path("reachMultiple").asDouble()).isEqualTo(10.0);
+		assertThat(payload.path("groups").get(1).path("key").asString()).isEqualTo("unknown_author");
+		assertThat(payload.path("groups").get(1).path("reachMultiple").isNull()).isTrue();
+	}
+
+	/** limit은 반환 그룹 수만 자르고, totalGroups는 절단과 무관하게 전체 그룹 수를 그대로 보고한다(조용한 절단 금지). */
+	@Test
+	void aggregate_posts_limit은_그룹을_자르되_totalGroups는_전체를_보고한다() throws Exception {
+		long brandId = insertBrand(monitoringJdbc, "grouplimitbrand");
+		linkRepository.insertLink(userId, brandId, "grouplimitbrand", BrandAccountType.OWN, 12);
+		insertMetricPost(brandId, "LIM1", "lim_author1", NOW.minusSeconds(3600), "1", "REELS", 1, 1, 1000L);
+		insertMetricPost(brandId, "LIM2", "lim_author2", NOW.minusSeconds(3600), "2", "REELS", 1, 1, 1000L);
+		insertMetricPost(brandId, "LIM3", "lim_author3", NOW.minusSeconds(3600), "3", "REELS", 1, 1, 1000L);
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", brandId).put("groupBy", "author").put("limit", 2));
+
+		assertThat(result.failed()).isFalse();
+		JsonNode payload = objectMapper.readTree(result.payloadJson());
+		assertThat(payload.path("totalGroups").asInt()).isEqualTo(3);
+		assertThat(payload.path("returnedGroups").asInt()).isEqualTo(2);
+		assertThat(payload.path("groups")).hasSize(2);
+	}
+
+	/** keyword는 search_posts와 같은 캡션 매칭 헬퍼로 모수를 좁힌다 - 매칭 안 된 게시물은 집계에서 아예 빠진다. */
+	@Test
+	void aggregate_posts_keyword는_캡션_매칭_게시물만_모수로_삼는다() throws Exception {
+		long brandId = insertBrand(monitoringJdbc, "aggkeywordbrand");
+		linkRepository.insertLink(userId, brandId, "aggkeywordbrand", BrandAccountType.OWN, 12);
+		insertSearchablePost(brandId, "KWMATCH1", "author1", NOW.minusSeconds(3600), "신상 세럼 후기");
+		insertSearchablePost(brandId, "KWNOMATCH1", "author2", NOW.minusSeconds(3600), "그냥 일상 게시물");
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", brandId).put("keyword", "세럼"));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.payloadJson()).contains("\"postCount\":1").contains("\"keyword\":\"세럼\"");
+	}
+
+	/**
+	 * groupBy=month는 KST 달력 월로 버킷한다(스펙 §3-1) - 8/31 23:00 KST(=8/31 14:00Z, 8월)와
+	 * 9/1 01:00 KST(=8/31 16:00Z, 9월) 게시물이 서로 다른 버킷에 들어가야 한다(롤링 30일이 아니다).
+	 */
+	@Test
+	void aggregate_posts_groupBy_month는_KST_달력_월로_버킷한다() {
+		long brandId = insertBrand(monitoringJdbc, "monthbucketbrand");
+		linkRepository.insertLink(userId, brandId, "monthbucketbrand", BrandAccountType.OWN, 12);
+		insertMetricPost(brandId, "AUGPOST", "author1", Instant.parse("2026-08-31T14:00:00Z"), "8월", "REELS", 1, 1,
+				1000L);
+		insertMetricPost(brandId, "SEPPOST", "author2", Instant.parse("2026-08-31T16:00:00Z"), "9월", "REELS", 1, 1,
+				1000L);
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", brandId).put("groupBy", "month"));
+
+		assertThat(result.failed()).isFalse();
+		String payload = result.payloadJson();
+		assertThat(payload).contains("\"key\":\"2026-08\"").contains("\"key\":\"2026-09\"");
+		assertThat(payload).contains("\"totalGroups\":2");
+	}
+
+	/** groupBy 생략 시 기존 스칼라 페이로드가 필드명·모양 그대로 나가야 한다(하위호환 고정, 기존 08-28 테스트와 동형). */
+	@Test
+	void aggregate_posts_groupBy_없으면_기존_스칼라_페이로드_그대로다() {
+		long brandId = insertBrand(monitoringJdbc, "scalarcompatbrand");
+		linkRepository.insertLink(userId, brandId, "scalarcompatbrand", BrandAccountType.OWN, 12);
+		insertMetricPost(brandId, "SCALAR1", "author1", NOW.minusSeconds(3600), "릴스 하나", "REELS", 10, 2, 1000L);
+		insertMetricPost(brandId, "SCALAR2", "author2", NOW.minusSeconds(7200), "피드 하나", "FEED", 5, 1, null);
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		String payload = result.payloadJson();
+		assertThat(payload).contains("\"postCount\":2").contains("\"reelsCount\":1").contains("\"feedCount\":1");
+		assertThat(payload).contains("\"totalViews\":1000").contains("\"avgViews\":1000.0")
+				.contains("\"viewsSampleCount\":1");
+		assertThat(payload).contains("\"totalLikes\":15").contains("\"avgLikes\":7.5")
+				.contains("\"likesSampleCount\":2");
+		assertThat(payload).contains("\"totalComments\":3").contains("\"commentsSampleCount\":2");
+		assertThat(payload).contains("\"topPost\"").contains("\"shortCode\":\"SCALAR1\"");
+		assertThat(payload).doesNotContain("\"groups\"").doesNotContain("\"totalGroups\"");
 	}
 }
