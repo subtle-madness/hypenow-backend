@@ -30,7 +30,7 @@ public class WeeklyDigestMailComposer {
 			WeeklyDigestAssembler.CATEGORY_ACTION, "확인 필요",
 			WeeklyDigestAssembler.CATEGORY_BRAND, "브랜드 소식",
 			WeeklyDigestAssembler.CATEGORY_CONTENT, "모니터링 진행",
-			WeeklyDigestAssembler.CATEGORY_HIGHLIGHT, "이번 주 하이라이트");
+			WeeklyDigestAssembler.CATEGORY_HIGHLIGHT, "지난주 하이라이트");
 
 	private final String webBaseUrl;
 
@@ -67,9 +67,11 @@ public class WeeklyDigestMailComposer {
 				}
 			}
 		}
-		text.append("\n자세한 내용은 ").append(webBaseUrl).append("/notifications 에서 확인할 수 있어요.\n");
+		// FE 알림 페이지(/notifications)가 준비중 스텁이라 임시 하향 - 페이지 완성 시 복원
+		text.append("\n자세한 내용은 ").append(webBaseUrl)
+				.append("/dashboard?utm_source=email&utm_medium=weekly_digest 대시보드에서 확인할 수 있어요.\n");
 		text.append("주간 이메일 수신은 ").append(webBaseUrl)
-				.append("/settings/notifications 에서 끌 수 있어요.\n");
+				.append("/settings?utm_source=email&utm_medium=weekly_digest 의 알림 설정에서 끌 수 있어요.\n");
 		return new Mail("[hypenow] 지난주 모니터링 요약 (" + period + ")", text.toString());
 	}
 

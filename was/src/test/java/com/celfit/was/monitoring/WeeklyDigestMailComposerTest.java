@@ -66,7 +66,7 @@ class WeeklyDigestMailComposerTest {
 						new DigestItem.Metrics(123456L, 10L, 1L))));
 
 		assertThat(mail.text())
-				.contains("[이번 주 하이라이트]")
+				.contains("[지난주 하이라이트]")
 				.contains("- @big 게시물 · 조회수 12.3만")
 				.doesNotContain("1건")
 				.doesNotContain("조회수(릴스)");
@@ -78,8 +78,8 @@ class WeeklyDigestMailComposerTest {
 				new DigestItem("content", "collection_started", "새로 수집을 시작한 콘텐츠가 있어요", 1, null)));
 
 		assertThat(mail.text())
-				.contains("https://hypenow.io/notifications")
-				.contains("https://hypenow.io/settings/notifications");
+				.contains("https://hypenow.io/dashboard?utm_source=email&utm_medium=weekly_digest")
+				.contains("https://hypenow.io/settings?utm_source=email&utm_medium=weekly_digest");
 	}
 
 	@Test
