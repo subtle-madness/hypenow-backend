@@ -59,7 +59,9 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				    handle            text PRIMARY KEY,
 				    display_name      text,
 				    profile_image_url text,
-				    followers         bigint
+				    followers         bigint,
+				    beauty            boolean,
+				    fnb               boolean
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE account_summaries (
@@ -121,6 +123,7 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				    main_order int  NOT NULL,
 				    mid_order  int  NOT NULL,
 				    sub_order  int  NOT NULL,
+				    axis       text NOT NULL DEFAULT 'beauty',
 				    PRIMARY KEY (main_value, mid_label, sub_label)
 				)""");
 		jdbcTemplate.execute("""
@@ -145,11 +148,14 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("""
 				CREATE VIEW account_category_share AS
 				SELECT s.account_handle, an.main_category,
-				       round(100.0 * count(*) / sum(count(*)) OVER (PARTITION BY s.account_handle))::int AS pct
+				       round(100.0 * count(*)
+				             / sum(count(*)) OVER (PARTITION BY s.account_handle, t.axis))::int AS pct
 				FROM account_content_series s
 				JOIN content_analyses an ON an.short_code = s.short_code
-				WHERE an.is_beauty IS TRUE AND an.main_category IS NOT NULL
-				GROUP BY s.account_handle, an.main_category
+				JOIN (SELECT DISTINCT main_value, axis FROM beauty_taxonomy) t
+				     ON t.main_value = an.main_category
+				WHERE an.main_category IS NOT NULL
+				GROUP BY s.account_handle, an.main_category, t.axis
 				""");
 		jdbcTemplate.execute("""
 				CREATE VIEW account_sponsored_counts AS
@@ -160,11 +166,12 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				""");
 
 		jdbcTemplate.update("""
-				INSERT INTO accounts (handle, display_name, profile_image_url, followers) VALUES
-				  ('glow', '글로우', 'https://cdn/glow.jpg', 20000),
-				  ('calm', '카암', 'https://cdn/calm.jpg', 30000),
-				  ('mute', '뮤트', NULL, 40000),
-				  ('tiny', '타이니', NULL, 1000)""");
+				INSERT INTO accounts (handle, display_name, profile_image_url, followers, beauty, fnb) VALUES
+				  ('glow', '글로우', 'https://cdn/glow.jpg', 20000, true, false),
+				  ('calm', '카암', 'https://cdn/calm.jpg', 30000, NULL, NULL),
+				  ('mute', '뮤트', NULL, 40000, true, false),
+				  ('tiny', '타이니', NULL, 1000, true, false),
+				  ('fbfood', '푸드핏', NULL, 12000, false, true)""");
 		// avg_hype_raw는 avg_hype_score(정수 반올림)를 만드는 반올림 전 평균 — 2026-07-30까지는
 		// 정렬 키였다(스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9 하위절).
 		// avg_hype_score_precise(2026-07-30, 스펙 §10 — 콘텐츠 출력 매핑 반영 소수 표시값) 도입 후
@@ -183,7 +190,24 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				  ('mute', 40000, 50, 40, NULL, NULL, NULL, 1.0, 300, 10,
 				   NULL, NULL, now() - interval '40 days', NULL, NULL),
 				  ('tiny', 1000, 10, 20, '새싹', 2000, 2.0, 3.0, 25, 3,
-				   45, 44.7, now() - interval '5 days', NULL, 44.7000)""");
+				   45, 44.7, now() - interval '5 days', NULL, 44.7000),
+				  -- F&B 단독 계정 — reach 2위 값이라 축 게이트가 없으면 무필터 상위에 섞인다
+				  ('fbfood', 12000, 80, 60, '밀키트 리뷰', 40000, 10.0, 3.5, 1500, 90,
+				   60, 59.5, now() - interval '2 days', NULL, 59.5000)""");
+		// fbfood 창 8개: 분석 8건 전부 비뷰티(뷰티 비율 0%) — F&B 필터의 뷰티비율 게이트 스킵 검증
+		// 재료. 그중 convenience 분류 2건 → F&B 축 분모 2, 비중 100% ≥ 20% 게이트 통과.
+		for (int i = 1; i <= 8; i++) {
+			jdbcTemplate.update("""
+					INSERT INTO account_content_series (short_code, account_handle, posted_at,
+					  content_type, views, likes, comments, sponsored)
+					VALUES (?, 'fbfood', now() - (? || ' days')::interval, 'reels', 10000, 500, 40, false)""",
+					"fb_p" + i, i);
+			jdbcTemplate.update("""
+					INSERT INTO content_analyses (short_code, is_beauty, main_category, sub_categories,
+					  ad_type, detected_brands)
+					VALUES (?, false, ?, NULL, 'organic', NULL)""",
+					"fb_p" + i, i <= 2 ? "convenience" : null);
+		}
 		// glow 창 5개: g1(1일 전)~g5(5일 전). 분류 5개 중 스킨케어 4·메이크업 1, 협찬 g2·g4.
 		jdbcTemplate.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at,
@@ -229,10 +253,11 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				  ('glow', now() - interval '1 day', '저자극 스킨케어 리뷰 톤')""");
 		jdbcTemplate.update("""
 				INSERT INTO beauty_taxonomy (main_value, main_label, mid_label, sub_label,
-				  main_order, mid_order, sub_order) VALUES
-				  ('makeup', '메이크업', '립메이크업', '립틴트', 3, 1, 1),
-				  ('makeup', '메이크업', '립메이크업', '립스틱', 3, 1, 2),
-				  ('skincare', '스킨케어', '크림', '크림', 1, 3, 1)""");
+				  main_order, mid_order, sub_order, axis) VALUES
+				  ('makeup', '메이크업', '립메이크업', '립틴트', 3, 1, 1, 'beauty'),
+				  ('makeup', '메이크업', '립메이크업', '립스틱', 3, 1, 2, 'beauty'),
+				  ('skincare', '스킨케어', '크림', '크림', 1, 3, 1, 'beauty'),
+				  ('convenience', '가공/간편식', '가공/간편식', '밀키트', 10, 1, 2, 'fnb')""");
 		jdbcTemplate.update("""
 				INSERT INTO image_assets (kind, key, object_path) VALUES
 				  ('profile', 'glow', 'p/glow.jpg'),
@@ -337,6 +362,31 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				.containsExactly("glow");
 		var skincare = query(null, "skincare", null, null, null, null, null, null, null, null, null);
 		assertThat(repository.findCards(skincare)).hasSize(4);
+	}
+
+	@Test
+	void 무필터_발굴에_FnB_계정은_안_나온다() {
+		// 기본 화면 불변(서빙 개방 §6-3) — COALESCE(a.beauty, true)가 지킨다.
+		// calm(축 NULL — 롤링 창 재현)은 뷰티 취급으로 그대로 나온다.
+		assertThat(repository.findCards(all())).extracting(CardRow::handle)
+				.containsExactly("glow", "calm", "tiny", "mute");
+	}
+
+	@Test
+	void FnB_대분류_필터는_FnB_계정만_내고_뷰티비율_게이트를_안_문다() {
+		// fbfood는 분석 8건 전부 비뷰티(뷰티 비율 0%) — 뷰티비율 게이트를 물면 전멸한다(§3).
+		// 오판 방어는 F&B 비중 게이트(convenience 100% ≥ 20%)가 같은 역할.
+		var fnb = query(null, "convenience", null, null, null, null, null, null, null, null, null);
+		assertThat(repository.findCards(fnb)).extracting(CardRow::handle)
+				.containsExactly("fbfood");
+	}
+
+	@Test
+	void 뷰티_대분류_필터에_FnB_계정은_안_섞인다() {
+		// 축 조건(COALESCE(a.beauty, true))이 뷰티 필터 경로에도 걸린다
+		var makeup = query(null, "makeup", null, null, null, null, null, null, null, null, null);
+		assertThat(repository.findCards(makeup)).extracting(CardRow::handle)
+				.containsExactly("glow");
 	}
 
 	@Test

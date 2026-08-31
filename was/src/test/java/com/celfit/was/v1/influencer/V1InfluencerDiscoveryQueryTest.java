@@ -132,4 +132,22 @@ class V1InfluencerDiscoveryQueryTest {
 		assertThat(of(null, null, null, null, null, null, null, null, "hype", null, null)
 				.sort()).isEqualTo("hype");
 	}
+
+	@org.junit.jupiter.api.Test
+	void FnB_대분류_6종은_검증을_통과하고_축이_판정된다() {
+		// 2026-08-31 F&B 서빙 개방 — 발굴은 축에 따라 게이트가 갈리므로(무필터·뷰티=뷰티 계정,
+		// F&B=F&B 계정 + 뷰티비율 게이트 스킵) 쿼리 홀더가 축 판정을 함께 제공한다.
+		for (String main : java.util.List.of("beverage", "alcohol", "convenience", "snack",
+				"health-food", "recipe")) {
+			V1InfluencerDiscoveryQuery query = V1InfluencerDiscoveryQuery.of(null, main, null, null,
+					null, null, null, null, null, null, null);
+			org.assertj.core.api.Assertions.assertThat(query.mainCategory()).isEqualTo(main);
+			org.assertj.core.api.Assertions.assertThat(
+					com.celfit.was.v1.common.MainCategories.isFnb(main)).isTrue();
+		}
+		org.assertj.core.api.Assertions.assertThat(
+				com.celfit.was.v1.common.MainCategories.isFnb("skincare")).isFalse();
+		org.assertj.core.api.Assertions.assertThat(
+				com.celfit.was.v1.common.MainCategories.isFnb(null)).isFalse();
+	}
 }

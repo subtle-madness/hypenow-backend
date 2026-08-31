@@ -150,6 +150,10 @@ public class BrandReadRepository {
 	 * caption_marker는 좌항 IS NOT NULL 가드 덕에 false). 정렬은 호출부(자바) 몫이라 ORDER BY를 두지
 	 * 않는다.
 	 *
+	 * <p>매핑은 수동 람다다(2026-08-31) — 창 안 전 행(운영 1.6만 행대)을 싣는 쿼리라
+	 * {@code query(Class)}의 이름 기반 리플렉션 매핑(행당 ~47µs 실측, raw 대비 20배)이 지배 비용이
+	 * 된다. 조립 8.4초 분해는 2026-08-31 수동 RowMapper 설계 §1 참조.
+	 *
 	 * @param markerRegex {@code BrandSponsorshipClassifier.postgresMarkerRegex()} 산출물 — 소문자
 	 *        캡션에 대한 ARE 정규식이다(호출부가 상수를 재작성하지 않게 그 메서드만 쓴다).
 	 * @param withCaptions true면 {@code m.caption}을 실어 온다(해시태그 추출용, perf119 고정비
@@ -182,7 +186,25 @@ public class BrandReadRepository {
 				.param("brandId", brandId)
 				.param("cutoff", cutoff)
 				.param("markerRegex", markerRegex)
-				.query(BrandPostIndexRow.class)
+				.query((rs, i) -> new BrandPostIndexRow(
+						rs.getString("short_code"),
+						rs.getObject("taken_at", OffsetDateTime.class),
+						rs.getObject("tag_detected_at", OffsetDateTime.class),
+						rs.getObject("direct_registered_at", OffsetDateTime.class),
+						rs.getObject("hashtag_detected_at", OffsetDateTime.class),
+						rs.getObject("unavailable_at", OffsetDateTime.class),
+						rs.getString("raw_author_username"),
+						rs.getString("author_ig_user_id"),
+						rs.getObject("is_paid_partnership", Boolean.class),
+						rs.getBoolean("caption_marker"),
+						rs.getString("content_type"),
+						rs.getString("ad_verdict"),
+						rs.getString("author_username"),
+						rs.getString("author_full_name"),
+						rs.getString("author_profile_pic_url"),
+						rs.getString("author_image_object_path"),
+						rs.getObject("author_followers", Long.class),
+						rs.getString("caption")))
 				.list();
 	}
 
@@ -217,6 +239,9 @@ public class BrandReadRepository {
 	 * "숨김"을 호출부가 구분하기 위한 것이다(숨김을 0으로 뭉개면 정렬·집계가 거짓말을 한다).
 	 * 브랜드 창 스코프 조인인 이유는 {@link #findBrandPostIndex} 주석과 같다 — 창·정산 술어가
 	 * 인덱스와 동형이어야 지표가 목록 모수와 어긋나지 않는다.
+	 *
+	 * <p>매핑은 수동 람다다(2026-08-31) — 게시물당 1행이라도 창 안 전 게시물(운영 1.5만 행대)을
+	 * 싣는다. 근거는 {@link #findBrandPostIndex} 매핑 주석과 같다.
 	 */
 	public List<LatestSnapshotRow> findLatestSnapshotsForBrand(long brandId, OffsetDateTime cutoff,
 			boolean enrichedOnly) {
@@ -234,7 +259,14 @@ public class BrandReadRepository {
 				""")
 				.param("brandId", brandId)
 				.param("cutoff", cutoff)
-				.query(LatestSnapshotRow.class)
+				.query((rs, i) -> new LatestSnapshotRow(
+						rs.getString("short_code"),
+						rs.getObject("captured_on", LocalDate.class),
+						rs.getString("content_type"),
+						rs.getObject("views", Long.class),
+						rs.getObject("likes", Long.class),
+						rs.getBoolean("likes_hidden"),
+						rs.getObject("comments", Long.class)))
 				.list();
 	}
 
@@ -288,7 +320,11 @@ public class BrandReadRepository {
 				.list();
 	}
 
-	/** 게시자(인플루언서) 프로필 — 기본 경로. author_profile의 PK가 ig_user_id라 중복이 없다. */
+	/**
+	 * 게시자(인플루언서) 프로필 — 기본 경로. author_profile의 PK가 ig_user_id라 중복이 없다.
+	 *
+	 * <p>게시자 프로필 배치 조회 — 매핑은 수동 람다(2026-08-31, 근거는 {@link #findBrandPostIndex} 참조).
+	 */
 	public List<AuthorRow> findAuthors(Collection<String> igUserIds) {
 		if (igUserIds.isEmpty()) {
 			return List.of();
@@ -300,7 +336,14 @@ public class BrandReadRepository {
 				WHERE ig_user_id IN (:igUserIds)
 				""")
 				.param("igUserIds", igUserIds)
-				.query(AuthorRow.class)
+				.query((rs, i) -> new AuthorRow(
+						rs.getString("ig_user_id"),
+						rs.getString("username"),
+						rs.getString("full_name"),
+						rs.getObject("followers", Long.class),
+						rs.getString("profile_pic_url"),
+						rs.getObject("is_verified", Boolean.class),
+						rs.getString("image_object_path")))
 				.list();
 	}
 

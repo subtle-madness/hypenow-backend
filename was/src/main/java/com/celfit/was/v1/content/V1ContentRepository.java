@@ -64,7 +64,6 @@ public class V1ContentRepository {
 				LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
 				WHERE c.posted_at >= :start AND c.posted_at < :end
 				  AND c.content_type = :contentType
-				  AND an.is_beauty = true
 				  -- 랭킹은 시점 편향 없는 분만 노출 (2026-07-21 PO 결정): late_backfill(늦크롤 지표 상향
 				  -- 편향)·immature(미성숙 하향 편향)는 제외, timely만 노출. 단 시점 미분류 레거시(NULL,
 				  -- V33 이전 기분석분 — 백필 편향과 무관)는 비회귀로 유지. 백필분은 인플루언서 상세
@@ -76,8 +75,14 @@ public class V1ContentRepository {
 		params.put("end", q.endExclusive());
 		params.put("contentType", q.contentType());
 		if (q.mainCategory() != null) {
+			// 대분류 필터가 있으면 축 게이트(is_beauty)를 걸지 않는다 (2026-08-31 F&B 서빙 개방 §2).
+			// 생산자 불변식 "main_category 있음 ⇒ 축 확정"이 근거: 뷰티 slug면 is_beauty=true가
+			// 파생돼 있어 동치이고, F&B slug면 is_beauty=false라 기존 게이트와 모순이라 빼야 나온다.
 			sb.append(" AND an.main_category = :mainCategory");
 			params.put("mainCategory", q.mainCategory());
+		} else {
+			// 무필터 = 뷰티(기본 화면 불변) — 미러에 F&B가 들어와도 여기서 걸러진다.
+			sb.append(" AND an.is_beauty = true");
 		}
 		if (q.midCategory() != null) {
 			// 중분류 → 소속 소분류 확장 매칭 (스펙 5.5) — 어휘는 beauty_taxonomy가 원천

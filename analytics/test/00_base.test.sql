@@ -19,8 +19,8 @@ BEGIN
     'v_base_influencer dummy_co home_living not null (미판정)';
 
   -- v_base_profile: 계정별 최신 1건 + 소스 분기
-  ASSERT (SELECT count(*) FROM analytics.v_base_profile WHERE username LIKE 'dummy_%') = 4,
-    'v_base_profile dummy rows != 4 (e는 프로필 없음)';
+  ASSERT (SELECT count(*) FROM analytics.v_base_profile WHERE username LIKE 'dummy_%') = 5,
+    'v_base_profile dummy rows != 5 (e는 프로필 없음 — 08-31 fb 프로필 추가로 4→5)';
   ASSERT (SELECT followers FROM analytics.v_base_profile WHERE username = 'dummy_a') = 5500,
     'v_base_profile dummy_a followers != 5500 (최신 SELF_GQL 실컬럼)';
   ASSERT (SELECT display_name FROM analytics.v_base_profile WHERE username = 'dummy_a') = '더미 에이',

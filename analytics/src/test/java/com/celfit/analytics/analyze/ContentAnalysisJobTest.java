@@ -51,6 +51,7 @@ class ContentAnalysisJobTest {
 
 	/** fake GeminiBatchApi — 배치 제출 경로 검증용. uploads/createdBatches에 호출 인자를 기록. */
 	List<byte[]> batchUploads;
+	List<String> batchUploadNames;
 	List<String> batchCreated;
 
 	GeminiBatchApi fakeBatchApi() {
@@ -58,7 +59,9 @@ class ContentAnalysisJobTest {
 			@Override
 			public String uploadFile(byte[] jsonl, String displayName) {
 				batchUploads.add(jsonl);
-				return "files/f1";
+				batchUploadNames.add(displayName);
+				// 실구현(VertexHttpApi)처럼 displayName이 곧 GCS 객체 경로다 — 이름이 같으면 덮어쓴다.
+				return "files/" + displayName;
 			}
 
 			@Override
@@ -136,6 +139,7 @@ class ContentAnalysisJobTest {
 		insightCalls = java.util.Collections.synchronizedList(new ArrayList<>());
 		thumbnailArgs = java.util.Collections.synchronizedList(new ArrayList<>());
 		batchUploads = new ArrayList<>();
+		batchUploadNames = new ArrayList<>();
 		batchCreated = new ArrayList<>();
 		// 테스트 간 완전 초기화: 스키마 통째 재생성 후 마이그레이션 재적용
 		TestDb.resetAndMigrate(db, ds);
@@ -593,6 +597,11 @@ class ContentAnalysisJobTest {
 
 		assertEquals(3, result.processed()); // 합계는 청크와 무관하게 전체 제출 건수
 		assertEquals(2, batchCreated.size()); // 청크 2개 = 배치 2건
+		// 업로드 객체 이름은 청크마다 달라야 한다 — 실구현의 GCS 경로가 displayName 고정이라
+		// 같은 이름이면 두 번째 업로드가 첫 번째를 덮어써, 두 배치가 같은(마지막) 입력 파일을
+		// 실행한다(2026-08-31 운영 실발생: 3,000건 배치가 795건 결과를 내고 전부 사이드카 매칭 실패).
+		assertEquals(2, batchUploadNames.stream().distinct().count(),
+				"청크 업로드 이름 충돌 — 뒤 청크가 앞 청크 입력 파일을 덮어쓴다");
 		assertEquals(2L, db.queryForObject("SELECT count(*) FROM content_batch_jobs", Long.class));
 		// 청크당 1행, submitted_count 합이 전체와 일치
 		assertEquals(3, db.queryForObject(
