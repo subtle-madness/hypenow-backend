@@ -19,7 +19,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
-import java.util.function.Supplier;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -131,12 +130,15 @@ public class V1PerformanceDashboardController {
 	private static final String CACHE_CONTROL = "private, no-cache";
 
 	private final PerformanceContentAssembler assembler;
+	private final DashboardIndexCoalescer coalescer;
 	private final PerformanceComparisonAssembler comparisonAssembler;
 	private final DashboardVersion dashboardVersion;
 
 	public V1PerformanceDashboardController(PerformanceContentAssembler assembler,
-			PerformanceComparisonAssembler comparisonAssembler, DashboardVersion dashboardVersion) {
+			DashboardIndexCoalescer coalescer, PerformanceComparisonAssembler comparisonAssembler,
+			DashboardVersion dashboardVersion) {
 		this.assembler = assembler;
+		this.coalescer = coalescer;
 		this.comparisonAssembler = comparisonAssembler;
 		this.dashboardVersion = dashboardVersion;
 	}
@@ -155,13 +157,18 @@ public class V1PerformanceDashboardController {
 	 * 클라이언트 쪽에서 URI별이고 {@code If-None-Match}는 <b>같은 URI의 사본</b>에만 쓰이므로
 	 * (RFC 9110 §13.1.2) 안전하다: 파라미터가 다른 요청은 그 URI의 사본이 없어 헤더 자체를 보내지
 	 * 않는다. 조기 반환 지점이 컨트롤러라 CORS·인증 필터를 이미 통과한 뒤라는 점도 함께 지킨다(§5-①).
+	 *
+	 * <p>계산한 버전키는 {@code body}로 넘긴다(2026-08-31) — {@link DashboardIndexCoalescer}의 합류
+	 * 키가 이 값이라, body 안에서 다시 계산하면 <b>같은 요청 안에서 키가 갈릴 수 있다</b>(자정 경계·
+	 * 동시 스윕). 그러면 ETag(신)와 바디(구)가 어긋난다.
 	 */
-	private <T> ResponseEntity<T> conditional(long userId, String ifNoneMatch, Supplier<T> body) {
-		String etag = DashboardVersion.etagOf(dashboardVersion.compute(userId));
+	private <T> ResponseEntity<T> conditional(long userId, String ifNoneMatch, Function<String, T> body) {
+		String version = dashboardVersion.compute(userId);
+		String etag = DashboardVersion.etagOf(version);
 		if (DashboardVersion.matches(ifNoneMatch, etag)) {
 			return cached(HttpStatus.NOT_MODIFIED, etag).build();
 		}
-		return cached(HttpStatus.OK, etag).body(body.get());
+		return cached(HttpStatus.OK, etag).body(body.apply(version));
 	}
 
 	/**
@@ -255,9 +262,9 @@ public class V1PerformanceDashboardController {
 		PageParams page = DashboardQueries.normalizePage(limit, offset);
 
 		// 값 공간 검증이 전부 끝난 자리 — 여기부터가 조건부 반환 구간이다(304면 아래가 통째로 안 돈다).
-		return conditional(principal.getUserId(), ifNoneMatch, () -> {
+		return conditional(principal.getUserId(), ifNoneMatch, version -> {
 			// 인덱스 패스(경량) — 여기부터 페이지 슬라이스까지 전부 ref 위에서 끝낸다.
-			PerformanceContentAssembler.DashboardIndex index = assembler.index(principal.getUserId());
+			PerformanceContentAssembler.DashboardIndex index = coalescer.index(version, principal.getUserId());
 			Set<String> competitorIds = index.competitorBrandAccountIds();
 
 			// 분류 필터 — statusCounts 모수의 술어다(status·업로드 기간은 여기 없다, 위 javadoc).
@@ -336,11 +343,11 @@ public class V1PerformanceDashboardController {
 				BrandSponsorshipClassifier.UNKNOWN);
 		String campaignFilter = DashboardQueries.normalizeFilter(campaignId);
 
-		return conditional(principal.getUserId(), ifNoneMatch, () -> {
+		return conditional(principal.getUserId(), ifNoneMatch, version -> {
 			// 인덱스 패스(2026-08-27) — 비교 집계는 업로드일·귀속 브랜드·최신 스냅샷 지표만 소비하고
 			// 그 값은 전부 ref에 있다. 카드 조립(스냅샷 시계열·표시 메타)은 이 표면에 필요 없다.
 			List<PerformanceContentAssembler.DashboardRef> filtered =
-					assembler.index(principal.getUserId()).refs().stream()
+					coalescer.index(version, principal.getUserId()).refs().stream()
 							.filter(r -> (sourceFilter == null || sourceFilter.equals(r.source()))
 									&& (sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
 									&& DashboardQueries.matchesCampaign(r.campaignId(), campaignFilter))
@@ -391,8 +398,8 @@ public class V1PerformanceDashboardController {
 		LocalDate to = DashboardQueries.parseDate(uploadedTo, "uploadedTo");
 		PageParams page = DashboardQueries.normalizePage(limit, offset);
 
-		return conditional(principal.getUserId(), ifNoneMatch, () -> {
-			PerformanceContentAssembler.DashboardIndex index = assembler.index(principal.getUserId());
+		return conditional(principal.getUserId(), ifNoneMatch, version -> {
+			PerformanceContentAssembler.DashboardIndex index = coalescer.index(version, principal.getUserId());
 			Set<String> competitorIds = index.competitorBrandAccountIds();
 			List<DashboardRef> filtered = index.refs().stream()
 					.filter(r -> (sponsorshipFilter == null || sponsorshipFilter.equals(r.sponsorship()))
@@ -487,8 +494,8 @@ public class V1PerformanceDashboardController {
 		// (If-None-Match는 같은 URI의 사본에만 실린다 — conditional javadoc).
 		// 예외는 `If-None-Match: *` 하나 — 사본 없이도 무조건 일치라 이 400이 304로 가려진다.
 		// 브라우저는 조건부 GET에 `*`를 쓰지 않으므로(수동 클라이언트만 도달) 수용한다.
-		return conditional(principal.getUserId(), ifNoneMatch, () -> {
-			PerformanceContentAssembler.DashboardIndex index = assembler.index(principal.getUserId());
+		return conditional(principal.getUserId(), ifNoneMatch, version -> {
+			PerformanceContentAssembler.DashboardIndex index = coalescer.index(version, principal.getUserId());
 			Set<String> competitorIds = index.competitorBrandAccountIds();
 
 			// 계정 축 — 지정 목록(순서 유지) 아니면 연결 활성 브랜드에서 accountType 통과분(위 javadoc).
