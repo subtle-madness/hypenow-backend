@@ -33,7 +33,7 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 			String follower, String activity, String sponsored, String contact, String sort,
 			Integer limit, Integer offset) {
 		return V1InfluencerDiscoveryQuery.of(q, main, mid, sub, follower, activity, sponsored,
-				contact, sort, limit, offset);
+				contact, sort, limit, offset, null);
 	}
 
 	private static V1InfluencerDiscoveryQuery all() {
@@ -379,6 +379,25 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		var fnb = query(null, "convenience", null, null, null, null, null, null, null, null, null);
 		assertThat(repository.findCards(fnb)).extracting(CardRow::handle)
 				.containsExactly("fbfood");
+	}
+
+	@Test
+	void vertical_fnb는_FnB_계정_전체를_비중_게이트_없이_낸다() {
+		// 2026-09-01 FE 피드백 #1 — 대분류 없이 축 전체. 비중 게이트(EXISTS)는 mainCategory
+		// 블록 소속이라 안 붙고, COALESCE(a.fnb, false)만 적용된다.
+		var fnb = V1InfluencerDiscoveryQuery.of(null, null, null, null, null, null, null, null,
+				null, null, null, "fnb");
+		assertThat(repository.findCards(fnb)).extracting(CardRow::handle)
+				.containsExactly("fbfood");
+		assertThat(repository.countCards(fnb)).isEqualTo(1);
+	}
+
+	@Test
+	void vertical_beauty는_무필터와_동치다() {
+		var beauty = V1InfluencerDiscoveryQuery.of(null, null, null, null, null, null, null, null,
+				null, null, null, "beauty");
+		assertThat(repository.findCards(beauty)).extracting(CardRow::handle)
+				.containsExactly("glow", "calm", "tiny", "mute");
 	}
 
 	@Test

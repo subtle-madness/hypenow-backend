@@ -30,7 +30,7 @@ class V1InfluencerDiscoveryPageServiceTest {
 	void 보강_4쿼리가_모두_같은_handles로_호출되고_total은_첫_행_totalCount다() {
 		V1InfluencerDiscoveryRepository repository = mock(V1InfluencerDiscoveryRepository.class);
 		V1InfluencerDiscoveryQuery query = V1InfluencerDiscoveryQuery.of(null, null, null, null, null,
-				null, null, null, null, 50, 0);
+				null, null, null, null, 50, 0, null);
 
 		given(repository.findCards(query)).willReturn(List.of(row("a"), row("b")));
 		given(repository.findShares(anyList())).willReturn(List.of());
@@ -68,7 +68,7 @@ class V1InfluencerDiscoveryPageServiceTest {
 		// offset 초과·공집합이면 첫 행이 없어 totalCount를 모른다 — 이때만 count 쿼리를 다시 친다.
 		V1InfluencerDiscoveryRepository repository = mock(V1InfluencerDiscoveryRepository.class);
 		V1InfluencerDiscoveryQuery query = V1InfluencerDiscoveryQuery.of(null, null, null, null, null,
-				null, null, null, null, 50, 500);
+				null, null, null, null, 50, 500, null);
 
 		given(repository.findCards(query)).willReturn(List.of());
 		given(repository.countCards(query)).willReturn(7L);

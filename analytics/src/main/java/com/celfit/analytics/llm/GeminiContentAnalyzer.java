@@ -110,8 +110,10 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 				- mainCategory: 아래 분류표의 대분류 영문 값 중 하나. 분류표는 [축] 표기로 계열을 밝힌다.
 				  ※ 섭취하는 제품(건강기능식품·단백질·다이어트 식품·이너뷰티 포함)은 뷰티 목적이어도
 				    fnb 축으로 분류하라 — 제형이 아니라 섭취 여부가 기준이다.
-				- subCategories: 이 콘텐츠에 해당하는 중분류·소분류 라벨 전부 — 분류표의 표기 그대로
-				  (예: 립틴트 콘텐츠면 ["립메이크업","립틴트"])
+				- subCategories: 이 콘텐츠에 해당하는 중분류·소분류 라벨 전부 — 분류표의 표기 그대로.
+				  중분류만 적고 끝내지 마라 — 해당하는 소분류(각 중분류의 대괄호 안 라벨)까지 반드시
+				  포함하라. 소분류를 하나도 특정할 수 없을 때만 중분류 단독을 허용한다.
+				  (예: 립틴트 콘텐츠면 ["립메이크업","립틴트"], 밀키트 소개면 ["가공/간편식","밀키트"])
 				- detectedProductCategories: 확인되는 제품들의 소분류 라벨 — 분류표의 표기 그대로
 				- detectedProducts: 확인되는 제품명 {name(상품명), brand(그 제품의 브랜드, 미상이면 null)}
 				- detectedDistributors: 확인되는 유통 채널 — %s 만, 그 외 상호는 제외.

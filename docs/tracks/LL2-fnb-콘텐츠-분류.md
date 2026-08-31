@@ -2,7 +2,7 @@
 
 - **소속 트랙군**: 분석 층 LLM 트랙 — 설계: [specs/2026-08-31-fnb-content-taxonomy-design.md](../superpowers/specs/2026-08-31-fnb-content-taxonomy-design.md)
 - **의존**: 트랙 [LL](LL-fnb-카테고리.md)(계정 F&B 판정 2축화, 08-24)의 후속 — "카테고리 서빙 개편"의 **LLM 계층 절반**
-- **상태**: ✅ 구현 완료(2026-08-31) — 서빙 개방까지 같은 날 후속 PR로 완료(FE 필터 UI 연결만 남음)
+- **상태**: ✅ 구현 완료(2026-08-31) — 서빙 개방 후 FE 피드백 반영(09-01, `vertical` 파라미터·subCategory 400·distributors 축·sanitize 대분류 정합)까지 완료
 
 ## 내용
 
@@ -102,9 +102,10 @@ F&B 계정은 이미 매일 크롤링된다(운영 `fnb.pipeline-enabled=true` �
 
 ## 후속
 
-- **서빙 개방** — FE 명세 도착 후. 손댈 곳은 설계 §8-1 점검표(allowlist ×2 · 랭킹 게이트 ·
-  matview·V35·`findShares` · `account_beauty_ratio` · `findDistributorOptions` 축 선택 ·
-  분석 뷰 01/02/20 모수).
+- ~~**서빙 개방**~~ — 08-31 완료. 09-01 FE 피드백으로 `vertical=beauty|fnb`(랭킹·발굴 축 전체
+  조회, mainCategory와 배타), 상위 없는 subCategory 400, `meta.distributors` 축 선택,
+  sanitize 대분류 정합 필터 + 프롬프트 소분류 필수 지시까지 반영. 기분석분의 얇은 소분류는
+  재분석 비용 문제로 보류 — 새 분석분부터 개선 적용.
 - **홈/리빙 어휘 추가** — 이 구조가 자리잡으면 어휘 INSERT + 04 모수 OR 한 항.
 - **F&B 유통사 목록 확정** — 현재 11곳은 초안. 운영 데이터가 쌓이면 등장 빈도로 조정.
 - **프롬프트 회귀 실측** — `isBeauty`→`isRelevant` 문구 변경이 기존 뷰티 분류를 흔들지 않는지는
