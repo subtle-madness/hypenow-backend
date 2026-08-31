@@ -122,15 +122,24 @@ public class BrandHashtagCollectService {
 				log.info("브랜드 해시태그 편입 상한({}) 도달 — {} 잔여 태그 열거 중단", postLimit, brand.username());
 				break;
 			}
+			// 태그별 실행 상태 기록(FE 요청, 2026-08-31) — collecting/done/failed 폴링 계약의 원재료.
+			// 시작은 sweepTag 진입 직전, 종료는 성공·실패 양쪽 다 기록한다(status는 저장 안 하고
+			// BrandHashtagRunStateResolver가 조회 시점에 계산 — 클래스 javadoc 참조).
+			tags.markRunStarted(brand.id(), tag);
 			// 태그 단위 격리(교환비): tags.findTags는 등록순(created_at, tag) 고정 순서다 — 여기서
 			// 한 태그의 실패(Hiker 5xx·타임아웃·파싱 이상)를 안 막으면 그 태그가 매 야간 스윕마다
 			// 뒤 태그 전부를 영구 굶긴다. BrandDirectCollectService.collectOne과 같은 이유의 격리이고,
 			// 미처리분은 다음 스윕이 같은 순서로 재시도한다(별도 백스톱 불필요 — 열거 자체가 멱등).
 			try {
-				savedTotal += sweepTag(brand, tag, cutoff, now, state);
+				int created = sweepTag(brand, tag, cutoff, now, state);
+				savedTotal += created;
+				tags.markRunFinished(brand.id(), tag, created, false);
 			} catch (RuntimeException e) {
 				log.warn("해시태그 태그 열거 실패(격리, 다음 태그 계속) — {} 태그 {}: {}",
 						brand.username(), tag, e.toString());
+				// found_count는 0으로 통일(위 markRunFinished javadoc) — Hiker 404는 여기 도달하지
+				// 않는다(fetchHashtagRecentPage가 이미 빈 HashtagPage로 흡수해 정상 0건 종료).
+				tags.markRunFinished(brand.id(), tag, 0, true);
 			}
 		}
 		log.info("브랜드 해시태그 수집 완료 — {} 태그 {}개, 신규 편입 {}건, 잔여 편입 여유 {}건",

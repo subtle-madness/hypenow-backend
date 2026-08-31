@@ -10,6 +10,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.MonitoringApiException;
 import com.celfit.was.monitoring.MonitoringCommandClient;
 import com.celfit.was.monitoring.MonitoringCommandClient.BrandRegisterResult;
+import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -249,17 +250,55 @@ public class V1BrandAccountService {
 	}
 
 	/**
-	 * 해시태그 태그 셋 조회(태그 관리 API, 2026-08-12 — <b>08-19 사용자 스코프 개정</b>) — 소유권은
-	 * 단건 폴링과 동일(남의 brandId는 403). <b>더 이상 monitoring을 호출하지 않는다</b> — 정본이
-	 * {@code app.brand_hashtag_tags}(이 유저가 이 브랜드에 등록한 태그)로 옮겨졌다: 남이 추가·삭제한
-	 * 태그가 내 목록에 나타나거나 사라지면 안 된다(요구사항 — 상호작용 상태는 사용자 스코프).
-	 * 감지 데이터(스윕) 자체는 여전히 연결 유저 전체 태그의 합집합으로 공유 돈다 — 그 동기화는
-	 * 쓰기 경로({@link #putHashtagTags} 등)가 담당한다.
+	 * 해시태그 태그 셋 조회(태그 관리 API, 2026-08-12 — 08-19 사용자 스코프 개정, <b>2026-08-31
+	 * 태그별 실행 상태 확장</b>) — 소유권은 단건 폴링과 동일(남의 brandId는 403). <b>태그 목록 자체의
+	 * 정본은 여전히</b> {@code app.brand_hashtag_tags}(이 유저가 이 브랜드에 등록한 태그, 08-19
+	 * 사용자 스코프 개정 그대로) — 남이 추가·삭제한 태그가 내 목록에 나타나거나 사라지면 안 된다.
+	 *
+	 * <p>다만 각 태그의 <b>실행 상태</b>(collecting|done|failed·lastRunAt·lastFoundCount)는 이
+	 * 유저의 원장이 알 수 없는 정보라 monitoring을 호출해 병합한다({@link
+	 * MonitoringCommandClient#getHashtagRunStates}) — "더 이상 monitoring을 호출하지 않는다"던 구
+	 * 계약이 실행 상태 조회 목적으로만 재도입됐다(태그 목록 자체는 여전히 원장이 정본). 원장에는
+	 * 있는데 monitoring 응답에 없는 태그(push 실패 드리프트, tombstone 등)는 collecting/lastRunAt=
+	 * null/lastFoundCount=null로 접는다 — "아직 monitoring에 반영 안 됨"과 "실행 전"을 FE 입장에서
+	 * 구분할 필요가 없다(둘 다 계속 폴링하면 된다).
+	 *
+	 * <p>monitoring 호출 자체가 실패해도(접속 불능 등) GET을 500/503으로 떨구지 않는다 — best-effort
+	 * 로 격리하고 전체를 collecting/null/null로 접는다(로그만 warn) — 폴링 화면이 monitoring 순단
+	 * 하나로 깨지면 안 된다(다른 monitoring best-effort push 관용구와 동형).
 	 */
-	public List<String> getHashtagTags(long userId, long brandId) {
+	public List<BrandHashtagTagsResponse.TagStatus> getHashtagTags(long userId, long brandId) {
 		requireOwnership(userId, brandId);
-		findAccountOrThrow(brandId);
-		return List.copyOf(hashtagTagRepository.findByUserAndBrand(userId, brandId));
+		List<String> ledgerTags = List.copyOf(hashtagTagRepository.findByUserAndBrand(userId, brandId));
+		if (ledgerTags.isEmpty()) {
+			findAccountOrThrow(brandId);   // 소유권 통과 후에도 브랜드 자체는 존재해야 한다(기존 계약 유지)
+			return List.of();
+		}
+		String username = findAccountOrThrow(brandId).username();
+		Map<String, MonitoringCommandClient.TagRunState> runStates = fetchRunStatesSafely(username);
+		List<BrandHashtagTagsResponse.TagStatus> result = new ArrayList<>();
+		for (String tag : ledgerTags) {
+			MonitoringCommandClient.TagRunState state = runStates.get(tag);
+			result.add(state == null
+					? new BrandHashtagTagsResponse.TagStatus(tag, "collecting", null, null)
+					: new BrandHashtagTagsResponse.TagStatus(tag, state.status(),
+							KstTimestamps.toKstIso(state.lastRunAt()), state.lastFoundCount()));
+		}
+		return result;
+	}
+
+	/** monitoring run-state 조회 best-effort 격리 — 실패하면 빈 맵(호출측이 전부 collecting으로 접는다). */
+	private Map<String, MonitoringCommandClient.TagRunState> fetchRunStatesSafely(String username) {
+		try {
+			Map<String, MonitoringCommandClient.TagRunState> map = new LinkedHashMap<>();
+			for (MonitoringCommandClient.TagRunState state : commandClient.getHashtagRunStates(username)) {
+				map.put(state.tag(), state);
+			}
+			return map;
+		} catch (RuntimeException e) {
+			log.warn("해시태그 실행 상태 조회 실패(격리, 전체 collecting으로 폴백) — username={}", username, e);
+			return Map.of();
+		}
 	}
 
 	/**
