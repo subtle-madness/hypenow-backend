@@ -93,6 +93,26 @@ class BrandStoreTest {
 		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNull();
 	}
 
+	/**
+	 * 진행 워터마크(2026-08-31 등록 백필 캐시 고착 수리) — was 버전키의 브랜드 입력이 last_swept_at
+	 * 이라, 페이지 정산마다 이 값을 전진시켜야 백필 도중 폴링이 캐시를 뚫고 새 페이지를 본다.
+	 * markServing(IS NULL 가드)과 달리 완주·재가입 상태에서도 무조건 전진한다 — 기간 확장 재백필도
+	 * 같은 고착에 걸리기 때문. 완주 컬럼(last_swept_on·backfill_completed_at)은 건드리지 않는다.
+	 */
+	@Test
+	void touchProgress는_완주_상태에서도_last_swept_at을_전진시킨다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
+		brands.touchSwept(id, LocalDate.of(2026, 8, 6));   // 완주 — markServing 가드로는 못 움직이는 상태
+		Timestamp before = column(id, "last_swept_at", Timestamp.class);
+
+		brands.touchProgress(id);
+
+		assertThat(column(id, "last_swept_at", Timestamp.class)).isAfter(before);
+		assertThat(brands.findByUsername("brandx").orElseThrow().lastSweptOn())
+				.isEqualTo(LocalDate.of(2026, 8, 6));                            // 완주 컬럼 불변
+		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNotNull();
+	}
+
 	@Test
 	void markServing은_이미_서빙_중이면_시각을_덮지_않는다() {
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
