@@ -281,9 +281,10 @@ public class PerformanceContentAssembler {
 		if (brandPostAssembler.isPresent()) {
 			for (Map.Entry<String, List<String>> entry : codesByBrand.entrySet()) {
 				DashboardIndex.BrandHydration brand = index.brandsById().get(entry.getKey());
-				// refs·legacyByCode는 대시보드가 쓰지 않는다(hydrateOverlaps와 같은 어댑터).
+				// refs·legacyByCode·hashtagMatchedTags는 대시보드가 쓰지 않는다(hydrateOverlaps와 같은
+				// 어댑터 — PerformanceContentResponse에 matchedTags 대응 필드가 없다).
 				BrandPostAssembler.BrandPostIndex adapter = new BrandPostAssembler.BrandPostIndex(
-						List.of(), Set.copyOf(entry.getValue()), Map.of(), brand.ownedShortCodes());
+						List.of(), Set.copyOf(entry.getValue()), Map.of(), brand.ownedShortCodes(), Map.of());
 				for (BrandPostResponse post : brandPostAssembler.get().hydrate(index.userId(), brand.account(),
 						brand.accountType(), adapter, entry.getValue(), false)) {
 					poolCards.putIfAbsent(post.shortcode(), fromBrandPost(post, index.campaignsById()));
@@ -387,8 +388,9 @@ public class PerformanceContentAssembler {
 		for (Map.Entry<String, Set<String>> entry : codesByBrand.entrySet()) {
 			DashboardIndex.BrandHydration brand = pool.brandsById().get(entry.getKey());
 			List<String> codes = List.copyOf(entry.getValue());
+			// refs·legacyByCode·hashtagMatchedTags는 대시보드가 쓰지 않는다(위 어댑터와 동형).
 			BrandPostAssembler.BrandPostIndex adapter = new BrandPostAssembler.BrandPostIndex(
-					List.of(), Set.copyOf(codes), Map.of(), brand.ownedShortCodes());
+					List.of(), Set.copyOf(codes), Map.of(), brand.ownedShortCodes(), Map.of());
 			for (BrandPostResponse post : brandPostAssembler.get()
 					.hydrate(userId, brand.account(), brand.accountType(), adapter, codes, false)) {
 				byCode.putIfAbsent(post.shortcode(), post);

@@ -387,9 +387,12 @@ public class V1BrandPostsController {
 		facets.put("sponsorship", axisMap(applyFilters(all, f, FacetAxis.SPONSORSHIP),
 				BrandPostAssembler.PostRef::sponsorship, BrandSponsorshipClassifier.SPONSORED,
 				BrandSponsorshipClassifier.ORGANIC, BrandSponsorshipClassifier.UNKNOWN));
+		// hashtag 버킷(2026-08-31 FE 리포트) — 해시태그 합류(2026-08-27 설계 §3) 당시 axisMap 값
+		// 목록이 갱신되지 않아, hashtag 게시물이 all엔 잡히는데 tagged·direct 어느 버킷에도 없어
+		// (computeIfPresent가 미등록 키를 조용히 떨굼) 버킷 합계가 all보다 작게 새고 있었다.
 		facets.put("source", axisMap(applyFilters(all, f, FacetAxis.SOURCE),
 				BrandPostAssembler.PostRef::source, BrandPostAssembler.SOURCE_TAGGED,
-				BrandPostAssembler.SOURCE_DIRECT));
+				BrandPostAssembler.SOURCE_DIRECT, BrandPostAssembler.SOURCE_HASHTAG));
 		// adRisk는 값이 아니라 불리언 축이라 맵이 아니라 "위험 건수" 하나다.
 		facets.put("adRisk", applyFilters(all, f, FacetAxis.AD_RISK).stream()
 				.filter(r -> isAdRisk(r, f.adGateOpen())).count());

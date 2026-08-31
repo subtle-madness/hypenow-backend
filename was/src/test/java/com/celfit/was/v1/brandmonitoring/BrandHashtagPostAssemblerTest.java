@@ -31,7 +31,7 @@ class BrandHashtagPostAssemblerTest {
 		TrackingItemResponse.SnapshotResponse latest = likes == null ? null
 				: new TrackingItemResponse.SnapshotResponse("2026-08-07", 500L, likes, false, comments,
 						null, null, false, null);
-		return new BrandPostResponse(code, "100", source,
+		return new BrandPostResponse(code, "100", source, null,
 				"https://www.instagram.com/reel/" + code + "/", code, "reels",
 				"2026-08-06T10:00:00+09:00", "캡션 원문", "https://cdn/thumb.jpg", null, null,
 				"https://www.instagram.com/hashtag_influencer/", "hashtag_influencer", "해시태그 인플루언서",
@@ -219,6 +219,6 @@ class BrandHashtagPostAssemblerTest {
 		for (BrandPostAssembler.PostRef ref : refs) {
 			poolCodes.add(ref.shortcode());
 		}
-		return new BrandPostAssembler.BrandPostIndex(List.of(refs), poolCodes, Map.of(), Set.of());
+		return new BrandPostAssembler.BrandPostIndex(List.of(refs), poolCodes, Map.of(), Set.of(), Map.of());
 	}
 }

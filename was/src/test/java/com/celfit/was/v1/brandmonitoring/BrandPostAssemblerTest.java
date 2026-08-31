@@ -349,6 +349,62 @@ class BrandPostAssemblerTest {
 		assertThat(index.poolCodes()).isEmpty();
 	}
 
+	// ---------- matchedTags 배지(2026-08-31, hashtag 감지 태그 노출 — 조회자 장부 교집합) ----------
+
+	/**
+	 * 인덱스/하이드레이트 경로 — 게시물이 여러 태그([끌리메, cclime])로 매칭돼도 조회자 장부에 있는
+	 * 태그(cclime)만 matchedTags에 실린다("남의 태그" 이름을 노출하지 않는다, isVisible과 같은 관점).
+	 */
+	@Test
+	void 하이드레이트는_source_hashtag_카드에_장부와_겹치는_매칭_태그만_matchedTags로_싣는다() {
+		var repository = mock(BrandReadRepository.class);
+		var hashtagTagRepository = mock(com.celfit.was.monitoring.BrandHashtagTagRepository.class);
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true), any())).willReturn(List.of(
+				indexRow("MATCH", "2026-08-06T01:00:00Z", null, null, "2026-08-06T03:00:00Z", null, null)));
+		given(hashtagTagRepository.findByUserAndBrand(7L, 42L)).willReturn(Set.of("cclime"));
+		given(repository.findMatchedTags(eq(42L), any())).willReturn(List.of(
+				new BrandReadRepository.MatchedTagRow("MATCH", "끌리메"),
+				new BrandReadRepository.MatchedTagRow("MATCH", "cclime")));
+		given(repository.findBrandPostsByShortCodes(eq(42L), anyCollection()))
+				.willReturn(List.of(hashtagRow("MATCH")));
+		given(repository.findPostMeta(anyCollection())).willReturn(List.of());
+		given(repository.findSnapshots(anyCollection())).willReturn(List.of());
+		given(repository.findAuthors(anyCollection())).willReturn(List.of());
+
+		var assembler = newAssemblerWithTags(repository, hashtagTagRepository);
+		var index = assembler.indexForBrand(7L, accountRow(), false);
+		var posts = assembler.hydrate(7L, accountRow(), BrandAccountType.OWN, index, List.of("MATCH"), false);
+
+		assertThat(posts).singleElement().satisfies(post -> {
+			assertThat(post.source()).isEqualTo("hashtag");
+			assertThat(post.matchedTags()).containsExactly("cclime");
+		});
+	}
+
+	/** tagged 카드는 hashtag 성분이 없으니 matchedTags가 항상 null이다(하이드레이트 경로). */
+	@Test
+	void 하이드레이트에서_tagged_카드는_matchedTags가_null이다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true), any())).willReturn(List.of(
+				indexRow("AAA", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null)));
+		given(repository.findBrandPostsByShortCodes(eq(42L), anyCollection()))
+				.willReturn(List.of(taggedRow("AAA")));
+		given(repository.findPostMeta(anyCollection())).willReturn(List.of());
+		given(repository.findSnapshots(anyCollection())).willReturn(List.of());
+		given(repository.findAuthors(anyCollection())).willReturn(List.of());
+
+		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class),
+				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
+				mock(MonitoringItemRepository.class), false);
+		var index = assembler.indexForBrand(7L, accountRow(), false);
+		var posts = assembler.hydrate(7L, accountRow(), BrandAccountType.OWN, index, List.of("AAA"), false);
+
+		assertThat(posts).singleElement().satisfies(post -> {
+			assertThat(post.source()).isEqualTo("tagged");
+			assertThat(post.matchedTags()).isNull();
+		});
+	}
+
 	/**
 	 * tagged 성분이 있으면(겹침 행) 격리 필터 없이 전원 노출되고 source는 "tagged"다 — hashtag-only
 	 * 후보가 하나도 없으므로 태그 장부·매칭 태그 조회 자체가 생략된다(지연 조회 관용구).
@@ -516,6 +572,51 @@ class BrandPostAssemblerTest {
 						BrandAccountType.OWN);
 
 		assertThat(posts).isEmpty();
+	}
+
+	/**
+	 * assembleBrandPosts(레거시 전량 조립) 경로 — 게시물이 여러 태그([끌리메, cclime])로 매칭돼도
+	 * 조회자 장부에 있는 태그(cclime)만 matchedTags에 실린다(하이드레이트 경로와 같은 계약).
+	 */
+	@Test
+	void assembleBrandPosts는_source_hashtag_카드에_장부와_겹치는_매칭_태그만_matchedTags로_싣는다() {
+		var repository = mock(BrandReadRepository.class);
+		var hashtagTagRepository = mock(com.celfit.was.monitoring.BrandHashtagTagRepository.class);
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
+				.willReturn(List.of(hashtagRow("MATCH")));
+		given(hashtagTagRepository.findByUserAndBrand(7L, 42L)).willReturn(Set.of("cclime"));
+		given(repository.findMatchedTags(eq(42L), any())).willReturn(List.of(
+				new BrandReadRepository.MatchedTagRow("MATCH", "끌리메"),
+				new BrandReadRepository.MatchedTagRow("MATCH", "cclime")));
+
+		var posts = newAssemblerWithTags(repository, hashtagTagRepository)
+				.assembleBrandPosts(7L, accountRow(), false, BrandPostAssembler.BrandPostScope.ALL, false,
+						BrandAccountType.OWN);
+
+		assertThat(posts).singleElement().satisfies(post -> {
+			assertThat(post.source()).isEqualTo("hashtag");
+			assertThat(post.matchedTags()).containsExactly("cclime");
+		});
+	}
+
+	/** direct 카드는 hashtag 성분이 없으니 matchedTags가 항상 null이다(assembleBrandPosts 경로). */
+	@Test
+	void assembleBrandPosts에서_direct_카드는_matchedTags가_null이다() {
+		var repository = mock(BrandReadRepository.class);
+		var directRepository = mock(BrandDirectPostRepository.class);
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
+				.willReturn(List.of(row("XYZ", null, "2026-08-06T02:00:00Z", "2026-08-07T02:00:00Z")));
+		given(directRepository.shortCodesByUser(7L)).willReturn(Set.of("XYZ"));
+
+		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class), directRepository,
+				mock(TrackingItemAssembler.class), mock(MonitoringItemRepository.class), false);
+		var posts = assembler.assembleBrandPosts(7L, accountRow(), false, BrandPostAssembler.BrandPostScope.ALL,
+				false, BrandAccountType.OWN);
+
+		assertThat(posts).singleElement().satisfies(post -> {
+			assertThat(post.source()).isEqualTo("direct");
+			assertThat(post.matchedTags()).isNull();
+		});
 	}
 
 	/**
