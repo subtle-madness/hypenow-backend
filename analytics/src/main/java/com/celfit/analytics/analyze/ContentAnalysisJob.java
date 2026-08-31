@@ -223,7 +223,12 @@ public class ContentAnalysisJob {
 		for (int from = 0; from < targets.size(); from += chunkSize) {
 			List<Map<String, Object>> chunk =
 					targets.subList(from, Math.min(from + chunkSize, targets.size()));
-			submitOneChunk(timely, chunk, baselines);
+			// 업로드 이름을 청크마다 유일하게 — 실구현(VertexHttpApi)의 GCS 객체 경로가
+			// displayName 그대로라, 같은 이름이면 뒤 청크 업로드가 앞 청크 입력 파일을 덮어쓰고
+			// Vertex 배치는 실행 시점에 GCS를 읽어 두 배치가 같은(마지막) 입력을 돌린다
+			// (2026-08-31 운영 실발생 — 3,000건 배치가 795건 결과·전원 사이드카 매칭 실패).
+			submitOneChunk(timely, chunk, baselines,
+					"hypenow-analyze-%d-c%d".formatted(System.currentTimeMillis(), chunks));
 			submitted += chunk.size();
 			chunks++;
 		}
@@ -232,9 +237,13 @@ public class ContentAnalysisJob {
 		return new JobResult(submitted, 0, false);
 	}
 
-	/** 청크 1개를 배치 1건으로 제출하고 content_batch_jobs에 pending 행을 남긴다. */
+	/**
+	 * 청크 1개를 배치 1건으로 제출하고 content_batch_jobs에 pending 행을 남긴다.
+	 * @param uploadName 업로드·배치 표시 이름 — GCS 객체 경로가 이 이름에서 나오므로 청크마다
+	 *                   유일해야 한다(호출자가 타임스탬프+청크 번호로 보장).
+	 */
 	private void submitOneChunk(boolean timely, List<Map<String, Object>> targets,
-			Baselines baselines) {
+			Baselines baselines, String uploadName) {
 		BeautyTaxonomy taxonomy = taxonomyLoader.get();
 		String system = GeminiContentAnalyzer.instructions(taxonomy);
 		String model = settings.activeLlmModel();
@@ -283,8 +292,8 @@ public class ContentAnalysisJob {
 			sidecar.append(json.writeValueAsString(GeminiBatchLines.sidecarLine(json, shortCode, row)))
 					.append('\n');
 		}
-		String fileName = batchApi.uploadFile(jsonl.toString().getBytes(StandardCharsets.UTF_8), "hypenow-analyze");
-		String batchName = batchApi.createBatch(model, fileName, "hypenow-analyze");
+		String fileName = batchApi.uploadFile(jsonl.toString().getBytes(StandardCharsets.UTF_8), uploadName);
+		String batchName = batchApi.createBatch(model, fileName, uploadName);
 		// 사이드카는 로컬 파일이 아니라 DB 컬럼에 보관한다 — analytics 컨테이너에는 쓰기 가능한
 		// 볼륨이 없어(deploy/compose.yaml), 제출~수거 사이에 배포·컨테이너 교체가 끼면 로컬 파일은
 		// 유실되고 pending 행이 영원히 pending으로 남는 좀비가 된다(리뷰 지적, 08-11). 백필 CLI
