@@ -338,8 +338,12 @@ GCS 값 하나가 된다 — 알람은 스트림별 평가라 어느 쪽이든 �
 ## 6. 백업·복원
 - 자동: 서버 크론이 매일 15:00 UTC(KST 00:00) 덤프 (맥·서버 어느 쪽이 꺼져 있든 오프사이트 사본 유지 —
   08-20 백업 I/O가 야간 분석 파이프라인과 겹치던 사고 이후 이 슬롯)
-  - **analysis**: 서버 `~/backups/` 3일 롤링 + B2 `hypenow-backups/analysis/` 7일(기간) 롤링
-    — 분석 결과는 raw에서 재파생 가능(LLM 재호출 비용만 부담)이라 짧게 유지(08-04 7일/30일에서 축소)
+  - **analysis**: **B2로 직스트리밍**(`pg_dump|zstd|tee|rclone rcat`, 08-30~) —
+    **성공 시 서버 로컬 0개** + B2 `hypenow-backups/analysis/` 7일(기간) 롤링.
+    분석 결과는 raw에서 재파생 가능(LLM 재호출 비용만 부담)이라 짧게 유지(08-04 7일/30일에서 축소).
+    업로드 실패 시 잘린 원격본을 지우고 **로컬 전용 덤프로 폴백**해 `LOCAL_FALLBACK_KEEP`개
+    (기본 3) 롤링한다(`offsite_ok` 판정은 analysis+crawler 둘 다 성공일 때만 — crawler 로컬
+    보관 분기의 기준). 로컬 정리 글롭은 `analysis-[0-9]*`라 수동 스냅샷(`analysis-pre-*`)은 남는다
   - **crawler**(raw — 07-19부터 서버가 수집 주체라 서버 raw가 유일 원본): B2가 살아 있으면
     **B2로 직스트리밍**(`pg_dump|zstd|tee|rclone rcat`, 08-25~) — **성공 시 서버 로컬 0개**
     (B2 사본 확인됨 — 덤프 19분+업로드 19분 직렬이 ~20분 동시 진행으로, 로컬 11GiB 상주와
@@ -355,8 +359,18 @@ GCS 값 하나가 된다 — 알람은 스트림별 평가라 어느 쪽이든 �
     "최신 30개" 정책이 요구한 ~240GB가 캡을 초과해 며칠간 오프사이트 백업 공백 발생. 07-29~
     재발 — 캡 상향 전까지 오프사이트 공백은 `pull-backup.sh` 수동 pull이 보완). 용량
     여유가 생기면 `B2_CRAWLER_KEEP`만 올릴 것.
-  - **monitoring**(시딩 캠페인 — postgres 인스턴스 내 별도 DB, §13): 서버 3일 롤링 +
-    B2 `hypenow-backups/monitoring/` 7일(기간) 롤링. 덤프가 작아 analysis와 같은 기간 롤링.
+  - **monitoring**(시딩 캠페인 — postgres 인스턴스 내 별도 DB, §13): analysis와 **완전히
+    동형**(08-30~) — 성공 시 서버 로컬 0개 + B2 `hypenow-backups/monitoring/` 7일(기간) 롤링.
+    통째로 **비치명**이다(개통 전·DB 미생성이어도 나머지 백업은 계속).
+    08-30 전환 근거 둘: ① 2패스 시절 08-29 실측으로 monitoring 로컬 덤프 완료 15:39:50 →
+    실행 종료 15:43 — 마지막 ~3분이 analysis 155MB + monitoring 1.77GB를 디스크에서 되읽는
+    업로드 패스였다(이 서버는 백업 재읽기 I/O가 외부 health 프로브를 죽인 전력이 있다 — 08-20).
+    ② 로컬 상주분이 monitoring 3개 5.03GB + analysis 3개 0.45GB = **5.5GB**였다(08-30 실측 —
+    monitoring 덤프는 08-23 1.10GB → 08-29 1.77GB로 한 주에 60% 증가). 루트 디스크가 87%까지
+    찬 전력(07-30·08-24 `hypenow-disk-high`)을 감안해 상시 사본을 B2 7일치로 일원화했다.
+  - ⚠ 세 계열 모두 성공일엔 서버에 사본이 없다 → **`pull-backup.sh`는 B2 장애일 폴백
+    회수용**이 됐다("덤프 없음 — 건너뜀"이 정상). 손안의 사본은 B2에서 직접:
+    `rclone copy b2:hypenow-backups/analysis/ ~/backups/hypenow/ --max-age 2d`
 - 수동 pull(보조): `deploy/scripts/pull-backup.sh ubuntu@<IP>` → `~/backups/hypenow/`
 - 복원 리허설(로컬): `zstdcat analysis-*.sql.zst | psql -h localhost -p 5433 -U crawler -d <빈 DB>`
   (08-04 이전 덤프는 `.sql.gz` — `gunzip -c`로. 압축은 08-04 gzip→zstd 전환: 2 vCPU에서
