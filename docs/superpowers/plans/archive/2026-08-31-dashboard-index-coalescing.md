@@ -8,7 +8,7 @@
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · JUnit 5 + Mockito(`MockitoExtension`) + AssertJ · `@WebMvcTest`(Spring Boot 4는 `org.springframework.boot.webmvc.test.autoconfigure`)
 
-**설계 문서:** [2026-08-31-dashboard-index-coalescing-design.md](../specs/2026-08-31-dashboard-index-coalescing-design.md)
+**설계 문서:** [2026-08-31-dashboard-index-coalescing-design.md](../../specs/2026-08-31-dashboard-index-coalescing-design.md)
 
 ## Global Constraints
 
