@@ -36,9 +36,17 @@ public class V1ContentRepository {
 				.params(sql.params).query(Long.class).single();
 	}
 
-	/** meta.distributors 옵션 — 어휘 테이블 전체, id(슬러그) 오름차순 (스펙 6.1). */
+	/**
+	 * meta.distributors 옵션 — <b>뷰티 축</b> 어휘, id(슬러그) 오름차순 (스펙 6.1).
+	 *
+	 * <p>축 필터가 필요한 이유: 어휘 테이블은 F&amp;B 유통사(편의점·마트)도 함께 담는데
+	 * (2026-08-31 F&amp;B 어휘 추가), 필터 없이 읽으면 뷰티 랭킹 화면의 유통사 드롭다운에
+	 * 편의점이 노출된다. 지금 이 API는 뷰티만 서빙하므로 뷰티 축으로 고정한다 —
+	 * F&amp;B 서빙을 열 때 요청 축에 따라 고르도록 바꾼다(설계 2026-08-31 §8-1).
+	 */
 	public List<Map<String, Object>> findDistributorOptions() {
-		return jdbcClient.sql("SELECT slug, name FROM beauty_distributors ORDER BY slug")
+		return jdbcClient.sql(
+						"SELECT slug, name FROM beauty_distributors WHERE axis = 'beauty' ORDER BY slug")
 				.query((rs, i) -> Map.<String, Object>of("id", rs.getString("slug"), "name", rs.getString("name")))
 				.list();
 	}

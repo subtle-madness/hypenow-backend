@@ -16,15 +16,43 @@ import org.junit.jupiter.api.Test;
 class BeautyTaxonomyTest {
 
 	private static final BeautyTaxonomy FIXTURE = new BeautyTaxonomy(List.of(
-			new BeautyTaxonomy.Entry("skincare", "스킨케어", "스킨/토너", "스킨"),
-			new BeautyTaxonomy.Entry("skincare", "스킨케어", "스킨/토너", "토너"),
-			new BeautyTaxonomy.Entry("makeup", "메이크업", "립메이크업", "립틴트"),
-			new BeautyTaxonomy.Entry("makeup", "메이크업", "립메이크업", "립스틱")),
-			List.of("올리브영", "다이소"));
+			new BeautyTaxonomy.Entry("skincare", "스킨케어", "스킨/토너", "스킨", "beauty"),
+			new BeautyTaxonomy.Entry("skincare", "스킨케어", "스킨/토너", "토너", "beauty"),
+			new BeautyTaxonomy.Entry("makeup", "메이크업", "립메이크업", "립틴트", "beauty"),
+			new BeautyTaxonomy.Entry("makeup", "메이크업", "립메이크업", "립스틱", "beauty"),
+			new BeautyTaxonomy.Entry("beverage", "음료", "음료", "탄산", "fnb")),
+			List.of(new BeautyTaxonomy.Distributor("올리브영", "beauty"),
+					new BeautyTaxonomy.Distributor("다이소", "beauty"),
+					new BeautyTaxonomy.Distributor("GS25", "fnb")));
+
+	@Test
+	void axisOf는_대분류의_축을_돌려준다() {
+		assertEquals("beauty", FIXTURE.axisOf("skincare"));
+		assertEquals("fnb", FIXTURE.axisOf("beverage"));
+		assertNull(FIXTURE.axisOf("nonexistent"));
+		assertNull(FIXTURE.axisOf(null));
+	}
+
+	@Test
+	void distributorAxisOf는_유통사의_축을_돌려준다() {
+		assertEquals("beauty", FIXTURE.distributorAxisOf("올리브영"));
+		assertEquals("fnb", FIXTURE.distributorAxisOf("GS25"));
+		assertNull(FIXTURE.distributorAxisOf("없는곳"));
+		assertNull(FIXTURE.distributorAxisOf(null));
+	}
+
+	@Test
+	void 프롬프트_렌더링은_축을_밝힌다() {
+		// LLM이 콘텐츠 축과 맞는 유통사·대분류만 고르게 하려면 축이 프롬프트에 보여야 한다.
+		assertTrue(FIXTURE.promptTable().contains("[beauty] skincare(스킨케어)"));
+		assertTrue(FIXTURE.promptTable().contains("[fnb] beverage(음료)"));
+		// 유통사 나열 순서는 시드 sort 순서를 보존한다
+		assertEquals("올리브영(beauty)|다이소(beauty)|GS25(fnb)", FIXTURE.distributorsPrompt());
+	}
 
 	@Test
 	void 대분류_slug_집합을_행에서_조립한다() {
-		assertEquals(Set.of("skincare", "makeup"), FIXTURE.mainCategories());
+		assertEquals(Set.of("skincare", "makeup", "beverage"), FIXTURE.mainCategories());
 	}
 
 	@Test
@@ -47,15 +75,17 @@ class BeautyTaxonomyTest {
 
 	@Test
 	void 유통사_집합과_프롬프트_나열을_제공한다() {
-		assertEquals(Set.of("올리브영", "다이소"), FIXTURE.distributors());
-		assertEquals("올리브영|다이소", FIXTURE.distributorsPrompt()); // 시드 정렬 순서 유지
+		assertEquals(Set.of("올리브영", "다이소", "GS25"), FIXTURE.distributors());
+		// 시드 정렬 순서 유지 + 축 표기 (LLM이 콘텐츠 축과 맞는 유통사만 고르게 하기 위해)
+		assertEquals("올리브영(beauty)|다이소(beauty)|GS25(fnb)", FIXTURE.distributorsPrompt());
 	}
 
 	@Test
 	void 프롬프트_분류표는_slug와_라벨_계층을_행_순서대로_렌더링한다() {
 		assertEquals("""
-				skincare(스킨케어): 스킨/토너[스킨, 토너]
-				makeup(메이크업): 립메이크업[립틴트, 립스틱]""",
+				[beauty] skincare(스킨케어): 스킨/토너[스킨, 토너]
+				[beauty] makeup(메이크업): 립메이크업[립틴트, 립스틱]
+				[fnb] beverage(음료): 음료[탄산]""",
 				FIXTURE.promptTable());
 	}
 
@@ -92,10 +122,10 @@ class BeautyTaxonomyTest {
 	void 여러_대분류에_걸치는_애매한_라벨은_투표에서_제외된다() {
 		// "겸용"이 skincare·makeup 둘 다에 속하면 단일 대분류로 못 정하므로 집계 제외 → 남은 단일표로 결정
 		BeautyTaxonomy ambiguous = new BeautyTaxonomy(List.of(
-				new BeautyTaxonomy.Entry("skincare", "스킨케어", "겸용", "겸용"),
-				new BeautyTaxonomy.Entry("makeup", "메이크업", "겸용", "겸용"),
-				new BeautyTaxonomy.Entry("makeup", "메이크업", "립메이크업", "립틴트")),
-				List.of("올리브영"));
+				new BeautyTaxonomy.Entry("skincare", "스킨케어", "겸용", "겸용", "beauty"),
+				new BeautyTaxonomy.Entry("makeup", "메이크업", "겸용", "겸용", "beauty"),
+				new BeautyTaxonomy.Entry("makeup", "메이크업", "립메이크업", "립틴트", "beauty")),
+				List.of(new BeautyTaxonomy.Distributor("올리브영", "beauty")));
 		assertEquals("makeup", ambiguous.deriveMain(List.of("겸용", "립틴트")));
 		assertNull(ambiguous.deriveMain(List.of("겸용"))); // 애매 라벨만 → 결정 불가
 	}

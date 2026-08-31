@@ -64,7 +64,9 @@ public final class ContentCacheSeed {
 				    followers         bigint
 				)""");
 		jdbc.execute("CREATE TABLE image_assets (kind text NOT NULL, key text NOT NULL, object_path text)");
-		jdbc.execute("CREATE TABLE beauty_distributors (slug text PRIMARY KEY, name text)");
+		// axis는 findDistributorOptions의 뷰티 축 필터가 읽는다 (2026-08-31 F&B 어휘 추가)
+		jdbc.execute("CREATE TABLE beauty_distributors (slug text PRIMARY KEY, name text,"
+				+ " axis text NOT NULL DEFAULT 'beauty')");
 		// 6.5 인플루언서 리포트 경로용. handle='glow' 1행만 채우고(캐시 히트 검증이 UPDATE로
 		// 변경을 걸 대상) 나머지 handle 조회는 전부 empty → findSummary 404(캐시 통합 테스트 F).
 		// 컬럼은 V1InfluencerReportRepository.SummaryRow SELECT 목록과 1:1.
