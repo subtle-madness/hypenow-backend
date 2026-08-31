@@ -1,4 +1,4 @@
-package com.celfit.monitoring.hiker;
+package com.celfit.instagram.source;
 
 /**
  * 게시자(인플루언서) 프로필 — /v2/user/by/id 파싱 결과(브랜드 태그 모니터링 스펙 §2).

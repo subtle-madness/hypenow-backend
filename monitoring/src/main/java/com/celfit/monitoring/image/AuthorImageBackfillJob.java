@@ -1,8 +1,8 @@
 package com.celfit.monitoring.image;
 
-import com.celfit.monitoring.hiker.AuthorInfo;
+import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import java.time.Instant;
 import java.util.List;

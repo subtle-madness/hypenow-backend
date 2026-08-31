@@ -1,5 +1,10 @@
 package com.celfit.monitoring.hiker;
 
+import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.MediaRef;
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.ProfileInfo;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;

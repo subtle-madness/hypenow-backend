@@ -3,6 +3,11 @@ package com.celfit.monitoring.hiker;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.MediaRef;
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.ProfileInfo;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;

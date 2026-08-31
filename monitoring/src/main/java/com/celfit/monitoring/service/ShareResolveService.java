@@ -1,7 +1,7 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.instagram.source.MediaRef;
 import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.MediaRef;
 import com.celfit.monitoring.hiker.ShareLinkUnresolvedException;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import java.net.URI;

@@ -1,4 +1,4 @@
-package com.celfit.monitoring.hiker;
+package com.celfit.instagram.source;
 
 /**
  * 게시물 스냅샷 원재료 — 6지표(좋아요·댓글·조회·저장·공유·리포스트).

@@ -8,8 +8,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.PostShapeUnsupportedException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.service.BrandDirectCollectService;

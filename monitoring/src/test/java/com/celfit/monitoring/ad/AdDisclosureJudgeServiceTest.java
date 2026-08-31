@@ -2,9 +2,9 @@ package com.celfit.monitoring.ad;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.ad.AdDisclosureExtractor.Category;
 import com.celfit.monitoring.ad.AdDisclosureExtractor.Disclosure;
-import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.store.BrandPostMetaRepository;
 import java.security.MessageDigest;
 import java.util.ArrayList;

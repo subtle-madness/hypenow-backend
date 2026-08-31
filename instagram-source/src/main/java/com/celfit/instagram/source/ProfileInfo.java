@@ -1,4 +1,4 @@
-package com.celfit.monitoring.hiker;
+package com.celfit.instagram.source;
 
 /**
  * 프로필 스냅샷 원재료 — 응답 원문은 나르지 않는다(감사용 원형 적재는 전송 계층

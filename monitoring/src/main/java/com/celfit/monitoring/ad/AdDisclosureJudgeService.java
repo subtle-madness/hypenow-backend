@@ -1,6 +1,6 @@
 package com.celfit.monitoring.ad;
 
-import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.store.BrandPostMetaRepository;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;

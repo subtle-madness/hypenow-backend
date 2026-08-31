@@ -1,9 +1,9 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
-import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;

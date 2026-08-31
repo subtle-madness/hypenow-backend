@@ -1,9 +1,9 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
-import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.PrivateAccountException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.hiker.TargetCallContext;
@@ -17,8 +17,8 @@ import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Comparator;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;

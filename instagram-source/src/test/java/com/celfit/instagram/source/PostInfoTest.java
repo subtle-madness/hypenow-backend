@@ -1,4 +1,4 @@
-package com.celfit.monitoring.hiker;
+package com.celfit.instagram.source;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

@@ -3,13 +3,13 @@ package com.celfit.monitoring.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.AuthorInfo;
 import com.celfit.monitoring.hiker.BrandCallContext;
-import com.celfit.monitoring.hiker.CommentInfo;
 import com.celfit.monitoring.hiker.CountingHikerHttp;
 import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.PostShapeUnsupportedException;
 import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.hiker.TargetCallContext;

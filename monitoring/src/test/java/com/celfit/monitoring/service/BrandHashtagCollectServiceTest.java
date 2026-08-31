@@ -2,11 +2,11 @@ package com.celfit.monitoring.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.AuthorInfo;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
 import com.celfit.monitoring.store.BrandHashtagRepository;

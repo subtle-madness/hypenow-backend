@@ -2,7 +2,7 @@ package com.celfit.monitoring.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.time.Instant;
 import java.util.List;
