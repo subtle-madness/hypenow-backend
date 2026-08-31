@@ -122,27 +122,36 @@ LANGUAGE sql STABLE AS $$
   FROM s
 $$;
 
--- 서빙 모수: 뷰티 인플루언서(QUALIFIED ∧ beauty ∧ ¬beauty_company)의 ENUMERATION 콘텐츠
--- (스펙 2026-07-17 §2 결정 2). 아래 뷰들이 공유하는 필터 밑판 — 미러 안 함.
--- 같은 필터가 01(v_recent_content)·20(micro_account)에도 있다 — 모수를 바꿀 땐 세 곳을 같이.
+-- 서빙 모수: 뷰티 ∪ F&B 인플루언서의 ENUMERATION 콘텐츠 (2026-08-31 F&B 서빙 개방 —
+-- 구: 뷰티 단독, 스펙 2026-07-17 §2 결정 2). 아래 뷰들이 공유하는 필터 밑판 — 미러 안 함.
+-- 01(v_recent_content)도 같은 모수 — 단 20(micro_account)은 **의도적으로 뷰티 유지**(랜딩
+-- 노출 숫자는 기본 화면이다 — 서빙 개방 §4). 기본 화면 불변은 was 층이 지킨다(무필터=뷰티).
 CREATE OR REPLACE VIEW analytics.v_serving_content AS
 SELECT c.content_id, c.short_code, c.owner_username, c.uploaded_at, c.content_type
 FROM analytics.v_base_content c
 JOIN analytics.v_base_influencer i ON i.influencer_id = c.influencer_id
 WHERE c.origin = 'ENUMERATION'
-  AND i.status = 'QUALIFIED' AND i.beauty AND NOT i.beauty_company;
+  AND i.status = 'QUALIFIED'
+  AND ( (i.beauty AND NOT i.beauty_company)
+     OR (i.fnb    AND NOT i.fnb_company) );
 
--- 계정 (자연키 handle = 인스타 username). 뷰티 모수 ∩ 프로필 보유 (INNER JOIN 의도).
+-- 계정 (자연키 handle = 인스타 username). 서빙 모수(뷰티 ∪ F&B) ∩ 프로필 보유 (INNER JOIN 의도).
+-- beauty·fnb 축 컬럼(맨 끝, 2026-08-31): was 발굴이 무필터=뷰티를 명시하는 재료 —
+-- 계약 3종(이 SELECT 순서 = accounts DDL = contract Account record) 동기 유지.
 CREATE OR REPLACE VIEW analytics.v_accounts AS
 SELECT
   p.username AS handle,
   p.display_name,
   p.profile_image_url,
   p.followers,
-  p.external_link
+  p.external_link,
+  (i.beauty AND NOT i.beauty_company) AS beauty,
+  (i.fnb    AND NOT i.fnb_company)    AS fnb
 FROM analytics.v_base_profile p
 JOIN analytics.v_base_influencer i USING (influencer_id)
-WHERE i.status = 'QUALIFIED' AND i.beauty AND NOT i.beauty_company;
+WHERE i.status = 'QUALIFIED'
+  AND ( (i.beauty AND NOT i.beauty_company)
+     OR (i.fnb    AND NOT i.fnb_company) );
 
 -- 콘텐츠 팩트. 지표(views·likes·comments·hype_score)는 **업로드 +N일 이후 가장 이른 스냅샷으로
 -- 고정**(07-14 정정 ③ — 열거 재방문으로 스냅샷이 누적돼도 서빙 지표는 3일 시점 값 유지).

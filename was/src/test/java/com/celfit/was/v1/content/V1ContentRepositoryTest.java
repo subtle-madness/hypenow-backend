@@ -134,6 +134,8 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				  NULL, 'https://ig/f1', NULL, 50, 5, 300, '2026-07-05T03:00:00Z', 300),
 				 ('f2', 'beta', 'https://thumb/f2.jpg', '피드 정렬용', '2026-07-03T03:00:00Z', 'feed',
 				  NULL, 'https://ig/f2', 800, 80, 8, 350, '2026-07-06T03:00:00Z', 350),
+				 ('fb1', 'alpha', 'https://thumb/fb1.jpg', '밀키트 릴스', '2026-07-02T04:00:00Z', 'reels',
+				  22, 'https://ig/fb1', 2000, 200, 20, 600, '2026-07-05T04:00:00Z', 600),
 				 ('nb1', 'alpha', 'https://thumb/nb1.jpg', '일상 브이로그', '2026-07-02T03:00:00Z', 'reels',
 				  22, 'https://ig/nb1', 5000, 500, 50, 800, '2026-07-05T03:00:00Z', 800),
 				 -- 시점 마킹 대조군(별도 기간 [07-11, 07-20) — 기존 테스트 무영향):
@@ -166,6 +168,9 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				 ('f1', 'makeup', '["립틴트"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'timely'),
 				 ('f2', 'skincare', '["토너"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'timely'),
 				 ('nb1', NULL, NULL, 'organic', NULL, NULL, NULL, false, 'timely'),
+				 -- F&B 분석행(2026-08-31 서빙 개방) — 축 파생으로 is_beauty=false ∧ main 확정
+				 ('fb1', 'convenience', '["가공/간편식","밀키트"]'::jsonb, 'organic', NULL, NULL,
+				  '["GS25"]'::jsonb, false, 'timely'),
 				 ('tl1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'timely'),
 				 ('lb1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'late_backfill'),
 				 ('lg1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, NULL),
@@ -313,6 +318,27 @@ class V1ContentRepositoryTest extends IntegrationTest {
 		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("z1", "a1");
 		assertThat(rows.get(0).hypeScorePrecise()).isEqualByComparingTo("65.4321");
 		assertThat(rows.get(1).hypeScorePrecise()).isEqualByComparingTo("65.1234");
+	}
+
+	@Test
+	void 무필터_랭킹에_FnB_콘텐츠는_안_나온다() {
+		// 기본 화면 불변(서빙 개방 §6-1) — 미러에 F&B가 있어도 is_beauty=true 게이트가 지킨다
+		List<ContentCardRow> rows = repository.findCards(query("reels", null, null, null, null, "latest", 50));
+		assertThat(rows).extracting(ContentCardRow::shortCode).doesNotContain("fb1");
+	}
+
+	@Test
+	void FnB_대분류_필터로_FnB_콘텐츠가_나온다() {
+		// main 필터 시 is_beauty 조건 제거(불변식: main 있음 ⇒ 축 확정 — 서빙 개방 §2)
+		List<ContentCardRow> rows = repository.findCards(query("reels", "convenience", null, null, null, "latest", 50));
+		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("fb1");
+	}
+
+	@Test
+	void 뷰티_대분류_필터는_기존과_동치다() {
+		// is_beauty 조건 제거 후에도 뷰티 필터 결과 불변(main=skincare ⇒ is_beauty=true 파생)
+		List<ContentCardRow> rows = repository.findCards(query("reels", "skincare", null, null, null, "latest", 50));
+		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("r2");
 	}
 
 	@Test

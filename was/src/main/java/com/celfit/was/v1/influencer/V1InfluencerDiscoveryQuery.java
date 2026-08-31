@@ -1,6 +1,7 @@
 package com.celfit.was.v1.influencer;
 
 import com.celfit.was.v1.common.CacheKeys;
+import com.celfit.was.v1.common.MainCategories;
 import com.celfit.was.v1.common.V1ApiException;
 import java.util.Arrays;
 import java.util.List;
@@ -17,8 +18,8 @@ public record V1InfluencerDiscoveryQuery(List<String> keywords, String mainCateg
 	private static final Set<String> SORTS = Set.of("reach", "views", "followers", "hype");
 	private static final Set<String> FOLLOWERS = Set.of("500-3k", "3k-10k", "10k-30k", "30k-50k");
 	private static final Set<String> SPONSORED = Set.of("none", "1-2", "3-5", "6plus");
-	private static final Set<String> MAIN_CATEGORIES =
-			Set.of("skincare", "suncare", "makeup", "cleansing", "haircare", "fragrance", "esthetic");
+	// 대분류 어휘는 공용 상수(MainCategories.ALL — 뷰티+F&B) — 2026-08-31 F&B 서빙 개방.
+	private static final Set<String> MAIN_CATEGORIES = MainCategories.ALL;
 
 	public static V1InfluencerDiscoveryQuery of(String q, String mainCategory, String midCategory,
 			String subCategory, String follower, String activity, String sponsored, String contact,
