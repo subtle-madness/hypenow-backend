@@ -243,7 +243,8 @@ public class PerformanceContentAssembler {
 				.thenComparing(DashboardRef::contentKey));
 		return new DashboardIndex(userId, List.copyOf(refs),
 				lastCollectedAt(legacy.lastCollectedAt(), pool.lastSweptAt()), competitorIds,
-				Map.copyOf(legacyCards), Map.copyOf(brandByCode), pool.brandsById(), campaignsById);
+				Map.copyOf(legacyCards), Map.copyOf(brandByCode), pool.brandsById(),
+				Map.copyOf(campaignsById));
 	}
 
 	/**
@@ -353,7 +354,7 @@ public class PerformanceContentAssembler {
 			// 하이드레이트 재료는 게시물 0건인 브랜드도 실어 둔다 — 페이지 하이드레이트가 계정 행을
 			// 다시 읽지 않게 하는 것이 목적이고, lastSweptAt도 게시물 유무와 무관하다(현행과 동일).
 			brandsById.put(brandAccountId,
-					new DashboardIndex.BrandHydration(account, link.accountType(), ownedShortCodes));
+					new DashboardIndex.BrandHydration(account, link.accountType(), Set.copyOf(ownedShortCodes)));
 			lastSweptAt = lastCollectedAt(lastSweptAt, account.lastSweptAt());
 			if (visible.isEmpty()) {
 				continue;
@@ -900,6 +901,9 @@ public class PerformanceContentAssembler {
 	/**
 	 * 인덱스 패스 결과({@link #index}) — refs 외 나머지는 페이지 하이드레이트가 재사용하는 재료다.
 	 * 인덱스가 이미 읽은 것(레거시 카드·계정 행·등록 원장·캠페인)을 다시 읽지 않게 실어 나른다.
+	 *
+	 * <p>인스턴스는 {@link DashboardIndexCoalescer}가 여러 요청 스레드에 <b>같은 것을 나눠 준다</b> —
+	 * 모든 컬렉션 필드는 생성 시점에 불변으로 굳힌다(2026-08-31).
 	 *
 	 * @param legacyCards contentKey(=item.id) → 조립 완료 카드. 겹침 병합분이 이미 반영돼 있다.
 	 * @param brandByCode 풀 전용 shortcode → brandAccountId(겹침 코드는 레거시 카드가 정본이라 없다).
