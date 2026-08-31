@@ -587,6 +587,17 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(byId.get(0).followers()).isEqualTo(5000L);
 		assertThat(byId.get(0).isVerified()).isTrue();
 
+		// 널 필드 행도 findAuthors 경로로 못박는다(2026-08-31 수동 매퍼 교체 대비) — 박싱 타입
+		// 전부 null 보존, 원시형 없음.
+		List<AuthorRow> nullFields = repository.findAuthors(List.of("IG_B"));
+		assertThat(nullFields).hasSize(1);
+		assertThat(nullFields.get(0).igUserId()).isEqualTo("IG_B");
+		assertThat(nullFields.get(0).fullName()).isNull();
+		assertThat(nullFields.get(0).followers()).isNull();
+		assertThat(nullFields.get(0).profilePicUrl()).isNull();
+		assertThat(nullFields.get(0).isVerified()).isNull();
+		assertThat(nullFields.get(0).imageObjectPath()).isNull();
+
 		List<AuthorRow> byUsername = repository.findAuthorsByUsername(List.of("influencer_b"));
 		assertThat(byUsername).hasSize(1);
 		assertThat(byUsername.get(0).igUserId()).isEqualTo("IG_B");
