@@ -182,7 +182,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 	/** 기본 조회: 2026-07-01~07-10, contentType 기본(reels)·sort 기본(hype)·limit 기본(100)·offset 기본(0). */
 	private V1ContentQuery query() {
 		return V1ContentQuery.of(LocalDate.parse("2026-07-01"), LocalDate.parse("2026-07-10"),
-				null, null, null, null, null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, null, null, null, null, null);
 	}
 
 	private V1ContentQuery query(String contentType, String mainCategory, String midCategory,
@@ -194,7 +194,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 			String subCategory, String distributorId, String sort, Integer limit, Integer offset) {
 		return V1ContentQuery.of(LocalDate.parse("2026-07-01"), LocalDate.parse("2026-07-10"),
 				contentType, mainCategory, midCategory, subCategory, null, null, null,
-				distributorId, sort, limit, offset);
+				distributorId, sort, limit, offset, null);
 	}
 
 	@Test
@@ -219,7 +219,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 		// [07-11, 07-20) 창: tl1(timely)·lg1(시점 NULL 레거시)는 노출, lb1(late_backfill)은 제외.
 		// lb1은 hype 999로 필터 없으면 1위인데, 늦크롤 지표 편향 때문에 랭킹에서 아예 빠진다.
 		V1ContentQuery q = V1ContentQuery.of(LocalDate.parse("2026-07-11"), LocalDate.parse("2026-07-20"),
-				null, null, null, null, null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, null, null, null, null, null);
 
 		List<ContentCardRow> rows = repository.findCards(q);
 
@@ -311,7 +311,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 		// short_code를 타서 a1이 먼저 나온다(직접 확인: orderBy()를 hype_score 기준으로 바꿔
 		// 재실행하면 이 단언이 깨진다).
 		V1ContentQuery q = V1ContentQuery.of(LocalDate.parse("2026-08-01"), LocalDate.parse("2026-08-05"),
-				null, null, null, null, null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, null, null, null, null, null);
 
 		List<ContentCardRow> rows = repository.findCards(q);
 
@@ -335,6 +335,29 @@ class V1ContentRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void vertical_fnb는_FnB_축_전체를_내린다() {
+		// 2026-09-01 FE 피드백 #1 — 대분류 없이 축 전체. nb1(무관, main NULL·is_beauty=false)은
+		// F&B 축이 아니므로 안 낀다(main IN F&B slug만).
+		V1ContentQuery q = V1ContentQuery.of(LocalDate.parse("2026-07-01"),
+				LocalDate.parse("2026-07-10"), "reels", null, null, null, null, null, null, null,
+				"latest", 50, null, "fnb");
+		List<ContentCardRow> rows = repository.findCards(q);
+		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("fb1");
+		assertThat(repository.countCards(q)).isEqualTo(1);
+	}
+
+	@Test
+	void vertical_beauty는_무필터와_동치다() {
+		V1ContentQuery q = V1ContentQuery.of(LocalDate.parse("2026-07-01"),
+				LocalDate.parse("2026-07-10"), "reels", null, null, null, null, null, null, null,
+				"latest", 50, null, "beauty");
+		List<ContentCardRow> vertical = repository.findCards(q);
+		List<ContentCardRow> plain = repository.findCards(query("reels", null, null, null, null, "latest", 50));
+		assertThat(vertical).extracting(ContentCardRow::shortCode)
+				.isEqualTo(plain.stream().map(ContentCardRow::shortCode).toList());
+	}
+
+	@Test
 	void 뷰티_대분류_필터는_기존과_동치다() {
 		// is_beauty 조건 제거 후에도 뷰티 필터 결과 불변(main=skincare ⇒ is_beauty=true 파생)
 		List<ContentCardRow> rows = repository.findCards(query("reels", "skincare", null, null, null, "latest", 50));
@@ -342,13 +365,15 @@ class V1ContentRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 유통사_옵션은_뷰티축만_슬러그_오름차순으로_내린다() {
-		// 어휘 테이블은 F&B 유통사(편의점·마트)도 함께 담는다(2026-08-31). 축 필터가 없으면
-		// 뷰티 랭킹 화면의 유통사 드롭다운에 GS25가 뜬다 — 서빙 확장이 아니라 오염 차단이다.
-		List<Map<String, Object>> options = repository.findDistributorOptions();
-
-		assertThat(options).containsExactly(
+	void 유통사_옵션은_요청_축만_슬러그_오름차순으로_내린다() {
+		// 어휘 테이블은 두 축의 유통사를 함께 담는다(2026-08-31). 축 인자(2026-09-01 FE #5)로
+		// 화면 축에 맞는 어휘만 내린다 — 뷰티 화면에 GS25가 뜨면 안 된다.
+		List<Map<String, Object>> beauty = repository.findDistributorOptions("beauty");
+		assertThat(beauty).containsExactly(
 				Map.of("id", "daiso", "name", "다이소"),
 				Map.of("id", "oliveyoung", "name", "올리브영"));
+
+		List<Map<String, Object>> fnb = repository.findDistributorOptions("fnb");
+		assertThat(fnb).containsExactly(Map.of("id", "gs25", "name", "GS25"));
 	}
 }
