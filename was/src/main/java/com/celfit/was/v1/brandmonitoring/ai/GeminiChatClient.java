@@ -2,6 +2,7 @@ package com.celfit.was.v1.brandmonitoring.ai;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
@@ -42,6 +43,84 @@ public class GeminiChatClient {
 	 */
 	public LlmTurn generate(String systemPrompt, List<JsonNode> contents, List<AiToolSpec> tools,
 			boolean toolCallsDisabled) {
+		ObjectNode body = buildBody(systemPrompt, contents, tools, toolCallsDisabled);
+		return parse(transport.post(body.toString()));
+	}
+
+	/**
+	 * generate()의 스트리밍 버전(T2) - 요청 조립은 완전히 동일하고(경로만 {@link ChatTransport}
+	 * 구현체가 다르게 잡는다, T1), 응답만 SSE 청크로 받는다. {@code onChunk}는 SSE data 이벤트가 올
+	 * 때마다 그 청크의 델타(텍스트·이번 청크에 새로 나타난 functionCall·이번 청크에 실린 finishReason)를
+	 * 받는다 - 홀드백 여부 같은 정책 판단은 호출자({@link BrandAiAgent})의 몫이고, 이 클래스는 순수
+	 * 파싱만 한다.
+	 *
+	 * <p>돌려주는 {@link LlmTurn}은 모든 청크를 누적한 완성 턴이다 - {@link #generate}와 동일한 형태로
+	 * 에이전트 루프의 나머지 로직(툴 실행·되먹임·정지 조건 판정)을 그대로 재사용할 수 있게 한다.
+	 */
+	public LlmTurn generateStream(String systemPrompt, List<JsonNode> contents, List<AiToolSpec> tools,
+			boolean toolCallsDisabled, Consumer<Chunk> onChunk) {
+		ObjectNode body = buildBody(systemPrompt, contents, tools, toolCallsDisabled);
+		StringBuilder text = new StringBuilder();
+		List<LlmTurn.ToolCall> allCalls = new ArrayList<>();
+		int[] promptTokens = {0};
+		int[] outputTokens = {0};
+		String[] finishReason = {null};
+		boolean[] sawCandidate = {false};
+
+		transport.postStream(body.toString(), raw -> {
+			JsonNode root = objectMapper.readTree(raw);
+			JsonNode usage = root.path("usageMetadata");
+			JsonNode candidates = root.path("candidates");
+			JsonNode candidate = candidates.path(0);
+			JsonNode parts = candidate.path("content").path("parts");
+			StringBuilder deltaText = new StringBuilder();
+			List<LlmTurn.ToolCall> deltaCalls = new ArrayList<>();
+			for (JsonNode part : parts) {
+				JsonNode functionCall = part.path("functionCall");
+				if (functionCall.isObject()) {
+					JsonNode args = functionCall.path("args");
+					LlmTurn.ToolCall call = new LlmTurn.ToolCall(functionCall.path("name").asString(),
+							args.isObject() ? args : objectMapper.createObjectNode());
+					allCalls.add(call);
+					deltaCalls.add(call);
+				} else if (part.hasNonNull("text")) {
+					deltaText.append(part.path("text").asString());
+				}
+			}
+			text.append(deltaText);
+			if (!candidates.isEmpty()) {
+				sawCandidate[0] = true;
+			}
+			String chunkFinishReason = null;
+			if (candidate.hasNonNull("finishReason")) {
+				chunkFinishReason = candidate.path("finishReason").asString();
+				finishReason[0] = chunkFinishReason;
+			} else if (candidates.isEmpty()) {
+				String blockReason = root.path("promptFeedback").path("blockReason").asString(null);
+				if (blockReason != null) {
+					chunkFinishReason = blockReason;
+					finishReason[0] = blockReason;
+				}
+			}
+			if (usage.isObject() && !usage.isMissingNode()) {
+				promptTokens[0] = usage.path("promptTokenCount").asInt();
+				// I7-④와 동형 - thinking 소비분도 출력 토큰에 합산한다.
+				outputTokens[0] = usage.path("candidatesTokenCount").asInt() + usage.path("thoughtsTokenCount").asInt();
+			}
+			onChunk.accept(new Chunk(deltaText.toString(), List.copyOf(deltaCalls), chunkFinishReason));
+		});
+
+		// I7과 동형 - 청크 전체에서 후보를 한 번도 못 봤고 finishReason도 못 얻었으면(전부 프롬프트
+		// 차단 등) NO_CANDIDATES로 대체한다.
+		String resolvedFinishReason = finishReason[0] != null ? finishReason[0] : sawCandidate[0] ? null : "NO_CANDIDATES";
+		return new LlmTurn(text.toString(), List.copyOf(allCalls), promptTokens[0], outputTokens[0],
+				resolvedFinishReason);
+	}
+
+	/** generate()·generateStream() 공통 요청 본문 조립(T2 리팩터) - I7 thinkingBudget=0 고정,
+	 * I8 강제 답변 턴에서도 tools 유지 등 기존 규칙을 그대로 지킨다. */
+	private ObjectNode buildBody(String systemPrompt, List<JsonNode> contents, List<AiToolSpec> tools,
+			boolean toolCallsDisabled) {
 		ObjectNode body = objectMapper.createObjectNode();
 		body.putObject("systemInstruction").putArray("parts").addObject().put("text", systemPrompt);
 		ArrayNode contentsNode = body.putArray("contents");
@@ -66,7 +145,7 @@ public class GeminiChatClient {
 		// thinkingBudget=0(I7) - gemini-2.5는 dynamic thinking이 기본이라 미지정 시 thinking 토큰이
 		// maxOutputTokens를 잠식해 finishReason=MAX_TOKENS로 parts 없이 끝날 수 있다.
 		generation.putObject("thinkingConfig").put("thinkingBudget", 0);
-		return parse(transport.post(body.toString()));
+		return body;
 	}
 
 	/**
@@ -168,5 +247,15 @@ public class GeminiChatClient {
 
 	/** 툴 결과 1건 - payloadJson은 {@link AiToolResult#payloadJson()} 그대로다. */
 	public record ToolResponse(String name, String payloadJson) {
+	}
+
+	/**
+	 * SSE 청크 1건(T2, {@link #generateStream}) - Vertex streamGenerateContent가 보낸 data 이벤트
+	 * 1건의 파싱 결과. textDelta는 <b>이번 청크만의</b> 텍스트(누적 아님) - Gemini 스트리밍은 각
+	 * data 이벤트에 그 시점의 증분 텍스트만 싣는다. toolCalls도 이번 청크에서 새로 나타난 것만이다
+	 * (보통 스트림 끝 무렵 한 청크에 몰려 온다). finishReason은 이번 청크에 실제로 실려온 경우만(대개
+	 * 마지막 청크) - 없으면 null.
+	 */
+	public record Chunk(String textDelta, List<LlmTurn.ToolCall> toolCalls, String finishReason) {
 	}
 }

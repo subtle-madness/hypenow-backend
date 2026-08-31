@@ -10,6 +10,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
@@ -18,7 +19,10 @@ import tools.jackson.databind.node.ObjectNode;
 
 /**
  * 에이전트 루프(설계 §3) - 시스템 프롬프트 + 대화 이력을 LLM에 보내고, 툴 호출이 오면 실행해
- * 되먹이기를 반복하다 텍스트 답변이 나오면 끝낸다. SSE·서버 세션은 스코프 밖이다(설계 §10).
+ * 되먹이기를 반복하다 텍스트 답변이 나오면 끝낸다. 서버 세션은 스코프 밖이다(설계 §10) - 다만 SSE
+ * 스트리밍(FE 변경요청서 §3.2, T3)은 {@link #run(long, List, Long, AiScope, String, StreamListener,
+ * BooleanSupplier)} 오버로드로 지원한다 - 정지 조건·툴 실행·되먹임 로직은 완결 경로와 완전히 같고
+ * LLM 호출만 스트리밍으로 받는다({@link StreamListener} 참조).
  *
  * <p>정지 조건이 네 겹이다(C2/I6) - 툴 호출 {@value #MAX_TOOL_CALLS}회(설계 §7), 누적 프롬프트
  * 토큰 {@value #PROMPT_TOKEN_BUDGET}(댓글 본문 무절단×매 턴 전체 재전송의 O(k²) 폭발 방지, I6),
@@ -202,6 +206,160 @@ public class BrandAiAgent {
 		return new AgentOutcome(FALLBACK_ANSWER, referenced, buildReferences(toolSession, referenced),
 				List.copyOf(toolCalls), promptTokens, outputTokens, brandId, AiChatLogEntry.OUTCOME_LLM_CALL_CAP,
 				false);
+	}
+
+	/**
+	 * 스트리밍 리스너(T3, FE 변경요청서 §3.2) - 텍스트 델타·툴 호출 시작을 실시간으로 통지한다.
+	 *
+	 * <p><b>홀드백 불변식</b> - {@link #onAnswerDelta}로 넘어오는 텍스트는 항상 최종 답변의 일부임이
+	 * 보장된다. 툴이 선언된 일반 턴(강제 답변 턴이 아닌 턴)은 텍스트를 누적만 하다가 그 턴이
+	 * functionCall 없이 순수 텍스트로 끝난(=최종 답변으로 확정된) 시점에만 방출한다. 강제 답변 턴
+	 * (toolConfig NONE)은 그 턴 자체가 항상 최종 답변이므로 델타 도착 즉시 방출한다. 이 불변식이
+	 * 없으면 같은 턴에서 텍스트를 먼저 흘린 뒤 functionCall이 나오는 경우(Gemini가 parts 배열에
+	 * 텍스트+functionCall을 함께 담아 반환할 수 있다) 클라이언트 화면에 고아 텍스트가 남는다 -
+	 * {@link #run(long, List, Long, AiScope, String, StreamListener, BooleanSupplier)}가 이 규칙을
+	 * 강제한다({@code BrandAiAgentTest}의 홀드백 테스트로 고정).
+	 *
+	 * <p><b>알려진 예외</b> - 강제 답변 턴(mode=NONE)인데도 모델이 텍스트와 functionCall을 같은 턴에
+	 * 함께 돌려주는 병리적 응답은 이 불변식을 깨뜨릴 수 있다(텍스트는 이미 라이브로 나갔는데 그 턴이
+	 * FALLBACK_ANSWER로 대체되는 경우) - 강제 답변 턴을 라이브 방출하는 설계 자체의 트레이드오프이고,
+	 * 비스트리밍 경로도 이 조합을 이미 병리 사례로 취급해 warn을 남긴다(위 클래스 상단 주석 C2 잔여).
+	 */
+	public interface StreamListener {
+
+		/** 방출 규칙은 위 홀드백 불변식을 따른다. */
+		void onAnswerDelta(String textDelta);
+
+		/** 툴 실행을 시작하는 시점에 1회 호출한다. index는 이번 run() 전체에서 몇 번째 툴 호출인지(1부터). */
+		void onToolCall(String toolName, int index);
+	}
+
+	/**
+	 * 스트리밍 오버로드(T3, FE 변경요청서 §3.2) - SSE 응답용. 정지 조건·툴 실행·재시도 되먹임은
+	 * {@link #run(long, List, Long, AiScope, String)}과 완전히 동일하고, 차이는 둘뿐이다: (1) LLM
+	 * 호출을 {@link GeminiChatClient#generateStream}으로 바꿔 청크 단위로 텍스트를 받아
+	 * {@link StreamListener}의 홀드백 불변식을 지키며 방출하고, (2) 매 LLM 호출 직전과 각 툴 실행
+	 * 직전에 {@code abortSignal}을 확인해 참이면 즉시 {@link AiChatLogEntry#OUTCOME_ABORTED}로
+	 * 멈춘다(T4 - 컨트롤러가 SSE emitter의 onError/onCompletion/onTimeout에서 세운 플래그를 넘긴다).
+	 * 진행 중인 HTTP 호출 자체를 강제 중단하지는 않는다 - 다음 확인 지점에서 멈추는 협조적 취소다.
+	 */
+	public AgentOutcome run(long userId, List<AiChatMessage> messages, Long sessionBrandId, AiScope scope,
+			String extraSystemPrompt, StreamListener listener, BooleanSupplier abortSignal) {
+		List<JsonNode> contents = new ArrayList<>();
+		for (AiChatMessage message : messages) {
+			contents.add(AiChatMessage.ROLE_ASSISTANT.equals(message.role())
+					? client.modelContent(message.content())
+					: client.userContent(message.content()));
+		}
+
+		List<AiChatLogEntry.ToolCallLog> toolCalls = new ArrayList<>();
+		LinkedHashSet<String> shortCodes = new LinkedHashSet<>();
+		Map<String, Integer> failuresByTool = new HashMap<>();
+		BrandAiToolbox.ToolSession toolSession = new BrandAiToolbox.ToolSession(scope, sessionBrandId);
+		String basePrompt = BrandAiPrompt.SYSTEM + (extraSystemPrompt == null ? "" : extraSystemPrompt);
+		Long brandId = null;
+		int promptTokens = 0;
+		int outputTokens = 0;
+		long deadline = clock.millis() + TIME_BUDGET_MILLIS;
+
+		for (int llmCall = 1; llmCall <= MAX_LLM_CALLS; llmCall++) {
+			if (abortSignal.getAsBoolean()) {
+				return abortedOutcome(userId, toolCalls, promptTokens, outputTokens, brandId);
+			}
+
+			boolean toolCapped = toolCalls.size() >= MAX_TOOL_CALLS;
+			boolean capped = toolCapped || promptTokens >= PROMPT_TOKEN_BUDGET || clock.millis() >= deadline;
+			String systemPrompt = !capped ? basePrompt
+					: basePrompt + (toolCapped ? BrandAiPrompt.TOOL_CAP_NOTE : BrandAiPrompt.TIME_BUDGET_NOTE);
+
+			// 강제 답변 턴(capped)만 라이브 방출한다 - 일반 턴은 순수 텍스트로 끝난 게 확정될 때까지
+			// 누적만 한다(홀드백 불변식, StreamListener 상단 주석).
+			boolean liveEmit = capped;
+			LlmTurn turn = client.generateStream(systemPrompt, contents, BrandAiToolSpecs.ALL, capped, chunk -> {
+				if (liveEmit && !chunk.textDelta().isEmpty()) {
+					listener.onAnswerDelta(chunk.textDelta());
+				}
+			});
+			promptTokens += turn.promptTokens();
+			outputTokens += turn.outputTokens();
+
+			if (turn.toolCalls().isEmpty()) {
+				if (turn.text().isBlank() && isBlocked(turn.finishReason())) {
+					// 텍스트가 비었으니 liveEmit이었어도 아직 아무 것도 안 나갔다 - 항상 여기서 방출한다.
+					listener.onAnswerDelta(BLOCKED_ANSWER);
+					List<String> blockedReferenced = referencedIn(BLOCKED_ANSWER, shortCodes);
+					return new AgentOutcome(BLOCKED_ANSWER, blockedReferenced,
+							buildReferences(toolSession, blockedReferenced),
+							List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
+							AiChatLogEntry.OUTCOME_BLOCKED, false);
+				}
+				boolean hasRealAnswer = !turn.text().isBlank();
+				String answer = hasRealAnswer ? turn.text() : FALLBACK_ANSWER;
+				// 홀드백 확정 시점 - 일반 턴이 순수 텍스트로 끝났다 = 최종 답변 확정. 강제 답변 턴은
+				// 이미 라이브로 다 내보냈으니(liveEmit=true) 여기서 다시 보내면 중복이라 건너뛴다.
+				if (!liveEmit) {
+					listener.onAnswerDelta(answer);
+				}
+				List<String> referenced = referencedIn(answer, shortCodes);
+				return new AgentOutcome(answer, referenced, buildReferences(toolSession, referenced),
+						List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
+						capped ? AiChatLogEntry.OUTCOME_TOOL_CAP : AiChatLogEntry.OUTCOME_OK, hasRealAnswer);
+			}
+
+			if (capped) {
+				// 알려진 예외(StreamListener 상단 주석) - 이 턴에서 이미 라이브로 나간 텍스트가 있었다면
+				// (병리적으로 텍스트+functionCall이 함께 온 경우) 여기서 FALLBACK_ANSWER를 또 보내는 게
+				// 홀드백 불변식과 어긋날 수 있다. 비스트리밍 경로도 이 조합을 병리로 보고 warn만 남긴다.
+				log.warn("AI 에이전트 강제 답변 턴에서도 툴 호출만 반환(스트리밍) - userId={}, 툴 호출 {}회", userId,
+						toolCalls.size());
+				listener.onAnswerDelta(FALLBACK_ANSWER);
+				List<String> referenced = referencedIn(FALLBACK_ANSWER, shortCodes);
+				return new AgentOutcome(FALLBACK_ANSWER, referenced, buildReferences(toolSession, referenced),
+						List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
+						AiChatLogEntry.OUTCOME_LLM_CALL_CAP, false);
+			}
+
+			contents.add(client.modelToolCallContent(turn.toolCalls()));
+			List<GeminiChatClient.ToolResponse> responses = new ArrayList<>();
+			for (LlmTurn.ToolCall call : turn.toolCalls()) {
+				if (abortSignal.getAsBoolean()) {
+					return abortedOutcome(userId, toolCalls, promptTokens, outputTokens, brandId);
+				}
+				if (toolCalls.size() >= MAX_TOOL_CALLS) {
+					responses.add(new GeminiChatClient.ToolResponse(call.name(),
+							objectMapper.createObjectNode().put("error", "조회 가능 횟수를 모두 썼습니다.")
+									.put("retry", false).toString()));
+					continue;
+				}
+				listener.onToolCall(call.name(), toolCalls.size() + 1);
+				AiToolResult result = toolbox.execute(toolSession, userId, call.name(), call.args());
+				toolCalls.add(new AiChatLogEntry.ToolCallLog(call.name(), call.args(), result.rowCount()));
+				shortCodes.addAll(result.shortCodes());
+				if (brandId == null && !result.failed() && call.args().hasNonNull("brandId")) {
+					brandId = call.args().path("brandId").asLong();
+				}
+				responses.add(new GeminiChatClient.ToolResponse(call.name(),
+						result.failed() ? withRetryHint(call.name(), result, failuresByTool)
+								: result.payloadJson()));
+			}
+			contents.add(client.toolResultContent(responses));
+		}
+
+		log.warn("AI 에이전트 LLM 호출 안전망 도달(스트리밍) - userId={}, 툴 호출 {}회", userId, toolCalls.size());
+		listener.onAnswerDelta(FALLBACK_ANSWER);
+		List<String> referenced = referencedIn(FALLBACK_ANSWER, shortCodes);
+		return new AgentOutcome(FALLBACK_ANSWER, referenced, buildReferences(toolSession, referenced),
+				List.copyOf(toolCalls), promptTokens, outputTokens, brandId, AiChatLogEntry.OUTCOME_LLM_CALL_CAP,
+				false);
+	}
+
+	/** 중단 산출물(T3/T4) - abortSignal이 참이 된 시점의 부분 정보만 담는다. answer는 null(F2 관용구와
+	 * 동형 - LLM 실패류는 answer 없음), answered=false라 컨트롤러가 followUps를 생략한다. */
+	private static AgentOutcome abortedOutcome(long userId, List<AiChatLogEntry.ToolCallLog> toolCalls,
+			int promptTokens, int outputTokens, Long brandId) {
+		log.info("AI 에이전트 중단(클라이언트 연결 끊김) - userId={}, 툴 호출 {}회", userId, toolCalls.size());
+		return new AgentOutcome(null, List.of(), List.of(), List.copyOf(toolCalls), promptTokens, outputTokens,
+				brandId, AiChatLogEntry.OUTCOME_ABORTED, false);
 	}
 
 	/**

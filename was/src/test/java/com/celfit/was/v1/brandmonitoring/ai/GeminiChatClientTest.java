@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -162,6 +163,84 @@ class GeminiChatClientTest {
 		assertThat(body.path("generationConfig").path("responseSchema").path("type").asString())
 				.isEqualTo("array");
 		assertThat(body.path("generationConfig").path("maxOutputTokens").asInt()).isEqualTo(256);
+	}
+
+	/** SSE data 청크를 하나씩 흘려주는 fake 전송(T2 테스트) - postStream만 오버라이드하고 post()는
+	 * 이 테스트들에서 쓰지 않으므로 미지원 예외를 던지는 기본 구현 그대로 둔다. */
+	private static ChatTransport streamingFake(List<String> chunksJson, List<String> sentBodies) {
+		return new ChatTransport() {
+			@Override
+			public String post(String jsonBody) {
+				throw new UnsupportedOperationException("이 테스트는 postStream만 쓴다");
+			}
+
+			@Override
+			public void postStream(String jsonBody, Consumer<String> onData) {
+				sentBodies.add(jsonBody);
+				chunksJson.forEach(onData::accept);
+			}
+		};
+	}
+
+	@Test
+	void 스트리밍_텍스트_델타를_청크마다_콜백하고_최종_텍스트로_합성한다() {
+		List<String> sent = new ArrayList<>();
+		List<String> deltas = new ArrayList<>();
+		ChatTransport transport = streamingFake(List.of(
+				"{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"안\"}]}}]}",
+				"{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"녕\"}]}}],"
+						+ "\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5}}",
+				"{\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"role\":\"model\",\"parts\":[]}}]}"),
+				sent);
+		GeminiChatClient client = new GeminiChatClient(transport, om);
+
+		LlmTurn turn = client.generateStream("시스템", List.of(client.userContent("질문")), List.of(), false,
+				chunk -> deltas.add(chunk.textDelta()));
+
+		assertThat(deltas).containsExactly("안", "녕", "");
+		assertThat(turn.text()).isEqualTo("안녕");
+		assertThat(turn.finishReason()).isEqualTo("STOP");
+		assertThat(turn.promptTokens()).isEqualTo(10);
+		assertThat(turn.outputTokens()).isEqualTo(5);
+		// 요청 본문 조립은 generate()와 동일하다(공통 buildBody 재사용).
+		assertThat(om.readTree(sent.get(0)).path("generationConfig").path("thinkingConfig")
+				.path("thinkingBudget").asInt()).isEqualTo(0);
+	}
+
+	@Test
+	void 스트리밍_함수호출_청크를_ToolCall로_합성한다() {
+		List<String> sent = new ArrayList<>();
+		List<List<LlmTurn.ToolCall>> deltaCalls = new ArrayList<>();
+		ChatTransport transport = streamingFake(List.of(
+				"{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":["
+						+ "{\"functionCall\":{\"name\":\"list_posts\",\"args\":{\"brandId\":7}}}]}}],"
+						+ "\"usageMetadata\":{\"promptTokenCount\":20,\"candidatesTokenCount\":8}}"),
+				sent);
+		GeminiChatClient client = new GeminiChatClient(transport, om);
+
+		LlmTurn turn = client.generateStream("시스템", List.of(client.userContent("질문")), List.of(), false,
+				chunk -> deltaCalls.add(chunk.toolCalls()));
+
+		assertThat(turn.toolCalls()).hasSize(1);
+		assertThat(turn.toolCalls().get(0).name()).isEqualTo("list_posts");
+		assertThat(deltaCalls).hasSize(1);
+		assertThat(deltaCalls.get(0)).hasSize(1);
+	}
+
+	@Test
+	void 강제답변_스트리밍도_tools를_유지하되_toolConfig로_호출만_막는다() {
+		List<String> sent = new ArrayList<>();
+		ChatTransport transport = streamingFake(
+				List.of("{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"끝\"}]}}]}"), sent);
+		GeminiChatClient client = new GeminiChatClient(transport, om);
+
+		client.generateStream("시스템", List.of(client.userContent("질문")),
+				List.of(new AiToolSpec("list_brands", "브랜드 목록", null)), true, chunk -> { });
+
+		JsonNode body = om.readTree(sent.get(0));
+		assertThat(body.path("tools").path(0).path("functionDeclarations").size()).isEqualTo(1);
+		assertThat(body.path("toolConfig").path("functionCallingConfig").path("mode").asString())
+				.isEqualTo("NONE");
 	}
 
 	@Test

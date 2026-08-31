@@ -49,6 +49,10 @@ public record AiChatLogEntry(long userId, Long brandId, String question, String 
 	/** 안전 필터 차단 또는 thinking이 maxOutputTokens를 잠식한 MAX_TOKENS로 candidates가 비거나
 	 * 텍스트 없이 끝난 경우(I7) - 사용자에게는 정중한 안내 답변을 주고 OUTCOME_OK로 오분류하지 않는다. */
 	public static final String OUTCOME_BLOCKED = "blocked";
+	/** SSE 경로(FE 변경요청서 §3.2, T4) 전용 - 클라이언트가 연결을 끊어 에이전트 루프를 중간에
+	 * 멈춘 경우. answer는 null. {@link AiChatLogRepository#countSince}의 제외 조건이 llm_failed
+	 * 하나뿐이라 이 값은 일일 상한 차감 대상에 자동으로 포함된다(FE 규칙 - 유저 중단도 차감). */
+	public static final String OUTCOME_ABORTED = "aborted";
 
 	/**
 	 * 툴 호출 1건 기록 - args는 모델이 넘긴 원본 인자 노드, rows는 툴이 돌려준 행 수.

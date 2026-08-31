@@ -7,6 +7,8 @@ import com.celfit.was.setting.AppSettingRepository;
 import com.celfit.was.v1.account.RateLimiter;
 import com.celfit.was.v1.common.ApiResponse;
 import com.celfit.was.v1.common.V1ApiException;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -16,17 +18,22 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * 브랜드 모니터링 AI 어시스턴트 질의 표면(FE 변경요청서 2026-08-28 §3·§5·§6·§7) -
@@ -153,17 +160,10 @@ public class V1BrandAiMessagesController {
 			throw failure.apiException();
 		}
 
-		// F3 - followUps는 60초 응답 예산 안에서만 만든다. min(5초, 남은 예산)만 주고, 1초 미만 남았으면
-		// 생성 자체를 생략한다(빈 배열) - 완성된 답변을 followUps 때문에 더 늦게 돌려줄 이유가 없다.
-		long remainingBudgetMillis = RESPONSE_TIMEOUT_SECONDS * 1_000L - elapsedMillis(startedAt);
-		List<AiMessagesResponse.FollowUp> followUps =
-				outcome.answered() && remainingBudgetMillis >= MIN_FOLLOW_UP_BUDGET_MILLIS
-						? followUpGenerator.generate(validated.text(), outcome.answer(), remainingBudgetMillis)
-						: List.of();
-		List<AiMessagesResponse.Reference> references = outcome.references().stream()
-				.map(ref -> new AiMessagesResponse.Reference(AiMessagesResponse.Reference.TYPE_POST, ref.shortCode(),
-						ref.label()))
-				.toList();
+		// F3 - followUps는 60초 응답 예산 안에서만 만든다(공통 로직은 followUpsFor로 추출 - SSE 경로도
+		// 그대로 재사용한다, T4).
+		List<AiMessagesResponse.FollowUp> followUps = followUpsFor(outcome, validated.text(), startedAt);
+		List<AiMessagesResponse.Reference> references = toReferences(outcome);
 
 		Long messageId = logRepository.insert(new AiChatLogEntry(userId, outcome.brandId() != null
 				? outcome.brandId() : validated.brandId(), validated.text(), outcome.answer(), outcome.toolCalls(),
@@ -174,6 +174,207 @@ public class V1BrandAiMessagesController {
 
 		return ApiResponse.ok(new AiMessagesResponse(String.valueOf(conversationId),
 				messageId == null ? null : String.valueOf(messageId), outcome.answer(), followUps, references));
+	}
+
+	/**
+	 * SSE 스트리밍 질의(T4, FE 변경요청서 §3.2) - 같은 경로·같은 메서드를 Accept: text/event-stream
+	 * 협상으로 나눈 변형이다({@code produces} 조건으로 스프링이 라우팅한다). 사전 검증(400/404/409/429)은
+	 * SSE를 열기 전이므로 완결 JSON 경로와 동일한 {@link V1ApiException}을 던지되, 이 메서드는 그
+	 * 예외를 전역 {@code V1ExceptionAdvice}에 맡기지 않고 직접 JSON으로 써서 응답한다 -
+	 * {@link #writeJsonError} 참조.
+	 *
+	 * <p>실행 풀 제출·F2 대화 생성 시점(풀 수용 확정 후에만 INSERT)·60초 데드라인·followUps 잔여 예산·
+	 * 로그 적재·touch는 전부 완결 경로와 같은 원칙을 공유한다({@link #followUpsFor}·{@link #toReferences}
+	 * 공통 메서드, 그리고 {@link SseEmitter}의 타임아웃을 {@value #RESPONSE_TIMEOUT_SECONDS}초로 맞춘
+	 * 것) - 다만 완결 경로가 {@code future.get(60, SECONDS)}로 요청 스레드에서 동기 대기하는 것과 달리,
+	 * 이 경로는 이미 전용 실행기 스레드 안에서 실행되므로 그 데드라인 역할을 {@link SseEmitter}의 자체
+	 * 타임아웃(만료 시 onTimeout → abort 플래그)이 대신한다.
+	 *
+	 * <p><b>메시지 필드 차이(FE 문서와 의도적 불일치, 보고에 명시할 것)</b> - messageId는 로그 적재가
+	 * 실행 끝에 일어나므로 {@code meta} 이벤트가 아니라 {@code done} 이벤트에 싣는다.
+	 */
+	@PostMapping(value = "/messages", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+	public SseEmitter messagesStream(@AuthenticationPrincipal AppUserDetails principal,
+			@RequestBody(required = false) AiMessagesRequest request, HttpServletResponse response)
+			throws IOException {
+		response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+		response.setHeader("X-Accel-Buffering", "no");
+
+		long userId;
+		Validated validated;
+		ConversationRef conversationRef;
+		try {
+			if (principal == null) {
+				throw V1ApiException.unauthorized("UNAUTHORIZED", "로그인이 필요해요.");
+			}
+			userId = principal.getUserId();
+			validated = validate(request, userId);
+			conversationRef = resolveConversationRef(userId, request, validated.brandId());
+			if (!rateLimiter.tryAcquire("ai-chat:" + userId, perMinuteLimit())) {
+				throw V1ApiException.rateLimited();
+			}
+			quota.requireWithinDailyLimit(userId);
+		} catch (V1ApiException e) {
+			writeJsonError(response, e);
+			return null;
+		}
+
+		SseEmitter emitter = new SseEmitter(RESPONSE_TIMEOUT_SECONDS * 1_000L);
+		AtomicBoolean aborted = new AtomicBoolean(false);
+		// T4 - 클라이언트 연결 중단(탭 종료·새로고침 등)·자체 타임아웃 만료·정상 완료 어느 쪽이든
+		// 이후 send()는 전부 무해하게 건너뛰도록 aborted를 세운다. 에이전트 루프는 이 플래그를
+		// LLM 호출·툴 실행 사이마다 확인해 협조적으로 멈춘다(BrandAiAgent#run 스트리밍 오버로드).
+		emitter.onTimeout(() -> aborted.set(true));
+		emitter.onError(e -> aborted.set(true));
+		emitter.onCompletion(() -> aborted.set(true));
+
+		long finalUserId = userId;
+		Validated finalValidated = validated;
+		ConversationRef finalConversationRef = conversationRef;
+		try {
+			executor.execute(() -> runSse(emitter, aborted, finalUserId, finalConversationRef, finalValidated,
+					request));
+		} catch (RejectedExecutionException e) {
+			// F2와 동형 - 접수 자체가 거절됐다. emitter는 아직 반환 전이라 클라이언트에 아무 것도
+			// 나가지 않았으니 JSON 429로 정리한다(대화도 로그도 만들지 않는다).
+			writeJsonError(response, V1ApiException.rateLimited(BUSY_RETRY_AFTER_SECONDS));
+			return null;
+		}
+		return emitter;
+	}
+
+	/**
+	 * SSE를 열기 전 검증 실패를 JSON으로 직접 쓴다(T4) - {@code /messages}의 SSE 변형은
+	 * {@code produces=text/event-stream}이라 요청 Accept가 정확히 그 값뿐이면 전역
+	 * {@code V1ExceptionAdvice}(콘텐츠 협상 기반)에 맡길 경우 406으로 뒤바뀔 위험이 있다(스프링이
+	 * 예외 처리 시에도 원 매핑의 producible media type을 기억해 그대로 강제한다). 완결 JSON 경로와
+	 * 같은 {@link ApiResponse#fail} envelope를 그대로 쓰되 메시지 컨버터 협상을 거치지 않고
+	 * 서블릿 응답에 직접 쓴다.
+	 */
+	private void writeJsonError(HttpServletResponse response, V1ApiException e) throws IOException {
+		response.setStatus(e.status().value());
+		response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+		if (e.retryAfterSeconds() != null) {
+			response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(e.retryAfterSeconds()));
+		}
+		response.getWriter().write(objectMapper.writeValueAsString(ApiResponse.fail(e.code(), e.getMessage())));
+	}
+
+	/**
+	 * SSE 실행 본체(T4) - 전용 실행기 스레드에서 돈다(이미 풀 수용이 확정된 뒤이므로 F2와 동형으로
+	 * 여기서 신규 대화를 만든다). meta → (status·delta 반복) → done 순으로 이벤트를 보낸다. 실패·
+	 * 중단 시에는 error 이벤트 또는 로그만 남기고 done 없이 끝낸다.
+	 */
+	private void runSse(SseEmitter emitter, AtomicBoolean aborted, long userId, ConversationRef conversationRef,
+			Validated validated, AiMessagesRequest request) {
+		long startedAt = System.nanoTime();
+		long conversationId = conversationRef.resolve(conversationRepository, userId, validated.brandId(),
+				validated.text());
+		sendEvent(emitter, aborted, "meta",
+				objectMapper.createObjectNode().put("conversationId", String.valueOf(conversationId)));
+
+		List<AiChatMessage> contents = conversationRef.isNew()
+				? List.of(new AiChatMessage(AiChatMessage.ROLE_USER, validated.text()))
+				: buildContents(conversationId, validated.text());
+		String extraPrompt = validated.scope().summaryLine() + BrandAiPresets.instructionFor(request.presetId());
+
+		BrandAiAgent.StreamListener listener = new BrandAiAgent.StreamListener() {
+			@Override
+			public void onAnswerDelta(String textDelta) {
+				sendEvent(emitter, aborted, "delta", objectMapper.createObjectNode().put("text", textDelta));
+			}
+
+			@Override
+			public void onToolCall(String toolName, int index) {
+				sendEvent(emitter, aborted, "status", objectMapper.createObjectNode().put("stage", "tool")
+						.put("tool", toolName).put("index", index));
+			}
+		};
+
+		BrandAiAgent.AgentOutcome outcome;
+		try {
+			outcome = agent.run(userId, contents, validated.brandId(), validated.scope(), extraPrompt, listener,
+					aborted::get);
+		} catch (RuntimeException e) {
+			if (e instanceof LlmQuotaExhaustedException) {
+				log.warn("AI 챗 스트리밍 Vertex 쿼터 소진 - userId={}", userId);
+			} else {
+				log.error("AI 챗 스트리밍 처리 실패 - userId={}", userId, e);
+			}
+			logRepository.insert(new AiChatLogEntry(userId, validated.brandId(), validated.text(), null, List.of(),
+					0, 0, elapsedMillis(startedAt), AiChatLogEntry.OUTCOME_LLM_FAILED, conversationId,
+					request.presetId(), scopeJson(request), emptyArray(), emptyArray()));
+			conversationRepository.touch(conversationId);
+			sendEvent(emitter, aborted, "error", objectMapper.createObjectNode().put("code", "AI_UNAVAILABLE")
+					.put("message", "답변을 받지 못했어요. 잠시 후 다시 시도해 주세요."));
+			emitter.complete();
+			return;
+		}
+
+		if (AiChatLogEntry.OUTCOME_ABORTED.equals(outcome.outcome())) {
+			// T4 - 유저 중단도 일일 상한 차감에 포함한다(countSince 제외 조건이 llm_failed 하나뿐이라
+			// 자동으로 포함된다). followUps는 생략 - 이미 끊긴 연결에 보낼 이유가 없다.
+			logRepository.insert(new AiChatLogEntry(userId,
+					outcome.brandId() != null ? outcome.brandId() : validated.brandId(), validated.text(), null,
+					outcome.toolCalls(), outcome.promptTokens(), outcome.outputTokens(), elapsedMillis(startedAt),
+					AiChatLogEntry.OUTCOME_ABORTED, conversationId, request.presetId(), scopeJson(request),
+					emptyArray(), emptyArray()));
+			conversationRepository.touch(conversationId);
+			emitter.complete();
+			return;
+		}
+
+		List<AiMessagesResponse.FollowUp> followUps = followUpsFor(outcome, validated.text(), startedAt);
+		List<AiMessagesResponse.Reference> references = toReferences(outcome);
+
+		Long messageId = logRepository.insert(new AiChatLogEntry(userId,
+				outcome.brandId() != null ? outcome.brandId() : validated.brandId(), validated.text(),
+				outcome.answer(), outcome.toolCalls(), outcome.promptTokens(), outcome.outputTokens(),
+				elapsedMillis(startedAt), outcome.outcome(), conversationId, request.presetId(), scopeJson(request),
+				objectMapper.valueToTree(followUps), objectMapper.valueToTree(references)));
+		conversationRepository.touch(conversationId);
+
+		// T4 - messageId는 로그 적재가 끝에 일어나므로 meta가 아니라 done에 싣는다(FE 문서와의 의도적
+		// 차이, 완료 보고에 명시).
+		ObjectNode doneNode = objectMapper.createObjectNode();
+		doneNode.put("messageId", messageId == null ? null : String.valueOf(messageId));
+		doneNode.set("followUps", objectMapper.valueToTree(followUps));
+		doneNode.set("references", objectMapper.valueToTree(references));
+		sendEvent(emitter, aborted, "done", doneNode);
+		emitter.complete();
+	}
+
+	/** SSE 이벤트 전송(T4) - 이미 중단된 연결이면 보내지 않고, 전송 실패는 중단으로 접는다(더 이상
+	 * 이 emitter에 쓰지 않게). 데이터는 메시지 컨버터 협상 없이 문자열로 직접 실어 보낸다 - 이 표면이
+	 * 쓰는 JSON 매퍼(tools.jackson)와 스프링 기본 SSE 컨버터 배선이 어긋날 여지를 없앤다. */
+	private void sendEvent(SseEmitter emitter, AtomicBoolean aborted, String eventName, JsonNode data) {
+		if (aborted.get()) {
+			return;
+		}
+		try {
+			emitter.send(SseEmitter.event().name(eventName).data(objectMapper.writeValueAsString(data)));
+		} catch (IOException | IllegalStateException e) {
+			aborted.set(true);
+		}
+	}
+
+	/** followUps 생성 공통 로직(F3, T4 리팩터) - 완결 JSON·SSE 두 경로가 그대로 공유한다. 60초 응답
+	 * 예산 중 남은 시간을 계산해 min(5초, 남은 예산)만 주고, 1초 미만 남았으면 생성 자체를 생략한다
+	 * (빈 배열) - 완성된 답변을 followUps 때문에 더 늦게 돌려줄 이유가 없다. */
+	private List<AiMessagesResponse.FollowUp> followUpsFor(BrandAiAgent.AgentOutcome outcome, String question,
+			long startedAtNanos) {
+		long remainingBudgetMillis = RESPONSE_TIMEOUT_SECONDS * 1_000L - elapsedMillis(startedAtNanos);
+		return outcome.answered() && remainingBudgetMillis >= MIN_FOLLOW_UP_BUDGET_MILLIS
+				? followUpGenerator.generate(question, outcome.answer(), remainingBudgetMillis)
+				: List.of();
+	}
+
+	/** references 응답 조립 공통 로직(T4 리팩터) - 완결 JSON·SSE 두 경로가 그대로 공유한다. */
+	private static List<AiMessagesResponse.Reference> toReferences(BrandAiAgent.AgentOutcome outcome) {
+		return outcome.references().stream()
+				.map(ref -> new AiMessagesResponse.Reference(AiMessagesResponse.Reference.TYPE_POST, ref.shortCode(),
+						ref.label()))
+				.toList();
 	}
 
 	/**

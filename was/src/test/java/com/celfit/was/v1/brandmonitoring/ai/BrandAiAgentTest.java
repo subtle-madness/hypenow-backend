@@ -5,14 +5,18 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -389,5 +393,145 @@ class BrandAiAgentTest {
 		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "몇 번 언급됐어?")));
 
 		assertThat(outcome.references()).isEmpty();
+	}
+
+	// --- 스트리밍 오버로드(T3, FE 변경요청서 §3.2) ---
+
+	private static String textChunk(String text) {
+		return "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"" + text + "\"}]}}]}";
+	}
+
+	private static String functionCallChunk(String name, String argsJson) {
+		return "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{"
+				+ "\"name\":\"" + name + "\",\"args\":" + argsJson + "}}]}}],"
+				+ "\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5}}";
+	}
+
+	/** LLM 호출(턴)마다 청크 목록을 하나씩 순서대로 흘려주는 fake - postStream만 오버라이드한다. */
+	private BrandAiAgent streamingAgentWith(List<List<String>> chunkScriptPerTurn, BrandAiToolbox toolbox,
+			Clock clock) {
+		AtomicInteger turnIndex = new AtomicInteger();
+		ChatTransport transport = new ChatTransport() {
+			@Override
+			public String post(String jsonBody) {
+				throw new UnsupportedOperationException("스트리밍 테스트는 post()를 쓰지 않는다");
+			}
+
+			@Override
+			public void postStream(String jsonBody, Consumer<String> onData) {
+				int i = Math.min(turnIndex.getAndIncrement(), chunkScriptPerTurn.size() - 1);
+				chunkScriptPerTurn.get(i).forEach(onData::accept);
+			}
+		};
+		return new BrandAiAgent(new GeminiChatClient(transport, om), toolbox, om, clock);
+	}
+
+	private static BrandAiAgent.StreamListener listener(List<String> deltas, List<String> toolCalls) {
+		return new BrandAiAgent.StreamListener() {
+			@Override
+			public void onAnswerDelta(String textDelta) {
+				deltas.add(textDelta);
+			}
+
+			@Override
+			public void onToolCall(String toolName, int index) {
+				toolCalls.add(toolName + "#" + index);
+			}
+		};
+	}
+
+	/**
+	 * 홀드백 불변식(T3 클래스 상단 주석) 검증 - 툴이 선언된 일반 턴은 텍스트 델타를 청크마다 따로
+	 * 방출하지 않고, 그 턴이 순수 텍스트로 끝난(=최종 답변 확정) 시점에 누적 텍스트를 한 번에
+	 * 방출한다. 첫 턴(functionCall)에서는 아예 방출이 없어야 한다.
+	 */
+	@Test
+	void 홀드백_일반_턴은_텍스트가_순수_텍스트로_끝난_시점에만_한번에_방출한다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.ok("{\"posts\":[]}", 3, List.of("ABC")));
+		List<List<String>> chunkScript = List.of(
+				List.of(functionCallChunk("list_posts", "{\"brandId\":7}")),
+				List.of(textChunk("앞"), textChunk("뒤")));
+		BrandAiAgent agent = streamingAgentWith(chunkScript, toolbox, Clock.systemUTC());
+		List<String> deltas = new ArrayList<>();
+		List<String> toolCalls = new ArrayList<>();
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "질문")), null, null, "",
+				listener(deltas, toolCalls), () -> false);
+
+		// 청크별로 "앞"·"뒤"가 따로 나가지 않고, 턴 완성 후 합쳐진 텍스트 1건만 나간다.
+		assertThat(deltas).containsExactly("앞뒤");
+		assertThat(outcome.answer()).isEqualTo("앞뒤");
+		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_OK);
+		assertThat(toolCalls).containsExactly("list_posts#1");
+	}
+
+	/** 강제 답변 턴(toolConfig NONE)은 반대로 델타 도착 즉시 라이브 방출한다. */
+	@Test
+	void 강제_답변_턴은_텍스트_델타를_도착_즉시_라이브_방출한다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		List<List<String>> chunkScript = List.of(List.of(textChunk("강"), textChunk("제")));
+		// 이미 예산이 소진된 시계 - 첫 턴부터 capped(강제 답변) 상태로 만든다.
+		BrandAiAgent agent = streamingAgentWith(chunkScript, toolbox, exhaustedBudgetClock());
+		List<String> deltas = new ArrayList<>();
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "질문")), null, null, "",
+				listener(deltas, new ArrayList<>()), () -> false);
+
+		// 청크마다 즉시 나간다 - 합쳐진 텍스트가 끝에 다시 나가면 안 된다(중복 방지).
+		assertThat(deltas).containsExactly("강", "제");
+		assertThat(outcome.answer()).isEqualTo("강제");
+	}
+
+	/** abort 신호가 처음부터 참이면 LLM 호출 자체를 시작하지 않고 즉시 OUTCOME_ABORTED로 멈춘다. */
+	@Test
+	void abort_신호가_처음부터_참이면_LLM_호출_전에_멈춘다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		AtomicInteger streamCalls = new AtomicInteger();
+		ChatTransport transport = new ChatTransport() {
+			@Override
+			public String post(String jsonBody) {
+				throw new UnsupportedOperationException();
+			}
+
+			@Override
+			public void postStream(String jsonBody, Consumer<String> onData) {
+				streamCalls.incrementAndGet();
+			}
+		};
+		BrandAiAgent agent = new BrandAiAgent(new GeminiChatClient(transport, om), toolbox, om, Clock.systemUTC());
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "질문")), null, null, "",
+				listener(new ArrayList<>(), new ArrayList<>()), () -> true);
+
+		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_ABORTED);
+		assertThat(outcome.answer()).isNull();
+		assertThat(outcome.answered()).isFalse();
+		assertThat(streamCalls.get()).isZero();
+	}
+
+	/** abort 신호는 툴 실행 사이사이에도 확인한다 - 한 턴에 함수 호출 2건이 와도 첫 실행 직후 신호가
+	 * 참이 되면 두 번째는 실행하지 않고 멈춘다. */
+	@Test
+	void abort_신호는_툴_실행_사이에도_확인한다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		AtomicBoolean abortAfterFirstTool = new AtomicBoolean(false);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
+				.willAnswer(invocation -> {
+					abortAfterFirstTool.set(true);
+					return AiToolResult.ok("{\"posts\":[]}", 1, List.of());
+				});
+		List<List<String>> chunkScript = List.of(List.of(
+				functionCallChunk("list_posts", "{\"brandId\":7}"),
+				functionCallChunk("list_posts", "{\"brandId\":8}")));
+		BrandAiAgent agent = streamingAgentWith(chunkScript, toolbox, Clock.systemUTC());
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "질문")), null, null, "",
+				listener(new ArrayList<>(), new ArrayList<>()), abortAfterFirstTool::get);
+
+		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_ABORTED);
+		assertThat(outcome.toolCalls()).hasSize(1);
+		then(toolbox).should(times(1)).execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any());
 	}
 }

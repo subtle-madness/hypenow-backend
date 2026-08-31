@@ -13,6 +13,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -44,6 +45,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -380,5 +382,106 @@ class V1BrandAiMessagesControllerTest {
 
 		then(conversationRepository).should(times(0)).touch(anyLong());
 		then(logRepository).should(times(0)).insert(any());
+	}
+
+	// --- SSE 협상(T4, FE 변경요청서 §3.2) ---
+
+	/** perform() 결과가 실제로 비동기 처리에 들어갔을 때만 asyncDispatch로 마무리한다 - 이 슬라이스의
+	 * 실행기가 동기(Runnable::run)라 SseEmitter가 컨트롤러 메서드 반환 전에 이미 완료될 수 있고, 그
+	 * 경우 스프링이 async 상태로 전이하지 않을 수 있다(둘 다 유효한 경로). */
+	private MvcResult completeAsyncIfStarted(MvcResult result) throws Exception {
+		if (result.getRequest().isAsyncStarted()) {
+			return mockMvc.perform(asyncDispatch(result)).andReturn();
+		}
+		return result;
+	}
+
+	@Test
+	void SSE_요청은_meta_status_delta_done_순서로_이벤트를_보낸다() throws Exception {
+		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(321L);
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(),
+				any(BrandAiAgent.StreamListener.class), any())).willAnswer(invocation -> {
+					BrandAiAgent.StreamListener listener = invocation.getArgument(5);
+					listener.onToolCall("search_posts", 1);
+					listener.onAnswerDelta("안녕하세요");
+					return new BrandAiAgent.AgentOutcome("안녕하세요", List.of(), List.of(), List.of(), 10, 5, BRAND_ID,
+							AiChatLogEntry.OUTCOME_OK, true);
+				});
+		given(logRepository.insert(any())).willReturn(999L);
+
+		MvcResult started = mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal()))
+						.with(csrf()).accept(MediaType.TEXT_EVENT_STREAM)
+						.contentType(MediaType.APPLICATION_JSON).content(body("45", "안녕")))
+				.andReturn();
+		MvcResult result = completeAsyncIfStarted(started);
+
+		assertThat(result.getResponse().getStatus()).isEqualTo(200);
+		String body = result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+		assertThat(body).contains("event:meta", "\"conversationId\":\"321\"")
+				.contains("event:status", "search_posts")
+				.contains("event:delta", "안녕하세요")
+				.contains("event:done", "\"messageId\":\"999\"");
+		// meta가 가장 먼저, done이 가장 나중에 나와야 한다.
+		assertThat(body.indexOf("event:meta")).isLessThan(body.indexOf("event:status"));
+		assertThat(body.indexOf("event:status")).isLessThan(body.indexOf("event:delta"));
+		assertThat(body.indexOf("event:delta")).isLessThan(body.indexOf("event:done"));
+		then(conversationRepository).should(times(1)).touch(321L);
+	}
+
+	/** SSE를 열기 전 검증 실패(여기선 미소유 브랜드 404)는 event-stream이 아니라 기존 JSON envelope
+	 * 그대로 돌아온다(T4) - Accept: text/event-stream이어도 마찬가지다. */
+	@Test
+	void SSE_요청도_사전_검증_실패는_기존_JSON_에러_응답이다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(USER_ID, 999L)).willReturn(Optional.empty());
+
+		MvcResult started = mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal()))
+						.with(csrf()).accept(MediaType.TEXT_EVENT_STREAM)
+						.contentType(MediaType.APPLICATION_JSON).content(body("999", "알려줘")))
+				.andReturn();
+		MvcResult result = completeAsyncIfStarted(started);
+
+		assertThat(result.getResponse().getStatus()).isEqualTo(404);
+		assertThat(result.getResponse().getContentType()).startsWith(MediaType.APPLICATION_JSON_VALUE);
+		assertThat(result.getResponse().getContentAsString()).contains("\"success\":false");
+	}
+
+	/** 에이전트 실행 자체가 예외로 실패하면 error 이벤트가 나가고 실패도 로그에 남는다(T4). */
+	@Test
+	void SSE_에이전트_실패는_error_이벤트를_보내고_로그에_남는다() throws Exception {
+		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(321L);
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(),
+				any(BrandAiAgent.StreamListener.class), any()))
+				.willThrow(new IllegalStateException("Vertex HTTP 500"));
+
+		MvcResult started = mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal()))
+						.with(csrf()).accept(MediaType.TEXT_EVENT_STREAM)
+						.contentType(MediaType.APPLICATION_JSON).content(body("45", "알려줘")))
+				.andReturn();
+		MvcResult result = completeAsyncIfStarted(started);
+
+		String body = result.getResponse().getContentAsString();
+		assertThat(body).contains("event:error", "AI_UNAVAILABLE");
+		ArgumentCaptor<AiChatLogEntry> captor = ArgumentCaptor.forClass(AiChatLogEntry.class);
+		then(logRepository).should(times(1)).insert(captor.capture());
+		assertThat(captor.getValue().outcome()).isEqualTo(AiChatLogEntry.OUTCOME_LLM_FAILED);
+		assertThat(captor.getValue().answer()).isNull();
+	}
+
+	/** 기존 JSON 경로(Accept 미지정 또는 application/json)는 SSE 도입 후에도 그대로 완결 응답이다 -
+	 * 회귀 확인용. */
+	@Test
+	void Accept_미지정_요청은_여전히_완결_JSON_응답이다() throws Exception {
+		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(1L);
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString())).willReturn(okOutcome("답변"));
+		given(logRepository.insert(any())).willReturn(2L);
+
+		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON).content(body("45", "알려줘")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.success").value(true))
+				.andExpect(jsonPath("$.data.content").value("답변"));
+
+		then(agent).should(times(0)).run(anyLong(), any(), anyLong(), any(), anyString(),
+				any(BrandAiAgent.StreamListener.class), any());
 	}
 }
