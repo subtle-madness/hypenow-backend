@@ -33,7 +33,7 @@ public class BrandAiConfig {
 
 	private static final Logger log = LoggerFactory.getLogger(BrandAiConfig.class);
 
-	/** 동기 챗의 재시도 횟수 - 60초 응답 계약(설계 §5) 안에 들어오도록 짧게 잡는다. */
+	/** 동기 챗의 재시도 횟수 - 85초 예산(한계 재도출 2026-08-31, 스펙 §4) 안에 들어오도록 짧게 잡는다. */
 	private static final int CHAT_MAX_ATTEMPTS = 2;
 	private static final long CHAT_RETRY_BASE_MILLIS = 2_000L;
 	private static final int ERROR_BODY_LOG_LIMIT = 2_000;
@@ -141,10 +141,10 @@ public class BrandAiConfig {
 	}
 
 	/**
-	 * 챗 전용 실행 풀 - 60초 응답 계약(설계 §5)을 실제로 지키려면 요청 스레드가 아닌 곳에서 돌리고
-	 * 시간 초과를 끊어야 한다. 공용 {@code ConcurrencyLimiter}(permits 4)를 쓰지 않는 이유: 60초짜리
+	 * 챗 전용 실행 풀 - 90초 응답 계약(한계 재도출 2026-08-31, 스펙 §4)을 실제로 지키려면 요청 스레드가 아닌 곳에서 돌리고
+	 * 시간 초과를 끊어야 한다. 공용 {@code ConcurrencyLimiter}(permits 4)를 쓰지 않는 이유: 85초짜리
 	 * 작업이 그 벌크헤드를 물면 무관한 무거운 엔드포인트까지 함께 굶는다.
-	 * 큐 없이 2 스레드 - 넘치면 즉시 거절해 429로 돌려보낸다(대기줄이 길어지면 60초 계약이 먼저 깨진다).
+	 * 큐 없이 2 스레드 - 넘치면 즉시 거절해 429로 돌려보낸다(대기줄이 길어지면 90초 계약이 먼저 깨진다).
 	 */
 	@Bean("brandAiChatExecutor")
 	public ThreadPoolTaskExecutor brandAiChatExecutor() {

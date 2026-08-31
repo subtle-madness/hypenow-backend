@@ -25,7 +25,7 @@ import tools.jackson.databind.ObjectMapper;
  * 응답 전체를 실패시키는 것은 손익이 맞지 않는다.
  *
  * <p>타임아웃은 {@link CompletableFuture#get(long, java.util.concurrent.TimeUnit)}로 강제한다(컨트롤러의
- * 60초 응답 계약 안에서 이 호출이 5초 넘게 물고 있으면 안 된다) - {@code brandAiChatExecutor}(2 스레드,
+ * 90초 응답 계약(한계 재도출 2026-08-31, 스펙 §4) 안에서 이 호출이 5초 넘게 물고 있으면 안 된다) - {@code brandAiChatExecutor}(2 스레드,
  * 이미 이번 요청이 하나를 쓰고 있다)를 쓰지 않는다.
  *
  * <p><b>F3(2026-08-30 리뷰) 전용 실행기 + 예산 인지 타임아웃</b> - 기본 {@link CompletableFuture} 풀
@@ -33,7 +33,7 @@ import tools.jackson.databind.ObjectMapper;
  * 인터럽트하지 않아(BrandAiAgent 관용구와 동일한 JDK 명세) 최악 45초(Vertex 요청 타임아웃)까지 스레드가
  * 물려 있을 수 있는데, 그 대가를 앱 전역에서 공유하는 commonPool이 아니라 이 클래스 전용 데몬 스레드가
  * 지도록 생성자로 {@link Executor}를 주입받는다({@link BrandAiConfig}가 전용 1스레드 빈을 배선한다).
- * 컨트롤러가 60초 응답 예산 중 남은 시간을 {@link #generate(String, String, long)}에 넘기면
+ * 컨트롤러가 90초 응답 예산 중 남은 시간을 {@link #generate(String, String, long)}에 넘기면
  * {@code min(5초, 남은 예산)}만큼만 기다린다 - followUps 하나 때문에 이미 다 쓴 응답 예산을 더 잠식하지
  * 않는다(2-인자 {@link #generate(String, String)}는 기존 관용구 그대로 5초 전액을 쓴다).
  */
@@ -105,7 +105,7 @@ public class BrandAiFollowUpGenerator {
 	}
 
 	/**
-	 * @param remainingBudgetMillis 컨트롤러의 60초 응답 예산 중 이 호출 시점에 남은 시간(F3, 2026-08-30
+	 * @param remainingBudgetMillis 컨트롤러의 90초 응답 예산(한계 재도출 2026-08-31, 스펙 §4) 중 이 호출 시점에 남은 시간(F3, 2026-08-30
 	 *                              리뷰) - {@code min(5초, remainingBudgetMillis)}만큼만 기다린다. 이미
 	 *                              5초보다 적게 남았으면 그만큼만, 5초보다 많이 남았어도 5초를 넘지
 	 *                              않는다. 호출부(컨트롤러)가 1초 미만이면 아예 호출하지 않는 판단을

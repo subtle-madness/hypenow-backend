@@ -42,7 +42,7 @@ public record AiChatLogEntry(long userId, Long brandId, String question, String 
 	public static final String OUTCOME_LLM_CALL_CAP = "llm_call_cap";
 	/** 순수 LLM 전송 실패(쿼터·5xx·자격 증명 등, 타임아웃 제외) - answer는 null(F2, 2026-08-30 리뷰). */
 	public static final String OUTCOME_LLM_FAILED = "llm_failed";
-	/** 컨트롤러 60초 응답 계약 초과(F2, 2026-08-30 리뷰) - llm_failed와 분리한다: 토큰이 실제로 소모된
+	/** 컨트롤러 90초 응답 계약 초과(한계 재도출 2026-08-31, 스펙 §4) - llm_failed와 분리한다: 토큰이 실제로 소모된
 	 * 채 끊긴 경우라 일일 상한 차감 대상에 포함해야 한다({@link AiChatLogRepository#countSince}의
 	 * 제외 조건이 llm_failed 하나뿐이라 이 값은 자동으로 카운트에 잡힌다). answer는 null. */
 	public static final String OUTCOME_TIMEOUT = "timeout";
