@@ -1,10 +1,10 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.instagram.source.InstagramSource;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.PostShapeUnsupportedException;
 import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.hiker.BrandCallContext;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.TaggedPostRepository;
 import java.time.Instant;
@@ -41,7 +41,7 @@ public class BrandDirectCollectService {
 	/** 야간 스윕 2단계 보강 배치 크기 — sweep 1단계의 페이지 배치(~21건)와 같은 규모감. */
 	private static final int SWEEP_BATCH_SIZE = 20;
 
-	private final HikerClient hiker;
+	private final InstagramSource hiker;
 	private final BrandCallContext callContext;
 	private final BrandSnapshotWriter writer;
 	private final TaggedPostRepository taggedPosts;
@@ -63,7 +63,7 @@ public class BrandDirectCollectService {
 	 */
 	final AtomicBoolean unenumeratedBusy = new AtomicBoolean(false);
 
-	public BrandDirectCollectService(HikerClient hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
+	public BrandDirectCollectService(InstagramSource hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
 			TaggedPostRepository taggedPosts, BrandCollectService collect,
 			@Value("${monitoring.brand.unenumerated-sweep-limit:300}") int sweepLimit) {
 		this.hiker = hiker;

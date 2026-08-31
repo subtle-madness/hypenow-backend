@@ -2,9 +2,9 @@ package com.celfit.monitoring.image;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.instagram.source.HikerBackend;
 import com.celfit.instagram.source.HikerFetchException;
 import com.celfit.instagram.source.HikerHttp;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.testsupport.CdnUrls;
 import com.celfit.monitoring.testsupport.TestDb;
@@ -87,7 +87,7 @@ class AuthorImageBackfillJobTest {
 				String.class, shortCode);
 	}
 
-	// ─── HikerClient 스텁 — HikerClientTest와 동일하게 HikerHttp 람다로 응답을 흉내낸다 ───
+	// ─── HikerBackend 스텁 — HikerBackendTest와 동일하게 HikerHttp 람다로 응답을 흉내낸다 ───
 
 	AuthorImageBackfillJob job() {
 		HikerHttp http = path -> {
@@ -110,7 +110,7 @@ class AuthorImageBackfillJobTest {
 			}
 			throw new IllegalStateException("예상치 못한 경로: " + path);
 		};
-		HikerClient hikerClient = new HikerClient(http);
+		HikerBackend hikerClient = new HikerBackend(http);
 		AuthorProfileRepository authorProfileRepo = new AuthorProfileRepository(db);
 		// PAR 미설정 = no-op(AuthorProfileImageArchiveJobTest·HashtagPostAuthorImageArchiveJobTest 관용구) —
 		// 즉시 아카이브 단계가 이 테스트의 Hiker 재조회·DB 갱신 검증에 끼어들지 않게 한다.

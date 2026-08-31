@@ -148,7 +148,7 @@ class AlarmRecorderTest {
 		assertThat(allEvents()).isEmpty();
 	}
 
-	/** 좋아요 숨김은 파서가 likes를 null로 내린다(HikerClient) — 그 전이가 알람까지 이어져야 한다. */
+	/** 좋아요 숨김은 파서가 likes를 null로 내린다(HikerBackend) — 그 전이가 알람까지 이어져야 한다. */
 	@Test
 	void 좋아요가_값에서_null로_바뀌면_비공개_이벤트를_남긴다() {
 		tracking(7L, "SC1", "rk-1");

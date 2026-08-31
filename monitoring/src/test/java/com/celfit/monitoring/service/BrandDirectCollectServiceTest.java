@@ -5,13 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.instagram.source.AuthorInfo;
 import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.HikerBackend;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.PostShapeUnsupportedException;
 import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.CountingHikerHttp;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCallCountRepository;
@@ -211,8 +211,8 @@ class BrandDirectCollectServiceTest {
 
 	// ── fake HikerHttp — 경로별 라우팅 ───────────────────────────────────────
 
-	private HikerClient client() {
-		return new HikerClient(new CountingHikerHttp(path -> {
+	private HikerBackend client() {
+		return new HikerBackend(new CountingHikerHttp(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/media/info/by/code")) {
 				String code = path.substring(path.indexOf("?code=") + "?code=".length());
@@ -255,7 +255,7 @@ class BrandDirectCollectServiceTest {
 		return new BrandDirectCollectService(client(), callContext, writer, tagged, collect, sweepLimit);
 	}
 
-	/** service()가 collect·direct 각자 별도 HikerClient(별도 fake 인스턴스)를 갖지만 같은 calls 리스트를 공유한다. */
+	/** service()가 collect·direct 각자 별도 HikerBackend(별도 fake 인스턴스)를 갖지만 같은 calls 리스트를 공유한다. */
 	private long postCalls() {
 		return calls.stream().filter(c -> c.startsWith("/v2/media/info/by/code")).count();
 	}

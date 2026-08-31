@@ -3,10 +3,10 @@ package com.celfit.monitoring.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.HikerBackend;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.BrandCallContext;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
 import com.celfit.monitoring.store.BrandHashtagRepository;
@@ -219,8 +219,8 @@ class BrandHashtagCollectServiceTest {
 
 	// ── fake HikerHttp — 태그별 페이지 큐 + 게시자 프로필 ─────────────────────
 
-	private HikerClient client() {
-		return new HikerClient(path -> {
+	private HikerBackend client() {
+		return new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/by/id")) {
 				String id = path.substring(path.indexOf("?id=") + "?id=".length());

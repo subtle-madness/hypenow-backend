@@ -1,9 +1,9 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.instagram.source.InstagramSource;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
@@ -70,7 +70,7 @@ public class BrandRegistrationService {
 	/** 탈퇴 결과 — CLOSED·ALREADY_CLOSED는 멱등 204, NOT_FOUND는 404(was 재시도 안전). */
 	public enum DeregisterOutcome { CLOSED, ALREADY_CLOSED, NOT_FOUND }
 
-	private final HikerClient hiker;
+	private final InstagramSource hiker;
 	private final BrandRepository brands;
 	private final BrandCollectService collect;
 	private final BrandCallCountRepository callCounts;
@@ -82,7 +82,7 @@ public class BrandRegistrationService {
 	private final Executor enrich;
 	private final Executor hashtagSweep;
 
-	public BrandRegistrationService(HikerClient hiker, BrandRepository brands,
+	public BrandRegistrationService(InstagramSource hiker, BrandRepository brands,
 			BrandCollectService collect, BrandCallCountRepository callCounts,
 			BrandHashtagCollectService hashtagCollect,
 			TaggedPostRepository taggedPosts,

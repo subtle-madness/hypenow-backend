@@ -3,10 +3,10 @@ package com.celfit.monitoring.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.HikerBackend;
 import com.celfit.instagram.source.HikerFetchException;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.ProfileInfo;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.store.CommentRepository;
 import com.celfit.monitoring.store.SnapshotRepository;
 import java.time.LocalDate;
@@ -50,7 +50,7 @@ class CollectServiceTest {
 	@Test
 	void 스윕용_collectComments는_commentPages를_쓰고_등록용은_registrationCommentPages를_쓴다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return alwaysMorePage(calls.size());
 		});
@@ -146,7 +146,7 @@ class CollectServiceTest {
 	@Test
 	void 등록_열거_fb_미관측_신규_릴스는_clips를_1회_재조회해_fb를_머지한다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/by/username")) return PROFILE;
 			if (path.startsWith("/v2/user/clips")) {
@@ -169,7 +169,7 @@ class CollectServiceTest {
 	@Test
 	void 등록_열거_fb_관측_이력이_있으면_재시도하지_않는다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/by/username")) return PROFILE;
 			if (path.startsWith("/v2/user/clips")) return clips(false);
@@ -186,7 +186,7 @@ class CollectServiceTest {
 	@Test
 	void 등록_열거_이번_콜에_fb가_실렸으면_재시도하지_않는다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/by/username")) return PROFILE;
 			if (path.startsWith("/v2/user/clips")) return clips(true);
@@ -213,7 +213,7 @@ class CollectServiceTest {
 	@Test
 	void 등록_단건_fb_미관측이면_1회_재조회하고_재시도_응답을_쓴다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return singlePost(calls.size() >= 2);
 		});
@@ -229,7 +229,7 @@ class CollectServiceTest {
 	@Test
 	void 등록_단건_재시도도_fb가_없으면_원_결과로_저장하고_더_부르지_않는다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return singlePost(false);
 		});
@@ -246,7 +246,7 @@ class CollectServiceTest {
 	@Test
 	void 등록_단건_fb_관측_이력이_있으면_재조회하지_않는다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return singlePost(false);
 		});
@@ -267,7 +267,7 @@ class CollectServiceTest {
 	@Test
 	void 스윕_열거는_fb_미관측이어도_재조회하지_않는다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/by/username")) return PROFILE;
 			if (path.startsWith("/v2/user/clips")) return clips(false);
@@ -284,7 +284,7 @@ class CollectServiceTest {
 	@Test
 	void 스윕_단건은_fb_미관측이어도_재조회하지_않는다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return singlePost(false);
 		});
@@ -318,7 +318,7 @@ class CollectServiceTest {
 				1_700_000_000L, 10L, 2L, 222L, null, null, 3L, null, null, null, null, true, false, false);
 	}
 
-	private static CollectService retryingCollect(HikerClient client, RecordingWriter writer, int retryMax) {
+	private static CollectService retryingCollect(HikerBackend client, RecordingWriter writer, int retryMax) {
 		return new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()),
 				1, 1, 1, retryMax, java.time.Duration.ZERO);
 	}
@@ -326,7 +326,7 @@ class CollectServiceTest {
 	@Test
 	void 저장리포스트_재시도는_당첨까지_재콜하고_관측을_머지해_저장한다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return calls.size() >= 3 ? CLIPS_HIT : CLIPS_MISS;   // 꽝·꽝·당첨
 		});
@@ -344,7 +344,7 @@ class CollectServiceTest {
 	@Test
 	void 저장리포스트_재시도는_상한에서_멈추고_저장하지_않는다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return CLIPS_MISS;
 		});
@@ -391,7 +391,7 @@ class CollectServiceTest {
 	@Test
 	void 저장리포스트_재시도는_열거_창_밖_게시물이면_단건_재시도로_전환해_3지표를_채운다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/clips")) return CLIPS_WITHOUT_REEL_A;
 			return singleReelA(SINGLE_HIT_ALL);
@@ -411,7 +411,7 @@ class CollectServiceTest {
 	@Test
 	void 창_밖_단건_재시도도_꽝이면_상한까지만_반복하고_저장하지_않는다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/clips")) return CLIPS_WITHOUT_REEL_A;
 			return singleReelA(null);   // 매번 꽝 세션
@@ -429,7 +429,7 @@ class CollectServiceTest {
 	@Test
 	void 창_밖_단건_재시도는_부분_관측을_머지하며_3지표_완비까지_계속한다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/clips")) return CLIPS_WITHOUT_REEL_A;
 			long singles = countByPrefix(calls, "/v2/media/info/by/code");
@@ -450,7 +450,7 @@ class CollectServiceTest {
 	@Test
 	void 창_밖_단건_재시도_콜_실패는_삼키고_다음_시도로_넘어간다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/clips")) return CLIPS_WITHOUT_REEL_A;
 			if (countByPrefix(calls, "/v2/media/info/by/code") == 1) {
@@ -481,7 +481,7 @@ class CollectServiceTest {
 	@Test
 	void 공유수만_미관측이어도_재시도가_돈다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return CLIPS_HIT;
 		});
@@ -501,7 +501,7 @@ class CollectServiceTest {
 		// 부분 세션(저장·리포스트만)이 당첨으로 잡혀도 공유가 비었으면 종료하지 않는다 —
 		// 저장·리포스트 기준으로 끝내면 공유수 단독 누락이 그대로 남는다.
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return calls.size() == 1
 					? """
@@ -524,7 +524,7 @@ class CollectServiceTest {
 		// POST 등록만 있고 단건 응답에 user.pk도 없는 계정(구형 셰이프) — 예전엔 통째로 건너뛰었지만
 		// 단건 재시도는 short_code만 있으면 되므로 이제 보강이 돈다.
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return singleReelA(SINGLE_HIT_ALL);
 		});
@@ -549,7 +549,7 @@ class CollectServiceTest {
 	void 재시도_소진_시_저장은_관측됐는데_리포스트_키가_없으면_0으로_저장한다() {
 		// 매 콜 저장·공유만 실리고 리포스트 키가 없는 세션 — 값이 0이라 생략된 게시물 재현.
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return """
 					{"response":{"items":[{"media":{"code":"ReelA","product_type":"clips",
@@ -569,7 +569,7 @@ class CollectServiceTest {
 	void 재시도_소진이어도_전부_꽝이면_리포스트를_0으로_간주하지_않는다() {
 		// 키 실은 세션을 한 번도 못 만난 날 — "0이라 생략"인지 "세션 복불복"인지 판정 근거가 없다.
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return CLIPS_MISS;
 		});
@@ -583,7 +583,7 @@ class CollectServiceTest {
 	@Test
 	void 창_밖_단건_재시도_소진_시에도_같은_0_간주_규칙이_적용된다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/clips")) return CLIPS_WITHOUT_REEL_A;
 			return singleReelA("\"save_count\":5,\"reshare_count\":9");   // 리포스트 키만 없는 세션
@@ -616,7 +616,7 @@ class CollectServiceTest {
 	@Test
 	void 소진_시_공유_키_부재도_숨김이_아니면_0으로_간주한다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return CLIPS_SAVE_ONLY;   // 저장만 실리는 세션 — 공유·리포스트 키 부재(=둘 다 0인 게시물)
 		});
@@ -632,7 +632,7 @@ class CollectServiceTest {
 	@Test
 	void 공유_숨김_게시물은_소진돼도_공유를_0으로_간주하지_않는다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return CLIPS_SAVE_ONLY;
 		});
@@ -649,7 +649,7 @@ class CollectServiceTest {
 	void 공유_숨김이면_공유만_미관측이어도_재시도를_하지_않는다() {
 		// 숨김 게시물의 공유는 영영 안 온다 — 진입 조건에 넣으면 매일 상한까지 헛 콜을 태운다.
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return CLIPS_HIT;
 		});
@@ -667,7 +667,7 @@ class CollectServiceTest {
 	void 공유_숨김_게시물은_저장리포스트가_채워지면_재시도를_종료한다() {
 		// 종료 조건에서도 공유 항이 빠져야 당첨 후 불필요한 재콜이 없다.
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return """
 					{"response":{"items":[{"media":{"code":"ReelA","product_type":"clips",
@@ -688,7 +688,7 @@ class CollectServiceTest {
 	// 이력이 전무하고 전일이 0 간주로 끝난 게시물은(판정은 SnapshotRepository) 해당 지표를
 	// 재시도에서 빼고 즉시 0을 기록한다. 실제 값이 생기면 키가 오기 시작해 자동 해제된다.
 
-	private static CollectService carryingCollect(HikerClient client, RecordingWriter writer,
+	private static CollectService carryingCollect(HikerBackend client, RecordingWriter writer,
 			Set<String> repostsCarry, Set<String> sharesCarry) {
 		return new CollectService(client, writer, new NoopCommentRepository(),
 				new FbRepo(Set.of(), repostsCarry, sharesCarry), 1, 1, 1, 6, java.time.Duration.ZERO);
@@ -697,7 +697,7 @@ class CollectServiceTest {
 	@Test
 	void 리포스트_0_캐리_게시물은_재시도_없이_즉시_0을_기록한다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return CLIPS_HIT;
 		});
@@ -718,7 +718,7 @@ class CollectServiceTest {
 	@Test
 	void 공유_0_캐리_게시물도_재시도_없이_즉시_0을_기록한다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return CLIPS_HIT;
 		});
@@ -738,7 +738,7 @@ class CollectServiceTest {
 	@Test
 	void 캐리_후_남은_지표가_있으면_그_지표만_재시도한다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return CLIPS_HIT;
 		});
@@ -758,7 +758,7 @@ class CollectServiceTest {
 	void 저장리포스트_재시도는_피드를_대상에서_제외한다() {
 		// 피드는 저장·공유 키가 전 세션 부재(08-04 실측 0/181) — 재시도 대상 자체가 아니다(사용자 결정).
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return CLIPS_HIT;
 		});
@@ -773,7 +773,7 @@ class CollectServiceTest {
 	@Test
 	void 저장리포스트_재시도는_상한_0이면_아무_콜도_하지_않는다() {
 		List<String> calls = new ArrayList<>();
-		var client = new HikerClient(path -> {
+		var client = new HikerBackend(path -> {
 			calls.add(path);
 			return CLIPS_HIT;
 		});

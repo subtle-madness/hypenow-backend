@@ -1,13 +1,13 @@
 package com.celfit.monitoring.service;
 
 import com.celfit.instagram.source.CommentsFetch;
+import com.celfit.instagram.source.InstagramSource;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.instagram.source.TaggedPage;
 import com.celfit.monitoring.ad.AdDisclosureJudgeService;
 import com.celfit.monitoring.hiker.BrandCallContext;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
 import com.celfit.monitoring.store.BrandRepository;
@@ -68,7 +68,7 @@ public class BrandCollectService {
 	static final int MAX_ABSENCE_VERIFY_PER_SWEEP = 30;
 	static final Duration ABSENCE_RECHECK = Duration.ofDays(7);
 
-	private final HikerClient hiker;
+	private final InstagramSource hiker;
 	private final BrandCallContext callContext;
 	private final BrandSnapshotWriter writer;
 	private final BrandSnapshotRepository snapshots;
@@ -84,7 +84,7 @@ public class BrandCollectService {
 	private final int authorStaleDays;
 	private final boolean adDisclosureEnabled;
 
-	public BrandCollectService(HikerClient hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
+	public BrandCollectService(InstagramSource hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
 			BrandRepository brands, AdDisclosureJudgeService adJudge,

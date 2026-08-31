@@ -1,7 +1,7 @@
 package com.celfit.monitoring.config;
 
+import com.celfit.instagram.source.InstagramSource;
 import com.celfit.monitoring.hiker.BrandCallContext;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.service.BrandCollectService;
 import com.celfit.monitoring.service.BrandHashtagCollectService;
 import com.celfit.monitoring.service.BrandSnapshotWriter;
@@ -29,7 +29,7 @@ import org.springframework.context.annotation.Configuration;
 public class BrandHashtagConfig {
 
 	@Bean
-	public BrandHashtagCollectService brandHashtagCollectService(HikerClient hiker,
+	public BrandHashtagCollectService brandHashtagCollectService(InstagramSource hiker,
 			BrandCallContext callContext, BrandHashtagRepository tags, TaggedPostRepository taggedPosts,
 			BrandSnapshotWriter writer, BrandCollectService collect,
 			@Value("${monitoring.brand.hashtag.max-pages:4}") int maxPages,

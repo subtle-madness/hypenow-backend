@@ -1,9 +1,9 @@
 package com.celfit.monitoring.service;
 
 import com.celfit.instagram.source.ClipCounts;
+import com.celfit.instagram.source.InstagramSource;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.ProfileInfo;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.store.CommentRepository;
 import com.celfit.monitoring.store.SnapshotRepository;
 import java.time.Duration;
@@ -35,7 +35,7 @@ public class CollectService {
 
 	private static final Logger log = LoggerFactory.getLogger(CollectService.class);
 
-	private final HikerClient hiker;
+	private final InstagramSource hiker;
 	private final SnapshotWriter writer;
 	private final CommentRepository comments;
 	private final SnapshotRepository snapshots;
@@ -56,7 +56,7 @@ public class CollectService {
 	 * Hiker가 수 초 단위로 같은 응답을 돌려주는 캐시가 관측돼(08-04, 연속 3콜 동일) 즉시 재콜하면
 	 * 같은 꽝 세션을 되받아 재시도가 헛돈다.
 	 */
-	public CollectService(HikerClient hiker, SnapshotWriter writer, CommentRepository comments,
+	public CollectService(InstagramSource hiker, SnapshotWriter writer, CommentRepository comments,
 			SnapshotRepository snapshots,
 			@Value("${monitoring.enumerate-pages:1}") int enumeratePages,
 			@Value("${monitoring.comment-pages:1}") int commentPages,

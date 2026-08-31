@@ -3,10 +3,10 @@ package com.celfit.monitoring.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.instagram.source.HikerBackend;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
@@ -387,7 +387,7 @@ class BrandRegistrationServiceTest {
 	}
 
 	private BrandRegistrationService service() {
-		HikerClient hiker = new HikerClient(path -> {
+		HikerBackend hiker = new HikerBackend(path -> {
 			hikerCalls.add(path);
 			return PROFILE_JSON;
 		});

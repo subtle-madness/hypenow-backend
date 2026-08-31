@@ -1,8 +1,8 @@
 package com.celfit.monitoring.image;
 
 import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.InstagramSource;
 import com.celfit.instagram.source.ProfileInfo;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import java.time.Instant;
 import java.util.List;
@@ -38,12 +38,12 @@ public class AuthorImageBackfillJob {
 	private static final Logger log = LoggerFactory.getLogger(AuthorImageBackfillJob.class);
 
 	private final JdbcTemplate db;
-	private final HikerClient hikerClient;
+	private final InstagramSource hikerClient;
 	private final AuthorProfileRepository authorProfileRepo;
 	private final AuthorProfileImageArchiveJob authorArchiveJob;
 	private final HashtagPostAuthorImageArchiveJob hashtagArchiveJob;
 
-	public AuthorImageBackfillJob(JdbcTemplate db, HikerClient hikerClient,
+	public AuthorImageBackfillJob(JdbcTemplate db, InstagramSource hikerClient,
 			AuthorProfileRepository authorProfileRepo, AuthorProfileImageArchiveJob authorArchiveJob,
 			HashtagPostAuthorImageArchiveJob hashtagArchiveJob) {
 		this.db = db;

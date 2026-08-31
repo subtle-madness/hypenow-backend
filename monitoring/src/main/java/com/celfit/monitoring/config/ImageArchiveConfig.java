@@ -1,6 +1,6 @@
 package com.celfit.monitoring.config;
 
-import com.celfit.monitoring.hiker.HikerClient;
+import com.celfit.instagram.source.InstagramSource;
 import com.celfit.monitoring.image.AuthorImageBackfillJob;
 import com.celfit.monitoring.image.AuthorProfileImageArchiveJob;
 import com.celfit.monitoring.image.BrandPostThumbnailArchiveJob;
@@ -122,7 +122,7 @@ public class ImageArchiveConfig {
 	 * 재사용해 백필 직후 같은 실행에서 다운로드·업로드까지 닫는다.
 	 */
 	@Bean
-	public AuthorImageBackfillJob authorImageBackfillJob(JdbcTemplate db, HikerClient hikerClient,
+	public AuthorImageBackfillJob authorImageBackfillJob(JdbcTemplate db, InstagramSource hikerClient,
 			AuthorProfileRepository authorProfileRepo, AuthorProfileImageArchiveJob authorProfileImageArchiveJob,
 			HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchiveJob) {
 		return new AuthorImageBackfillJob(db, hikerClient, authorProfileRepo, authorProfileImageArchiveJob,

@@ -1,8 +1,8 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.instagram.source.InstagramSource;
 import com.celfit.instagram.source.MediaRef;
 import com.celfit.instagram.source.ShareLinkUnresolvedException;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import java.net.URI;
 import java.util.Set;
@@ -19,10 +19,10 @@ public class ShareResolveService {
 	/** www. 유무만 허용 — m.instagram.com 등 서브도메인은 대상이 아니다(실측 잔여, 계약 §2-6 각주). */
 	private static final Pattern INSTAGRAM_HOST = Pattern.compile("(?i)^(www\\.)?instagram\\.com$");
 
-	private final HikerClient hiker;
+	private final InstagramSource hiker;
 	private final TargetCallContext callContext;
 
-	public ShareResolveService(HikerClient hiker, TargetCallContext callContext) {
+	public ShareResolveService(InstagramSource hiker, TargetCallContext callContext) {
 		this.hiker = hiker;
 		this.callContext = callContext;
 	}

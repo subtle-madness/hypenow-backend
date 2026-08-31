@@ -2,8 +2,8 @@ package com.celfit.monitoring.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.instagram.source.InstagramSource;
 import com.celfit.monitoring.hiker.BrandCallContext;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.RawPayloadRepository;
@@ -31,9 +31,9 @@ class HikerConfigTest {
 	}
 
 	@Test
-	void 조립된_HikerClient_콜은_external_call_타이머에_기록된다() {
+	void 조립된_InstagramSource_콜은_external_call_타이머에_기록된다() {
 		SimpleMeterRegistry registry = new SimpleMeterRegistry();
-		HikerClient client = new HikerConfig().hikerClient(path -> "{\"user\":{\"pk\":1}}",
+		InstagramSource client = new HikerConfig().instagramSource(path -> "{\"user\":{\"pk\":1}}",
 				new NoopPayloadRepo(), new BrandCallContext(), new BrandCallCountRepository(null),
 				new TargetCallContext(), new TargetCallCountRepository(null), registry);
 

@@ -2,12 +2,12 @@ package com.celfit.monitoring.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.instagram.source.HikerBackend;
 import com.celfit.monitoring.alarm.AlarmEventRepository;
 import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.TargetType;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.CountingHikerHttp;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.CommentRepository;
@@ -94,7 +94,7 @@ class RegistrationServiceTest {
 		scriptedClips = new ArrayDeque<>();
 		scriptedSingles = new ArrayDeque<>();
 		// 운영 조립(HikerConfig)과 동형으로 콜 집계 데코레이터를 끼운다 — 등록 콜의 유저 귀속까지 검증.
-		var client = new HikerClient(new CountingHikerHttp(path -> {
+		var client = new HikerBackend(new CountingHikerHttp(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/media/comments")) {
 				return "{\"response\":{\"comments\":[],\"has_more_comments\":false},\"next_page_id\":null}";

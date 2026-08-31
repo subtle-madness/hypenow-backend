@@ -2,9 +2,9 @@ package com.celfit.monitoring.service;
 
 import com.celfit.instagram.source.HashtagPage;
 import com.celfit.instagram.source.HashtagPost;
+import com.celfit.instagram.source.InstagramSource;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.hiker.BrandCallContext;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.TaggedPostRepository;
@@ -62,7 +62,7 @@ public class BrandHashtagCollectService {
 	private static final Logger log = LoggerFactory.getLogger(BrandHashtagCollectService.class);
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
-	private final HikerClient hiker;
+	private final InstagramSource hiker;
 	private final BrandCallContext callContext;
 	private final BrandHashtagRepository tags;
 	private final TaggedPostRepository taggedPosts;
@@ -71,7 +71,7 @@ public class BrandHashtagCollectService {
 	private final int maxPages;
 	private final int postLimit;
 
-	public BrandHashtagCollectService(HikerClient hiker, BrandCallContext callContext,
+	public BrandHashtagCollectService(InstagramSource hiker, BrandCallContext callContext,
 			BrandHashtagRepository tags, TaggedPostRepository taggedPosts, BrandSnapshotWriter writer,
 			BrandCollectService collect, int maxPages, int postLimit) {
 		this.hiker = hiker;

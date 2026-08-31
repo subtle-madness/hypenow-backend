@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.instagram.source.AuthorInfo;
 import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.HikerBackend;
 import com.celfit.instagram.source.HikerFetchException;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.ProfileInfo;
@@ -13,7 +14,6 @@ import com.celfit.monitoring.ad.AdDisclosureJudgeService;
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.CountingHikerHttp;
-import com.celfit.monitoring.hiker.HikerClient;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCallCountRepository;
@@ -349,9 +349,9 @@ class BrandCollectServiceTest {
 
 	// ── fake HikerHttp — 경로별 라우팅 ───────────────────────────────────────
 
-	private HikerClient client() {
+	private HikerBackend client() {
 		// 운영 조립(HikerConfig)과 동형으로 콜 집계 데코레이터를 끼운다 — 스코프 전파까지 함께 검증.
-		return new HikerClient(new CountingHikerHttp(path -> {
+		return new HikerBackend(new CountingHikerHttp(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/by/username")) {
 				if (brandProfileFails) {
@@ -380,7 +380,7 @@ class BrandCollectServiceTest {
 				return body;
 			}
 			if (path.startsWith("/v2/user/by/id")) {
-				// 쿼리 파라미터명은 id(08-07 실측 교정 — HikerClient.fetchAuthorProfile 주석 참조)
+				// 쿼리 파라미터명은 id(08-07 실측 교정 — HikerBackend.fetchAuthorProfile 주석 참조)
 				String id = path.substring(path.indexOf("?id=") + "?id=".length());
 				if (failingAuthorIds.contains(id)) {
 					throw new HikerFetchException("게시자 프로필 500");
@@ -1023,7 +1023,7 @@ class BrandCollectServiceTest {
 	/** 태그 0건 브랜드도 콜백을 1회 받는다 — 안 부르면 그 브랜드가 collecting에 영구히 갇힌다. */
 	@Test
 	void 태그가_0건이면_빈_페이지로_콜백을_1회_부른다() {
-		tagNotFound = true;   // 404 → 빈 페이지(HikerClient 변환) — 처리할 페이지가 없는 경로
+		tagNotFound = true;   // 404 → 빈 페이지(HikerBackend 변환) — 처리할 페이지가 없는 경로
 		List<Integer> sizes = new ArrayList<>();
 
 		service(2000).sweepCore(brand, pageItems -> sizes.add(pageItems.size()));
@@ -1282,7 +1282,7 @@ class BrandCollectServiceTest {
 		AtomicInteger inFlight = new AtomicInteger();
 		AtomicInteger maxInFlight = new AtomicInteger();
 		CyclicBarrier trio = new CyclicBarrier(3);   // 3콜이 "동시에" 모여야 통과 — 순차면 못 모인다
-		HikerClient latched = new HikerClient(path -> {
+		HikerBackend latched = new HikerBackend(path -> {
 			if (path.startsWith("/v2/user/by/username")) {
 				return BRAND_PROFILE_JSON;
 			}
