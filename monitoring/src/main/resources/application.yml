@@ -54,7 +54,7 @@ monitoring:
     mobile-url: ${DATAIMPULSE_MOBILE_PROXY_URL:}
     request-timeout: 15s
     geo-kr: false          # C 실측 전 기본 off(스펙 §10-1)
-    self-enabled: false    # 마일스톤 B: 자체 경로 미개통(=Hiker). C에서 점진 on
+    # 자체크롤 on/off는 boot 프로퍼티가 아니라 app_setting 'ig-source.self-enabled'(런타임 토글)로 제어
     comment-doc-id: ${IG_COMMENT_DOC_ID:}
     comment-friendly-name: ${IG_COMMENT_FRIENDLY_NAME:}
   sweep:

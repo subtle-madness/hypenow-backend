@@ -50,9 +50,9 @@ class HikerConfigTest {
 	@Test
 	void 조립된_InstagramSource_콜은_external_call_타이머에_기록된다() {
 		SimpleMeterRegistry registry = new SimpleMeterRegistry();
-		// selfEnabled=false — 자체 백엔드는 조립만 되고 콜은 전량 Hiker 경로(운영 기본과 동일)
+		// 자체크롤 토글은 app_setting(기본 off) — 자체 백엔드는 조립만 되고 콜은 전량 Hiker 경로(운영 기본과 동일)
 		InstagramProxyProperties proxyProps =
-				new InstagramProxyProperties("", "", null, false, false, "", "");
+				new InstagramProxyProperties("", "", null, false, "", "");
 		InstagramSource client = new HikerConfig().instagramSource(path -> "{\"user\":{\"pk\":1}}",
 				new NoopPayloadRepo(), new BrandCallContext(), new BrandCallCountRepository(null),
 				new TargetCallContext(), new TargetCallCountRepository(null), registry, proxyProps,
