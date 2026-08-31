@@ -79,6 +79,12 @@ public class BrandAiToolbox {
 	/** 댓글 본문 절단 길이(I6) - 인스타 댓글은 최대 2,200자라 45건 무절단 × 매 턴 전체 재전송이면
 	 * O(k²)로 토큰이 터진다. 300자면 맥락 파악에는 충분하다. */
 	private static final int COMMENT_BODY_LENGTH = 300;
+	/** get_comments 배치 호출(2026-08-31, 스펙 §3-3) 상한 - 게시물 수·게시물당 건수·전체 건수 3중 상한. */
+	private static final int MAX_COMMENT_POSTS = 5;
+	private static final int PER_POST_DEFAULT_COMMENTS = 10;
+	private static final int PER_POST_MAX_COMMENTS = 20;
+	/** 배치 호출 전체 총 상한 - 기존 MAX_COMMENTS(50)와 같은 값이라 토큰 예산이 불변이다(스펙 §3-3). */
+	private static final int TOTAL_BATCH_COMMENTS = 50;
 
 	private static final String SORT_PERFORMANCE_DESC = "performance_desc";
 
@@ -967,8 +973,76 @@ public class BrandAiToolbox {
 		return AiToolResult.ok(payload.toString(), 1, List.of(shortCode));
 	}
 
-	/** 댓글(C1) - {@link #hydrateOwnedPost}로 같은 소유·창 검증을 거친 뒤 이미 하이드레이트된 댓글만 자른다. */
+	/**
+	 * 댓글(C1, 배치화 2026-08-31 스펙 §3-3) - shortCodes 배열이 있으면 최대 {@value #MAX_COMMENT_POSTS}개
+	 * 게시물의 댓글을 1회 호출로 묶어 돌려준다(여러 게시물 여론 종합 시 게시물마다 따로 부르는 왕복을
+	 * 없앤다). shortCodes가 없으면(모델 이력 호환) 기존 단건 경로({@link #getCommentsSingle})로 그대로
+	 * 위임한다 - 페이로드 모양이 배열 경로와 달라 모델이 예전 관용구를 써도 응답 파싱이 깨지지 않는다.
+	 */
 	private AiToolResult getComments(ToolSession session, long userId, JsonNode args) {
+		JsonNode codesNode = args.path("shortCodes");
+		if (!codesNode.isArray() || codesNode.isEmpty()) {
+			return getCommentsSingle(session, userId, args);
+		}
+		List<String> shortCodes = new ArrayList<>();
+		for (JsonNode codeNode : codesNode) {
+			String code = codeNode.asString("");
+			if (!code.isBlank() && !shortCodes.contains(code)) {
+				shortCodes.add(code);
+			}
+			if (shortCodes.size() >= MAX_COMMENT_POSTS) {
+				break;
+			}
+		}
+		if (shortCodes.isEmpty()) {
+			return error("shortCodes가 비어 있습니다.");
+		}
+		int perPost = Math.clamp(args.path("limit").asInt(PER_POST_DEFAULT_COMMENTS), 1, PER_POST_MAX_COMMENTS);
+
+		ObjectNode payload = objectMapper.createObjectNode();
+		ArrayNode postsNode = payload.putArray("posts");
+		ArrayNode notFound = objectMapper.createArrayNode();
+		List<String> okCodes = new ArrayList<>();
+		int total = 0;
+		for (String shortCode : shortCodes) {
+			if (total >= TOTAL_BATCH_COMMENTS) {
+				break;
+			}
+			Optional<BrandPostResponse> found = hydrateOwnedPost(session, userId, shortCode, true);
+			if (found.isEmpty()) {
+				notFound.add(shortCode);
+				continue;
+			}
+			List<TrackingItemResponse.PostCommentResponse> rows = found.get().recentComments().stream()
+					.limit(Math.min(perPost, TOTAL_BATCH_COMMENTS - total)).toList();
+			total += rows.size();
+			okCodes.add(shortCode);
+			ObjectNode postNode = postsNode.addObject();
+			postNode.put("shortCode", shortCode);
+			postNode.put("returned", rows.size());
+			ArrayNode comments = postNode.putArray("comments");
+			for (TrackingItemResponse.PostCommentResponse row : rows) {
+				ObjectNode node = comments.addObject();
+				node.put("author", row.author());
+				node.put("body", truncate(row.text(), COMMENT_BODY_LENGTH));
+				node.put("likeCount", row.likes());
+				node.put("commentedAt", row.createdAt());
+				node.put("ownerReplyText", row.reply() == null ? null : row.reply().text());
+			}
+		}
+		payload.put("totalReturned", total);
+		if (!notFound.isEmpty()) {
+			payload.set("notFound", notFound);
+		}
+		if (okCodes.isEmpty()) {
+			return error("어느 게시물도 이 사용자의 브랜드 게시물 목록에 없거나 접근 권한이 없습니다. list_posts로 확인하세요.");
+		}
+		return AiToolResult.ok(payload.toString(), total, okCodes);
+	}
+
+	/** 기존 단건 경로(하위호환, 스펙 §3-3) - shortCodes 배열 없이 shortCode 하나로 부르는 기존 관용구를
+	 * 그대로 유지한다. {@link #hydrateOwnedPost}로 소유·창 검증을 거친 뒤 이미 하이드레이트된 댓글만 자른다. */
+	private AiToolResult getCommentsSingle(ToolSession session, long userId, JsonNode args) {
 		String shortCode = args.path("shortCode").asString();
 		Optional<BrandPostResponse> found = hydrateOwnedPost(session, userId, shortCode, true);
 		if (found.isEmpty()) {

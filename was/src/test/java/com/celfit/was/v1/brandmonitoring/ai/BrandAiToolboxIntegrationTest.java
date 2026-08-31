@@ -32,6 +32,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
@@ -149,6 +150,13 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 	 */
 	private void insertTaggedPost(JdbcClient monitoringJdbc, long brandId, String shortCode, String author,
 			Instant takenAt) {
+		insertPostSkeleton(monitoringJdbc, brandId, shortCode, author, takenAt);
+		insertComment(monitoringJdbc, shortCode, shortCode + "-c1", "fan1", "너무 예뻐요", 3, NOW);
+	}
+
+	/** {@link #insertTaggedPost}에서 댓글 삽입만 뺀 골격 - get_comments 배치화 테스트(다건 댓글 시드)가 재사용한다. */
+	private void insertPostSkeleton(JdbcClient monitoringJdbc, long brandId, String shortCode, String author,
+			Instant takenAt) {
 		monitoringJdbc.sql("""
 				INSERT INTO brand_tagged_post (brand_id, short_code, author_username, author_ig_user_id, taken_at,
 				                                enriched_at)
@@ -166,11 +174,27 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 				INSERT INTO brand_post_snapshot (username, short_code, captured_on, content_type, likes, comments, views)
 				VALUES (:author, :shortCode, DATE '2026-08-26', 'reel', 100, 7, 5000)
 				""").param("shortCode", shortCode).param("author", author).update();
+	}
+
+	private void insertComment(JdbcClient monitoringJdbc, String shortCode, String id, String author, String body,
+			long likeCount, Instant at) {
 		monitoringJdbc.sql("""
 				INSERT INTO brand_post_comment (short_code, id, author, body, like_count, commented_at)
-				VALUES (:shortCode, :shortCode || '-c1', 'fan1', '너무 예뻐요', 3, :at)
-				""").param("shortCode", shortCode)
-				.param("at", OffsetDateTime.ofInstant(NOW, ZoneOffset.UTC)).update();
+				VALUES (:shortCode, :id, :author, :body, :likeCount, :at)
+				""").param("shortCode", shortCode).param("id", id).param("author", author).param("body", body)
+				.param("likeCount", likeCount).param("at", OffsetDateTime.ofInstant(at, ZoneOffset.UTC)).update();
+	}
+
+	/**
+	 * get_comments 배치화 테스트 전용(2026-08-31, 스펙 §3-3) - 골격(insertPostSkeleton)만 태우고 댓글을
+	 * commentCount건 시드한다. commentedAt을 댓글마다 다르게 둬 최신순 정렬이 실제로 의미 있게 한다.
+	 */
+	private void insertPostWithComments(long brandId, String shortCode, String author, int commentCount) {
+		insertPostSkeleton(monitoringJdbc, brandId, shortCode, author, NOW.minusSeconds(86400));
+		for (int i = 1; i <= commentCount; i++) {
+			insertComment(monitoringJdbc, shortCode, shortCode + "-c" + i, "fan" + i, "댓글 " + i, i,
+					NOW.minusSeconds(i));
+		}
 	}
 
 	/**
@@ -1058,5 +1082,74 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 		assertThat(payload).contains("\"totalComments\":3").contains("\"commentsSampleCount\":2");
 		assertThat(payload).contains("\"topPost\"").contains("\"shortCode\":\"SCALAR1\"");
 		assertThat(payload).doesNotContain("\"groups\"").doesNotContain("\"totalGroups\"");
+	}
+
+	// ---------- get_comments 배치화(2026-08-31 툴·한계 재설계, 스펙 §3-3) ----------
+
+	@Test
+	void get_comments는_shortCodes_배열로_여러_게시물을_한_번에_돌려준다() throws Exception {
+		insertPostWithComments(myBrandId, "MULTI1", "multi_author1", 3);
+		insertPostWithComments(myBrandId, "MULTI2", "multi_author2", 3);
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.GET_COMMENTS,
+				args().set("shortCodes", objectMapper.createArrayNode().add("MULTI1").add("MULTI2")));
+
+		assertThat(result.failed()).isFalse();
+		JsonNode payload = objectMapper.readTree(result.payloadJson());
+		assertThat(payload.path("posts")).hasSize(2);
+		assertThat(payload.path("posts").get(0).path("shortCode").asString()).isEqualTo("MULTI1");
+		assertThat(payload.path("posts").get(0).path("comments")).hasSize(3);
+		assertThat(payload.path("posts").get(1).path("shortCode").asString()).isEqualTo("MULTI2");
+		assertThat(payload.path("posts").get(1).path("comments")).hasSize(3);
+		assertThat(payload.path("totalReturned").asInt()).isEqualTo(6);
+		assertThat(result.rowCount()).isEqualTo(6);
+	}
+
+	@Test
+	void get_comments_배열은_게시물당_상한과_총_상한을_지킨다() throws Exception {
+		ArrayNode shortCodes = objectMapper.createArrayNode();
+		for (int i = 1; i <= 5; i++) {
+			String shortCode = "BATCH" + i;
+			insertPostWithComments(myBrandId, shortCode, "batch_author" + i, 15);
+			shortCodes.add(shortCode);
+		}
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.GET_COMMENTS,
+				args().set("shortCodes", shortCodes));
+
+		assertThat(result.failed()).isFalse();
+		JsonNode payload = objectMapper.readTree(result.payloadJson());
+		assertThat(payload.path("posts")).hasSize(5);
+		for (JsonNode postNode : payload.path("posts")) {
+			assertThat(postNode.path("comments")).hasSize(10);
+		}
+		assertThat(payload.path("totalReturned").asInt()).isEqualTo(50);
+		assertThat(result.rowCount()).isEqualTo(50);
+	}
+
+	@Test
+	void get_comments는_기존_shortCode_단건_호출과_하위호환된다() {
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.GET_COMMENTS,
+				args().put("shortCode", "MINE1"));
+
+		assertThat(result.failed()).isFalse();
+		String payload = result.payloadJson();
+		assertThat(payload).contains("\"shortCode\":\"MINE1\"").contains("\"limit\":20")
+				.contains("\"returned\":1").contains("너무 예뻐요");
+		assertThat(payload).doesNotContain("\"posts\"").doesNotContain("\"notFound\"");
+		assertThat(result.shortCodes()).containsExactly("MINE1");
+	}
+
+	@Test
+	void get_comments_배열에_소유하지_않은_게시물이_섞이면_그_게시물만_빠진다() throws Exception {
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.GET_COMMENTS,
+				args().set("shortCodes", objectMapper.createArrayNode().add("MINE1").add("THEIRS1")));
+
+		assertThat(result.failed()).isFalse();
+		JsonNode payload = objectMapper.readTree(result.payloadJson());
+		assertThat(payload.path("posts")).hasSize(1);
+		assertThat(payload.path("posts").get(0).path("shortCode").asString()).isEqualTo("MINE1");
+		assertThat(payload.path("notFound")).hasSize(1);
+		assertThat(payload.path("notFound").get(0).asString()).isEqualTo("THEIRS1");
 	}
 }

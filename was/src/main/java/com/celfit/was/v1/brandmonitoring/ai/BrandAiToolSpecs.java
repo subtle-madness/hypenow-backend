@@ -95,13 +95,17 @@ public final class BrandAiToolSpecs {
 					},"required":["shortCode"]}
 					"""),
 			new AiToolSpec(GET_COMMENTS,
-					"게시물 1건의 댓글을 최신순으로 돌려준다. 최대 50건이며 그보다 큰 limit을 넘겨도 50건으로 자른다. "
-							+ "댓글 반응·여론을 물었을 때 쓴다.",
+					"게시물의 댓글을 최신순으로 돌려준다. shortCodes 배열로 최대 5개 게시물을 한 번에 조회할 수 있다 - "
+							+ "여러 게시물의 댓글 여론을 종합할 때 게시물마다 따로 호출하지 말고 반드시 배열로 묶어 1회 호출한다. "
+							+ "배열 호출은 게시물당 기본 10건(최대 20건), 전체 최대 50건. 단일 게시물만 볼 때는 shortCode 하나로 "
+							+ "호출하면 기본 20건(최대 50건)이다.",
 					"""
 					{"type":"object","properties":{
-					  "shortCode":{"type":"string","description":"인스타그램 게시물 shortCode"},
-					  "limit":{"type":"integer","description":"가져올 댓글 수. 생략하면 20건, 최대 50건"}
-					},"required":["shortCode"]}
+					  "shortCodes":{"type":"array","items":{"type":"string"},
+					                "description":"인스타그램 게시물 shortCode 목록(최대 5개) - 여러 게시물 댓글 종합 시 사용"},
+					  "shortCode":{"type":"string","description":"단일 게시물 shortCode(shortCodes 대신 사용 가능)"},
+					  "limit":{"type":"integer","description":"게시물당 가져올 댓글 수. 배열이면 기본 10·최대 20, 단건이면 기본 20·최대 50"}
+					}}
 					"""),
 			new AiToolSpec(LIST_HASHTAG_POSTS,
 					"브랜드 해시태그로 발견한 게시물을 최근 순으로 최대 30건 돌려준다. 태그 없이 브랜드를 언급한 게시물을 찾는 경로다. "
