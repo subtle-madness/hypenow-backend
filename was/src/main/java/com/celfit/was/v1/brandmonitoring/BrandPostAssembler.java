@@ -139,10 +139,13 @@ public class BrandPostAssembler {
 	 * @param adVerdict 광고 표기 판정 원값(노출 게이트 미적용 — 게이트는 {@link #adDisclosureExposed}가
 	 *                  호출부에서 적용한다). 과도기 폴백(레거시 direct)은 산지가 없어 항상 null.
 	 * @param takenAtKst 카드 {@code takenAt}과 같은 KST ISO 문자열(미상이면 null).
+	 * @param hashtags 캡션 추출 태그(등장 순, 정규화 키 dedup — BrandCaptionHashtags). 캡션은 인덱스
+	 *                 SQL({@code withCaptions=true})로 실어 와 추출 직후 버린다 — ref에는 태그만 남는다.
 	 */
 	public record PostRef(String shortcode, String source, String sponsorship, LocalDate uploadedOn,
 			Long latestViews, String contentType, String adVerdict, String authorUsername,
-			String authorFullName, String authorProfilePicUrl, Long authorFollowers, String takenAtKst) {
+			String authorFullName, String authorProfilePicUrl, Long authorFollowers, String takenAtKst,
+			List<String> hashtags) {
 	}
 
 	/**
@@ -193,8 +196,10 @@ public class BrandPostAssembler {
 	 *                  최신 스냅샷 조회 자체를 생략한다(withComments 관용구와 같은 이유).
 	 */
 	public BrandPostIndex indexForBrand(long userId, BrandAccountRow account, boolean withViews) {
+		// withCaptions=true — 이 경로만 hashtags(BrandCaptionHashtags.extract)를 PostRef에 태우고,
+		// BrandIndexCache가 결과를 캐싱해 캡션 전송 비용(perf119)은 캐시 미스 시에만 지불한다.
 		List<BrandReadRepository.BrandPostIndexRow> allRows = brandReadRepository.findBrandPostIndex(
-				account.id(), windowCutoff(), true, MARKER_REGEX);
+				account.id(), windowCutoff(), true, MARKER_REGEX, true);
 		boolean hasDirectRegistration = allRows.stream().anyMatch(r -> r.directRegisteredAt() != null);
 		Set<String> ownedShortCodes = hasDirectRegistration ? directPostRepository.shortCodesByUser(userId)
 				: Set.of();
@@ -269,7 +274,8 @@ public class BrandPostAssembler {
 					author.username(), author.fullName(),
 					resolveImageUrl(author.imageObjectPath(), author.profilePicUrl()),
 					author.followers(),
-					KstTimestamps.toKstIso(row.takenAt())));
+					KstTimestamps.toKstIso(row.takenAt()),
+					BrandCaptionHashtags.extract(row.caption())));
 		}
 		for (BrandPostResponse legacy : legacyByCode.values()) {
 			TrackingItemResponse.SnapshotResponse latest = legacy.latestSnapshot();
@@ -279,7 +285,8 @@ public class BrandPostAssembler {
 					latest == null ? null : latest.views(),
 					contentTypeOf(legacy.contentType()), null,
 					legacy.authorUsername(), legacy.authorFullName(), legacy.authorProfilePicUrl(),
-					legacy.authorFollowers(), legacy.takenAt()));
+					legacy.authorFollowers(), legacy.takenAt(),
+					BrandCaptionHashtags.extract(legacy.caption())));
 		}
 		// poolCodes는 keySet() 뷰가 아니라 복사본이다(2026-08-28 힙 실측) — 뷰를 넘기면 원시 행 맵
 		// (BrandPostIndexRow 전량)이 인덱스에 딸려 살아남는다. 인덱스가 요청마다 버려지던 시절엔
@@ -814,6 +821,7 @@ public class BrandPostAssembler {
 				adDisclosure,
 				adViolations,
 				adEvidence,
+				meta == null ? List.of() : BrandCaptionHashtags.extract(meta.caption()),
 				seededAuthor);
 	}
 
@@ -1032,7 +1040,7 @@ public class BrandPostAssembler {
 				item.registeredAt(),
 				KstTimestamps.toKstIso(legacyLastCollectedAt),
 				// direct 산지는 광고 판정 정보가 없다(tagged 전용 — brand_post_meta 유래).
-				null, List.of(), List.of(), false);
+				null, List.of(), List.of(), BrandCaptionHashtags.extract(caption), false);
 	}
 
 	// 풀 우선 병합(mergeWithLegacyPending)은 indexForBrand의 legacyByCode 구성(풀 코드와 겹치면

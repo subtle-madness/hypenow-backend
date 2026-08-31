@@ -102,6 +102,6 @@ class BrandCollectionCapTest {
 	private static BrandPostAssembler.PostRef ref(String shortcode, String uploadedOn) {
 		return new BrandPostAssembler.PostRef(shortcode, BrandPostAssembler.SOURCE_TAGGED, null,
 				uploadedOn == null ? null : LocalDate.parse(uploadedOn),
-				null, "reels", null, "author", null, null, null, null);
+				null, "reels", null, "author", null, null, null, null, List.of());
 	}
 }
