@@ -137,7 +137,7 @@ class V1BrandAiMessagesControllerTest {
 
 	private static BrandAiAgent.AgentOutcome okOutcome(String answer) {
 		return new BrandAiAgent.AgentOutcome(answer, List.of(), List.of(), List.of(), 100, 20, BRAND_ID,
-				AiChatLogEntry.OUTCOME_OK, true);
+				AiChatLogEntry.OUTCOME_OK, true, null);
 	}
 
 	private static String body(String accountId, String text) {
@@ -405,7 +405,7 @@ class V1BrandAiMessagesControllerTest {
 					listener.onToolCall("search_posts", 1);
 					listener.onAnswerDelta("안녕하세요");
 					return new BrandAiAgent.AgentOutcome("안녕하세요", List.of(), List.of(), List.of(), 10, 5, BRAND_ID,
-							AiChatLogEntry.OUTCOME_OK, true);
+							AiChatLogEntry.OUTCOME_OK, true, null);
 				});
 		given(logRepository.insert(any())).willReturn(999L);
 

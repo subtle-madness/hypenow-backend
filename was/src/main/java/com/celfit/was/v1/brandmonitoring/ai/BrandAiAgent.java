@@ -24,11 +24,15 @@ import tools.jackson.databind.node.ObjectNode;
  * BooleanSupplier)} 오버로드로 지원한다 - 정지 조건·툴 실행·되먹임 로직은 완결 경로와 완전히 같고
  * LLM 호출만 스트리밍으로 받는다({@link StreamListener} 참조).
  *
- * <p>정지 조건이 네 겹이다(C2/I6) - 툴 호출 {@value #MAX_TOOL_CALLS}회(설계 §7), 누적 프롬프트
- * 토큰 {@value #PROMPT_TOKEN_BUDGET}(댓글 본문 무절단×매 턴 전체 재전송의 O(k²) 폭발 방지, I6),
- * 벽시계 예산 {@value #TIME_BUDGET_MILLIS}ms(1 LLM 호출 최악 92초까지 걸릴 수 있어 안전망 12회를
- * 다 채우면 수십 분이 걸리는 것을 막는다) 중 하나라도 걸리면 다음 턴을 툴 호출 불가로 보내 답변을
- * 강제한다. <b>강제 답변 턴은 1회로 제한한다(C2 잔여, 2026-08-28 재리뷰)</b> - mode=NONE인데도 모델이
+ * <p>정지 조건이 네 겹이다(C2/I6, 한계 재도출 2026-08-31 - 스펙 §4) - 툴 호출
+ * {@value #MAX_TOOL_CALLS}회(정상 질문은 닿지 않는 폭주 방지 안전망으로 강등 - 1차 제약은 시간·토큰
+ * 둘이다), 누적 프롬프트 토큰 {@value #PROMPT_TOKEN_BUDGET}(비용 뿌리 질문당 천장 ~50원의 직접
+ * 환산, 댓글 본문 무절단×매 턴 전체 재전송의 O(k²) 폭발 방지, I6), 벽시계 예산
+ * {@value #TIME_BUDGET_MILLIS}ms(시간 뿌리 90초에서 마무리 여유를 뺀 값 - 1 LLM 호출 최악 92초까지
+ * 걸릴 수 있어 안전망 12회를 다 채우면 수십 분이 걸리는 것을 막는다) 중 하나라도 걸리면 다음 턴을 툴
+ * 호출 불가로 보내 답변을 강제한다. 강제 답변이 일어난 원인은 {@link AgentOutcome#limitReached()}로
+ * 노출한다({@value #LIMIT_BUDGET}=툴 상한·토큰 예산, {@value #LIMIT_TIME}=벽시계 예산, 스펙 §5).
+ * <b>강제 답변 턴은 1회로 제한한다(C2 잔여, 2026-08-28 재리뷰)</b> - mode=NONE인데도 모델이
  * functionCall만 돌려주면(관측된 병리 사례) 즉시 루프를 끊고 그 시점 결과로 FALLBACK_ANSWER를
  * 돌려준다 - 재시도하며 MAX_LLM_CALLS까지 계속 돌면 호출 1회가 최악 92초라 스레드가 십수 분씩
  * 잔류한다. 이 경로는 OUTCOME_LLM_CALL_CAP으로 기록하고(안전망 도달과 같은 병리이므로 같은 outcome을
@@ -51,18 +55,22 @@ import tools.jackson.databind.node.ObjectNode;
  */
 public class BrandAiAgent {
 
-	/** 턴당 툴 호출 상한(설계 §7). */
-	static final int MAX_TOOL_CALLS = 8;
+	/** 툴 호출 안전망(한계 재도출 2026-08-31, 스펙 §4) - 1차 제약이 아니라 폭주 방지선이다. 정상
+	 * 질문은 시간·토큰 예산이 먼저 끊으므로 이 상한에는 원래 닿지 않는다(구 상한 8회는 회수를 1차
+	 * 제약으로 뒀던 시절 값 - 싼 툴을 회수 상한이 먼저 끊는 배신이 있었다). */
+	static final int MAX_TOOL_CALLS = 24;
 	/** LLM 호출 안전망(M2) - 강제 답변 턴 1회 제한(C2 잔여)이 정상적으로는 항상 먼저 걸리므로 여기
-	 * 도달은 이제 이론상으로만 남은 최후 방어선이다. */
+	 * 도달은 이제 이론상으로만 남은 최후 방어선이다. 왕복은 고정 오버헤드가 커서 시간·토큰이 먼저
+	 * 끊는 게 정상이라 한계 재도출(스펙 §4)에서도 12회를 그대로 유지한다. */
 	static final int MAX_LLM_CALLS = 12;
-	/** 누적 프롬프트 토큰 예산(I6) - 댓글 본문 무절단 × 매 턴 전체 재전송이면 O(k²)로 토큰이
-	 * 터진다. 절단(BrandAiToolbox)과 별개로 루프 차원의 두 번째 방어선이다. */
-	static final int PROMPT_TOKEN_BUDGET = 60_000;
-	/** 벽시계 예산(C2, 55초) - 컨트롤러의 60초 응답 계약(설계 §5) 안에 여유를 두고 강제 답변으로
-	 * 전환한다. Vertex 요청 타임아웃을 45초로 줄여도(BrandAiConfig) 재시도 1회를 더하면 최악
-	 * 92초까지 걸릴 수 있어, 이 예산이 소진되면 그 한 번의 호출을 끝으로 더 부르지 않는다. */
-	static final long TIME_BUDGET_MILLIS = 55_000L;
+	/** 누적 프롬프트 토큰 예산(I6, 한계 재도출 2026-08-31 - 스펙 §4) - 비용 뿌리(질문당 비용 천장
+	 * ~50원)를 직접 환산한 값이다. 댓글 본문 무절단 × 매 턴 전체 재전송이면 O(k²)로 토큰이 터진다 -
+	 * 절단(BrandAiToolbox)과 별개로 루프 차원의 두 번째 방어선이다. */
+	static final int PROMPT_TOKEN_BUDGET = 100_000;
+	/** 벽시계 예산(C2, 한계 재도출 2026-08-31 - 스펙 §4) - 시간 뿌리 90초(컨트롤러 응답 계약)에서
+	 * 마무리 여유를 뺀 값이다. Vertex 요청 타임아웃을 45초로 줄여도(BrandAiConfig) 재시도 1회를
+	 * 더하면 최악 92초까지 걸릴 수 있어, 이 예산이 소진되면 그 한 번의 호출을 끝으로 더 부르지 않는다. */
+	static final long TIME_BUDGET_MILLIS = 85_000L;
 	/** 정상 종료를 뜻하는 finishReason - 이 값이 아니면서 텍스트·툴 호출이 모두 없으면 막힌 것으로
 	 * 본다(I7, SAFETY·MAX_TOKENS·후보 부재 전부 포함 - Vertex가 추가할 수 있는 다른 비정상 사유도
 	 * 같은 취급이 맞다). */
@@ -75,6 +83,11 @@ public class BrandAiAgent {
 			"이 질문에는 안전 정책이나 응답 길이 제한 때문에 답변을 만들지 못했어요. 질문을 조금 다르게 바꿔서 다시 시도해 주세요.";
 	/** references 상한(FE 변경요청서 §7) - 답변이 아무리 많은 shortCode를 인용해도 참조 목록은 10개까지만. */
 	private static final int MAX_REFERENCES = 10;
+
+	/** {@link AgentOutcome#limitReached()} 값 - 구조 고지(스펙 §5)용. 툴 상한·토큰 예산 소진이 원인이면
+	 * budget, 벽시계 예산 소진이 원인이면 time. */
+	public static final String LIMIT_BUDGET = "budget";
+	public static final String LIMIT_TIME = "time";
 
 	private static final Logger log = LoggerFactory.getLogger(BrandAiAgent.class);
 
@@ -138,8 +151,12 @@ public class BrandAiAgent {
 
 		for (int llmCall = 1; llmCall <= MAX_LLM_CALLS; llmCall++) {
 			// 매 호출 전에 남은 예산을 확인한다(C2) - 부족하면 이번 호출을 마지막으로 삼아 답변을 강제한다.
+			// 원인을 보존한다(한계 재도출 2026-08-31, 스펙 §5) - 툴 상한·토큰 예산 소진은 budget, 벽시계
+			// 예산 소진은 time. AgentOutcome#limitReached로 그대로 노출한다.
 			boolean toolCapped = toolCalls.size() >= MAX_TOOL_CALLS;
-			boolean capped = toolCapped || promptTokens >= PROMPT_TOKEN_BUDGET || clock.millis() >= deadline;
+			String limitCause = toolCapped || promptTokens >= PROMPT_TOKEN_BUDGET ? LIMIT_BUDGET
+					: clock.millis() >= deadline ? LIMIT_TIME : null;
+			boolean capped = limitCause != null;
 			// 원인별 문구 분기(N3, 2026-08-28 재리뷰) - 툴 상한은 TOOL_CAP_NOTE, 벽시계·토큰 예산은
 			// TIME_BUDGET_NOTE. 이전에는 원인과 무관하게 항상 TIME_BUDGET_NOTE만 나가 TOOL_CAP_NOTE가
 			// 죽은 코드였다.
@@ -155,14 +172,15 @@ public class BrandAiAgent {
 					return new AgentOutcome(BLOCKED_ANSWER, blockedReferenced,
 							buildReferences(toolSession, blockedReferenced),
 							List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
-							AiChatLogEntry.OUTCOME_BLOCKED, false);
+							AiChatLogEntry.OUTCOME_BLOCKED, false, null);
 				}
 				boolean hasRealAnswer = !turn.text().isBlank();
 				String answer = hasRealAnswer ? turn.text() : FALLBACK_ANSWER;
 				List<String> referenced = referencedIn(answer, shortCodes);
 				return new AgentOutcome(answer, referenced, buildReferences(toolSession, referenced),
 						List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
-						capped ? AiChatLogEntry.OUTCOME_TOOL_CAP : AiChatLogEntry.OUTCOME_OK, hasRealAnswer);
+						capped ? AiChatLogEntry.OUTCOME_TOOL_CAP : AiChatLogEntry.OUTCOME_OK, hasRealAnswer,
+						capped ? limitCause : null);
 			}
 
 			// 강제 답변 턴을 1회로 제한한다(C2 잔여) - mode=NONE으로 보냈는데도 모델이 functionCall만
@@ -175,7 +193,7 @@ public class BrandAiAgent {
 				List<String> referenced = referencedIn(FALLBACK_ANSWER, shortCodes);
 				return new AgentOutcome(FALLBACK_ANSWER, referenced, buildReferences(toolSession, referenced),
 						List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
-						AiChatLogEntry.OUTCOME_LLM_CALL_CAP, false);
+						AiChatLogEntry.OUTCOME_LLM_CALL_CAP, false, limitCause);
 			}
 
 			contents.add(client.modelToolCallContent(turn.toolCalls()));
@@ -205,7 +223,7 @@ public class BrandAiAgent {
 		List<String> referenced = referencedIn(FALLBACK_ANSWER, shortCodes);
 		return new AgentOutcome(FALLBACK_ANSWER, referenced, buildReferences(toolSession, referenced),
 				List.copyOf(toolCalls), promptTokens, outputTokens, brandId, AiChatLogEntry.OUTCOME_LLM_CALL_CAP,
-				false);
+				false, LIMIT_BUDGET);
 	}
 
 	/**
@@ -267,8 +285,11 @@ public class BrandAiAgent {
 				return abortedOutcome(userId, toolCalls, promptTokens, outputTokens, brandId);
 			}
 
+			// 원인을 보존한다(한계 재도출 2026-08-31, 스펙 §5) - 비스트리밍 경로와 동일한 분기.
 			boolean toolCapped = toolCalls.size() >= MAX_TOOL_CALLS;
-			boolean capped = toolCapped || promptTokens >= PROMPT_TOKEN_BUDGET || clock.millis() >= deadline;
+			String limitCause = toolCapped || promptTokens >= PROMPT_TOKEN_BUDGET ? LIMIT_BUDGET
+					: clock.millis() >= deadline ? LIMIT_TIME : null;
+			boolean capped = limitCause != null;
 			String systemPrompt = !capped ? basePrompt
 					: basePrompt + (toolCapped ? BrandAiPrompt.TOOL_CAP_NOTE : BrandAiPrompt.TIME_BUDGET_NOTE);
 
@@ -291,7 +312,7 @@ public class BrandAiAgent {
 					return new AgentOutcome(BLOCKED_ANSWER, blockedReferenced,
 							buildReferences(toolSession, blockedReferenced),
 							List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
-							AiChatLogEntry.OUTCOME_BLOCKED, false);
+							AiChatLogEntry.OUTCOME_BLOCKED, false, null);
 				}
 				boolean hasRealAnswer = !turn.text().isBlank();
 				String answer = hasRealAnswer ? turn.text() : FALLBACK_ANSWER;
@@ -303,7 +324,8 @@ public class BrandAiAgent {
 				List<String> referenced = referencedIn(answer, shortCodes);
 				return new AgentOutcome(answer, referenced, buildReferences(toolSession, referenced),
 						List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
-						capped ? AiChatLogEntry.OUTCOME_TOOL_CAP : AiChatLogEntry.OUTCOME_OK, hasRealAnswer);
+						capped ? AiChatLogEntry.OUTCOME_TOOL_CAP : AiChatLogEntry.OUTCOME_OK, hasRealAnswer,
+						capped ? limitCause : null);
 			}
 
 			if (capped) {
@@ -316,7 +338,7 @@ public class BrandAiAgent {
 				List<String> referenced = referencedIn(FALLBACK_ANSWER, shortCodes);
 				return new AgentOutcome(FALLBACK_ANSWER, referenced, buildReferences(toolSession, referenced),
 						List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
-						AiChatLogEntry.OUTCOME_LLM_CALL_CAP, false);
+						AiChatLogEntry.OUTCOME_LLM_CALL_CAP, false, limitCause);
 			}
 
 			contents.add(client.modelToolCallContent(turn.toolCalls()));
@@ -350,7 +372,7 @@ public class BrandAiAgent {
 		List<String> referenced = referencedIn(FALLBACK_ANSWER, shortCodes);
 		return new AgentOutcome(FALLBACK_ANSWER, referenced, buildReferences(toolSession, referenced),
 				List.copyOf(toolCalls), promptTokens, outputTokens, brandId, AiChatLogEntry.OUTCOME_LLM_CALL_CAP,
-				false);
+				false, LIMIT_BUDGET);
 	}
 
 	/** 중단 산출물(T3/T4) - abortSignal이 참이 된 시점의 부분 정보만 담는다. answer는 null(F2 관용구와
@@ -359,7 +381,7 @@ public class BrandAiAgent {
 			int promptTokens, int outputTokens, Long brandId) {
 		log.info("AI 에이전트 중단(클라이언트 연결 끊김) - userId={}, 툴 호출 {}회", userId, toolCalls.size());
 		return new AgentOutcome(null, List.of(), List.of(), List.copyOf(toolCalls), promptTokens, outputTokens,
-				brandId, AiChatLogEntry.OUTCOME_ABORTED, false);
+				brandId, AiChatLogEntry.OUTCOME_ABORTED, false, null);
 	}
 
 	/**
@@ -430,13 +452,17 @@ public class BrandAiAgent {
 	 * 루프 1회의 산출물.
 	 *
 	 * @param brandId  모델이 처음 넘긴 brandId 인자 - 로그 분석에서 "어느 브랜드 질문인가"를 가른다.
-	 * @param answered true면 실제로 생성된 답변 텍스트다(FALLBACK_ANSWER·BLOCKED_ANSWER가 아님) -
-	 *                 호출부(컨트롤러)가 이 값으로 followUps 생성 여부를 가른다(설계 §요구 "답변이
-	 *                 실패/차단/폴백 문구면 호출 자체를 생략").
+	 * @param answered      true면 실제로 생성된 답변 텍스트다(FALLBACK_ANSWER·BLOCKED_ANSWER가 아님) -
+	 *                      호출부(컨트롤러)가 이 값으로 followUps 생성 여부를 가른다(설계 §요구 "답변이
+	 *                      실패/차단/폴백 문구면 호출 자체를 생략").
+	 * @param limitReached  강제 답변이 일어난 원인(한계 재도출 2026-08-31, 스펙 §5) -
+	 *                      {@value #LIMIT_BUDGET}(툴 상한·토큰 예산) 또는 {@value #LIMIT_TIME}(벽시계
+	 *                      예산), 정상 완료·BLOCKED·ABORTED면 null. 컨트롤러가 이 값으로 FE 구조 고지
+	 *                      필드를 채운다.
 	 */
 	public record AgentOutcome(String answer, List<String> referencedShortCodes, List<ReferenceInfo> references,
 			List<AiChatLogEntry.ToolCallLog> toolCalls, int promptTokens, int outputTokens,
-			Long brandId, String outcome, boolean answered) {
+			Long brandId, String outcome, boolean answered, String limitReached) {
 	}
 
 	/** 참조 1건(FE 변경요청서 §7) - label은 라벨 조립 결과 문자열(형(type)·후속 매핑은 컨트롤러 몫). */

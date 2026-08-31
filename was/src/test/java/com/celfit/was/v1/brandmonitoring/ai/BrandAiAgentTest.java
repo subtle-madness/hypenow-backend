@@ -40,6 +40,22 @@ class BrandAiAgentTest {
 				+ "\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5}}";
 	}
 
+	/** 한 턴에 함수 호출 여러 개를 함께 돌려주는 응답(한계 재도출 2026-08-31) - MAX_TOOL_CALLS(24)가
+	 * MAX_LLM_CALLS(12)보다 커진 뒤로는 턴당 1개씩으로 툴 상한에 닿는 시나리오를 LLM 호출 상한 안에서
+	 * 재현할 수 없다 - 실제 모델의 병렬 호출(스펙 §6 유도)과 같은 모양으로 턴당 여러 개를 묶는다. */
+	private static String multiFunctionCall(String name, String argsJson, int count) {
+		StringBuilder parts = new StringBuilder();
+		for (int i = 0; i < count; i++) {
+			if (i > 0) {
+				parts.append(',');
+			}
+			parts.append("{\"functionCall\":{\"name\":\"").append(name).append("\",\"args\":").append(argsJson)
+					.append("}}");
+		}
+		return "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[" + parts + "]}}],"
+				+ "\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5}}";
+	}
+
 	/** 프롬프트 토큰 예산(N5) 소진을 재현하는 함수 호출 응답 - usageMetadata.promptTokenCount를 직접 지정한다. */
 	private static String functionCallWithPromptTokens(String name, String argsJson, int promptTokenCount) {
 		return "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{"
@@ -91,7 +107,7 @@ class BrandAiAgentTest {
 
 			@Override
 			public Instant instant() {
-				// 1번째 호출(run 진입 시 deadline 계산)만 start, 그 뒤로는 예산(55초)을 넘긴 시각.
+				// 1번째 호출(run 진입 시 deadline 계산)만 start, 그 뒤로는 예산(TIME_BUDGET_MILLIS)을 넘긴 시각.
 				return calls.getAndIncrement() == 0 ? start : start.plusMillis(BrandAiAgent.TIME_BUDGET_MILLIS + 1);
 			}
 		};
@@ -111,6 +127,7 @@ class BrandAiAgentTest {
 
 		assertThat(outcome.answer()).isEqualTo("ABC 게시물 등 3건 있어요");
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_OK);
+		assertThat(outcome.limitReached()).isNull();
 		assertThat(outcome.referencedShortCodes()).containsExactly("ABC");
 		assertThat(outcome.toolCalls()).hasSize(1);
 		assertThat(outcome.toolCalls().get(0).name()).isEqualTo("list_posts");
@@ -155,23 +172,29 @@ class BrandAiAgentTest {
 	}
 
 	@Test
-	void 툴_호출이_8회를_넘으면_툴_없이_답변을_강제한다() {
+	void 툴_상한_도달_강제_답변이면_limitReached가_budget이다() {
 		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
 		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
 				.willReturn(AiToolResult.ok("{}", 0, List.of()));
 		List<String> captured = new ArrayList<>();
-		// 8번은 툴 호출, 그다음(강제 답변 턴)엔 실제 Vertex가 mode=NONE을 지키듯 텍스트로 답한다.
+		// 한 턴에 3개씩 묶어 MAX_TOOL_CALLS(24)에 정확히 도달시키고, 그다음(강제 답변 턴)엔 실제
+		// Vertex가 mode=NONE을 지키듯 텍스트로 답한다. MAX_TOOL_CALLS(24)가 MAX_LLM_CALLS(12)보다
+		// 커진 뒤로는(한계 재도출 2026-08-31 - 툴 상한이 안전망으로 강등) 턴당 1개씩으로는 LLM 호출
+		// 상한 안에서 툴 상한에 닿을 수 없다 - 병렬 호출(스펙 §6 유도)과 같은 모양으로 재현한다.
+		int toolsPerTurn = 3;
+		int toolTurns = BrandAiAgent.MAX_TOOL_CALLS / toolsPerTurn;
 		List<String> script = new ArrayList<>();
-		for (int i = 0; i < BrandAiAgent.MAX_TOOL_CALLS; i++) {
-			script.add(functionCall("list_brands", "{}"));
+		for (int i = 0; i < toolTurns; i++) {
+			script.add(multiFunctionCall("list_brands", "{}", toolsPerTurn));
 		}
 		script.add(textAnswer("확인한 것만 답할게요"));
 		BrandAiAgent agent = agentWith(script, captured, toolbox);
 
 		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "알려줘")));
 
-		assertThat(outcome.toolCalls()).hasSize(8);
+		assertThat(outcome.toolCalls()).hasSize(BrandAiAgent.MAX_TOOL_CALLS);
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_TOOL_CAP);
+		assertThat(outcome.limitReached()).isEqualTo(BrandAiAgent.LIMIT_BUDGET);
 		assertThat(outcome.answer()).isEqualTo("확인한 것만 답할게요");
 		// 강제 답변 턴 요청은 tools 선언은 그대로 싣되 toolConfig mode=NONE으로 호출만 막는다(I8) -
 		// tools를 통째로 빼면 이전 턴의 functionCall/functionResponse 파트가 남은 히스토리와 조합돼
@@ -190,20 +213,28 @@ class BrandAiAgentTest {
 				.willReturn(AiToolResult.ok("{}", 0, List.of()));
 		List<String> captured = new ArrayList<>();
 		// 강제 답변 턴에서도(mode=NONE) 계속 툴만 요청하는 병리적 경우(C2 잔여, 2026-08-28 재리뷰) -
-		// 강제 답변 턴을 1회로 제한하므로 툴 상한(8회) 도달 직후 1번 더 부르고는 더 이상 LLM을
-		// 부르지 않고 그 자리에서 끊는다 - MAX_LLM_CALLS(12)까지 도지 않는다.
-		BrandAiAgent agent = agentWith(List.of(functionCall("list_brands", "{}")), captured, toolbox);
+		// 강제 답변 턴을 1회로 제한하므로 툴 상한(MAX_TOOL_CALLS) 도달 직후 1번 더 부르고는 더 이상
+		// LLM을 부르지 않고 그 자리에서 끊는다 - MAX_LLM_CALLS(12)까지 도지 않는다. 한 턴에 3개씩
+		// 묶는 이유는 위 상한 도달 테스트와 같다(MAX_TOOL_CALLS(24) > MAX_LLM_CALLS(12)). scripted()는
+		// 목록이 1개뿐이면 매 턴 같은 응답을 반복하므로, 강제 답변 턴에도 같은 3-호출 응답이 나가
+		// 병리를 그대로 재현한다.
+		int toolsPerTurn = 3;
+		int toolTurns = BrandAiAgent.MAX_TOOL_CALLS / toolsPerTurn;
+		BrandAiAgent agent = agentWith(List.of(multiFunctionCall("list_brands", "{}", toolsPerTurn)), captured,
+				toolbox);
 
 		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "알려줘")));
 
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_LLM_CALL_CAP);
 		assertThat(outcome.answer()).contains("정리하지 못했어요");
-		// 툴 상한(8회)까지 정상 호출 8번 + 강제 답변 턴 1번 = 9번에서 멈춘다(추가 LLM 호출 없음).
-		assertThat(captured).hasSize(BrandAiAgent.MAX_TOOL_CALLS + 1);
+		// 이 시나리오의 원인은 툴 상한 도달이라 budget이다(한계 재도출 2026-08-31, 스펙 §5).
+		assertThat(outcome.limitReached()).isEqualTo(BrandAiAgent.LIMIT_BUDGET);
+		// 툴 상한까지 정상 호출 toolTurns번 + 강제 답변 턴 1번에서 멈춘다(추가 LLM 호출 없음).
+		assertThat(captured).hasSize(toolTurns + 1);
 	}
 
 	@Test
-	void 벽시계_예산이_이미_소진되면_즉시_강제_답변으로_전환한다() {
+	void 벽시계_예산_소진_강제_답변이면_limitReached가_time이다() {
 		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
 		List<String> captured = new ArrayList<>();
 		// 첫 LLM 호출 전에 이미 예산이 다 떨어진 상태 - 스크립트가 툴 호출을 내려도 강제 답변 턴으로
@@ -215,6 +246,7 @@ class BrandAiAgentTest {
 
 		assertThat(outcome.answer()).isEqualTo("시간이 없어 지금까지 확인한 것만 답할게요");
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_TOOL_CAP);
+		assertThat(outcome.limitReached()).isEqualTo(BrandAiAgent.LIMIT_TIME);
 		assertThat(captured).hasSize(1);
 		assertThat(captured.get(0)).contains("답변 시간이 얼마 남지 않았습니다");
 		JsonNode body = om.readTree(captured.get(0));
@@ -228,8 +260,9 @@ class BrandAiAgentTest {
 		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
 				.willReturn(AiToolResult.ok("{}", 0, List.of()));
 		List<String> captured = new ArrayList<>();
-		// 1번째 응답만으로 누적 promptTokens가 예산(60,000)을 채운다 - 툴 상한(8회)은 전혀 걸리지
-		// 않았으니(1회) 원인은 토큰 예산이지 툴 횟수가 아니다 - N3 분기상 TIME_BUDGET_NOTE가 나가야 한다.
+		// 1번째 응답만으로 누적 promptTokens가 예산(PROMPT_TOKEN_BUDGET)을 채운다 - 툴 상한은 전혀
+		// 걸리지 않았으니(1회) 원인은 토큰 예산이지 툴 횟수가 아니다 - N3 분기상 TIME_BUDGET_NOTE가
+		// 나가야 한다. limitReached는 그래도 budget이다(토큰 예산도 budget - 한계 재도출 스펙 §5).
 		BrandAiAgent agent = agentWith(
 				List.of(functionCallWithPromptTokens("list_brands", "{}", BrandAiAgent.PROMPT_TOKEN_BUDGET),
 						textAnswer("토큰을 많이 써서 이제 답할게요")),
@@ -239,6 +272,7 @@ class BrandAiAgentTest {
 
 		assertThat(outcome.answer()).isEqualTo("토큰을 많이 써서 이제 답할게요");
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_TOOL_CAP);
+		assertThat(outcome.limitReached()).isEqualTo(BrandAiAgent.LIMIT_BUDGET);
 		assertThat(captured).hasSize(2);
 		assertThat(captured.get(1)).contains("답변 시간이 얼마 남지 않았습니다");
 	}
@@ -308,6 +342,7 @@ class BrandAiAgentTest {
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_BLOCKED);
 		assertThat(outcome.answer()).contains("답변을 만들지 못했어요");
 		assertThat(outcome.answered()).isFalse();
+		assertThat(outcome.limitReached()).isNull();
 	}
 
 	// ---------- FE 변경요청서 2026-08-28 T3(scope 배선)·T7(references) ----------
@@ -508,6 +543,7 @@ class BrandAiAgentTest {
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_ABORTED);
 		assertThat(outcome.answer()).isNull();
 		assertThat(outcome.answered()).isFalse();
+		assertThat(outcome.limitReached()).isNull();
 		assertThat(streamCalls.get()).isZero();
 	}
 

@@ -38,8 +38,8 @@ public class BrandAiConfig {
 	private static final long CHAT_RETRY_BASE_MILLIS = 2_000L;
 	private static final int ERROR_BODY_LOG_LIMIT = 2_000;
 	/** Vertex 요청 자체의 타임아웃(C2) - common-llm 기본 120초는 사람이 기다리는 이 경로엔 너무
-	 * 길다. 2회 재시도까지 감안해도 45초×2+백오프 ≈ 92초로, 에이전트 벽시계 예산(55초)이 한
-	 * 번 더 끊어준다. */
+	 * 길다. 2회 재시도까지 감안해도 45초×2+백오프 ≈ 92초로, 에이전트 벽시계 예산(85초, 한계 재도출
+	 * 2026-08-31 - 스펙 §4)이 한 번 더 끊어준다. */
 	private static final int CHAT_REQUEST_TIMEOUT_SECONDS = 45;
 
 	/**
