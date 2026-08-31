@@ -36,6 +36,7 @@ class DashboardIndexCoalescerTest {
 	private static final String VERSION = "0123456789abcdef0123456789abcdef";
 	private static final String OTHER_VERSION = "ffffffffffffffffffffffffffffffff";
 	private static final long USER_ID = 7L;
+	private static final long OTHER_USER_ID = 8L;
 	/** 대기 상한 — 합류 실패 시 무한 대기로 굳지 않게 모든 대기에 건다. */
 	private static final long TIMEOUT_SECONDS = 5;
 
@@ -120,6 +121,40 @@ class DashboardIndexCoalescerTest {
 			assertThat(a.get(TIMEOUT_SECONDS, TimeUnit.SECONDS))
 					.isNotSameAs(b.get(TIMEOUT_SECONDS, TimeUnit.SECONDS));
 			then(assembler).should(times(2)).index(USER_ID);
+		} finally {
+			pool.shutdownNow();
+		}
+	}
+
+	@Test
+	void 유저가_다르면_합류하지_않고_각자_조립한다() throws Exception {
+		// 회귀 가드 — 버전키가 유저를 해싱한다고 키에서 userId를 빼면 A유저의 대시보드가 B유저에게 나간다.
+		CountDownLatch 둘다진입 = new CountDownLatch(2);
+		CountDownLatch 해제 = new CountDownLatch(1);
+		given(assembler.index(USER_ID)).willAnswer(invocation -> {
+			둘다진입.countDown();
+			assertThat(해제.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)).isTrue();
+			return emptyIndex();
+		});
+		given(assembler.index(OTHER_USER_ID)).willAnswer(invocation -> {
+			둘다진입.countDown();
+			assertThat(해제.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)).isTrue();
+			return emptyIndex();
+		});
+
+		ExecutorService pool = Executors.newFixedThreadPool(2);
+		try {
+			Future<DashboardIndex> a = pool.submit(() -> coalescer.index(VERSION, USER_ID));
+			Future<DashboardIndex> b = pool.submit(() -> coalescer.index(VERSION, OTHER_USER_ID));
+
+			// 둘 다 조립에 들어왔다는 것 자체가 "합류하지 않았다"의 증거다.
+			assertThat(둘다진입.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)).isTrue();
+			해제.countDown();
+
+			assertThat(a.get(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+					.isNotSameAs(b.get(TIMEOUT_SECONDS, TimeUnit.SECONDS));
+			then(assembler).should().index(USER_ID);
+			then(assembler).should().index(OTHER_USER_ID);
 		} finally {
 			pool.shutdownNow();
 		}

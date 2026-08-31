@@ -903,7 +903,10 @@ public class PerformanceContentAssembler {
 	 * 인덱스가 이미 읽은 것(레거시 카드·계정 행·등록 원장·캠페인)을 다시 읽지 않게 실어 나른다.
 	 *
 	 * <p>인스턴스는 {@link DashboardIndexCoalescer}가 여러 요청 스레드에 <b>같은 것을 나눠 준다</b> —
-	 * 모든 컬렉션 필드는 생성 시점에 불변으로 굳힌다(2026-08-31).
+	 * <b>이 레코드의 컬렉션 필드 7개</b>는 생성 시점에 불변으로 굳힌다(2026-08-31). 다만 그 안에 실린
+	 * 값 객체({@link PerformanceContentResponse}의 {@code snapshots}·{@code matchedKeywords}·
+	 * {@code recentComments}·{@code additionalSources})까지 깊게 굳히지는 않는다 — 어셈블러가 만든
+	 * 리스트가 그대로 실린다. 조립 이후 그 값들을 변형하는 코드가 없다는 것이 안전의 근거다.
 	 *
 	 * @param legacyCards contentKey(=item.id) → 조립 완료 카드. 겹침 병합분이 이미 반영돼 있다.
 	 * @param brandByCode 풀 전용 shortcode → brandAccountId(겹침 코드는 레거시 카드가 정본이라 없다).

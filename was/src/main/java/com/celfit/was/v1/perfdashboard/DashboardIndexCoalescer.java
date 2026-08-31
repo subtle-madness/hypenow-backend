@@ -32,6 +32,10 @@ import org.springframework.stereotype.Component;
  * <p><b>리더 실패는 합류자에게도 전파한다</b>({@link #join}). 합류자가 각자 재시도하면 DB가 힘든 바로
  * 그 순간에 N중 재조립이 터진다 — 같이 실패하고 클라이언트가 재시도하는 편이 낫다. 실패한 키는
  * 맵에 남지 않으므로 다음 요청은 새로 조립한다.
+ *
+ * <p><b>합류자가 영원히 매달리는 경로는 없다</b>: 리더는 정상·실패 어느 쪽이든 자기 future를
+ * 완료시키고, {@code finally}가 키 제거에 이어 완료를 한 번 더 시도한다(이미 완료됐으면 no-op) —
+ * 등록과 조립 사이에서 스레드가 비정상으로 죽는 경우까지 덮는 최후 방어다.
  */
 @Component
 public class DashboardIndexCoalescer {
@@ -53,11 +57,12 @@ public class DashboardIndexCoalescer {
 	public DashboardIndex index(String version, long userId) {
 		Key key = new Key(userId, version);
 		CompletableFuture<DashboardIndex> mine = new CompletableFuture<>();
-		CompletableFuture<DashboardIndex> leader = inFlight.putIfAbsent(key, mine);
-		if (leader != null) {
-			return join(leader);
-		}
 		try {
+			CompletableFuture<DashboardIndex> leader = inFlight.putIfAbsent(key, mine);
+			if (leader != null) {
+				// 합류자 — 내 future는 맵에 안 올라갔으니 아래 remove는 값 조건부라 no-op이다.
+				return join(leader);
+			}
 			// 조립은 맵 밖에서 한다 — 8초짜리를 락 안에서 돌리면 다른 유저의 진입까지 줄을 선다.
 			DashboardIndex value = assembler.index(userId);
 			mine.complete(value);
@@ -68,6 +73,10 @@ public class DashboardIndexCoalescer {
 			throw t;
 		} finally {
 			inFlight.remove(key, mine);
+			// 어떤 경로로도 완료를 남기지 못한 경우(catch의 completeExceptionally 자체가 OOM 등으로
+			// 실패한 경우까지)의 최후 방어 —
+			// 이미 완료됐으면 no-op이라 정상·실패 경로의 결과를 덮지 않는다.
+			mine.completeExceptionally(new IllegalStateException("조립이 완료를 남기지 못했다"));
 		}
 	}
 
@@ -83,6 +92,7 @@ public class DashboardIndexCoalescer {
 			if (cause instanceof Error error) {
 				throw error;
 			}
+			// 도달 불가 — assembler.index는 checked 예외를 선언하지 않아 cause는 항상 위 둘 중 하나다.
 			throw e;
 		}
 	}
