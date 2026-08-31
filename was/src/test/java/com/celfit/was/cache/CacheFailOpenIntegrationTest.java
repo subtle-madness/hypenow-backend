@@ -35,7 +35,7 @@ class CacheFailOpenIntegrationTest extends IntegrationTest {
 	void 레디스_불능이어도_조회는_정상() {
 		ContentCacheSeed.reset(jdbcTemplate);
 		var page = pageService.page(V1ContentQuery.of(LocalDate.now().minusDays(7), LocalDate.now(),
-				null, null, null, null, null, null, null, null, null, 100, 0));
+				null, null, null, null, null, null, null, null, null, 100, 0, null));
 		assertThat(page.total()).isEqualTo(2);
 	}
 }

@@ -13,7 +13,7 @@ class V1InfluencerDiscoveryQueryTest {
 			String follower, String activity, String sponsored, String contact, String sort,
 			Integer limit, Integer offset) {
 		return V1InfluencerDiscoveryQuery.of(q, main, mid, sub, follower, activity, sponsored,
-				contact, sort, limit, offset);
+				contact, sort, limit, offset, null);
 	}
 
 	@Test
@@ -36,13 +36,38 @@ class V1InfluencerDiscoveryQueryTest {
 	}
 
 	@Test
-	void main이_all이면_mid_sub는_무시된다() {
-		var query = of(null, "all", "립메이크업", "립틴트", null, null, null, null, null, null, null);
+	void main이_all이면_mid는_무시된다() {
+		var query = of(null, "all", "립메이크업", null, null, null, null, null, null, null, null);
 		assertThat(query.midCategory()).isNull();
-		assertThat(query.subCategory()).isNull();
+	}
 
-		var query2 = of(null, "makeup", "all", "립틴트", null, null, null, null, null, null, null);
-		assertThat(query2.subCategory()).isNull();
+	@Test
+	void 상위없는_subCategory는_400이다() {
+		// 2026-09-01 FE 피드백 #4 — 조용한 무시 대신 400. mid=all·main=all로 상위가 지워진 경우 포함.
+		assertThatThrownBy(() -> of(null, "all", "립메이크업", "립틴트", null, null, null, null, null,
+				null, null)).isInstanceOf(V1ApiException.class);
+		assertThatThrownBy(() -> of(null, "makeup", "all", "립틴트", null, null, null, null, null,
+				null, null)).isInstanceOf(V1ApiException.class);
+		assertThatThrownBy(() -> of(null, null, null, "립틴트", null, null, null, null, null,
+				null, null)).isInstanceOf(V1ApiException.class);
+	}
+
+	@Test
+	void vertical은_축_전체_조회_파라미터다() {
+		// 2026-09-01 FE 피드백 #1 — 대분류 없이 축 전체를 하나의 쿼리로.
+		var fnb = V1InfluencerDiscoveryQuery.of(null, null, null, null, null, null, null, null,
+				null, null, null, "fnb");
+		assertThat(fnb.vertical()).isEqualTo("fnb");
+		var none = V1InfluencerDiscoveryQuery.of(null, null, null, null, null, null, null, null,
+				null, null, null, null);
+		assertThat(fnb.cacheKey()).isNotEqualTo(none.cacheKey());
+		// vertical=all은 생략과 동치
+		assertThat(V1InfluencerDiscoveryQuery.of(null, null, null, null, null, null, null, null,
+				null, null, null, "all").vertical()).isNull();
+		assertThatThrownBy(() -> V1InfluencerDiscoveryQuery.of(null, null, null, null, null, null,
+				null, null, null, null, null, "home")).isInstanceOf(V1ApiException.class);
+		assertThatThrownBy(() -> V1InfluencerDiscoveryQuery.of(null, "snack", null, null, null,
+				null, null, null, null, null, null, "fnb")).isInstanceOf(V1ApiException.class);
 	}
 
 	@Test
@@ -62,9 +87,9 @@ class V1InfluencerDiscoveryQueryTest {
 	@Test
 	void 같은_조건은_같은_캐시_키_페이지가_다르면_다른_키() {
 		V1InfluencerDiscoveryQuery a = V1InfluencerDiscoveryQuery.of(null, null, null, null, null,
-				null, null, null, null, 50, 0);
+				null, null, null, null, 50, 0, null);
 		V1InfluencerDiscoveryQuery b = V1InfluencerDiscoveryQuery.of(null, null, null, null, null,
-				null, null, null, null, 50, 0);
+				null, null, null, null, 50, 0, null);
 		assertThat(a.cacheKey()).isEqualTo(b.cacheKey());
 		assertThat(a.cacheKey()).isNotEqualTo(a.next().cacheKey());
 	}
@@ -72,7 +97,7 @@ class V1InfluencerDiscoveryQueryTest {
 	@Test
 	void next는_offset만_limit만큼_전진() {
 		V1InfluencerDiscoveryQuery next = V1InfluencerDiscoveryQuery.of(null, null, null, null, null,
-				null, null, null, null, 50, 100).next();
+				null, null, null, null, 50, 100, null).next();
 		assertThat(next.offset()).isEqualTo(150);
 		assertThat(next.limit()).isEqualTo(50);
 	}
@@ -81,9 +106,9 @@ class V1InfluencerDiscoveryQueryTest {
 	void 자유입력_리터럴_null은_필터_생략과_다른_키() {
 		// midCategory="null"(자유입력 리터럴)과 midCategory 생략(실제 null)은 다른 조건이어야 한다.
 		V1InfluencerDiscoveryQuery literalNull = V1InfluencerDiscoveryQuery.of(null, "makeup", "null",
-				null, null, null, null, null, null, 50, 0);
+				null, null, null, null, null, null, 50, 0, null);
 		V1InfluencerDiscoveryQuery omitted = V1InfluencerDiscoveryQuery.of(null, "makeup", null, null,
-				null, null, null, null, null, 50, 0);
+				null, null, null, null, null, 50, 0, null);
 		assertThat(literalNull.cacheKey()).isNotEqualTo(omitted.cacheKey());
 	}
 
@@ -91,9 +116,9 @@ class V1InfluencerDiscoveryQueryTest {
 	void 기본값_명시와_all은_생략과_같은_키() {
 		// main=all이면 mid·sub는 연쇄 무시(스펙 6.21) — 명시한 값과 상관없이 생략과 동일 조건·동일 키.
 		V1InfluencerDiscoveryQuery explicit = V1InfluencerDiscoveryQuery.of(null, "all", "립메이크업",
-				"립틴트", "all", null, "all", null, "reach", 100, 0);
+				"all", "all", null, "all", null, "reach", 100, 0, "all");
 		V1InfluencerDiscoveryQuery omitted = V1InfluencerDiscoveryQuery.of(null, null, null, null,
-				null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, null);
 		assertThat(explicit.cacheKey()).isEqualTo(omitted.cacheKey());
 	}
 
@@ -123,7 +148,7 @@ class V1InfluencerDiscoveryQueryTest {
 	void 에스테틱_대분류는_검증을_통과한다() {
 		// V20260809063533 시드로 추가된 어휘 — allowlist 누락 시 400 회귀 방지
 		V1InfluencerDiscoveryQuery query = V1InfluencerDiscoveryQuery.of(null, "esthetic", null,
-				null, null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, null, null);
 		assertThat(query.mainCategory()).isEqualTo("esthetic");
 	}
 
@@ -140,7 +165,7 @@ class V1InfluencerDiscoveryQueryTest {
 		for (String main : java.util.List.of("beverage", "alcohol", "convenience", "snack",
 				"health-food", "recipe")) {
 			V1InfluencerDiscoveryQuery query = V1InfluencerDiscoveryQuery.of(null, main, null, null,
-					null, null, null, null, null, null, null);
+					null, null, null, null, null, null, null, null);
 			org.assertj.core.api.Assertions.assertThat(query.mainCategory()).isEqualTo(main);
 			org.assertj.core.api.Assertions.assertThat(
 					com.celfit.was.v1.common.MainCategories.isFnb(main)).isTrue();

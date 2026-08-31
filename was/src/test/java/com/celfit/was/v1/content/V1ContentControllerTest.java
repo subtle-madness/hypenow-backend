@@ -76,7 +76,7 @@ class V1ContentControllerTest {
 	@Test
 	void 로그인이면_저장_여부로_isContentsSaved를_채운다() throws Exception {
 		given(pageService.page(any())).willReturn(new ContentPage(List.of(row("c1"), row("c2")), 2L));
-		given(pageService.distributorOptions()).willReturn(List.of());
+		given(pageService.distributorOptions(org.mockito.ArgumentMatchers.anyString())).willReturn(List.of());
 		given(savedLookup.savedShortCodes(7L)).willReturn(Set.of("c1"));
 
 		mockMvc.perform(get("/v1/contents").with(user(principal()))
@@ -91,7 +91,7 @@ class V1ContentControllerTest {
 	@Test
 	void 성공_응답은_envelope와_meta를_가진다() throws Exception {
 		given(pageService.page(any())).willReturn(new ContentPage(List.of(), 0L));
-		given(pageService.distributorOptions())
+		given(pageService.distributorOptions(org.mockito.ArgumentMatchers.anyString()))
 				.willReturn(List.of(Map.of("id", "daiso", "name", "다이소")));
 
 		mockMvc.perform(get("/v1/contents").with(user(principal()))
@@ -107,7 +107,7 @@ class V1ContentControllerTest {
 	@Test
 	void offset_파라미터는_meta에_그대로_반영된다() throws Exception {
 		given(pageService.page(any())).willReturn(new ContentPage(List.of(), 0L));
-		given(pageService.distributorOptions()).willReturn(List.of());
+		given(pageService.distributorOptions(org.mockito.ArgumentMatchers.anyString())).willReturn(List.of());
 
 		mockMvc.perform(get("/v1/contents").with(user(principal()))
 						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")
@@ -122,7 +122,7 @@ class V1ContentControllerTest {
 	void 다음_페이지가_있으면_프리페치가_다음_쿼리로_page를_호출한다() throws Exception {
 		List<ContentCardRow> rows = IntStream.range(0, 50).mapToObj(i -> row("c" + i)).toList();
 		given(pageService.page(any())).willReturn(new ContentPage(rows, 200L));
-		given(pageService.distributorOptions()).willReturn(List.of());
+		given(pageService.distributorOptions(org.mockito.ArgumentMatchers.anyString())).willReturn(List.of());
 
 		mockMvc.perform(get("/v1/contents").with(user(principal()))
 						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")
@@ -147,7 +147,7 @@ class V1ContentControllerTest {
 	@Test
 	void 마지막_페이지면_프리페치하지_않는다() throws Exception {
 		given(pageService.page(any())).willReturn(new ContentPage(List.of(row("c1")), 1L));
-		given(pageService.distributorOptions()).willReturn(List.of());
+		given(pageService.distributorOptions(org.mockito.ArgumentMatchers.anyString())).willReturn(List.of());
 
 		mockMvc.perform(get("/v1/contents").with(user(principal()))
 						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")
@@ -194,7 +194,7 @@ class V1ContentControllerTest {
 	@Test
 	void 허용_오리진에_CORS_헤더를_내린다() throws Exception {
 		given(pageService.page(any())).willReturn(new ContentPage(List.of(), 0L));
-		given(pageService.distributorOptions()).willReturn(List.of());
+		given(pageService.distributorOptions(org.mockito.ArgumentMatchers.anyString())).willReturn(List.of());
 
 		mockMvc.perform(get("/v1/contents").with(user(principal()))
 						.param("startDate", "2026-07-05").param("endDate", "2026-07-11")

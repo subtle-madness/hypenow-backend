@@ -27,6 +27,9 @@ public final class MainCategories {
 	public static final Set<String> ALL = Stream.concat(BEAUTY.stream(), FNB.stream())
 			.collect(Collectors.toUnmodifiableSet());
 
+	/** vertical 파라미터 어휘 — 축 전체 조회(2026-09-01 FE 버티컬 요청). */
+	public static final Set<String> VERTICALS = Set.of("beauty", "fnb");
+
 	/** F&B 축 여부 — null(무필터)은 false(기본 화면 = 뷰티). */
 	public static boolean isFnb(String mainCategory) {
 		return mainCategory != null && FNB.contains(mainCategory);

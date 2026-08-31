@@ -113,7 +113,11 @@ public class V1InfluencerDiscoveryRepository {
 		// 축 분기 (2026-08-31 F&B 서빙 개방 §3): 무필터·뷰티축 필터 = 뷰티 계정(기본 화면 불변),
 		// F&B축 필터 = F&B 계정. COALESCE 방향이 다르다 — beauty는 true(롤링 창에서 구 미러가 축을
 		// 안 채운 기존 행은 전부 뷰티 모수 출신), fnb는 false(미러 전엔 F&B 계정이 미러에 없다).
-		boolean fnbAxis = com.celfit.was.v1.common.MainCategories.isFnb(q.mainCategory());
+		// vertical=fnb는 대분류 없이 축 전체 조회(2026-09-01 FE 피드백 #1) — 비중 게이트 없이
+		// COALESCE(a.fnb, false)만 적용된다(아래 mainCategory 블록이 안 붙는다). vertical=beauty는
+		// 뷰티 경로 그대로(무필터와 동치).
+		boolean fnbAxis = com.celfit.was.v1.common.MainCategories.isFnb(q.mainCategory())
+				|| "fnb".equals(q.vertical());
 		if (fnbAxis) {
 			where.append(" AND COALESCE(a.fnb, false)");
 			// 뷰티 게시물 비율 게이트는 F&B축에 적용하지 않는다 — F&B 계정은 뷰티 비율이 0이라
