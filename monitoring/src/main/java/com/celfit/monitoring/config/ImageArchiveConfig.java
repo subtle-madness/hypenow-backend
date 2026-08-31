@@ -122,10 +122,10 @@ public class ImageArchiveConfig {
 	 * 재사용해 백필 직후 같은 실행에서 다운로드·업로드까지 닫는다.
 	 */
 	@Bean
-	public AuthorImageBackfillJob authorImageBackfillJob(JdbcTemplate db, InstagramSource hikerClient,
+	public AuthorImageBackfillJob authorImageBackfillJob(JdbcTemplate db, InstagramSource hiker,
 			AuthorProfileRepository authorProfileRepo, AuthorProfileImageArchiveJob authorProfileImageArchiveJob,
 			HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchiveJob) {
-		return new AuthorImageBackfillJob(db, hikerClient, authorProfileRepo, authorProfileImageArchiveJob,
+		return new AuthorImageBackfillJob(db, hiker, authorProfileRepo, authorProfileImageArchiveJob,
 				hashtagPostAuthorImageArchiveJob);
 	}
 }

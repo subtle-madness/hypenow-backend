@@ -286,7 +286,7 @@ public class AdDisclosureJudgeService {
 		if (Boolean.TRUE.equals(isPaidPartnership)) {
 			return new AdVerdictResult("DISCLOSED", "RULE", List.of(), List.of(), List.of());
 		}
-		// 릴스뿐 아니라 일반 피드의 단일 동영상(HikerClient는 contentType을 REELS/FEED 2값으로만
+		// 릴스뿐 아니라 일반 피드의 단일 동영상(HikerBackend는 contentType을 REELS/FEED 2값으로만
 		// 매핑하므로 FEED+videoUrl 보유가 그 경우)도 영상 내 표기가 정본 위치라 캡션 부재로 단정할 수
 		// 없다 — 스펙 §5 Tier0.
 		boolean isVideo = "REELS".equalsIgnoreCase(contentType) || videoUrl != null;

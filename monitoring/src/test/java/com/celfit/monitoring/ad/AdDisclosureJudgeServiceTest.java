@@ -31,7 +31,7 @@ class AdDisclosureJudgeServiceTest {
 				true, false, false);
 	}
 
-	/** contentType=FEED이지만 videoUrl을 가진 단일 동영상 게시물 — HikerClient는 REELS/FEED 2값만
+	/** contentType=FEED이지만 videoUrl을 가진 단일 동영상 게시물 — HikerBackend는 REELS/FEED 2값만
 	 * 매핑하므로 일반 피드의 단일 동영상도 이 셰이프로 온다(코디네이터 리뷰 반영). */
 	private static PostInfo feedVideoPost(String shortCode, String caption) {
 		return new PostInfo(shortCode, "poster1", null, null, "uid1", "FEED", caption, null,

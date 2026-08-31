@@ -24,6 +24,9 @@ public class HikerConfig {
 	 * 지연 메트릭)은 그대로 유지되고, 그 위에 Hiker 파싱 백엔드(HikerBackend)와 정책 계층
 	 * (FailoverInstagramSource)을 얹는다. 마일스톤 A는 자체 백엔드가 없어 Failover가 Hiker로만
 	 * 위임한다(행동 변화 0). 마일스톤 B에서 SelfCrawlBackend가 Failover 안에 추가된다.
+	 *
+	 * <p>전송 위임자는 HikerHttp 단일 빈이라, 테스트가 {@code @Primary}로 가짜 전송을 꽂아도
+	 * 같은 데코레이터 체인(과금·원형 적재·타이머)에 그대로 감싸여 실전과 동일 경로로 동작한다.
 	 */
 	@Bean
 	public InstagramSource instagramSource(HikerHttp transport, RawPayloadRepository rawPayloads,

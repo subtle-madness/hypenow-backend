@@ -38,16 +38,16 @@ public class AuthorImageBackfillJob {
 	private static final Logger log = LoggerFactory.getLogger(AuthorImageBackfillJob.class);
 
 	private final JdbcTemplate db;
-	private final InstagramSource hikerClient;
+	private final InstagramSource hiker;
 	private final AuthorProfileRepository authorProfileRepo;
 	private final AuthorProfileImageArchiveJob authorArchiveJob;
 	private final HashtagPostAuthorImageArchiveJob hashtagArchiveJob;
 
-	public AuthorImageBackfillJob(JdbcTemplate db, InstagramSource hikerClient,
+	public AuthorImageBackfillJob(JdbcTemplate db, InstagramSource hiker,
 			AuthorProfileRepository authorProfileRepo, AuthorProfileImageArchiveJob authorArchiveJob,
 			HashtagPostAuthorImageArchiveJob hashtagArchiveJob) {
 		this.db = db;
-		this.hikerClient = hikerClient;
+		this.hiker = hiker;
 		this.authorProfileRepo = authorProfileRepo;
 		this.authorArchiveJob = authorArchiveJob;
 		this.hashtagArchiveJob = hashtagArchiveJob;
@@ -103,7 +103,7 @@ public class AuthorImageBackfillJob {
 			}
 			callsUsed[0]++;
 			try {
-				AuthorInfo info = hikerClient.fetchAuthorProfile(c.igUserId());
+				AuthorInfo info = hiker.fetchAuthorProfile(c.igUserId());
 				authorProfileRepo.upsert(info);   // profile_pic_url·fetched_at 갱신 → 다음 아카이브 스윕이 수거
 				refreshed++;
 			} catch (RuntimeException e) {
@@ -152,7 +152,7 @@ public class AuthorImageBackfillJob {
 			}
 			callsUsed[0]++;
 			try {
-				ProfileInfo info = hikerClient.fetchProfile(c.authorUsername());
+				ProfileInfo info = hiker.fetchProfile(c.authorUsername());
 				if (info.profilePicUrl() != null) {
 					updateHashtagAuthorUrl(c.authorUsername(), info.profilePicUrl());
 				}
