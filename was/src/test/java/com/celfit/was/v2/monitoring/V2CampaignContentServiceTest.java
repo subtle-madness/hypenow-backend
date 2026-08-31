@@ -588,7 +588,7 @@ class V2CampaignContentServiceTest {
 	}
 
 	private static BrandPostResponse taggedPost(String shortcode, String postUrl, long brandId) {
-		return new BrandPostResponse(shortcode, String.valueOf(brandId), "tagged", postUrl, shortcode,
+		return new BrandPostResponse(shortcode, String.valueOf(brandId), "tagged", null, postUrl, shortcode,
 				"reels", "2026-08-05T00:00:00+09:00", null, null, null, null, null, null, null, null,
 				false, null, "unknown", null, "tracking", null, null, null, List.of(), null, false, 0,
 				List.of(), List.of(), null, null,

@@ -1008,7 +1008,7 @@ class PerformanceContentAssemblerTest {
 	 */
 	private static BrandPostResponse hiddenSponsoredPoolPost() {
 		SnapshotResponse latest = snapshot("2026-08-04", 300L, 30L, 3L);
-		return new BrandPostResponse("POOL2", String.valueOf(BRAND_ID), "tagged",
+		return new BrandPostResponse("POOL2", String.valueOf(BRAND_ID), "tagged", null,
 				"https://www.instagram.com/reel/POOL2/", "POOL2", "reels",
 				"2026-08-04T09:00:00+09:00", "브랜드 태그 캡션", null, null, null,
 				"https://www.instagram.com/creator/", "creator", "크리에이터",
@@ -1168,7 +1168,7 @@ class PerformanceContentAssemblerTest {
 			String caption, boolean commentsHidden, long brandId, List<String> campaignIds, String trackingStatus,
 			String authorFullName, String authorProfilePicUrl) {
 		SnapshotResponse latest = snapshots.isEmpty() ? null : snapshots.get(snapshots.size() - 1);
-		return new BrandPostResponse(shortcode, String.valueOf(brandId), source,
+		return new BrandPostResponse(shortcode, String.valueOf(brandId), source, null,
 				"https://www.instagram.com/reel/" + shortcode + "/", shortcode, "reels",
 				"2026-08-06T09:00:00+09:00", caption, null, null, null,
 				"https://www.instagram.com/creator/", "creator", authorFullName, authorProfilePicUrl, false, 1000L,

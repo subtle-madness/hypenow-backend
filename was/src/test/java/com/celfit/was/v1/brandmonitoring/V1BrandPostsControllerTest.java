@@ -577,6 +577,30 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.meta.counts.hashtag").value(0));
 	}
 
+	/**
+	 * matchedTags 배지(2026-08-31, 해시태그 감지 태그 노출) — hashtag 게시물은 게시물이 여러 태그로
+	 * 매칭돼도 <b>조회자 본인 장부와 겹치는 태그만</b> 응답에 싣는다(남의 태그 이름 비노출). tagged
+	 * 게시물은 hashtag 성분이 없어 matchedTags가 항상 null이다(계약 무결성 규칙 #1 — 키는 생략하지
+	 * 않고 명시적 null로 내려간다).
+	 */
+	@Test
+	void 게시물_목록의_해시태그_게시물은_matchedTags를_장부_교집합으로_싣고_tagged는_null이다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"),
+				hashtagOnlyRow("HHH", "2026-08-05T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
+		given(hashtagTagRepository.findByUserAndBrand(7L, 100L)).willReturn(Set.of("cclime"));
+		given(brandReadRepository.findMatchedTags(eq(100L), any())).willReturn(List.of(
+				new BrandReadRepository.MatchedTagRow("HHH", "끌리메"),
+				new BrandReadRepository.MatchedTagRow("HHH", "cclime")));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[?(@.shortcode=='HHH')].matchedTags")
+						.value(Matchers.contains(Matchers.contains("cclime"))))
+				.andExpect(jsonPath("$.data[?(@.shortcode=='AAA')].matchedTags")
+						.value(Matchers.contains(Matchers.nullValue())));
+	}
+
 	@Test
 	void 업로드_기간_필터는_KST_날짜로_자른다() throws Exception {
 		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-01T01:00:00Z"));
