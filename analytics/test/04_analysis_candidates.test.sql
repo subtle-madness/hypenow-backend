@@ -56,13 +56,12 @@ BEGIN
   ASSERT EXISTS (SELECT 1 FROM analytics.v_analysis_candidates
                  WHERE short_code = 'dummy_fb1' AND NOT timely),
     'F&B 콘텐츠가 in_window 경로로 안 들어옴 — recency_rank 자체 계산 확인';
-  -- 서빙은 불변 — F&B 단독 계정은 랭킹·최근창에 한 건도 없어야 한다.
-  ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_contents WHERE account_handle = 'dummy_fb'),
-    'F&B 계정이 서빙 뷰 v_contents에 노출됨 — 서빙 무변경 위반';
-  ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_recent_content WHERE owner_username = 'dummy_fb'),
-    'F&B 계정이 최근창 뷰에 노출됨 — 서빙 무변경 위반';
-  ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_accounts WHERE handle = 'dummy_fb'),
-    'F&B 계정이 서빙 계정 뷰에 노출됨 — 서빙 무변경 위반';
+  -- 08-31 서빙 개방: 뷰 모수가 뷰티 ∪ F&B로 넓어졌다 — F&B가 서빙 재료(미러)에 들어온다.
+  -- 기본 화면 불변은 was 층(무필터=뷰티 명시)이 지킨다. 04 분리 자체는 유지(독립 구조가 가치).
+  ASSERT EXISTS (SELECT 1 FROM analytics.v_contents WHERE account_handle = 'dummy_fb'),
+    'F&B 계정이 서빙 뷰 v_contents에 없음 — 서빙 모수 확장 누락';
+  ASSERT EXISTS (SELECT 1 FROM analytics.v_recent_content WHERE owner_username = 'dummy_fb'),
+    'F&B 계정이 최근창 뷰에 없음 — 01 모수 확장 누락';
   -- 기본 후보 = f1·dummy_cl(timely) + r1·r2·ra1(백필, 윈도우 안) 5건 — 07-20 개정으로 2→4건,
   -- 08-06 액터 분기 도입으로 +ra1(액터) → 5건, 08-31 F&B 모수 편입으로 +fb1 → 6건.
   ASSERT (SELECT count(*) FROM analytics.v_analysis_candidates WHERE account_handle LIKE 'dummy_%') = 6,

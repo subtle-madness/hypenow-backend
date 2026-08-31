@@ -19,8 +19,8 @@
 --   dummy_x(99990004)  비뷰티 — r5(99990107, 모수 제외 검증)
 --   dummy_e(99990005)  EXCLUDED — 콘텐츠·프로필 없음
 --   dummy_fb(99990060) F&B 단독(뷰티 아님) — fb1(99990160, 릴스: D+4 캡처라 timely=false,
---                  계정 유일 콘텐츠라 최근창 안). 분석 후보(04)엔 들고 서빙 뷰(01·02·20)엔
---                  안 나타나는지 검증 — 2026-08-31 축 분리 트랙
+--                  계정 유일 콘텐츠라 최근창 안). 분석 후보(04)·서빙 뷰(01·02 — 08-31 서빙
+--                  개방으로 모수 편입)에 들고, 20(랜딩)엔 안 드는지 검증
 
 -- 설정 키 결정화: 실DB 오버라이드가 있으면 기대값이 흔들린다 (ROLLBACK으로 복구됨).
 DELETE FROM app_setting WHERE key LIKE 'analytics.%';
@@ -34,8 +34,7 @@ INSERT INTO influencer(id, username, status, followers, beauty, beauty_company, 
  (99990003,'dummy_co','QUALIFIED', 8000, true,  true,  timestamptz '2026-06-01 00:00:00+09'),
  (99990004,'dummy_x' ,'QUALIFIED', 9000, false, false, timestamptz '2026-06-01 00:00:00+09'),
  (99990005,'dummy_e' ,'EXCLUDED',  NULL, NULL,  NULL,  NULL),
- -- F&B 단독 계정(뷰티 아님) — 분석 후보 뷰(04)가 서빙 모수에서 분리됐는지 검증하는 픽스처.
- -- 서빙 뷰(01·02·20)에는 절대 나타나면 안 된다.
+ -- F&B 단독 계정(뷰티 아님) — 04 후보·서빙(01·02) 편입 + 랜딩(20) 제외 검증 픽스처.
  (99990060,'dummy_fb','QUALIFIED', 7000, false, false, timestamptz '2026-06-01 00:00:00+09');
 
 -- F&B 축 시드: dummy_a는 뷰티+F&B 겸임(복수 카테고리), dummy_fb는 F&B 단독,
@@ -75,6 +74,10 @@ INSERT INTO raw_profile(influencer_id, crawl_run_id, source, username, followers
   timestamptz '2026-06-01 12:00:00+09'),
  (99990004,99990000,'HIKER_MOBILE','dummy_x',9000,
   '{"status":"ok","user":{"username":"dummy_x","full_name":"더미 엑스","follower_count":9000}}'::jsonb,
+  timestamptz '2026-06-01 12:00:00+09'),
+ -- F&B 단독 계정 프로필 — v_accounts 모수·축 컬럼 검증용 (08-31 서빙 개방)
+ (99990060,99990000,'HIKER_MOBILE','dummy_fb',7000,
+  '{"status":"ok","user":{"username":"dummy_fb","full_name":"더미 푸드","follower_count":7000}}'::jsonb,
   timestamptz '2026-06-01 12:00:00+09'),
  (99990001,99990000,'SELF_GQL','dummy_a',5500,
   '{"status":"ok","data":{"user":{
