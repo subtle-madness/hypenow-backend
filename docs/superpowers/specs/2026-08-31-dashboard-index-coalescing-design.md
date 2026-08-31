@@ -1,6 +1,6 @@
 # 성과 대시보드 동시 조립 합류(single-flight) — 26초 꼬리 응급 처치 설계
 
-> 상태: 🟢 활성 (2026-08-31 작성 · 미구현)
+> 상태: ✅ 구현됨 (2026-08-31 작성 · §2~§5 구현, §7은 후속)
 >
 > 계기: 운영 요청 추적 대시보드에서 `GET /v1/performance-dashboard/growth` 26.5초 관측(request_id `mbx0prz2`, 2026-08-31 00:32 UTC)
 > 선행: [2026-08-27 목록 API 최적화](2026-08-27-perf-dashboard-list-api-optimization-design.md)(2단 조립·ETag) ·
