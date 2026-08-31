@@ -140,6 +140,11 @@ class V1BrandAiMessagesControllerTest {
 				AiChatLogEntry.OUTCOME_OK, true, null);
 	}
 
+	private static BrandAiAgent.AgentOutcome limitReachedOutcome(String answer, String limitReached) {
+		return new BrandAiAgent.AgentOutcome(answer, List.of(), List.of(), List.of(), 100, 20, BRAND_ID,
+				AiChatLogEntry.OUTCOME_OK, true, limitReached);
+	}
+
 	private static String body(String accountId, String text) {
 		return "{\"accountIds\":[\"" + accountId + "\"],\"text\":\"" + text + "\"}";
 	}
@@ -483,5 +488,34 @@ class V1BrandAiMessagesControllerTest {
 
 		then(agent).should(times(0)).run(anyLong(), any(), anyLong(), any(), anyString(),
 				any(BrandAiAgent.StreamListener.class), any());
+	}
+
+	// --- limitReached 구조 고지(Task 7, 스펙 §5) ---
+
+	/** 예산 소진으로 강제 답변이 일어나면 그 원인을 응답 필드로 노출한다(FE additive). */
+	@Test
+	void 강제_답변이면_응답에_limitReached가_실린다() throws Exception {
+		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(123L);
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString()))
+				.willReturn(limitReachedOutcome("예산 안에서 답변드려요", "budget"));
+		given(logRepository.insert(any())).willReturn(456L);
+
+		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON).content(body("45", "알려줘")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.limitReached").value("budget"));
+	}
+
+	/** 정상 완료면 limitReached는 null이다(값 자체가 "강제 답변 아님"의 신호). */
+	@Test
+	void 정상_완료면_limitReached가_null이다() throws Exception {
+		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(123L);
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString())).willReturn(okOutcome("답변"));
+		given(logRepository.insert(any())).willReturn(456L);
+
+		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON).content(body("45", "알려줘")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.limitReached").doesNotExist());
 	}
 }

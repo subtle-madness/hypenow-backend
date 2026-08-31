@@ -175,7 +175,8 @@ public class V1BrandAiMessagesController {
 		conversationRepository.touch(conversationId);
 
 		return ApiResponse.ok(new AiMessagesResponse(String.valueOf(conversationId),
-				messageId == null ? null : String.valueOf(messageId), outcome.answer(), followUps, references));
+				messageId == null ? null : String.valueOf(messageId), outcome.answer(), followUps, references,
+				outcome.limitReached()));
 	}
 
 	/**
@@ -342,6 +343,7 @@ public class V1BrandAiMessagesController {
 		doneNode.put("messageId", messageId == null ? null : String.valueOf(messageId));
 		doneNode.set("followUps", objectMapper.valueToTree(followUps));
 		doneNode.set("references", objectMapper.valueToTree(references));
+		doneNode.put("limitReached", outcome.limitReached());
 		sendEvent(emitter, aborted, "done", doneNode);
 		emitter.complete();
 	}
