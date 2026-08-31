@@ -332,13 +332,15 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				       ('SHORT9', 'influencer_b', 'FEED', '2026-08-02', '', NULL, NULL, NULL, true)
 				""").update();
 
+		// withCaptions=true — 이 테스트가 caption 자체까지 함께 검증한다(아래 assertion).
 		List<BrandReadRepository.BrandPostIndexRow> rows = repository.findBrandPostIndex(
 				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), true,
-				BrandSponsorshipClassifier.postgresMarkerRegex());
+				BrandSponsorshipClassifier.postgresMarkerRegex(), true);
 
 		assertThat(rows).hasSize(2);
 		BrandReadRepository.BrandPostIndexRow enriched = byCode(rows, "SHORT1");
 		assertThat(enriched.captionMarker()).isTrue();       // 캡션 원문 대신 SQL 마커 매치 결과
+		assertThat(enriched.caption()).isEqualTo("#협찬 후기");   // withCaptions=true — 캡션 원문도 함께 옴
 		assertThat(enriched.isPaidPartnership()).isNull();   // null = 키 부재(판정 unknown) 보존
 		assertThat(enriched.tagDetectedAt()).isNotNull();
 		assertThat(enriched.directRegisteredAt()).isNull();
@@ -348,6 +350,7 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(enriched.authorIgUserId()).isEqualTo("IG_A");
 		BrandReadRepository.BrandPostIndexRow noMeta = byCode(rows, "NOMETA");
 		assertThat(noMeta.captionMarker()).isFalse();        // 메타 없음 → 마커 매치 false(판정은 unknown)
+		assertThat(noMeta.caption()).isNull();               // LEFT JOIN 미스 — caption도 null
 		assertThat(noMeta.isPaidPartnership()).isNull();
 		assertThat(noMeta.contentType()).isNull();
 		assertThat(noMeta.adVerdict()).isNull();
@@ -364,13 +367,15 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				VALUES ('OLDDIRECT', 'influencer_a', 'REELS', '2024-01-01', '', NULL, NULL, NULL, true)
 				""").update();
 
+		// withCaptions=false — 성과 대시보드 경로 동형(캡션 미전송 확인은 아래 assertion).
 		List<BrandReadRepository.BrandPostIndexRow> rows = repository.findBrandPostIndex(
 				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), false,
-				BrandSponsorshipClassifier.postgresMarkerRegex());
+				BrandSponsorshipClassifier.postgresMarkerRegex(), false);
 
 		assertThat(rows).hasSize(1);
 		assertThat(rows.get(0).isPaidPartnership()).isTrue();
 		assertThat(rows.get(0).directRegisteredAt()).isNotNull();
+		assertThat(rows.get(0).caption()).isNull();   // withCaptions=false — NULL AS caption
 	}
 
 	/**
@@ -402,12 +407,14 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				        'monitor-author/author1.jpg')
 				""").update();
 
+		// withCaptions=false — 이 테스트 취지(슬림 인덱스는 캡션 원문을 전송하지 않는다)를 그대로 겨눈다.
 		List<BrandReadRepository.BrandPostIndexRow> rows = repository.findBrandPostIndex(
 				brandId, OffsetDateTime.now().minusDays(365), true,
-				BrandSponsorshipClassifier.postgresMarkerRegex());
+				BrandSponsorshipClassifier.postgresMarkerRegex(), false);
 
 		BrandReadRepository.BrandPostIndexRow ad = byCode(rows, "CODE1");
 		assertThat(ad.captionMarker()).isTrue();
+		assertThat(ad.caption()).isNull();   // withCaptions=false — 캡션 원문 미전송
 		assertThat(ad.contentType()).isEqualTo("REELS");
 		assertThat(ad.adVerdict()).isEqualTo("NOT_DISCLOSED");
 		assertThat(ad.authorUsername()).isEqualTo("author1");

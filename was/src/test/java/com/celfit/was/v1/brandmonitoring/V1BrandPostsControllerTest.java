@@ -139,7 +139,7 @@ class V1BrandPostsControllerTest {
 		// 인덱스 패스 경량 프로젝션(2026-08-27 목록 타임아웃 해소)은 기존 시드 관용구(givenTagged의
 		// findBrandPostsInWindow + findPostMeta·findSnapshots 고정)에서 파생시킨다 — 시드를 그대로
 		// 재사용하고, 두 산지의 값이 어긋나 counts·정렬이 풀 조립과 불일치하는 시드 실수도 원천 차단한다.
-		given(brandReadRepository.findBrandPostIndex(anyLong(), any(), anyBoolean(), any())).willAnswer(inv -> {
+		given(brandReadRepository.findBrandPostIndex(anyLong(), any(), anyBoolean(), any(), anyBoolean())).willAnswer(inv -> {
 			var metaByCode = new java.util.LinkedHashMap<String, BrandPostMetaRow>();
 			for (BrandPostMetaRow m : brandReadRepository.findPostMeta(List.of())) {
 				metaByCode.putIfAbsent(m.shortCode(), m);
@@ -1041,7 +1041,7 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
 
-		then(brandReadRepository).should(never()).findBrandPostIndex(anyLong(), any(), anyBoolean(), any());
+		then(brandReadRepository).should(never()).findBrandPostIndex(anyLong(), any(), anyBoolean(), any(), anyBoolean());
 	}
 
 	@Test

@@ -504,7 +504,7 @@ class V1BrandInfluencersControllerTest {
 	}
 
 	private void givenIndex(long brandId, BrandPostIndexRow... rows) {
-		given(brandReadRepository.findBrandPostIndex(eq(brandId), any(), anyBoolean(), any()))
+		given(brandReadRepository.findBrandPostIndex(eq(brandId), any(), anyBoolean(), any(), anyBoolean()))
 				.willReturn(List.of(rows));
 	}
 

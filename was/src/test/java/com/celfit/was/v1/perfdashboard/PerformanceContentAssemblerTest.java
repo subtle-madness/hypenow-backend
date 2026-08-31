@@ -733,7 +733,7 @@ class PerformanceContentAssemblerTest {
 				List.of(snapshot("2026-08-06", 100L, 40L, 5L))));
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(OWN_LINK));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(OWN_ACCOUNT));
-		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any())).willReturn(List.of(
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any(), eq(false))).willReturn(List.of(
 				taggedRow("ABC", "2026-08-06T09:00:00+09:00"),
 				taggedRow("POOL1", "2026-08-06T09:00:00+09:00")));
 		given(brandReadRepository.findLatestSnapshotsForBrand(eq(BRAND_ID), any(), eq(false)))
@@ -807,7 +807,7 @@ class PerformanceContentAssemblerTest {
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(OWN_LINK));
 		given(brandReadRepository.findAccount(BRAND_ID))
 				.willReturn(Optional.of(accountCoveredUntil(OffsetDateTime.parse("2026-08-05T00:00:00+09:00"))));
-		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any())).willReturn(List.of(
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any(), eq(false))).willReturn(List.of(
 				taggedRow("OLD", "2026-08-03T09:00:00+09:00"),
 				taggedRow("NEW", "2026-08-06T09:00:00+09:00"),
 				directRow("DIR", "2026-08-01T09:00:00+09:00")));
@@ -839,7 +839,7 @@ class PerformanceContentAssemblerTest {
 		given(campaignRepository.findByUser(USER_ID)).willReturn(
 				List.of(new CampaignRow(7L, USER_ID, "여름 캠페인", null, null, null, null, null, null, null)));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(OWN_ACCOUNT));
-		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any())).willReturn(List.of(
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any(), eq(false))).willReturn(List.of(
 				taggedRow("NEW", "2026-08-06T09:00:00+09:00"),
 				directRow("DIR", "2026-08-01T09:00:00+09:00")));
 		given(brandPostAssembler.directRegisteredShortCodes(USER_ID))
@@ -867,7 +867,7 @@ class PerformanceContentAssemblerTest {
 		givenLegacy();
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(OWN_LINK));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(OWN_ACCOUNT));
-		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any())).willReturn(List.of(
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any(), eq(false))).willReturn(List.of(
 				taggedRow("T1", "2026-08-06T09:00:00+09:00"),
 				directRow("D1", "2026-08-06T09:00:00+09:00")));
 		given(brandPostAssembler.directRegisteredShortCodes(USER_ID)).willReturn(Set.of());   // 내 등록이 아니다
@@ -889,9 +889,9 @@ class PerformanceContentAssemblerTest {
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(OWN_ACCOUNT));
-		given(brandReadRepository.findBrandPostIndex(eq(99L), any(), eq(false), any()))
+		given(brandReadRepository.findBrandPostIndex(eq(99L), any(), eq(false), any(), eq(false)))
 				.willReturn(List.of(taggedRow("ABC", "2026-08-06T09:00:00+09:00")));
-		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any()))
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any(), eq(false)))
 				.willReturn(List.of(taggedRow("ABC", "2026-08-06T09:00:00+09:00")));
 		given(brandReadRepository.findLatestSnapshotsForBrand(eq(99L), any(), eq(false))).willReturn(List.of());
 		given(brandReadRepository.findLatestSnapshotsForBrand(eq(BRAND_ID), any(), eq(false)))
@@ -928,7 +928,7 @@ class PerformanceContentAssemblerTest {
 
 		assertThat(index.refs()).hasSize(1);
 		assertThat(index.lastCollectedAt()).isEqualTo(LAST_COLLECTED);
-		then(brandReadRepository).should(never()).findBrandPostIndex(anyLong(), any(), anyBoolean(), any());
+		then(brandReadRepository).should(never()).findBrandPostIndex(anyLong(), any(), anyBoolean(), any(), anyBoolean());
 	}
 
 	// ---------- 하이드레이트 패스(2026-08-27 목록 최적화 §1-2) ----------
@@ -995,7 +995,7 @@ class PerformanceContentAssemblerTest {
 						List.of(snapshot("2026-08-06", 10L, 1L, 1L))));
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(OWN_LINK));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(OWN_ACCOUNT));
-		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any())).willReturn(List.of(
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any(), eq(false))).willReturn(List.of(
 				taggedRow("ABC", "2026-08-06T09:00:00+09:00"), taggedRow("POOL1", "2026-08-06T09:00:00+09:00"),
 				hiddenSponsoredRow("POOL2", "2026-08-04T09:00:00+09:00")));
 		given(brandReadRepository.findLatestSnapshotsForBrand(eq(BRAND_ID), any(), eq(false))).willReturn(List.of(

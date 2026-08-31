@@ -328,9 +328,11 @@ public class PerformanceContentAssembler {
 			BrandAccountRow account = found.get();
 			String brandAccountId = String.valueOf(account.id());
 			// scope=ALL(enrichedOnly=false) — 지표 집계라 정산 전 게시물도 담는다(loadBrandPool 승계).
+			// withCaptions=false — 이 경로는 hashtags를 쓰지 않고 캐싱도 없어(매 요청 조회) perf119
+			// 캡션 전송 고정비를 계속 면제받는다(2026-08-31 캡션 해시태그 탑재 설계).
 			List<BrandReadRepository.BrandPostIndexRow> rows = brandReadRepository.get()
 					.findBrandPostIndex(account.id(), BrandPostAssembler.windowCutoff(), false,
-							BrandSponsorshipClassifier.postgresMarkerRegex());
+							BrandSponsorshipClassifier.postgresMarkerRegex(), false);
 			// 커버리지 클램프(수집 상한 v2 §7-1) — coveredUntil의 KST 달력일보다 앞선 tagged 행 제외,
 			// direct 등록 행은 상한 밖이라 면제. assembleBrandPosts의 현행 술어와 같은 식이다.
 			LocalDate coveredOn = KstTimestamps.toKstDate(account.coveredUntil());
