@@ -318,7 +318,7 @@ services:
       # 전용 SA 키(IMAGE_GCS_KEY)를 코드가 직접 읽으므로 이 값과 충돌하지 않는다(analytics
       # compose 주석과 동일 사유 — ADC는 JVM당 하나뿐이라 GcsImageStore가 여길 덮으면 Vertex가 403).
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
-      MONITORING_LLM_VERTEX_PROJECT: ${MONITORING_LLM_VERTEX_PROJECT:-hypenow-llm-prod}
+      MONITORING_LLM_VERTEX_PROJECT: ${MONITORING_LLM_VERTEX_PROJECT:-project-00d0f3bd-bdef-4b0a-9eb}
       MONITORING_LLM_VERTEX_LOCATION: ${MONITORING_LLM_VERTEX_LOCATION:-global}
       # 프로필 이미지 아카이브(설계 스펙 §3-1) — analytics와 같은 버킷·같은 쓰기 PAR을 재사용
       MONITORING_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}
