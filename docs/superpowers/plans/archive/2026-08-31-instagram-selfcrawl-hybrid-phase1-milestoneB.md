@@ -1,5 +1,7 @@
-> 상태: 🟢 활성 · 상세 계획 완료, 실행 미착수 (2026-08-31)
+> 상태: ✅ 구현됨 · 마일스톤 B 전 11태스크 완료 · 회귀 통과(instagram-source 113 / monitoring 783, 0 failures, 토글 off=행동 변화 0) (2026-08-31)
 > 범위: Phase 1 마일스톤 B(자체크롤 백엔드 신설, **토글 off = 행동 변화 0**). **선행: 마일스톤 A 완료됨**(seam·모듈 존재).
+> 구현: branch `claude/optimistic-knuth-3212ef` 커밋 8e9d5fdf~449a1f4c. 후속 마일스톤 C는 `plans/`에 활성 유지.
+> C 이월 항목: ①K≈3 워커 어피니티(효율 최적화) ②og 표면·og/wpi A/B ③런타임 app_setting 토글·킬스위치·Micrometer 메트릭 ④geo:kr 실엔드포인트 A/B·Hiker 지연 벤치·dev/staging e2e ⑤DirectComment 페이지 간 pageDelay(라이브러리 밖 caller 책임) ⑥Failover에 self發 미분류 RuntimeException catch-all 폴백(개통 전 하드닝) ⑦IG_COMMENT_DOC_ID/FRIENDLY_NAME·DATAIMPULSE_* 운영 env 주입.
 > 설계 정본: `docs/superpowers/specs/2026-08-31-instagram-hiker-selfcrawl-hybrid-design.md`. 선행 실측: 메모리 `hiker-self-scraping-breakeven.md`(embed 08-31 재검증 = 살아있음).
 
 # 인스타그램 수집 하이브리드 — Phase 1 마일스톤 B(자체크롤 백엔드) 구현 계획
@@ -82,7 +84,7 @@
 - Create: `instagram-source/src/main/java/com/celfit/instagram/source/self/ProxyConfig.java`
 - Test: `instagram-source/src/test/java/com/celfit/instagram/source/self/ProxyUrlsTest.java`
 
-- [ ] **Step 1: 실패 테스트(geo:kr 변환 — 하니스 검증 assertion 이식)**
+- [x] **Step 1: 실패 테스트(geo:kr 변환 — 하니스 검증 assertion 이식)**
 
 `ProxyUrlsTest.java`:
 ```java
@@ -114,9 +116,9 @@ class ProxyUrlsTest {
 }
 ```
 
-- [ ] **Step 2: 테스트 실패 확인** — Run: `./gradlew :instagram-source:test --tests "*ProxyUrlsTest"` → FAIL(심볼 없음).
+- [x] **Step 2: 테스트 실패 확인** — Run: `./gradlew :instagram-source:test --tests "*ProxyUrlsTest"` → FAIL(심볼 없음).
 
-- [ ] **Step 3: ProxyTier**
+- [x] **Step 3: ProxyTier**
 ```java
 package com.celfit.instagram.source.self;
 
@@ -127,7 +129,7 @@ public enum ProxyTier {
 }
 ```
 
-- [ ] **Step 4: ProxyUrls (URI 대신 수동 파싱 — userinfo/비밀번호 특수문자 안전)**
+- [x] **Step 4: ProxyUrls (URI 대신 수동 파싱 — userinfo/비밀번호 특수문자 안전)**
 ```java
 package com.celfit.instagram.source.self;
 
@@ -159,7 +161,7 @@ public final class ProxyUrls {
 }
 ```
 
-- [ ] **Step 5: ProxyConfig**
+- [x] **Step 5: ProxyConfig**
 ```java
 package com.celfit.instagram.source.self;
 
@@ -185,9 +187,9 @@ public record ProxyConfig(String residentialUrl, String mobileUrl, Duration requ
 }
 ```
 
-- [ ] **Step 6: 테스트 통과** — Run: `./gradlew :instagram-source:test --tests "*ProxyUrlsTest"` → PASS(3).
+- [x] **Step 6: 테스트 통과** — Run: `./gradlew :instagram-source:test --tests "*ProxyUrlsTest"` → PASS(3).
 
-- [ ] **Step 7: 커밋**
+- [x] **Step 7: 커밋**
 ```bash
 git add instagram-source/src/main/java/com/celfit/instagram/source/self/ instagram-source/src/test/java/com/celfit/instagram/source/self/ProxyUrlsTest.java
 git commit -m "feat(instagram-source): 자체크롤 프록시 기반 - ProxyTier·ProxyConfig·geo:kr 변환"
@@ -203,7 +205,7 @@ git commit -m "feat(instagram-source): 자체크롤 프록시 기반 - ProxyTier
 
 에러 분류는 스펙 §8-1 라우팅과 직결된다: 구조적400=즉시 Hiker / 회복가능401=로테이트+재시도 / 전송=재시도(새 터널) / 로그인벽=다음 표면→Hiker / 404=종료(폴백 안 함).
 
-- [ ] **Step 1: SelfResponse record**
+- [x] **Step 1: SelfResponse record**
 ```java
 package com.celfit.instagram.source.self;
 
@@ -211,7 +213,7 @@ package com.celfit.instagram.source.self;
 public record SelfResponse(int status, String body) {}
 ```
 
-- [ ] **Step 2: SelfErrorClass enum**
+- [x] **Step 2: SelfErrorClass enum**
 ```java
 package com.celfit.instagram.source.self;
 
@@ -238,7 +240,7 @@ public enum SelfErrorClass {
 }
 ```
 
-- [ ] **Step 3: SelfCrawlException (분류 실은 예외)**
+- [x] **Step 3: SelfCrawlException (분류 실은 예외)**
 ```java
 package com.celfit.instagram.source.self;
 
@@ -263,7 +265,7 @@ public class SelfCrawlException extends RuntimeException {
 }
 ```
 
-- [ ] **Step 4: 실패 테스트 (분류 표 — 하니스 outcomes.py 이식)**
+- [x] **Step 4: 실패 테스트 (분류 표 — 하니스 outcomes.py 이식)**
 
 `SelfErrorClassifierTest.java`:
 ```java
@@ -302,9 +304,9 @@ class SelfErrorClassifierTest {
 }
 ```
 
-- [ ] **Step 5: 테스트 실패 확인** — Run: `./gradlew :instagram-source:test --tests "*SelfErrorClassifierTest"` → FAIL.
+- [x] **Step 5: 테스트 실패 확인** — Run: `./gradlew :instagram-source:test --tests "*SelfErrorClassifierTest"` → FAIL.
 
-- [ ] **Step 6: SelfErrorClassifier**
+- [x] **Step 6: SelfErrorClassifier**
 ```java
 package com.celfit.instagram.source.self;
 
@@ -354,9 +356,9 @@ public final class SelfErrorClassifier {
 }
 ```
 
-- [ ] **Step 7: 테스트 통과** — Run: `./gradlew :instagram-source:test --tests "*SelfErrorClassifierTest"` → PASS.
+- [x] **Step 7: 테스트 통과** — Run: `./gradlew :instagram-source:test --tests "*SelfErrorClassifierTest"` → PASS.
 
-- [ ] **Step 8: 커밋**
+- [x] **Step 8: 커밋**
 ```bash
 git add -A && git commit -m "feat(instagram-source): 자체크롤 에러 taxonomy - SelfErrorClass·분류기·예외(스펙 §8-1 라우팅)"
 ```
@@ -371,7 +373,7 @@ git add -A && git commit -m "feat(instagram-source): 자체크롤 에러 taxonom
 
 crawler `JdkInstagramWebClient`를 순수 JDK로 이식(Spring 제거, ProxyConfig 주입). 요청당 새 클라이언트(K=1 로테이션), HTTP/2 강제, gunzip, 401 복원, fastfail connect 타임아웃.
 
-- [ ] **Step 1: 실패 테스트 (JDK HttpServer로 전송·헤더·gunzip·401 검증)**
+- [x] **Step 1: 실패 테스트 (JDK HttpServer로 전송·헤더·gunzip·401 검증)**
 
 `SelfHttpClientTest.java`:
 ```java
@@ -443,9 +445,9 @@ class SelfHttpClientTest {
 ```
 (주: 프록시 CONNECT 터널·gunzip·401복원은 실 프록시/IG 없이는 로컬 재현이 제한적이라, 그 부분은 코드 이식 정확성 + Task 6/7의 실 픽스처로 담보한다. 로컬 HttpServer는 헤더·상태·본문 왕복만 검증.)
 
-- [ ] **Step 2: 테스트 실패 확인** — Run: `./gradlew :instagram-source:test --tests "*SelfHttpClientTest"` → FAIL.
+- [x] **Step 2: 테스트 실패 확인** — Run: `./gradlew :instagram-source:test --tests "*SelfHttpClientTest"` → FAIL.
 
-- [ ] **Step 3: SelfHttpClient 구현 (crawler JdkInstagramWebClient 이식, 순수 JDK)**
+- [x] **Step 3: SelfHttpClient 구현 (crawler JdkInstagramWebClient 이식, 순수 JDK)**
 ```java
 package com.celfit.instagram.source.self;
 
@@ -575,9 +577,9 @@ public class SelfHttpClient {
 ```
 주의: `URI.create(proxyUrl)`가 password 특수문자에서 깨질 수 있다 — Task 1의 수동 파서(`ProxyUrls`)와 달리 여기선 host/port/userinfo만 필요하니, 필요 시 `ProxyUrls`에 `hostOf/portOf/userOf/passOf` 헬퍼를 추가해 재사용한다(구현 중 password에 `@`·`:`가 있으면 이 스텝에서 헬퍼 분해로 교체).
 
-- [ ] **Step 4: 테스트 통과** — Run: `./gradlew :instagram-source:test --tests "*SelfHttpClientTest"` → PASS.
+- [x] **Step 4: 테스트 통과** — Run: `./gradlew :instagram-source:test --tests "*SelfHttpClientTest"` → PASS.
 
-- [ ] **Step 5: 커밋**
+- [x] **Step 5: 커밋**
 ```bash
 git add -A && git commit -m "feat(instagram-source): 자체크롤 저수준 전송 SelfHttpClient - HTTP/2·프록시 요청당·gunzip·401복원·fastfail"
 ```
@@ -590,7 +592,7 @@ git add -A && git commit -m "feat(instagram-source): 자체크롤 저수준 전�
 
 표면별(embed/wpi/comment) 연속 블록 5회 트립 → 이후 그 표면은 곧장 폴백(캐스케이드 세금 회피). 전역 킬 포함. crawler `RATE_LIMIT_STREAK_LIMIT=5` 계승.
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 ```java
 package com.celfit.instagram.source.self;
 
@@ -624,9 +626,9 @@ class SurfaceCircuitBreakerTest {
 }
 ```
 
-- [ ] **Step 2: 실패 확인** → FAIL.
+- [x] **Step 2: 실패 확인** → FAIL.
 
-- [ ] **Step 3: 구현**
+- [x] **Step 3: 구현**
 ```java
 package com.celfit.instagram.source.self;
 
@@ -675,9 +677,9 @@ public class SurfaceCircuitBreaker {
 }
 ```
 
-- [ ] **Step 4: 통과** → PASS.
+- [x] **Step 4: 통과** → PASS.
 
-- [ ] **Step 5: SelfRetry (K=1의 짝 — 회복가능 실패를 새 IP로 재시도) + 테스트**
+- [x] **Step 5: SelfRetry (K=1의 짝 — 회복가능 실패를 새 IP로 재시도) + 테스트**
 
 `self/SelfRetry.java`:
 ```java
@@ -728,7 +730,7 @@ public final class SelfRetry {
 ```
 `SelfRetryTest.java`: (a)회복가능(RECOVERABLE_401) 2회 실패 후 성공 → op 3회 호출·성공값 반환; (b)비회복(NOT_FOUND) → op 1회만·즉시 전파; (c)회복가능 3회 소진 → 마지막 예외 전파. `Supplier`를 카운터 람다로 검증.
 
-- [ ] **Step 6: 통과 → 커밋** `feat(instagram-source): 표면별 서킷브레이커 + SelfRetry(K=1 회복가능 재시도 3회=새 IP)`.
+- [x] **Step 6: 통과 → 커밋** `feat(instagram-source): 표면별 서킷브레이커 + SelfRetry(K=1 회복가능 재시도 3회=새 IP)`.
 
 ---
 
@@ -738,7 +740,7 @@ public final class SelfRetry {
 
 embed는 로케일 텍스트라 파서를 **진짜 응답에 대고** 만들어야 한다. 첫 스텝에서 프록시로 실 응답을 포착해 픽스처로 커밋한다(바운디드 라이브 액션 — 이후 구현·테스트는 mock).
 
-- [ ] **Step 1: 실 embed 픽스처 3종 포착(프록시, en 로케일 고정)**
+- [x] **Step 1: 실 embed 픽스처 3종 포착(프록시, en 로케일 고정)**
 
 프록시 URL 조달(시크릿, 출력 금지): `ssh hypenow 'docker exec deploy-crawler-1 printenv DATAIMPULSE_RESIDENTIAL_PROXY_URL'`. geo:kr 적용 후, 살아있는 이미지 게시물·릴스(영상) 각 1개 + 삭제/비공개 게시물 1개의 `/p/{code}/embed/captioned/`를 `Accept-Language: en-US`로 포착:
 ```bash
@@ -750,7 +752,7 @@ curl -sS --proxy "$PXKR" -A "$UA" -H "Accept: text/html" -H "Accept-Language: en
 ```
 포착 후 각 파일에서 지표 텍스트가 실제로 어떤 문자열·컨테이너로 오는지 육안 확인(예: `<span class="...">1,234 likes</span>`, `View all 56 comments`, `1.2M views`). **이 실측 문자열이 Step 3 정규식의 정본**이다. ⚠️민감정보 없음(공개 게시물) — 픽스처 커밋 OK. ⚠️포착 후 프록시 임시 파일 삭제.
 
-- [ ] **Step 2: 실패 테스트 (포착한 픽스처의 실제 값으로 assert)**
+- [x] **Step 2: 실패 테스트 (포착한 픽스처의 실제 값으로 assert)**
 
 `EmbedPostFetcherTest.java` — fake `SelfHttpClient`(픽스처 반환)로 파싱만 검증. **아래 기대값(likes/comments/views/caption/shortcode)은 Step 1에서 포착한 픽스처의 실제 값으로 채운다**(플레이스홀더 금지 — 포착 즉시 확정):
 ```java
@@ -811,7 +813,7 @@ class EmbedPostFetcherTest {
 }
 ```
 
-- [ ] **Step 3: EmbedPostFetcher 구현 (Step 1 실측 문자열 기반 정규식)**
+- [x] **Step 3: EmbedPostFetcher 구현 (Step 1 실측 문자열 기반 정규식)**
 
 함수형 fetch 이음매(`SelfFetch`)를 주입받아 테스트 가능하게. 파싱은 en 로케일 텍스트 정규식. **정규식·컨테이너 셀렉터는 Step 1 픽스처 실측으로 확정**:
 ```java
@@ -903,7 +905,7 @@ public class EmbedPostFetcher {
 ```
 ⚠️ **구현자 주의:** `extract*` 5개 메서드와 `isVideo` 판별은 Step 1 픽스처의 실제 HTML 구조를 보고 채운다(빈 스텁으로 두지 말 것 — No Placeholders). PostInfo 22개 필드 순서는 `com.celfit.instagram.source.PostInfo` 정의를 따른다(saves/shares/reposts/fbPlays/videoUrl/videoDuration/isPaidPartnership는 embed 미제공 → null; `viewsTrusted=조회수 있으면 true`, `likesHidden=likes null이면 true`, `sharesHidden=false`).
 
-- [ ] **Step 4: 통과** → PASS(3). **Step 5: 커밋** `feat(instagram-source): embed 단건 fetcher - 문서표면 로케일 텍스트 파싱(정확 지표·doc_id불필요)`.
+- [x] **Step 4: 통과** → PASS(3). **Step 5: 커밋** `feat(instagram-source): embed 단건 fetcher - 문서표면 로케일 텍스트 파싱(정확 지표·doc_id불필요)`.
 
 ---
 
@@ -913,13 +915,13 @@ public class EmbedPostFetcher {
 
 web_profile_info JSON → ProfileInfo + 최근 12 PostInfo. 401-prone라 MOBILE 티어. Jackson으로 파싱(하니스 경로 확정).
 
-- [ ] **Step 1: 실 wpi 픽스처 포착(모바일 프록시)** — `DATAIMPULSE_MOBILE_PROXY_URL`로 `web_profile_info/?username=nasa`(x-ig-app-id) 200 응답을 `wpi_profile.json`으로 저장. 응답 크기 큼 — 커밋 전 민감정보(없음, 공개 프로필) 확인.
+- [x] **Step 1: 실 wpi 픽스처 포착(모바일 프록시)** — `DATAIMPULSE_MOBILE_PROXY_URL`로 `web_profile_info/?username=nasa`(x-ig-app-id) 200 응답을 `wpi_profile.json`으로 저장. 응답 크기 큼 — 커밋 전 민감정보(없음, 공개 프로필) 확인.
 
-- [ ] **Step 2: 실패 테스트** — 포착 픽스처의 실제 followers/following/posts/최근12 shortcode로 assert(EmbedPostFetcherTest와 동일한 fake SelfFetch 패턴).
+- [x] **Step 2: 실패 테스트** — 포착 픽스처의 실제 followers/following/posts/최근12 shortcode로 assert(EmbedPostFetcherTest와 동일한 fake SelfFetch 패턴).
 
-- [ ] **Step 3: 구현** — `https://www.instagram.com/api/v1/users/web_profile_info/?username={}` GET(MOBILE, x-ig-app-id 헤더). Jackson `JsonMapper.readTree`, 루트 `data.user`: `edge_followed_by.count`·`edge_follow.count`·`edge_owner_to_timeline_media.count`, `is_private`면 `PrivateAccountException` 승격(HikerBackend와 동일 계약), 최근 12=`edge_owner_to_timeline_media.edges[:12]`의 각 `node`(shortcode·`edge_media_preview_like.count`·`edge_media_to_comment.count`·`video_view_count`·`taken_at_timestamp`) → PostInfo. `SelfErrorClassifier.ofStatus`로 401/404 분기 → SelfCrawlException.
+- [x] **Step 3: 구현** — `https://www.instagram.com/api/v1/users/web_profile_info/?username={}` GET(MOBILE, x-ig-app-id 헤더). Jackson `JsonMapper.readTree`, 루트 `data.user`: `edge_followed_by.count`·`edge_follow.count`·`edge_owner_to_timeline_media.count`, `is_private`면 `PrivateAccountException` 승격(HikerBackend와 동일 계약), 최근 12=`edge_owner_to_timeline_media.edges[:12]`의 각 `node`(shortcode·`edge_media_preview_like.count`·`edge_media_to_comment.count`·`video_view_count`·`taken_at_timestamp`) → PostInfo. `SelfErrorClassifier.ofStatus`로 401/404 분기 → SelfCrawlException.
 
-- [ ] **Step 4: 통과. Step 5: 커밋** `feat(instagram-source): wpi 프로필 fetcher - web_profile_info JSON→ProfileInfo+최근12(모바일 티어)`.
+- [x] **Step 4: 통과. Step 5: 커밋** `feat(instagram-source): wpi 프로필 fetcher - web_profile_info JSON→ProfileInfo+최근12(모바일 티어)`.
 
 ---
 
@@ -929,13 +931,13 @@ web_profile_info JSON → ProfileInfo + 최근 12 PostInfo. 401-prone라 MOBILE 
 
 crawler `DirectCommentFetcher` 이식(순수 JDK, CrawlExecutor·저장 결합 제거 — 순수 fetch+DTO). lsd 부트스트랩 + graphql 커서 페이지네이션 → `List<CommentInfo>`(모듈 DTO).
 
-- [ ] **Step 1: 픽스처 포착** — 포스트 페이지 GET 1건(lsd 추출용 `post_page_lsd.html`) + graphql 댓글 응답 1페이지(`comment_page.json`). 프록시 경유. doc_id/friendlyName은 crawler `DirectCommentProperties` 값 재사용(구현 시 `git show` 또는 config에서 확인 — 값은 crawler와 동일).
+- [x] **Step 1: 픽스처 포착** — 포스트 페이지 GET 1건(lsd 추출용 `post_page_lsd.html`) + graphql 댓글 응답 1페이지(`comment_page.json`). 프록시 경유. doc_id/friendlyName은 crawler `DirectCommentProperties` 값 재사용(구현 시 `git show` 또는 config에서 확인 — 값은 crawler와 동일).
 
-- [ ] **Step 2: 실패 테스트** — fake SelfFetch로 (a)포스트 페이지→lsd 추출, (b)graphql→댓글 파싱. 픽스처의 실제 댓글 id/text/작성자로 assert. `HandshakeExtractor.lsdFrom` 단위테스트 포함.
+- [x] **Step 2: 실패 테스트** — fake SelfFetch로 (a)포스트 페이지→lsd 추출, (b)graphql→댓글 파싱. 픽스처의 실제 댓글 id/text/작성자로 assert. `HandshakeExtractor.lsdFrom` 단위테스트 포함.
 
-- [ ] **Step 3: 구현** — `HandshakeExtractor`(lsd 정규식·shortcode→mediaId, crawler 이식). `DirectCommentFetcher.fetch(shortCode, pages)`: 포스트 페이지 GET(RESIDENTIAL)→lsd, `https://www.instagram.com/api/graphql` POST(헤더 x-ig-app-id·x-fb-lsd, body `lsd`+`fb_api_req_friendly_name`+`doc_id`+`variables`{media_id,after}), 커서 순회(무진전 가드), 응답 파싱→`CommentInfo`(id·author·body·likeCount·commentedAt). 결손 필드 댓글 제외(HikerBackend `toComment` 규칙 일치).
+- [x] **Step 3: 구현** — `HandshakeExtractor`(lsd 정규식·shortcode→mediaId, crawler 이식). `DirectCommentFetcher.fetch(shortCode, pages)`: 포스트 페이지 GET(RESIDENTIAL)→lsd, `https://www.instagram.com/api/graphql` POST(헤더 x-ig-app-id·x-fb-lsd, body `lsd`+`fb_api_req_friendly_name`+`doc_id`+`variables`{media_id,after}), 커서 순회(무진전 가드), 응답 파싱→`CommentInfo`(id·author·body·likeCount·commentedAt). 결손 필드 댓글 제외(HikerBackend `toComment` 규칙 일치).
 
-- [ ] **Step 4: 통과. Step 5: 커밋** `feat(instagram-source): 자체 댓글 fetcher - lsd 부트스트랩+graphql 커서(crawler DirectComment 이식)`.
+- [x] **Step 4: 통과. Step 5: 커밋** `feat(instagram-source): 자체 댓글 fetcher - lsd 부트스트랩+graphql 커서(crawler DirectComment 이식)`.
 
 ---
 
@@ -945,9 +947,9 @@ crawler `DirectCommentFetcher` 이식(순수 JDK, CrawlExecutor·저장 결합 �
 
 fetcher들을 `InstagramSource` 계약으로 정규화. 하드게이트 3종 + 미구현 경로는 `UnsupportedOperationException`(정책이 Hiker로 라우팅). 서킷 연동.
 
-- [ ] **Step 1: 실패 테스트** — `new SelfCrawlBackend(fakeEmbed, fakeWpi, fakeComments, new SurfaceCircuitBreaker(5), new SelfRetry(3))`. 검증: `fetchPost`→embed 위임, `fetchProfile`→wpi, `fetchComments`→direct, `fetchRecentPosts`→wpi 최근12. `fetchTaggedPage`·`fetchAuthorProfile`·`fetchHashtagRecentPage`·`fetchClipCounts`→`UnsupportedOperationException`. **재시도 연동**: fakeEmbed가 RECOVERABLE_401 2회 후 성공하면 `fetchPost`가 성공값 반환(SelfRetry 관통). RECOVERABLE_401 3회 소진하면 `SelfCrawlException` 전파 + 그 표면 서킷 카운트 증가. NOT_FOUND는 재시도 없이 즉시 전파. 서킷 열림 시 `guard`가 `SelfCrawlException(OTHER)`.
+- [x] **Step 1: 실패 테스트** — `new SelfCrawlBackend(fakeEmbed, fakeWpi, fakeComments, new SurfaceCircuitBreaker(5), new SelfRetry(3))`. 검증: `fetchPost`→embed 위임, `fetchProfile`→wpi, `fetchComments`→direct, `fetchRecentPosts`→wpi 최근12. `fetchTaggedPage`·`fetchAuthorProfile`·`fetchHashtagRecentPage`·`fetchClipCounts`→`UnsupportedOperationException`. **재시도 연동**: fakeEmbed가 RECOVERABLE_401 2회 후 성공하면 `fetchPost`가 성공값 반환(SelfRetry 관통). RECOVERABLE_401 3회 소진하면 `SelfCrawlException` 전파 + 그 표면 서킷 카운트 증가. NOT_FOUND는 재시도 없이 즉시 전파. 서킷 열림 시 `guard`가 `SelfCrawlException(OTHER)`.
 
-- [ ] **Step 2: 구현**
+- [x] **Step 2: 구현**
 ```java
 package com.celfit.instagram.source.self;
 
@@ -1063,7 +1065,7 @@ public class SelfCrawlBackend implements InstagramSource {
 ```
 (주: `resolveMediaByUrl`는 스펙상 자체 가능(리다이렉트 추적)이나 저volume·best-effort라 B에선 Hiker 유지, C/후속에서 자체 추가.)
 
-- [ ] **Step 3: 통과. Step 4: 커밋** `feat(instagram-source): SelfCrawlBackend - fetcher→InstagramSource 정규화, 하드게이트 미구현`.
+- [x] **Step 3: 통과. Step 4: 커밋** `feat(instagram-source): SelfCrawlBackend - fetcher→InstagramSource 정규화, 하드게이트 미구현`.
 
 ---
 
@@ -1073,9 +1075,9 @@ public class SelfCrawlBackend implements InstagramSource {
 
 마일스톤 A의 pass-through를 정책으로 교체. 생성자에 (self, hiker, selfEnabled) — **selfEnabled 기본 false면 전량 Hiker(행동 변화 0)**. self가 `UnsupportedOperationException`·폴백류 SelfCrawlException이면 Hiker, `NOT_FOUND`면 그대로 전파(폴백 안 함).
 
-- [ ] **Step 1: 실패 테스트** — (a)selfEnabled=false면 모든 호출이 hiker로만; (b)true면 fetchPost가 self 먼저, self가 STRUCTURAL_400/LOGIN_WALL/OTHER SelfCrawlException이면 hiker 폴백; (c)self가 NOT_FOUND면 hiker 호출 없이 예외 전파; (d)하드게이트(self가 UnsupportedOperationException)면 hiker. mock InstagramSource(self)·mock(hiker)로 검증.
+- [x] **Step 1: 실패 테스트** — (a)selfEnabled=false면 모든 호출이 hiker로만; (b)true면 fetchPost가 self 먼저, self가 STRUCTURAL_400/LOGIN_WALL/OTHER SelfCrawlException이면 hiker 폴백; (c)self가 NOT_FOUND면 hiker 호출 없이 예외 전파; (d)하드게이트(self가 UnsupportedOperationException)면 hiker. mock InstagramSource(self)·mock(hiker)로 검증.
 
-- [ ] **Step 2: 구현** — 각 메서드를 `route(surface, selfCall, hikerCall)` 헬퍼로:
+- [x] **Step 2: 구현** — 각 메서드를 `route(surface, selfCall, hikerCall)` 헬퍼로:
 ```java
 // 핵심 라우팅 로직(발췌 — 각 메서드가 이 패턴을 따른다)
 private <T> T route(java.util.function.Supplier<T> selfCall, java.util.function.Supplier<T> hikerCall) {
@@ -1096,7 +1098,7 @@ private <T> T route(java.util.function.Supplier<T> selfCall, java.util.function.
 ```
 `fetchPost` 예: `return route(() -> self.fetchPost(shortCode), () -> hiker.fetchPost(shortCode));`. 10개 메서드 전부 이 패턴(단, `NOT_FOUND` 시 self가 던지는 예외 타입이 소비자 계약과 맞는지 확인 — 자체 NOT_FOUND는 Hiker의 `SubjectNotFoundException`으로 변환해 던져 소비자 catch 호환 유지). 기존 생성자 `FailoverInstagramSource(InstagramSource hiker)`는 유지(self 없는 A식 조립 = selfEnabled false)하거나 오버로드 추가.
 
-- [ ] **Step 3: 통과. Step 4: 커밋** `feat(instagram-source): FailoverInstagramSource 정책 - 자체 1순위+Hiker 폴백+에러 라우팅(토글 off 기본)`.
+- [x] **Step 3: 통과. Step 4: 커밋** `feat(instagram-source): FailoverInstagramSource 정책 - 자체 1순위+Hiker 폴백+에러 라우팅(토글 off 기본)`.
 
 ---
 
@@ -1104,9 +1106,9 @@ private <T> T route(java.util.function.Supplier<T> selfCall, java.util.function.
 
 **Files:** Modify `monitoring/.../config/HikerConfig.java`; Create/Modify `monitoring` 프록시 프로퍼티; Modify `monitoring/src/main/resources/application.yml`, `deploy/compose.yaml`, `deploy/.env.example`
 
-- [ ] **Step 1: 프록시 프로퍼티** — monitoring에 `@ConfigurationProperties("monitoring.proxy")` record(`residentialUrl`, `mobileUrl`, `requestTimeout`, `geoKr`, `selfEnabled`) 추가(`HikerProperties`와 동일 관용구). `PropertiesConfig`에 `@EnableConfigurationProperties` 등재.
+- [x] **Step 1: 프록시 프로퍼티** — monitoring에 `@ConfigurationProperties("monitoring.proxy")` record(`residentialUrl`, `mobileUrl`, `requestTimeout`, `geoKr`, `selfEnabled`) 추가(`HikerProperties`와 동일 관용구). `PropertiesConfig`에 `@EnableConfigurationProperties` 등재.
 
-- [ ] **Step 2: application.yml** — `monitoring.proxy` 블록 추가(UTC 채번 마이그레이션 불필요, yml만):
+- [x] **Step 2: application.yml** — `monitoring.proxy` 블록 추가(UTC 채번 마이그레이션 불필요, yml만):
 ```yaml
   proxy:
     residential-url: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:}
@@ -1116,38 +1118,38 @@ private <T> T route(java.util.function.Supplier<T> selfCall, java.util.function.
     self-enabled: false    # 마일스톤 B: 자체 경로 미개통(=Hiker). C에서 점진 on
 ```
 
-- [ ] **Step 3: HikerConfig 조립** — `instagramSource` 빈에서 ProxyConfig 구성 후 `SelfHttpClient httpClient = new SelfHttpClient(proxyConfig)`를 만들고, SelfCrawlBackend(EmbedPostFetcher(httpClient::get), WpiProfileFetcher(httpClient, jackson), DirectCommentFetcher(httpClient, docId, friendlyName), `new SurfaceCircuitBreaker(5)`, `new SelfRetry(3)`)를 조립, `new FailoverInstagramSource(self, new HikerBackend(chain), proxyProps.selfEnabled())`로 노출. **selfEnabled=false라 self는 생성되되 호출 안 됨** → 회귀 동작 동일.
+- [x] **Step 3: HikerConfig 조립** — `instagramSource` 빈에서 ProxyConfig 구성 후 `SelfHttpClient httpClient = new SelfHttpClient(proxyConfig)`를 만들고, SelfCrawlBackend(EmbedPostFetcher(httpClient::get), WpiProfileFetcher(httpClient, jackson), DirectCommentFetcher(httpClient, docId, friendlyName), `new SurfaceCircuitBreaker(5)`, `new SelfRetry(3)`)를 조립, `new FailoverInstagramSource(self, new HikerBackend(chain), proxyProps.selfEnabled())`로 노출. **selfEnabled=false라 self는 생성되되 호출 안 됨** → 회귀 동작 동일.
 
-- [ ] **Step 4: compose·env** — `deploy/compose.yaml`의 monitoring 서비스 environment에 `DATAIMPULSE_RESIDENTIAL_PROXY_URL: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:-}`·`DATAIMPULSE_MOBILE_PROXY_URL: ${...:-}` 추가, `deploy/.env.example`에 항목 추가(crawler와 동일 패턴).
+- [x] **Step 4: compose·env** — `deploy/compose.yaml`의 monitoring 서비스 environment에 `DATAIMPULSE_RESIDENTIAL_PROXY_URL: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:-}`·`DATAIMPULSE_MOBILE_PROXY_URL: ${...:-}` 추가, `deploy/.env.example`에 항목 추가(crawler와 동일 패턴).
 
-- [ ] **Step 5: FULL GATE (행동 변화 0)**
+- [x] **Step 5: FULL GATE (행동 변화 0)**
 ```bash
 export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
 ./gradlew :instagram-source:test :monitoring:test
 ```
 monitoring 783 + 모듈(신규 self 테스트 포함) 전부 PASS, **기존 monitoring 동작 불변**(selfEnabled=false). 실패 시 배선 오류 — 토글 off인데 동작이 바뀌면 안 됨.
 
-- [ ] **Step 6: 커밋** `refactor(monitoring): 자체크롤 백엔드 배선 - 프록시 env·SelfCrawlBackend 조립(토글 off, 행동 불변)`.
+- [x] **Step 6: 커밋** `refactor(monitoring): 자체크롤 백엔드 배선 - 프록시 env·SelfCrawlBackend 조립(토글 off, 행동 불변)`.
 
 ---
 
 ## Task 11: 마무리 — 회귀·경계·자기검토
 
-- [ ] **Step 1: 모듈 경계** — `grep -rnE 'org\.springframework|javax\.sql|java\.sql|jakarta' instagram-source/src/main` → 0(순수 유지).
-- [ ] **Step 2: 하드게이트 확인** — SelfCrawlBackend의 3종+clip이 UnsupportedOperationException인지, Failover가 이를 Hiker로 라우팅하는지 테스트로 재확인.
-- [ ] **Step 3: FULL 회귀** — `:instagram-source:test :monitoring:test` 그린(토글 off = 행동 변화 0 재확인).
-- [ ] **Step 4: 자기검토(writing-plans Self-Review)** — 스펙 §5-1 자체 5경로 중 B 구현분(단건 embed·프로필 wpi·최근열거·댓글) 커버 확인, resolveShare·og·K≈3·런타임토글은 C로 명시. 플레이스홀더 스캔(특히 EmbedPostFetcher `extract*`가 실제 구현됐는지). 타입 일관성(SelfCrawlBackend/Failover의 InstagramSource override 10개 시그니처).
-- [ ] **Step 5: 계획 문서 아카이브** — 이 문서를 `plans/archive/`로(상태 ✅). 커밋.
+- [x] **Step 1: 모듈 경계** — `grep -rnE 'org\.springframework|javax\.sql|java\.sql|jakarta' instagram-source/src/main` → 0(순수 유지).
+- [x] **Step 2: 하드게이트 확인** — SelfCrawlBackend의 3종+clip이 UnsupportedOperationException인지, Failover가 이를 Hiker로 라우팅하는지 테스트로 재확인.
+- [x] **Step 3: FULL 회귀** — `:instagram-source:test :monitoring:test` 그린(토글 off = 행동 변화 0 재확인).
+- [x] **Step 4: 자기검토(writing-plans Self-Review)** — 스펙 §5-1 자체 5경로 중 B 구현분(단건 embed·프로필 wpi·최근열거·댓글) 커버 확인, resolveShare·og·K≈3·런타임토글은 C로 명시. 플레이스홀더 스캔(특히 EmbedPostFetcher `extract*`가 실제 구현됐는지). 타입 일관성(SelfCrawlBackend/Failover의 InstagramSource override 10개 시그니처).
+- [x] **Step 5: 계획 문서 아카이브** — 이 문서를 `plans/archive/`로(상태 ✅). 커밋.
 
 ---
 
 ## 마일스톤 B 완료 기준(Definition of Done)
 
-- [ ] `self` 서브패키지에 전송·프록시·taxonomy·서킷·fetcher(embed·wpi·comment)·SelfCrawlBackend 신설, 각 단위테스트 통과.
-- [ ] `FailoverInstagramSource`가 자체 1순위+Hiker 폴백+에러 라우팅 구현, **selfEnabled 기본 false**.
-- [ ] monitoring 프록시 env 배선, `:monitoring:test` 783 그대로 통과(**토글 off = 행동 변화 0**).
-- [ ] 하드게이트 3종 + clip/premium = 자체 미구현(UnsupportedOperationException→Hiker).
-- [ ] 모듈 Spring·DB 의존 없음.
-- [ ] 실측(프록시·geo:kr·og/wpi A/B·Hiker 지연 벤치·dev/staging e2e)·런타임 토글·킬스위치·메트릭·K≈3 = **마일스톤 C**.
+- [x] `self` 서브패키지에 전송·프록시·taxonomy·서킷·fetcher(embed·wpi·comment)·SelfCrawlBackend 신설, 각 단위테스트 통과.
+- [x] `FailoverInstagramSource`가 자체 1순위+Hiker 폴백+에러 라우팅 구현, **selfEnabled 기본 false**.
+- [x] monitoring 프록시 env 배선, `:monitoring:test` 783 그대로 통과(**토글 off = 행동 변화 0**).
+- [x] 하드게이트 3종 + clip/premium = 자체 미구현(UnsupportedOperationException→Hiker).
+- [x] 모듈 Spring·DB 의존 없음.
+- [x] 실측(프록시·geo:kr·og/wpi A/B·Hiker 지연 벤치·dev/staging e2e)·런타임 토글·킬스위치·메트릭·K≈3 = **마일스톤 C**.
 
 **PR·배포·운영 개통은 이 계획 범위 밖** — push까지만, PR 여부는 사용자 확인.
