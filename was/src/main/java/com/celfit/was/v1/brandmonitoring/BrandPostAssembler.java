@@ -160,9 +160,22 @@ public class BrandPostAssembler {
 	 * 과도기 폴백 카드(풀과 겹치는 shortcode는 이미 제외 — 풀 우선 병합 규칙), ownedShortCodes는
 	 * 이 유저의 direct 등록 원장(source 파생에 썼던 값을 하이드레이트가 다시 조회하지 않게 실어
 	 * 나른다).
+	 *
+	 * <p>{@code hashtagMatchedTags}(2026-08-31, matchedTags 배지 통합)는 노출 필터를 통과한
+	 * hashtag-only 후보 shortcode → (조회자 장부 ∩ 게시물 매칭 태그) 교집합이다 — 이 인덱스 패스가
+	 * 이미 그 판정에 쓴 {@code myTags}·{@code matchedTagsByCode}(격리 필터 계산의 부산물)를 그대로
+	 * 재사용한 것이라 별도 조회가 없다. tagged·direct 성분 shortcode는 이 맵에 없다(하이드레이트가
+	 * source=hashtag로 확정된 카드에만 조회한다).
+	 *
+	 * <p><b>캐시 정합성</b>({@link BrandIndexCache}가 이 레코드를 (버전키·유저·브랜드) 단위로 캐싱한다):
+	 * 이 필드는 조회자 장부(myTags)에 좌우되는 유저 스코프 파생값이다 — 캐시 키에 이미 userId가 있어
+	 * 유저 간 혼선이 없고, 조회자가 자기 장부를 고치면(태그 추가·삭제) {@link
+	 * com.celfit.was.v1.perfdashboard.DashboardVersion#compute}의 지문에 {@code brand_hashtag_tags}가
+	 * 들어 있어 버전키가 바뀌어 새로 계산된다 — 캐싱해도 낡은 교집합이 서빙되지 않는다.
 	 */
 	public record BrandPostIndex(List<PostRef> refs, Set<String> poolCodes,
-			Map<String, BrandPostResponse> legacyByCode, Set<String> ownedShortCodes) {
+			Map<String, BrandPostResponse> legacyByCode, Set<String> ownedShortCodes,
+			Map<String, List<String>> hashtagMatchedTags) {
 	}
 
 	/**
@@ -208,6 +221,15 @@ public class BrandPostAssembler {
 			if (isVisible(row.tagDetectedAt(), row.hashtagDetectedAt(), ownedShortCodes.contains(row.shortCode()),
 					row.shortCode(), myTags, matchedTagsByCode)) {
 				poolByCode.putIfAbsent(row.shortCode(), row);
+			}
+		}
+
+		// matchedTags 배지(2026-08-31) — 노출을 통과한 hashtag-only 후보만, 이미 격리 판정에 쓴
+		// myTags·matchedTagsByCode를 재사용해 교집합을 뽑는다(별도 조회 없음, BrandPostIndex 주석 참조).
+		Map<String, List<String>> hashtagMatchedTags = new LinkedHashMap<>();
+		for (String code : hashtagOnlyCandidates) {
+			if (poolByCode.containsKey(code)) {
+				hashtagMatchedTags.put(code, intersectTags(myTags, matchedTagsByCode.get(code)));
 			}
 		}
 
@@ -263,7 +285,7 @@ public class BrandPostAssembler {
 		// (BrandPostIndexRow 전량)이 인덱스에 딸려 살아남는다. 인덱스가 요청마다 버려지던 시절엔
 		// 무해했지만 BrandIndexCache가 장기 보관하면서 그 원시 행까지 장기 상주가 됐다.
 		return new BrandPostIndex(List.copyOf(refs), Set.copyOf(poolByCode.keySet()), legacyByCode,
-				ownedShortCodes);
+				ownedShortCodes, hashtagMatchedTags);
 	}
 
 	/**
@@ -338,12 +360,19 @@ public class BrandPostAssembler {
 			Map<String, List<String>> campaignIdsByCode = campaignIdsByCode(account.id(), poolCodes);
 			Set<String> seededUsernames = !exposeAdDisclosure ? Set.of() : resolveSeededUsernames(userId);
 			for (BrandTaggedPostRow post : posts) {
-				poolCards.put(post.shortCode(), brandPost(account.id(), post, metaByCode.get(post.shortCode()),
+				BrandPostResponse card = brandPost(account.id(), post, metaByCode.get(post.shortCode()),
 						authorsByPost.get(post.shortCode()),
 						snapshotsByCode.getOrDefault(post.shortCode(), List.of()),
 						commentsByCode.getOrDefault(post.shortCode(), List.of()), account.lastSweptAt(),
 						campaignIdsByCode.getOrDefault(post.shortCode(), List.of()), exposeAdDisclosure,
-						seededUsernames, index.ownedShortCodes().contains(post.shortCode()), viewerAccountType));
+						seededUsernames, index.ownedShortCodes().contains(post.shortCode()), viewerAccountType);
+				// matchedTags 배지(2026-08-31) — source=hashtag로 확정된 카드에만, 인덱스 패스가 이미
+				// 계산해 둔 조회자 장부 교집합을 얹는다(재조회 없음, BrandPostIndex#hashtagMatchedTags 주석 참조).
+				if (SOURCE_HASHTAG.equals(card.source())) {
+					card = card.withMatchedTags(
+							index.hashtagMatchedTags().getOrDefault(post.shortCode(), List.of()));
+				}
+				poolCards.put(post.shortCode(), card);
 			}
 		}
 
@@ -482,11 +511,19 @@ public class BrandPostAssembler {
 		Set<String> seededUsernames = !exposeAdDisclosure ? Set.of() : resolveSeededUsernames(userId);
 
 		return posts.stream()
-				.map(p -> brandPost(account.id(), p, metaByCode.get(p.shortCode()), authorsByPost.get(p.shortCode()),
-						snapshotsByCode.getOrDefault(p.shortCode(), List.of()),
-						commentsByCode.getOrDefault(p.shortCode(), List.of()), account.lastSweptAt(),
-						campaignIdsByCode.getOrDefault(p.shortCode(), List.of()), exposeAdDisclosure, seededUsernames,
-						ownedShortCodes.contains(p.shortCode()), viewerAccountType))
+				.map(p -> {
+					BrandPostResponse card = brandPost(account.id(), p, metaByCode.get(p.shortCode()),
+							authorsByPost.get(p.shortCode()),
+							snapshotsByCode.getOrDefault(p.shortCode(), List.of()),
+							commentsByCode.getOrDefault(p.shortCode(), List.of()), account.lastSweptAt(),
+							campaignIdsByCode.getOrDefault(p.shortCode(), List.of()), exposeAdDisclosure,
+							seededUsernames, ownedShortCodes.contains(p.shortCode()), viewerAccountType);
+					// matchedTags 배지(2026-08-31) — 이 메서드가 격리 판정에 이미 쓴 myTags·
+					// matchedTagsByCode를 재사용해 source=hashtag 카드에만 조회자 장부 교집합을 얹는다.
+					return SOURCE_HASHTAG.equals(card.source())
+							? card.withMatchedTags(intersectTags(myTags, matchedTagsByCode.get(p.shortCode())))
+							: card;
+				})
 				.toList();
 	}
 
@@ -540,6 +577,20 @@ public class BrandPostAssembler {
 		}
 		Set<String> matched = matchedTagsByCode.get(shortCode);
 		return matched != null && !Collections.disjoint(matched, myTags);
+	}
+
+	/**
+	 * matchedTags 배지 값(2026-08-31) — 조회자 장부(myTags)와 게시물의 매칭 태그 교집합, myTags의
+	 * 정렬 순서(태그명 ASC — {@link com.celfit.was.monitoring.BrandHashtagTagRepository#findByUserAndBrand})를
+	 * 그대로 물려받아 결정적이다. {@code isVisible}이 이미 강제하는 전제(hashtag 게시물이 노출됐다면
+	 * 이 교집합은 구조적으로 비지 않는다)를 이 헬퍼는 재확인하지 않는다 — 방어적으로 빈 교집합이 와도
+	 * 그냥 빈 목록을 돌려줄 뿐이다.
+	 */
+	private static List<String> intersectTags(Set<String> myTags, Set<String> matchedTags) {
+		if (matchedTags == null || matchedTags.isEmpty()) {
+			return List.of();
+		}
+		return myTags.stream().filter(matchedTags::contains).toList();
 	}
 
 	/**
@@ -723,6 +774,10 @@ public class BrandPostAssembler {
 				post.shortCode(),
 				String.valueOf(brandId),
 				source,
+				// 순수 판정 함수라 조회자의 태그 장부(유저 스코프 입력)를 모른다 — matchedTags는 항상 null로
+				// 만들고, source=hashtag로 확정된 뒤 호출부(indexForBrand·assembleBrandPosts)가
+				// BrandPostResponse#withMatchedTags로 교집합을 얹는다.
+				null,
 				postUrl(contentType, post.shortCode()),
 				post.shortCode(),
 				contentType,
@@ -941,6 +996,8 @@ public class BrandPostAssembler {
 				shortCode,
 				String.valueOf(brandId),
 				SOURCE_DIRECT,
+				// 과도기 폴백은 항상 SOURCE_DIRECT다 — hashtag 성분 자체가 없다(레거시 direct 등록 전용).
+				null,
 				// 게시물 미확정(collecting)이면 매체를 모른다 — 피드 경로로 접는다(IG가 /p/를 리다이렉트).
 				post != null ? post.url() : postUrl(FEED, shortCode),
 				shortCode,
