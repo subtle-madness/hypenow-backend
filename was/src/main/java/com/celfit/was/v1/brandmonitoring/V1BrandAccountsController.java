@@ -105,7 +105,8 @@ public class V1BrandAccountsController {
 	@GetMapping("/{accountId}/hashtag-tags")
 	public ApiResponse<BrandHashtagTagsResponse> getHashtagTags(
 			@AuthenticationPrincipal AppUserDetails principal, @PathVariable String accountId) {
-		List<String> tags = service.getHashtagTags(principal.getUserId(), parseAccountId(accountId));
+		List<BrandHashtagTagsResponse.TagStatus> tags =
+				service.getHashtagTags(principal.getUserId(), parseAccountId(accountId));
 		return ApiResponse.ok(new BrandHashtagTagsResponse(tags));
 	}
 

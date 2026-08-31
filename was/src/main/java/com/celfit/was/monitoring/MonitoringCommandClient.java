@@ -126,6 +126,18 @@ public class MonitoringCommandClient {
 	}
 
 	/**
+	 * 태그별 스윕 실행 상태 조회(FE 요청, 2026-08-31 — monitoring BrandController run-state) — 활성
+	 * 태그 전체(deleted_at 있는 태그는 monitoring이 이미 빼고 준다). status 계산은 monitoring이
+	 * 끝낸 값을 그대로 받는다(BrandHashtagRunStateResolver가 정본 — was는 재계산하지 않는다).
+	 */
+	public List<TagRunState> getHashtagRunStates(String username) {
+		HashtagRunStateBody body = exchange(() -> restClient.get()
+				.uri("/api/brands/{username}/hashtag-tags/run-state", username)
+				.retrieve().body(HashtagRunStateBody.class));
+		return body == null || body.tags() == null ? List.of() : body.tags();
+	}
+
+	/**
 	 * 태그 셋 전체 교체(PUT 계약) — tags는 monitoring이 정규화(trim·#제거·소문자·중복 제거) 후 저장.
 	 * 빈 목록도 허용(2026-08-12부터 — monitoring PUT 하한 가드 폐지, 단건·전체 삭제 API 참조).
 	 */
@@ -239,6 +251,14 @@ public class MonitoringCommandClient {
 
 	/** monitoring BrandController.HashtagTagsBody와 동형 — GET 응답·PUT 요청 바디 공용. */
 	record HashtagTagsBody(List<String> tags) {
+	}
+
+	/** monitoring BrandController.TagRunState와 동형(2026-08-31) — status는 monitoring 계산값 그대로. */
+	public record TagRunState(String tag, String status, OffsetDateTime lastRunAt, Integer lastFoundCount) {
+	}
+
+	/** monitoring BrandController.HashtagRunStateBody와 동형. */
+	record HashtagRunStateBody(List<TagRunState> tags) {
 	}
 
 	/** monitoring BrandController.DirectPostRegisterRequest와 동형. */

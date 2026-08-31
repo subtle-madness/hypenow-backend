@@ -201,6 +201,65 @@ class MonitoringBrandCommandClientTest {
 				});
 	}
 
+	// ---------- 태그별 스윕 실행 상태(FE 요청, 2026-08-31) ----------
+
+	@Test
+	void 실행_상태_조회는_tags를_그대로_반환한다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags/run-state"))
+				.andExpect(method(HttpMethod.GET))
+				.andRespond(withSuccess("""
+						{ "tags": [
+						    { "tag": "리즈다", "status": "done", "lastRunAt": "2026-08-31T10:00:00Z", "lastFoundCount": 3 },
+						    { "tag": "lizda", "status": "collecting", "lastRunAt": null, "lastFoundCount": null }
+						] }
+						""", MediaType.APPLICATION_JSON));
+
+		var states = client.getHashtagRunStates("brand_official");
+
+		assertThat(states).hasSize(2);
+		assertThat(states.get(0).tag()).isEqualTo("리즈다");
+		assertThat(states.get(0).status()).isEqualTo("done");
+		assertThat(states.get(0).lastFoundCount()).isEqualTo(3);
+		assertThat(states.get(1).tag()).isEqualTo("lizda");
+		assertThat(states.get(1).status()).isEqualTo("collecting");
+		assertThat(states.get(1).lastRunAt()).isNull();
+		server.verify();
+	}
+
+	/** tags가 null·본문이 비어도 예외 없이 빈 목록으로 접는다 — 태그 조회와 같은 방어 규칙. */
+	@Test
+	void 실행_상태_조회는_tags가_null이면_빈_목록이다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags/run-state"))
+				.andRespond(withSuccess("""
+						{ "tags": null }
+						""", MediaType.APPLICATION_JSON));
+
+		assertThat(client.getHashtagRunStates("brand_official")).isEmpty();
+	}
+
+	@Test
+	void 실행_상태_조회_404는_MonitoringApiException으로_승격된다() {
+		server.expect(requestTo(BASE + "/api/brands/gone_brand/hashtag-tags/run-state"))
+				.andRespond(withStatus(HttpStatus.NOT_FOUND)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body("{ \"code\": \"BRAND_NOT_FOUND\", \"message\": \"브랜드를 찾을 수 없습니다.\" }"));
+
+		assertThatThrownBy(() -> client.getHashtagRunStates("gone_brand"))
+				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
+					assertThat(e.code()).isEqualTo("BRAND_NOT_FOUND");
+					assertThat(e.httpStatus()).isEqualTo(404);
+				});
+	}
+
+	@Test
+	void 실행_상태_조회_접속_실패는_Unavailable() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags/run-state"))
+				.andRespond(withException(new java.net.SocketTimeoutException("read timeout")));
+
+		assertThatThrownBy(() -> client.getHashtagRunStates("brand_official"))
+				.isInstanceOf(MonitoringUnavailableException.class);
+	}
+
 	@Test
 	void 태그_교체는_tags를_그대로_전달하고_204를_받는다() {
 		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-tags"))
