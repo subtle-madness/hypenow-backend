@@ -9,6 +9,20 @@ spring:
 server:
   port: 8082   # crawler 8080 · was 8081 다음
 
+# JVM 지표 노출(2026-08-31, 08-22 monitoring 스펙의 이연분) — health·prometheus만. 운영은 compose env
+# (MANAGEMENT_SERVER_PORT 9082)로 관리 포트를 분리해 내부망 전용, 로컬·테스트는 메인 포트에 그대로 노출.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true   # 어드민 uri별 p95 — was와 같은 관용구
+      maximum-expected-value:
+        http.server.requests: 120s   # 기본 상한 30s 포화 해제(was 08-25 실측 관용구) — 잡 트리거가 장시간 요청
+
 analytics:
   admin-enabled: true          # 어드민 UI·잡 트리거 층. cloud one-shot에서는 false
   mirror-on-startup: false     # 서버 모드에선 UI 트리거가 정본. one-shot 미러: --analytics.mirror-on-startup=true --spring.main.web-application-type=none
