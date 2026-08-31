@@ -190,7 +190,9 @@ public class DashboardVersion {
 	 *   <tr><td>{@code id}</td><td>행 식별(정렬 키)</td></tr>
 	 *   <tr><td>{@code last_swept_at}</td><td>스윕 세대 — 게시물·스냅샷이 갱신되는 <b>주된</b> 지점
 	 *       (전부는 아니다: 같은 런의 direct 2단계는 이 값이 찍힌 <b>뒤</b>에 돈다 — 클래스 javadoc
-	 *       "수용된 지연" ②·③)</td></tr>
+	 *       "수용된 지연" ②·③). 08-31 개정: 스윕·백필 <b>도중에도</b> 페이지 정산마다 전진한다
+	 *       ({@code BrandRepository.touchProgress}) — 안 그러면 등록 백필 수 분간 폴링이 전부 이
+	 *       키의 캐시에 붙어 게시물이 완주 시점에 한꺼번에 나타난다(08-31 skinfood 실측)</td></tr>
 	 *   <tr><td>{@code covered_until}</td><td>목록의 커버리지 클램프 술어 · {@code /comparison}의 covered 판정</td></tr>
 	 *   <tr><td>{@code backfill_completed_at}</td><td>{@code /comparison}의 {@code accountCovered} 판정</td></tr>
 	 *   <tr><td>{@code last_swept_on}</td><td>〃 (같은 술어의 다른 절)</td></tr>
