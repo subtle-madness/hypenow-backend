@@ -2,7 +2,7 @@
 
 - **소속 트랙군**: 분석 층 LLM 트랙 — 설계: [specs/2026-08-31-fnb-content-taxonomy-design.md](../superpowers/specs/2026-08-31-fnb-content-taxonomy-design.md)
 - **의존**: 트랙 [LL](LL-fnb-카테고리.md)(계정 F&B 판정 2축화, 08-24)의 후속 — "카테고리 서빙 개편"의 **LLM 계층 절반**
-- **상태**: ✅ 구현 완료(2026-08-31, 한 PR) — 서빙 개방은 FE 명세 도착 후 별도 트랙(⬜)
+- **상태**: ✅ 구현 완료(2026-08-31) — 서빙 개방까지 같은 날 후속 PR로 완료(FE 필터 UI 연결만 남음)
 
 ## 내용
 
@@ -41,7 +41,7 @@ F&B 계정은 이미 매일 크롤링된다(운영 `fnb.pipeline-enabled=true` �
 | 7 | 분석 재료를 미러 → 후보 뷰로 전환, 미러 미도달 게이트 제거 | ✅ |
 | 8 | 배치 제출 청크 분할 — `app_setting` `analytics.batch-chunk-size`(기본 3000) | ✅ |
 | 9 | 문서·PR | ✅ |
-| — | **서빙 개방** — FE 명세 도착 후 (설계 §8-1 점검표) | ⬜ |
+| 10 | **서빙 개방**(같은 날 후속 PR) — 기본 화면 무변경·명시 필터에서만. [설계](../superpowers/specs/2026-08-31-fnb-serving-open-design.md) | ✅ |
 
 ## 주요 결정
 
