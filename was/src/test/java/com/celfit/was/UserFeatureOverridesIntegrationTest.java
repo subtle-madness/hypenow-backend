@@ -108,6 +108,27 @@ class UserFeatureOverridesIntegrationTest extends IntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.featureOverrides").isMap())
 				.andExpect(jsonPath("$.data.featureOverrides").isEmpty());
+
+		mockMvc.perform(get("/v1/admin/users").param("query", TARGET_EMAIL).cookie(admin))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].featureOverrides").isMap())
+				.andExpect(jsonPath("$.data[0].featureOverrides").isEmpty());
+	}
+
+	/** 매트릭스 화면이 목록 1회로 끝나야 한다(상세 N회 금지) — 목록 행이 상세와 같은 값을 든다. */
+	@Test
+	void 목록_행의_featureOverrides는_상세와_같은_값이다() throws Exception {
+		Cookie admin = login(ADMIN_EMAIL);
+		putFeatures(admin, targetId,
+				"{\"overrides\":{\"influencer_search\":[\"beauty\",\"fnb\"],\"content_ranking\":true}}")
+				.andExpect(status().isOk());
+
+		mockMvc.perform(get("/v1/admin/users").param("query", TARGET_EMAIL).cookie(admin))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[0].email").value(TARGET_EMAIL))
+				.andExpect(jsonPath("$.data[0].featureOverrides.influencer_search[0]").value("beauty"))
+				.andExpect(jsonPath("$.data[0].featureOverrides.influencer_search[1]").value("fnb"))
+				.andExpect(jsonPath("$.data[0].featureOverrides.content_ranking").value(true));
 	}
 
 	@Test

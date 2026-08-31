@@ -38,9 +38,13 @@
 - **`app.users.feature_overrides jsonb NOT NULL DEFAULT '{}'` 신설**(V20260831032920, expand-only).
   "미설정"을 null과 `{}` 두 값으로 쪼개지 않기 위해 NOT NULL — 응답 계약(항상 객체·null 금지)이
   저장 계층에서부터 성립한다.
-- **`GET /v1/me`·`GET /v1/admin/users/{id}`에 `featureOverrides` 추가** — 컬럼 값 그대로, 비면 `{}`.
-  `/v1/me`는 role과 같이 매 요청 DB를 읽으므로(`UserProfile`) **어드민이 바꾼 값이 세션 갱신 없이
-  즉시 반영**된다(재로그인·세션 재발급 불필요).
+- **`GET /v1/me`·`GET /v1/admin/users`(목록)·`GET /v1/admin/users/{id}`(상세)에 `featureOverrides` 추가**
+  — 컬럼 값 그대로, 비면 `{}`. `/v1/me`는 role과 같이 매 요청 DB를 읽으므로(`UserProfile`)
+  **어드민이 바꾼 값이 세션 갱신 없이 즉시 반영**된다(재로그인·세션 재발급 불필요).
+  목록 노출은 어드민 "유저 기능" 매트릭스 화면 요청(08-31) — 상세에만 있으면 화면 진입마다 유저
+  수만큼 상세 요청이 나간다. companyName(08-02)과 동일하게 `AdminUserSummary`가 직접 들고
+  상세는 물려받아 두 표면이 구조적으로 어긋날 수 없게 했다. 목록 쿼리는 이미 같은 컬럼 집합을
+  읽고 있어(`AdminUserRepository.COLUMNS` 공유) DB 왕복·조회 비용은 늘지 않는다.
 - **`PUT /v1/admin/users/{id}/features` 신설** — `{"overrides": ...}` **전체 교체**(PATCH 병합 아님).
   값 타입은 `boolean | string[]`만, 그 외 400 `VALIDATION_FAILED`. **키 문자열은 검증하지 않는다**
   (기능 목록·기본값의 정본은 프론트 — DB가 어휘를 고정하면 기능이 늘 때마다 마이그레이션이 따라붙는다).

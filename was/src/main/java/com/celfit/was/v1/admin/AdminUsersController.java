@@ -2,7 +2,6 @@ package com.celfit.was.v1.admin;
 
 import com.celfit.was.v1.account.SignupCodeRepository;
 import com.celfit.was.v1.common.ApiResponse;
-import com.celfit.was.v1.common.FeatureOverridesCodec;
 import com.celfit.was.v1.common.V1ApiException;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,16 +22,13 @@ public class AdminUsersController {
 	private final AdminUserAssembler assembler;
 	private final AdminUserEventAssembler eventAssembler;
 	private final SignupCodeRepository signupCodeRepository;
-	private final FeatureOverridesCodec featureOverridesCodec;
 
 	public AdminUsersController(AdminUserRepository userRepository, AdminUserAssembler assembler,
-			AdminUserEventAssembler eventAssembler, SignupCodeRepository signupCodeRepository,
-			FeatureOverridesCodec featureOverridesCodec) {
+			AdminUserEventAssembler eventAssembler, SignupCodeRepository signupCodeRepository) {
 		this.userRepository = userRepository;
 		this.assembler = assembler;
 		this.eventAssembler = eventAssembler;
 		this.signupCodeRepository = signupCodeRepository;
-		this.featureOverridesCodec = featureOverridesCodec;
 	}
 
 	/**
@@ -66,8 +62,7 @@ public class AdminUsersController {
 		String signupCode = signupCodeRepository.findCodeByUsedBy(userId).orElse(null);
 		List<AdminUserEvent> events = eventAssembler.assemble(row, signupCode);
 
-		AdminUserDetail detail = AdminUserDetail.from(summary, blankToEmpty(row.jobTitle()), signupCode, events,
-				featureOverridesCodec.read(row.featureOverrides()));
+		AdminUserDetail detail = AdminUserDetail.from(summary, blankToEmpty(row.jobTitle()), signupCode, events);
 		return ApiResponse.ok(detail);
 	}
 
