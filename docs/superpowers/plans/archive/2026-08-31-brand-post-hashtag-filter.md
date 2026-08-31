@@ -1,12 +1,12 @@
 # 브랜드 게시물 해시태그 필터 구현 계획
 
-> 상태: 🟢 활성 · 2026-08-31 작성 (구현 미착수)
+> 상태: ✅ 구현됨 · 2026-08-31 작성·동일 브랜치에서 구현 완료
 >
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 브랜드 모니터링 게시물 캡션에서 해시태그를 추출해 게시물별 태그 배열 + 브랜드 스코프 태그 facet을 내려주고, 태그 필터 파라미터로 수집된 게시물 내 필터를 제공한다.
 
-**Architecture:** 조회 시 추출(A안, [spec](../specs/2026-08-31-brand-post-hashtag-filter-design.md)). 인덱스 SQL(`findBrandPostIndex`)에 `m.caption`을 추가 프로젝션하고 `indexForBrand()`에서 Java 정규식으로 태그만 뽑아 `PostRef`에 싣는다(캡션은 버림 — ref는 계속 경량). 필터·facet은 기존 in-memory 필터/FacetAxis 패턴에 5번째 축으로 편입. DB 스키마·monitoring 모듈 무변경.
+**Architecture:** 조회 시 추출(A안, [spec](../../specs/2026-08-31-brand-post-hashtag-filter-design.md)). 인덱스 SQL(`findBrandPostIndex`)에 `m.caption`을 추가 프로젝션하고 `indexForBrand()`에서 Java 정규식으로 태그만 뽑아 `PostRef`에 싣는다(캡션은 버림 — ref는 계속 경량). 필터·facet은 기존 in-memory 필터/FacetAxis 패턴에 5번째 축으로 편입. DB 스키마·monitoring 모듈 무변경.
 
 **Tech Stack:** Java 21, Spring Boot 4.1 (was 모듈만), JUnit 5 + AssertJ. Task 1~3은 순수 유닛 테스트라 Testcontainers 불요. Task 4 회귀만 colima + `DOCKER_HOST` 필요.
 
