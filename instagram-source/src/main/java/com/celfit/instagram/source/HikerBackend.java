@@ -1,22 +1,5 @@
-package com.celfit.monitoring.hiker;
+package com.celfit.instagram.source;
 
-import com.celfit.instagram.source.AuthorInfo;
-import com.celfit.instagram.source.ClipCounts;
-import com.celfit.instagram.source.CommentInfo;
-import com.celfit.instagram.source.CommentsFetch;
-import com.celfit.instagram.source.HashtagPage;
-import com.celfit.instagram.source.HashtagPost;
-import com.celfit.instagram.source.HikerBadRequestException;
-import com.celfit.instagram.source.HikerFetchException;
-import com.celfit.instagram.source.HikerHttp;
-import com.celfit.instagram.source.MediaRef;
-import com.celfit.instagram.source.PostInfo;
-import com.celfit.instagram.source.PrivateAccountException;
-import com.celfit.instagram.source.ProfileInfo;
-import com.celfit.instagram.source.ShareLinkUnresolvedException;
-import com.celfit.instagram.source.ShortCodes;
-import com.celfit.instagram.source.SubjectNotFoundException;
-import com.celfit.instagram.source.TaggedPage;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -33,17 +16,18 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * monitoring의 유일한 외부 수집 경로 — HikerAPI v2 3종(프로필·열거·단건) 파싱.
- * 엔드포인트·필드 매핑의 정본은 docs/superpowers/plans/2026-07-28-monitoring-hiker-findings.md.
- * 빈 조립은 {@code HikerConfig} — 전송은 항상 RecordingHikerHttp로 감싸져 들어온다(원형 적재).
+ * HikerAPI v2 기반 InstagramSource 백엔드 — 프로필·열거·단건 3종 파싱. instagram-source 공유
+ * 모듈 소속(순수 fetch+DTO). 엔드포인트·필드 매핑의 정본은
+ * docs/superpowers/plans/2026-07-28-monitoring-hiker-findings.md.
+ * 전송(HikerHttp)·빈 조립·원형 적재(RecordingHikerHttp)는 소비 모듈(monitoring)이 감싼다.
  */
-public class HikerClient {
+public class HikerBackend implements InstagramSource {
 
-	private static final Logger log = LoggerFactory.getLogger(HikerClient.class);
+	private static final Logger log = LoggerFactory.getLogger(HikerBackend.class);
 	private static final JsonMapper MAPPER = JsonMapper.builder().build();
 	private final HikerHttp http;
 
-	public HikerClient(HikerHttp http) {
+	public HikerBackend(HikerHttp http) {
 		this.http = http;
 	}
 
@@ -53,6 +37,7 @@ public class HikerClient {
 	/** clips 열거의 media 노드 원형 — 그리드 숨김 릴스를 게시물로 승격할 때 파싱 재료가 된다. */
 	private record ClipItem(JsonNode media) {}
 
+	@Override
 	public ProfileInfo fetchProfile(String username) {
 		String body = http.get("/v2/user/by/username?username=" + enc(username));
 		JsonNode user = root(body).path("user");
@@ -79,6 +64,7 @@ public class HikerClient {
 	 * 비공개를 예외로 승격하지 않는다(게시자 비공개는 관측값 — author_profile.is_private).
 	 * 응답 셰이프는 by/username과 동일한 {user:{...}}로 가정(경로만 실측 — 셰이프는 미확인 유지).
 	 */
+	@Override
 	public AuthorInfo fetchAuthorProfile(String userId) {
 		String body = http.get("/v2/user/by/id?id=" + enc(userId));
 		JsonNode user = root(body).path("user");
@@ -101,6 +87,7 @@ public class HikerClient {
 	 * 게시물 열거 — /v2/user/medias(릴스+피드 전체, 1페이지 12건).
 	 * 이 엔드포인트는 릴스여도 play_count를 안 주므로(findings §2-③) /v2/user/clips 열거로 조회수를 머지한다.
 	 */
+	@Override
 	public List<PostInfo> fetchRecentPosts(String username, String userId, int pages) {
 		int wanted = Math.max(1, pages);
 		ClipPlays clips = fetchClipPlays(userId, wanted);
@@ -164,6 +151,7 @@ public class HikerClient {
 	 * 클립 콜만 따로 다시 부르는 재시도 경로용(최초 1회 재시도 — CollectService) — 코드별 IG·FB 몫.
 	 * 실패는 fetchClipPlays와 같은 규칙으로 삼킨다(재시도는 최선 노력, 빈 맵이면 머지가 안 일어날 뿐).
 	 */
+	@Override
 	public Map<String, ClipCounts> fetchClipCounts(String userId, int pages) {
 		return fetchClipPlays(userId, pages).plays();
 	}
@@ -217,6 +205,7 @@ public class HikerClient {
 	 * → clips 보강 없이 viewsTrusted=true. 정렬은 태그된 시점 순이라 taken_at 비단조(소급 태그 혼입)
 	 * — 재정렬하지 않고 응답 순서를 유지한다(페이지 단위 중단 판정이 순서에 의존).
 	 */
+	@Override
 	public TaggedPage fetchTaggedPage(String userId, String pageId) {
 		String body;
 		try {
@@ -241,6 +230,7 @@ public class HikerClient {
 	 * {response:{sections:[{layout_content:{medias:[{media}]}}]}}를 우선 파싱하고,
 	 * 평탄 items 셰이프는 폴백. usertags는 직접태그 제외 판정 재료(추가 콜 없음).
 	 */
+	@Override
 	public HashtagPage fetchHashtagRecentPage(String tag, String pageId) {
 		String body;
 		try {
@@ -258,6 +248,7 @@ public class HikerClient {
 		return new HashtagPage(posts, cursor);
 	}
 
+	@Override
 	public PostInfo fetchPost(String shortCode) {
 		// /v2/media/info/by/code — share 해소(§2-6)와 같은 media_or_ad 셰이프. 구 /v2/media/by/code와
 		// 미디어 노드 동등성은 실측 대조로 확인됨(14게시물 짝 비교 — 차이는 전부 세션 편차, 08-04).
@@ -282,6 +273,7 @@ public class HikerClient {
 	 * shortcode에서 산술 유도한다({@link ShortCodes}). 결손 필드(pk·text·좋아요·작성 시각·작성자) 댓글은
 	 * 저장 대상이 아니라 리스트에서 제외한다(계약 §3 post_comment).
 	 */
+	@Override
 	public CommentsFetch fetchComments(String shortCode, String postUsername, int pages) {
 		return fetchComments(shortCode, postUsername, pages, Set.of());
 	}
@@ -292,6 +284,7 @@ public class HikerClient {
 	 * (태그 스펙 §3). 정렬이 IG 랭킹 혼합이라 건 단위 중단은 신규를 놓칠 수 있어 페이지 단위로 본다.
 	 * 기지 댓글도 반환 목록에는 담는다(upsert가 body·like_count를 갱신).
 	 */
+	@Override
 	public CommentsFetch fetchComments(String shortCode, String postUsername, int pages,
 			Set<String> knownCommentIds) {
 		int wanted = Math.max(1, pages);
@@ -381,6 +374,7 @@ public class HikerClient {
 	 * share 단축 링크 해소 — /v2/media/info/by/url(계약 §2-6). 404는 게시물 부재로 전송 계층이 이미
 	 * SubjectNotFoundException을 던진다. 400(URL 형식 불량)만 여기서 ShareLinkUnresolvedException으로 바꾼다.
 	 */
+	@Override
 	public MediaRef resolveMediaByUrl(String url) {
 		String body;
 		try {

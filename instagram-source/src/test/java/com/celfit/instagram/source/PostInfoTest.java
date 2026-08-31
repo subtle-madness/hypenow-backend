@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
  * 사본 생성자 3종(withFbPlays·mergedMetrics·mergedWith)이 브랜드 was 계약 표시 메타
  * (videoUrl·videoDuration·isPaidPartnership — 2026-08-07 스펙 §3-2)를 관통시키는지.
  *
- * <p>파싱 테스트(HikerClientTest)만으로는 이 경로가 안 덮인다: 스윕은 파싱 직후 재시도·머지
+ * <p>파싱 테스트(HikerBackendTest)만으로는 이 경로가 안 덮인다: 스윕은 파싱 직후 재시도·머지
  * 사본을 만들어 저장하므로, 사본 생성자에서 필드가 하나 빠지면 파싱은 멀쩡한데 저장값만
  * 조용히 null이 된다(레코드 필드가 23개라 자리 밀림·누락이 눈으로 안 잡힌다).
  */

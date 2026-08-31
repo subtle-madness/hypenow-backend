@@ -1,9 +1,7 @@
-package com.celfit.monitoring.hiker;
+package com.celfit.instagram.source;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.celfit.instagram.source.HashtagPage;
-import com.celfit.instagram.source.SubjectNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -11,20 +9,20 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-class HikerClientHashtagTest {
+class HikerBackendHashtagTest {
 
 	private final List<String> calls = new ArrayList<>();
 
-	private HikerClient client(String body) {
-		return new HikerClient(path -> {
+	private HikerBackend client(String body) {
+		return new HikerBackend(path -> {
 			calls.add(path);
 			return body;
 		});
 	}
 
-	/** HikerClientTest와 동일 관용구 — /hiker/ 클래스패스 리소스를 문자열로 읽는다. */
+	/** HikerBackendTest와 동일 관용구 — /hiker/ 클래스패스 리소스를 문자열로 읽는다. */
 	private static String fixture(String name) {
-		try (var in = HikerClientHashtagTest.class.getResourceAsStream("/hiker/" + name)) {
+		try (var in = HikerBackendHashtagTest.class.getResourceAsStream("/hiker/" + name)) {
 			return new String(in.readAllBytes(), StandardCharsets.UTF_8);
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
@@ -84,7 +82,7 @@ class HikerClientHashtagTest {
 
 	@Test
 	void 태그_404는_빈_페이지로_접는다() {
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			throw new SubjectNotFoundException("Entries not found");
 		});
 		HashtagPage page = client.fetchHashtagRecentPage("없는태그", null);

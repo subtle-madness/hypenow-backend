@@ -1,19 +1,8 @@
-package com.celfit.monitoring.hiker;
+package com.celfit.instagram.source;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.celfit.instagram.source.AuthorInfo;
-import com.celfit.instagram.source.CommentInfo;
-import com.celfit.instagram.source.HikerBadRequestException;
-import com.celfit.instagram.source.HikerFetchException;
-import com.celfit.instagram.source.HikerHttp;
-import com.celfit.instagram.source.MediaRef;
-import com.celfit.instagram.source.PostInfo;
-import com.celfit.instagram.source.PrivateAccountException;
-import com.celfit.instagram.source.ProfileInfo;
-import com.celfit.instagram.source.ShareLinkUnresolvedException;
-import com.celfit.instagram.source.SubjectNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -22,10 +11,10 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-class HikerClientTest {
+class HikerBackendTest {
 
 	private static String fixture(String name) {
-		try (var in = HikerClientTest.class.getResourceAsStream("/hiker/" + name)) {
+		try (var in = HikerBackendTest.class.getResourceAsStream("/hiker/" + name)) {
 			return new String(in.readAllBytes(), StandardCharsets.UTF_8);
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
@@ -44,7 +33,7 @@ class HikerClientTest {
 
 	@Test
 	void 프로필_파싱() {
-		HikerClient client = new HikerClient(fakeHttp());
+		HikerBackend client = new HikerBackend(fakeHttp());
 		ProfileInfo p = client.fetchProfile("rarebeauty");
 		assertThat(p.userId()).isNotBlank();
 		assertThat(p.followers()).isPositive();
@@ -55,7 +44,7 @@ class HikerClientTest {
 
 	@Test
 	void 프로필_파싱은_biography를_담는다() {
-		HikerClient client = new HikerClient(fakeHttp());
+		HikerBackend client = new HikerBackend(fakeHttp());
 		ProfileInfo p = client.fetchProfile("rarebeauty");
 		assertThat(p.biography()).isNotBlank();   // profile.json의 user.biography(실측 픽스처 실재 확인)
 	}
@@ -66,7 +55,7 @@ class HikerClientTest {
 	 */
 	@Test
 	void 프로필_파싱은_인증뱃지와_외부링크를_담는다() {
-		HikerClient client = new HikerClient(fakeHttp());
+		HikerBackend client = new HikerBackend(fakeHttp());
 		ProfileInfo p = client.fetchProfile("rarebeauty");
 		assertThat(p.isVerified()).isTrue();   // profile.json 실측: user.is_verified = true
 		assertThat(p.externalUrl()).contains("sephora.com");   // 실측: 상품 링크
@@ -75,7 +64,7 @@ class HikerClientTest {
 	/** external_url은 없을 수 있는 필드 — 파싱이 예외 없이 null을 허용하는지가 계약이다. */
 	@Test
 	void 프로필_파싱은_외부링크_부재를_null로_허용한다() {
-		HikerClient client = new HikerClient(
+		HikerBackend client = new HikerBackend(
 				path -> "{\"user\":{\"pk\":1,\"is_private\":false},\"status\":\"ok\"}");
 		ProfileInfo p = client.fetchProfile("nolink");
 		assertThat(p.externalUrl()).isNull();
@@ -89,7 +78,7 @@ class HikerClientTest {
 	@Test
 	void 게시자_프로필_파싱_by_id() {
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			return fixture("author-profile-by-id.json");
 		});
@@ -108,7 +97,7 @@ class HikerClientTest {
 	/** 게시자 is_verified도 키 부재(null)와 관측된 false를 구분한다 — 화면이 뱃지 미표시와 미상을 나눈다. */
 	@Test
 	void 게시자_프로필_인증뱃지_키_부재는_null이다() {
-		HikerClient client = new HikerClient(path -> "{\"user\":{\"pk\":9876543210},\"status\":\"ok\"}");
+		HikerBackend client = new HikerBackend(path -> "{\"user\":{\"pk\":9876543210},\"status\":\"ok\"}");
 		assertThat(client.fetchAuthorProfile("9876543210").isVerified()).isNull();
 	}
 
@@ -117,7 +106,7 @@ class HikerClientTest {
 	void 게시자_프로필은_비공개여도_예외_없이_관측값을_준다() {
 		String privateUser = fixture("author-profile-by-id.json")
 				.replace("\"is_private\": false", "\"is_private\": true");
-		HikerClient client = new HikerClient(path -> privateUser);
+		HikerBackend client = new HikerBackend(path -> privateUser);
 		AuthorInfo a = client.fetchAuthorProfile("9876543210");
 		assertThat(a.isPrivate()).isTrue();
 	}
@@ -126,7 +115,7 @@ class HikerClientTest {
 	@Test
 	void 태그_열거는_1콜에_릴스_조회수_인라인이고_클립_콜이_없다() {
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			return fixture("tag-medias.json");
 		});
@@ -148,7 +137,7 @@ class HikerClientTest {
 	@Test
 	void 태그_열거는_커서를_page_id로_전달한다() {
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			return fixture("tag-medias.json");
 		});
@@ -159,7 +148,7 @@ class HikerClientTest {
 	/** 태그 0건 계정 — Hiker는 200 빈 배열이 아니라 404를 준다(fetchRecentPosts와 동일 규칙). */
 	@Test
 	void 태그_열거_404는_빈_페이지다() {
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			throw new SubjectNotFoundException("Entries not found");
 		});
 		var page = client.fetchTaggedPage("17841400000000000", null);
@@ -180,7 +169,7 @@ class HikerClientTest {
 	@Test
 	void 댓글_수집은_페이지_전체가_기지면_중단한다() {
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			return alwaysMoreCommentPage(calls.size());
 		});
@@ -194,7 +183,7 @@ class HikerClientTest {
 	@Test
 	void 댓글_수집은_기지_집합이_비면_페이지_수만큼_간다() {
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			return alwaysMoreCommentPage(calls.size());
 		});
@@ -204,7 +193,7 @@ class HikerClientTest {
 
 	@Test
 	void 열거_파싱_릴스는_조회수_머지_피드는_저장공유_null() {
-		HikerClient client = new HikerClient(fakeHttp());
+		HikerBackend client = new HikerBackend(fakeHttp());
 		var posts = client.fetchRecentPosts("rarebeauty", "3109786630", 1);
 		// medias 12건 + clips 전용(그리드 숨김) 릴스 2건 합류(Da5zz2di7C1·Da3BOMzCuhq — 08-07)
 		assertThat(posts).hasSize(14);
@@ -235,7 +224,7 @@ class HikerClientTest {
 	 */
 	@Test
 	void 게시물_파싱은_영상과_유료협찬_표시를_담는다() {
-		HikerClient client = new HikerClient(fakeHttp());
+		HikerBackend client = new HikerBackend(fakeHttp());
 		List<PostInfo> posts = client.fetchRecentPosts("rarebeauty", "12345", 1);
 		PostInfo reels = posts.stream().filter(p -> "REELS".equals(p.contentType())).findFirst().orElseThrow();
 		// medias.json 실측: 릴스는 video_versions[0].url·video_duration(12.119…)이 실린다
@@ -251,7 +240,7 @@ class HikerClientTest {
 	/** 유료협찬 키 부재는 null — false(관측된 비협찬)로 뭉개면 화면이 unknown을 표시할 근거를 잃는다. */
 	@Test
 	void 유료협찬_키_부재는_null이고_false와_구분된다() {
-		HikerClient client = new HikerClient(path -> fixture("tag-medias.json"));
+		HikerBackend client = new HikerBackend(path -> fixture("tag-medias.json"));
 		var page = client.fetchTaggedPage("17841400000000000", null);
 		// tag-medias.json(합성 픽스처)에는 is_paid_partnership 키 자체가 없다
 		assertThat(page.posts()).allSatisfy(p -> assertThat(p.isPaidPartnership()).isNull());
@@ -272,7 +261,7 @@ class HikerClientTest {
 	void 열거_medias가_저장공유리포스트를_안_실어도_clips_관측을_머지한다() {
 		// 세션 복권(08-04 실측): 저장·리포스트 키는 콜 단위로 전부 실리거나 전부 빠진다.
 		// medias가 꽝 세션이어도 clips가 당첨 세션이면 그 관측을 버리면 안 된다(존재율 45% vs 30%).
-		HikerClient client = new HikerClient(path ->
+		HikerBackend client = new HikerBackend(path ->
 				path.startsWith("/v2/user/clips") ? CLIPS_WITH_METRIC_KEYS : MEDIAS_NO_METRIC_KEYS);
 		var posts = client.fetchRecentPosts("acct", "999", 1);
 		assertThat(posts).hasSize(1);
@@ -300,7 +289,7 @@ class HikerClientTest {
 
 	@Test
 	void 그리드_숨김_릴스는_clips에만_있어도_열거에_합류한다() {
-		HikerClient client = new HikerClient(path ->
+		HikerBackend client = new HikerBackend(path ->
 				path.startsWith("/v2/user/clips") ? CLIPS_WITH_GRID_HIDDEN_REEL : MEDIAS_FEED_ONLY);
 		var posts = client.fetchRecentPosts("acct", "999", 1);
 		assertThat(posts).extracting(PostInfo::shortCode).containsExactly("HiddenR", "FeedA");
@@ -316,7 +305,7 @@ class HikerClientTest {
 	/** 게시물 0건(medias 404) 계정이어도 릴스 탭에 릴스가 있으면 그건 전부 그리드 숨김 릴스다 — 버리면 안 된다. */
 	@Test
 	void 게시물_0건_계정도_clips_릴스는_열거에_합류한다() {
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			if (path.startsWith("/v2/user/medias")) throw new SubjectNotFoundException("404 Entries not found");
 			return CLIPS_WITH_GRID_HIDDEN_REEL;
 		});
@@ -328,7 +317,7 @@ class HikerClientTest {
 	void 단건_파싱_릴스는_6지표_전량() {
 		// 단건은 /v2/media/info/by/code(media_or_ad 셰이프)로 이전됐다(08-04 — 구 by/code와 응답 동등성 실측).
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			return fixture("media-info-by-code.json");
 		});
@@ -353,7 +342,7 @@ class HikerClientTest {
 
 	@Test
 	void 단건_파싱_피드는_조회_저장_공유가_null() {
-		HikerClient client = new HikerClient(path -> fixture("media-info-by-code-feed.json"));
+		HikerBackend client = new HikerBackend(path -> fixture("media-info-by-code-feed.json"));
 		PostInfo p = client.fetchPost("DbOMP1_CY18");
 		assertThat(p.contentType()).isEqualTo("FEED");
 		assertThat(p.likes()).isPositive();
@@ -367,14 +356,14 @@ class HikerClientTest {
 
 	@Test
 	void _404는_SubjectNotFound로() {
-		HikerClient client = new HikerClient(path -> { throw new SubjectNotFoundException("404"); });
+		HikerBackend client = new HikerBackend(path -> { throw new SubjectNotFoundException("404"); });
 		assertThatThrownBy(() -> client.fetchProfile("ghost"))
 				.isInstanceOf(SubjectNotFoundException.class);
 	}
 
 	@Test
 	void 비공개_계정은_PrivateAccount로() {
-		HikerClient client = new HikerClient(
+		HikerBackend client = new HikerBackend(
 				path -> "{\"user\":{\"pk\":1,\"is_private\":true},\"status\":\"ok\"}");
 		assertThatThrownBy(() -> client.fetchProfile("secret"))
 				.isInstanceOf(PrivateAccountException.class);
@@ -389,7 +378,7 @@ class HikerClientTest {
 	@Test
 	void 열거_2페이지는_next_page_id를_커서로_전달하고_다음_페이지를_이어붙인다() {
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/clips")) return fixture("clips.json");
 			return path.contains("page_id=") ? PAGE2 : fixture("medias.json");
@@ -412,7 +401,7 @@ class HikerClientTest {
 		// 커서 파라미터명이 틀려 API가 같은 1페이지를 계속 돌려주는 상황.
 		// dedupe가 결과를 12건으로 보정해버려 조용히 넘어가면 콜만 배로 나간다 → 즉시 중단해야 한다.
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/clips")) return fixture("clips.json");
 			return fixture("medias.json");
@@ -426,7 +415,7 @@ class HikerClientTest {
 	@Test
 	void more_available가_false면_페이지가_남아도_멈춘다() {
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/clips")) return fixture("clips.json");
 			// next_page_id는 있지만 more_available=false — 커서만 믿고 더 부르면 안 된다
@@ -451,7 +440,7 @@ class HikerClientTest {
 	void 게시물_0건_계정은_medias_404를_빈_리스트로_강등한다() {
 		// 릴스도 0건이라 clips까지 404인 진짜 0건 계정(그리드 숨김 릴스가 있는 케이스는
 		// 게시물_0건_계정도_clips_릴스는_열거에_합류한다가 별도로 덮는다).
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			if (path.startsWith("/v2/user/medias")) throw new SubjectNotFoundException("404 Entries not found");
 			if (path.startsWith("/v2/user/clips")) throw new SubjectNotFoundException("404 Entries not found");
 			throw new IllegalStateException("예상 밖 호출: " + path);
@@ -467,7 +456,7 @@ class HikerClientTest {
 	 */
 	@Test
 	void 둘째페이지_medias_404는_1페이지_결과를_보존하고_중단한다() {
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			if (path.startsWith("/v2/user/clips")) return fixture("clips.json");
 			if (path.startsWith("/v2/user/medias")) {
 				if (path.contains("page_id=")) throw new SubjectNotFoundException("404 Entries not found");
@@ -481,7 +470,7 @@ class HikerClientTest {
 
 	@Test
 	void 클립_보강이_실패해도_열거는_계속되고_조회수만_null() {
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			if (path.startsWith("/v2/user/clips")) throw new HikerFetchException("클립 500");
 			return fixture("medias.json");
 		});
@@ -497,7 +486,7 @@ class HikerClientTest {
 
 	@Test
 	void 좋아요_숨김이면_like_count는_프리뷰_잔여값이라_null_처리한다() {
-		HikerClient client = new HikerClient(path -> """
+		HikerBackend client = new HikerBackend(path -> """
 				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":3,
 				"like_and_view_counts_disabled":true,"comment_count":13,
 				"play_count":1551,"ig_play_count":1551,"user":{"username":"acct"}},"status":"ok"}""");
@@ -512,7 +501,7 @@ class HikerClientTest {
 
 	@Test
 	void 숨김_플래그가_없거나_false면_like_count를_그대로_쓴다() {
-		HikerClient client = new HikerClient(path -> """
+		HikerBackend client = new HikerBackend(path -> """
 				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":83,
 				"like_and_view_counts_disabled":false,"user":{"username":"acct"}},"status":"ok"}""");
 		PostInfo p = client.fetchPost("Xx1");
@@ -524,7 +513,7 @@ class HikerClientTest {
 	@Test
 	void 공유_횟수_숨기기_토글은_share_count_disabled로_관측된다() {
 		// 운영 실측(08-05): DaHSf2uB2Vj — 이 플래그 true인 게시물은 reshare_count가 영구 부재.
-		HikerClient client = new HikerClient(path -> """
+		HikerBackend client = new HikerBackend(path -> """
 				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":83,
 				"share_count_disabled":true,"user":{"username":"acct"}},"status":"ok"}""");
 		PostInfo p = client.fetchPost("Xx1");
@@ -535,7 +524,7 @@ class HikerClientTest {
 	@Test
 	void 좋아요_숨김은_공유_숨김을_함의한다() {
 		// IG 앱 문구 "좋아요 수 및 공유 횟수는 회원님만" + 실측: lvcd=true 10게시물 전원 공유 영구 부재.
-		HikerClient client = new HikerClient(path -> """
+		HikerBackend client = new HikerBackend(path -> """
 				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":3,
 				"like_and_view_counts_disabled":true,"share_count_disabled":false,
 				"user":{"username":"acct"}},"status":"ok"}""");
@@ -546,7 +535,7 @@ class HikerClientTest {
 	/** 단건은 usernameHint가 없어 user.username이 유일한 소유 계정 출처다 — 없으면 셰이프 이상. */
 	@Test
 	void 단건_응답에_소유_계정이_없으면_HikerFetch로() {
-		HikerClient client = new HikerClient(path -> """
+		HikerBackend client = new HikerBackend(path -> """
 				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1},"status":"ok"}""");
 		assertThatThrownBy(() -> client.fetchPost("Xx1"))
 				.isInstanceOf(HikerFetchException.class);
@@ -555,7 +544,7 @@ class HikerClientTest {
 	@Test
 	void 단건_응답에_media_or_ad가_없으면_SubjectNotFound로() {
 		// 실존 부재는 전송 계층 404가 정상 경로 — 200인데 media_or_ad가 없는 건 부재로 강등한다.
-		HikerClient client = new HikerClient(path -> "{\"status\":\"ok\"}");
+		HikerBackend client = new HikerBackend(path -> "{\"status\":\"ok\"}");
 		assertThatThrownBy(() -> client.fetchPost("gone"))
 				.isInstanceOf(SubjectNotFoundException.class);
 	}
@@ -569,7 +558,7 @@ class HikerClientTest {
 
 	@Test
 	void 단건_조회수는_세션따라_흔들리는_play_count가_아니라_ig_play_count를_쓴다() {
-		HikerClient client = new HikerClient(path -> """
+		HikerBackend client = new HikerBackend(path -> """
 				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
 				"play_count":305,"ig_play_count":222,"fb_play_count":83,"user":{"username":"acct"}},"status":"ok"}""");
 		PostInfo p = client.fetchPost("Xx1");
@@ -580,12 +569,12 @@ class HikerClientTest {
 	/** fb 키 부재(IG 전용 세션)와 fb=0(합산 세션이지만 FB 재생 0)은 다르다 — 캐리포워드·재시도 판정 기준. */
 	@Test
 	void fb_play_count_키_부재는_null이고_0은_0이다() {
-		HikerClient client = new HikerClient(path -> """
+		HikerBackend client = new HikerBackend(path -> """
 				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
 				"play_count":222,"ig_play_count":222,"user":{"username":"acct"}},"status":"ok"}""");
 		assertThat(client.fetchPost("Xx1").fbPlays()).isNull();
 
-		HikerClient zero = new HikerClient(path -> """
+		HikerBackend zero = new HikerBackend(path -> """
 				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
 				"play_count":222,"ig_play_count":222,"fb_play_count":0,"user":{"username":"acct"}},"status":"ok"}""");
 		assertThat(zero.fetchPost("Xx1").fbPlays()).isEqualTo(0L);
@@ -599,7 +588,7 @@ class HikerClientTest {
 	 */
 	@Test
 	void fb_키가_없어도_play가_ig보다_크면_차이를_fb몫으로_유도한다() {
-		HikerClient client = new HikerClient(path -> """
+		HikerBackend client = new HikerBackend(path -> """
 				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
 				"play_count":570331,"ig_play_count":512077,"user":{"username":"acct"}},"status":"ok"}""");
 		PostInfo p = client.fetchPost("Xx1");
@@ -609,7 +598,7 @@ class HikerClientTest {
 
 	@Test
 	void fb_키가_0이어도_play가_ig보다_크면_유도값을_우선한다() {
-		HikerClient client = new HikerClient(path -> """
+		HikerBackend client = new HikerBackend(path -> """
 				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
 				"play_count":916881,"ig_play_count":869438,"fb_play_count":0,"user":{"username":"acct"}},"status":"ok"}""");
 		assertThat(client.fetchPost("Xx1").fbPlays()).isEqualTo(47443L);
@@ -618,7 +607,7 @@ class HikerClientTest {
 	/** 방어: ig 키가 없는 응답이 오면 play - fb로 IG 몫을 복원한다(합산 이중 계상 방지). */
 	@Test
 	void ig_play_count가_없으면_play에서_fb를_빼서_IG_몫을_복원한다() {
-		HikerClient client = new HikerClient(path -> """
+		HikerBackend client = new HikerBackend(path -> """
 				{"media_or_ad":{"code":"Xx1","product_type":"clips","like_count":1,
 				"play_count":305,"fb_play_count":83,"user":{"username":"acct"}},"status":"ok"}""");
 		PostInfo p = client.fetchPost("Xx1");
@@ -628,7 +617,7 @@ class HikerClientTest {
 
 	@Test
 	void 열거_클립_머지_조회수도_ig_play_count를_쓰고_fb몫도_머지된다() {
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			if (path.startsWith("/v2/user/clips")) {
 				return """
 						{"response":{"items":[{"media":{"code":"ReelA","product_type":"clips",
@@ -649,7 +638,7 @@ class HikerClientTest {
 	/** 클립 콜만 따로 재조회하는 재시도 경로용 — 코드별 IG·FB 몫을 그대로 돌려준다. */
 	@Test
 	void fetchClipCounts는_코드별_IG_FB_몫을_준다() {
-		HikerClient client = new HikerClient(path -> """
+		HikerBackend client = new HikerBackend(path -> """
 				{"response":{"items":[
 				{"media":{"code":"ReelA","play_count":305,"ig_play_count":222,"fb_play_count":83}},
 				{"media":{"code":"ReelB","play_count":10,"ig_play_count":10}}],
@@ -670,7 +659,7 @@ class HikerClientTest {
 	 */
 	@Test
 	void 댓글_파싱_6건_owner_답글_판정() {
-		HikerClient client = new HikerClient(path -> fixture("comments.json"));
+		HikerBackend client = new HikerBackend(path -> fixture("comments.json"));
 		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 1).comments();
 
 		assertThat(comments).hasSize(6);
@@ -698,7 +687,7 @@ class HikerClientTest {
 
 	@Test
 	void owner_답글_판정은_username_대소문자_무시_일치도_잡는다() {
-		HikerClient client = new HikerClient(path -> USERNAME_MATCH_COMMENTS);
+		HikerBackend client = new HikerBackend(path -> USERNAME_MATCH_COMMENTS);
 		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 1).comments();
 
 		assertThat(comments).hasSize(1);
@@ -718,7 +707,7 @@ class HikerClientTest {
 
 	@Test
 	void 결손_필드_댓글은_제외된다() {
-		HikerClient client = new HikerClient(path -> MISSING_FIELD_COMMENTS);
+		HikerBackend client = new HikerBackend(path -> MISSING_FIELD_COMMENTS);
 		var comments = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 1).comments();
 
 		assertThat(comments).hasSize(1);
@@ -744,7 +733,7 @@ class HikerClientTest {
 	@Test
 	void 댓글_2페이지는_next_page_id를_커서로_전달하고_다음_페이지를_이어붙인다() {
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			return path.contains("page_id=") ? COMMENTS_PAGE2 : COMMENTS_PAGE1;
 		});
@@ -766,7 +755,7 @@ class HikerClientTest {
 	@Test
 	void has_more_comments가_false여도_next_page_id가_있으면_계속_가져온다() {
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.contains("page_id=")) {
 				return """
@@ -792,7 +781,7 @@ class HikerClientTest {
 	@Test
 	void 요청한_페이지_수에_도달하면_next_page_id가_남아도_멈춘다() {
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			int page = calls.size();
 			return """
@@ -816,7 +805,7 @@ class HikerClientTest {
 	@Test
 	void 댓글_중간_페이지_실패는_받은_페이지분을_보존하고_미완주로_표시한다() {
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.contains("page_id=")) {
 				throw new HikerFetchException("Hiker HTTP 500: 순간 과부하");
@@ -834,7 +823,7 @@ class HikerClientTest {
 	/** 1페이지부터 실패하면 보존할 것이 없다 — 기존 의미(예외 전파, 호출자 격리 catch) 유지. */
 	@Test
 	void 댓글_첫_페이지_실패는_그대로_전파한다() {
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			throw new HikerFetchException("Hiker HTTP 500");
 		});
 
@@ -846,7 +835,7 @@ class HikerClientTest {
 	/** 정상 완주(마지막 페이지 커서 없음)는 complete=true — 브랜드 워터마크 전진 조건. */
 	@Test
 	void 댓글_정상_완주는_complete_true다() {
-		HikerClient client = new HikerClient(path ->
+		HikerBackend client = new HikerBackend(path ->
 				path.contains("page_id=") ? COMMENTS_PAGE2 : COMMENTS_PAGE1);
 
 		var fetch = client.fetchComments("DbV7LgZsKG8", "rarebeauty", 3);
@@ -859,7 +848,7 @@ class HikerClientTest {
 	@Test
 	void 댓글_커서가_전진하지_않으면_경고하고_중단한다() {
 		List<String> calls = new ArrayList<>();
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			calls.add(path);
 			if (path.contains("page_id=")) {
 				// 2페이지째: comments 배열은 있지만 전부 결손 필드라 유효 댓글 0건 — 새 댓글 없음
@@ -881,7 +870,7 @@ class HikerClientTest {
 
 	@Test
 	void 단축링크_해소_파싱() {
-		HikerClient client = new HikerClient(path -> fixture("media-info-by-url.json"));
+		HikerBackend client = new HikerBackend(path -> fixture("media-info-by-url.json"));
 		MediaRef ref = client.resolveMediaByUrl("https://www.instagram.com/reel/DbV7LgZsKG8/");
 
 		assertThat(ref.shortCode()).isEqualTo("DbV7LgZsKG8");
@@ -891,7 +880,7 @@ class HikerClientTest {
 
 	@Test
 	void 단축링크_해소_400은_ShareLinkUnresolved로() {
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			throw new HikerBadRequestException("400");
 		});
 		assertThatThrownBy(() -> client.resolveMediaByUrl("https://www.instagram.com/share/reel/bad/"))
@@ -900,7 +889,7 @@ class HikerClientTest {
 
 	@Test
 	void 단축링크_해소_404는_SubjectNotFound로() {
-		HikerClient client = new HikerClient(path -> {
+		HikerBackend client = new HikerBackend(path -> {
 			throw new SubjectNotFoundException("404");
 		});
 		assertThatThrownBy(() -> client.resolveMediaByUrl("https://www.instagram.com/reel/gone/"))
