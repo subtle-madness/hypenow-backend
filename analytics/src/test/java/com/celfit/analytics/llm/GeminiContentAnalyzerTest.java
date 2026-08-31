@@ -22,8 +22,9 @@ class GeminiContentAnalyzerTest {
 			 "aiCommentInsight":"표본 부족","commentAuthenticityGrade":"이상값","commentAuthenticityNote":"근거"}""";
 
 	BeautyTaxonomy taxonomy = new BeautyTaxonomy(List.of(
-			new BeautyTaxonomy.Entry("cleansing", "클렌징", "클렌징폼/젤", "클렌징폼")),
-			List.of("올리브영", "다이소"));
+			new BeautyTaxonomy.Entry("cleansing", "클렌징", "클렌징폼/젤", "클렌징폼", "beauty")),
+			List.of(new BeautyTaxonomy.Distributor("올리브영", "beauty"),
+					new BeautyTaxonomy.Distributor("다이소", "beauty")));
 
 	record Call(String model, String system, String user, GeminiApi.InlineImage image, String schema) {}
 

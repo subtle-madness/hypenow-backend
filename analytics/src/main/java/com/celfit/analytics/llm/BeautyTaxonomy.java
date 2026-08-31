@@ -1,6 +1,7 @@
 package com.celfit.analytics.llm;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -21,7 +22,15 @@ import java.util.stream.Stream;
 public final class BeautyTaxonomy {
 
 	/** 소분류당 1행. 목록 순서 = 시드 정렬 순서 (프롬프트 분류표 렌더링 순서). */
-	public record Entry(String mainValue, String mainLabel, String midLabel, String subLabel) {
+	public record Entry(String mainValue, String mainLabel, String midLabel, String subLabel,
+			String axis) {
+	}
+
+	/**
+	 * 유통사 1행 — 축이 다르면 그 축의 콘텐츠에서만 유효하다. 목록 순서 = 시드 sort 순서
+	 * (프롬프트 나열 순서).
+	 */
+	public record Distributor(String name, String axis) {
 	}
 
 	private final List<Entry> entries;
@@ -32,13 +41,15 @@ public final class BeautyTaxonomy {
 	private final Set<String> subLabels;
 	private final Map<String, String> labelToMain; // mid·sub 라벨 → 단일 대분류(애매하면 제외)
 	private final List<String> mainOrder;          // 대분류 최초 등장 순서(분류표 순 tie-break)
+	private final Map<String, String> mainAxis;    // 대분류 slug → 축 (is_beauty 파생 근거)
+	private final Map<String, String> distributorAxis; // 유통사 이름 → 축 (삽입 순서 = 프롬프트 순서)
 
-	public BeautyTaxonomy(List<Entry> entries, List<String> distributors) {
+	public BeautyTaxonomy(List<Entry> entries, List<Distributor> distributors) {
 		this.entries = List.copyOf(entries);
-		this.distributors = List.copyOf(distributors);
+		this.distributors = distributors.stream().map(Distributor::name).toList();
 		this.mainCategories = entries.stream().map(Entry::mainValue)
 				.collect(Collectors.toUnmodifiableSet());
-		this.distributorSet = Set.copyOf(distributors);
+		this.distributorSet = Set.copyOf(this.distributors);
 		this.midAndSubLabels = entries.stream()
 				.flatMap(e -> Stream.of(e.midLabel(), e.subLabel()))
 				.collect(Collectors.toUnmodifiableSet());
@@ -62,6 +73,31 @@ public final class BeautyTaxonomy {
 		});
 		this.labelToMain = Map.copyOf(single);
 		this.mainOrder = List.copyOf(order);
+
+		Map<String, String> axes = new LinkedHashMap<>();
+		for (Entry e : entries) {
+			axes.putIfAbsent(e.mainValue(), e.axis());
+		}
+		this.mainAxis = Map.copyOf(axes);
+		// 삽입 순서 보존 — distributorsPrompt()의 나열 순서가 곧 시드 sort 순서다.
+		Map<String, String> distAxes = new LinkedHashMap<>();
+		for (Distributor d : distributors) {
+			distAxes.putIfAbsent(d.name(), d.axis());
+		}
+		this.distributorAxis = Collections.unmodifiableMap(distAxes);
+	}
+
+	/**
+	 * 대분류가 속한 축 — 어휘 밖이면 null. sanitize가 이 값으로 is_beauty를 파생한다
+	 * ("beauty"면 true) — 축이 늘어도 content_analyses에 컬럼을 더하지 않는 근거(설계 §2).
+	 */
+	public String axisOf(String mainValue) {
+		return mainValue == null ? null : mainAxis.get(mainValue);
+	}
+
+	/** 유통사가 속한 축 — 어휘 밖이면 null. 콘텐츠 축과 다른 유통사는 sanitize가 드랍한다. */
+	public String distributorAxisOf(String name) {
+		return name == null ? null : distributorAxis.get(name);
 	}
 
 	/** 대분류 value(영문 slug) — content_analyses.main_category 어휘. */
@@ -84,12 +120,18 @@ public final class BeautyTaxonomy {
 		return subLabels;
 	}
 
-	/** 프롬프트에 넣는 유통사 나열 — 예: "올리브영|다이소". */
+	/**
+	 * 프롬프트에 넣는 유통사 나열 — 예: "올리브영(beauty)|다이소(beauty)|GS25(fnb)".
+	 * 축을 함께 싣는 이유: 분석 시점엔 콘텐츠 축이 아직 미정(대분류가 같은 콜의 산출물)이라
+	 * 전체를 보여주고 LLM이 대분류와 같은 축의 유통사를 고르게 한다. 최종 정합은 sanitize가 본다.
+	 */
 	public String distributorsPrompt() {
-		return String.join("|", distributors);
+		return distributorAxis.entrySet().stream()
+				.map(e -> "%s(%s)".formatted(e.getKey(), e.getValue()))
+				.collect(Collectors.joining("|"));
 	}
 
-	/** 프롬프트에 넣는 분류표 — slug(한글 라벨): 중분류[소분류…] 계층, 행 순서 유지. */
+	/** 프롬프트에 넣는 분류표 — [축] slug(한글 라벨): 중분류[소분류…] 계층, 행 순서 유지. */
 	public String promptTable() {
 		Map<String, String> mainLabels = new LinkedHashMap<>();
 		Map<String, Map<String, List<String>>> tree = new LinkedHashMap<>();
@@ -100,7 +142,8 @@ public final class BeautyTaxonomy {
 					.add(e.subLabel());
 		}
 		return tree.entrySet().stream()
-				.map(main -> "%s(%s): %s".formatted(main.getKey(), mainLabels.get(main.getKey()),
+				.map(main -> "[%s] %s(%s): %s".formatted(mainAxis.get(main.getKey()), main.getKey(),
+						mainLabels.get(main.getKey()),
 						main.getValue().entrySet().stream()
 								.map(mid -> "%s[%s]".formatted(mid.getKey(), String.join(", ", mid.getValue())))
 								.collect(Collectors.joining(" · "))))

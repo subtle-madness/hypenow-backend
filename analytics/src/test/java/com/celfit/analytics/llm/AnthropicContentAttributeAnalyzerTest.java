@@ -12,11 +12,12 @@ class AnthropicContentAttributeAnalyzerTest {
 
 	// sanitize가 어휘 스냅샷을 쓰는지 검증하기 위한 소형 픽스처 (실 시드 검증은 BeautyTaxonomySeedTest)
 	private static final BeautyTaxonomy TAXONOMY = new BeautyTaxonomy(List.of(
-			new BeautyTaxonomy.Entry("skincare", "스킨케어", "스킨/토너", "스킨"),
-			new BeautyTaxonomy.Entry("makeup", "메이크업", "립메이크업", "립틴트"),
-			new BeautyTaxonomy.Entry("cleansing", "클렌징", "클렌징폼/젤", "클렌징폼"),
-			new BeautyTaxonomy.Entry("haircare", "헤어케어", "샴푸/스케일러", "샴푸")),
-			List.of("올리브영", "다이소"));
+			new BeautyTaxonomy.Entry("skincare", "스킨케어", "스킨/토너", "스킨", "beauty"),
+			new BeautyTaxonomy.Entry("makeup", "메이크업", "립메이크업", "립틴트", "beauty"),
+			new BeautyTaxonomy.Entry("cleansing", "클렌징", "클렌징폼/젤", "클렌징폼", "beauty"),
+			new BeautyTaxonomy.Entry("haircare", "헤어케어", "샴푸/스케일러", "샴푸", "beauty")),
+			List.of(new BeautyTaxonomy.Distributor("올리브영", "beauty"),
+					new BeautyTaxonomy.Distributor("다이소", "beauty")));
 
 	private ContentAttributes attrsWith(String level, String adType) {
 		return new ContentAttributes(List.of(new ContentAttributes.Brand("브랜드A", "화면 노출")), level,
@@ -152,8 +153,8 @@ class AnthropicContentAttributeAnalyzerTest {
 	void 프롬프트는_어휘_스냅샷의_분류표와_유통사를_담는다() {
 		String instructions = AnthropicContentAttributeAnalyzer.instructions(TAXONOMY);
 
-		assertTrue(instructions.contains("올리브영|다이소"));
-		assertTrue(instructions.contains("skincare(스킨케어)"));
+		assertTrue(instructions.contains("올리브영(beauty)|다이소(beauty)"));
+		assertTrue(instructions.contains("[beauty] skincare(스킨케어)"));
 		assertTrue(instructions.contains("detectedProducts"));
 	}
 }
