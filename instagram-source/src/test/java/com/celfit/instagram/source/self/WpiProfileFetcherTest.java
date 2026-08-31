@@ -75,6 +75,22 @@ class WpiProfileFetcherTest {
 	}
 
 	@Test
+	void 로그인벽_200_HTML은_LOGIN_WALL_예외() {
+		String html = "<!DOCTYPE html><html><body>Login • Instagram</body></html>";
+		assertThatThrownBy(() -> fetcher(html, 200).fetchProfile("nasa"))
+				.isInstanceOf(SelfCrawlException.class)
+				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
+						.isEqualTo(SelfErrorClass.LOGIN_WALL));
+	}
+
+	@Test
+	void 비JSON_200은_잭슨_예외가_아닌_SelfCrawlException() {
+		// 파스 실패가 unchecked Jackson 예외로 새면 폴백망(Failover 라우팅)을 우회한다.
+		assertThatThrownBy(() -> fetcher("not json {{{", 200).fetchProfile("nasa"))
+				.isInstanceOf(SelfCrawlException.class);
+	}
+
+	@Test
 	void user_부재는_NOT_FOUND() {
 		assertThatThrownBy(() -> fetcher("{\"data\":{\"user\":null}}", 200).fetchProfile("ghost"))
 				.isInstanceOf(SelfCrawlException.class)

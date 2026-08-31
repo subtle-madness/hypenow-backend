@@ -58,17 +58,30 @@ public class DirectCommentFetcher {
 		for (int p = 0; p < wanted; p++) {
 			SelfResponse r = transport.post(GRAPHQL_URL, graphqlBody(lsd, mediaId, cursor),
 					ProxyTier.RESIDENTIAL, postHeaders(lsd));
-			if (r.status() != 200) {
+			// 비200뿐 아니라 200 로그인벽 HTML도 분류해 폴백망에 태운다(ofStatus의 LOGIN_WALL 분기).
+			SelfErrorClass ec = SelfErrorClassifier.ofStatus(r.status(), r.body());
+			if (ec != SelfErrorClass.OK) {
 				if (p == 0) {
 					// 보존할 것이 없다 — 상태 분류 예외로 폴백 라우팅에 태운다.
-					throw new SelfCrawlException(SelfErrorClassifier.ofStatus(r.status(), r.body()),
+					throw new SelfCrawlException(ec,
 							"댓글 graphql 실패 status=" + r.status() + " code=" + shortCode);
 				}
 				// 중간 페이지 실패 — 받은 페이지분은 보존하되 미완주로 표시(HikerBackend와 동일 규칙).
 				return new CommentsFetch(out, false);
 			}
-			JsonNode connection = MAPPER.readTree(r.body())
-					.path("data").path("xig_polaris_media").path("comments_connection");
+			JsonNode connection;
+			try {
+				connection = MAPPER.readTree(r.body())
+						.path("data").path("xig_polaris_media").path("comments_connection");
+			} catch (RuntimeException e) {
+				if (p > 0) {
+					// 중간 페이지 파스 실패 — 비200 중간 실패와 같은 규칙으로 받은 분을 보존한다.
+					return new CommentsFetch(out, false);
+				}
+				// 200인데 JSON이 아니다 — 게이트 응답으로 보고 폴백망에 태운다(잭슨 예외 누출 차단).
+				throw new SelfCrawlException(SelfErrorClass.LOGIN_WALL,
+						"댓글 graphql JSON 파스 실패(로그인벽 의심) code=" + shortCode, e);
+			}
 			int before = out.size();
 			for (JsonNode edge : connection.path("edges")) {
 				CommentInfo comment = toComment(edge.path("node"));

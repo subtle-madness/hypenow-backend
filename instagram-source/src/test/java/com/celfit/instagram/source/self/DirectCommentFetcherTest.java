@@ -123,6 +123,27 @@ class DirectCommentFetcherTest {
 	}
 
 	@Test
+	void graphql_200_로그인벽_HTML은_LOGIN_WALL_예외() {
+		FakeTransport fake = new FakeTransport(ok(fixture("post_page_lsd.html")),
+				ok("<!DOCTYPE html><html><body>login</body></html>"));
+		assertThatThrownBy(() -> new DirectCommentFetcher(fake, "DOC", "FRIENDLY")
+				.fetch("DYtaeT4TPYu", "someowner", 1))
+				.isInstanceOf(SelfCrawlException.class)
+				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
+						.isEqualTo(SelfErrorClass.LOGIN_WALL));
+	}
+
+	@Test
+	void graphql_200_비JSON은_잭슨_예외가_아닌_SelfCrawlException() {
+		// 파스 실패가 unchecked Jackson 예외로 새면 폴백망(Failover 라우팅)을 우회한다.
+		FakeTransport fake = new FakeTransport(ok(fixture("post_page_lsd.html")),
+				ok("not json {{{"));
+		assertThatThrownBy(() -> new DirectCommentFetcher(fake, "DOC", "FRIENDLY")
+				.fetch("DYtaeT4TPYu", "someowner", 1))
+				.isInstanceOf(SelfCrawlException.class);
+	}
+
+	@Test
 	void 첫_페이지_비200은_예외_중간_페이지_비200은_부분_결과() {
 		FakeTransport failFirst = new FakeTransport(ok(fixture("post_page_lsd.html")),
 				new SelfResponse(429, ""));

@@ -58,11 +58,21 @@ public class WpiProfileFetcher {
 				+ URLEncoder.encode(username, StandardCharsets.UTF_8);
 		SelfResponse res = http.fetch(url, ProxyTier.MOBILE, HEADERS);
 		String body = res.body() == null ? "" : res.body();
-		if (res.status() != 200) {
-			throw new SelfCrawlException(SelfErrorClassifier.ofStatus(res.status(), body),
+		// 비200뿐 아니라 200 로그인벽 HTML도 분류해 폴백망에 태운다(ofStatus의 LOGIN_WALL 분기).
+		SelfErrorClass ec = SelfErrorClassifier.ofStatus(res.status(), body);
+		if (ec != SelfErrorClass.OK) {
+			throw new SelfCrawlException(ec,
 					"web_profile_info 실패 status=" + res.status() + " username=" + username);
 		}
-		JsonNode user = MAPPER.readTree(body).path("data").path("user");
+		JsonNode root;
+		try {
+			root = MAPPER.readTree(body);
+		} catch (RuntimeException e) {
+			// 200인데 JSON이 아니다 — 게이트 응답으로 보고 폴백망에 태운다(잭슨 예외 누출 차단).
+			throw new SelfCrawlException(SelfErrorClass.LOGIN_WALL,
+					"web_profile_info JSON 파스 실패(로그인벽 의심) username=" + username, e);
+		}
+		JsonNode user = root.path("data").path("user");
 		if (user.isMissingNode() || user.isNull() || user.isEmpty()) {
 			// 존재하지 않는 계정도 200 + user:null로 온다 — 폴백 없이 NOT_FOUND.
 			throw new SelfCrawlException(SelfErrorClass.NOT_FOUND,
