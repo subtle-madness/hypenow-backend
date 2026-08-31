@@ -119,13 +119,21 @@ public class BrandReadRepository {
 	 * 컬럼(author_profile 조인). 협찬 판정 자체는 was의 {@code BrandSponsorshipClassifier}가 조회 시
 	 * 계산한다(저장 없음 — 키워드 개선이 과거분에 즉시 소급되는 설계라 버킷·컬럼으로 굳히지 않는다).
 	 *
-	 * <p><b>캡션 원문을 싣지 않는 이유</b>(스테이징 실측 2026-08-27 perf119, marynmay 창 안
+	 * <p><b>캡션 원문을 기본으로 싣지 않는 이유</b>(스테이징 실측 2026-08-27 perf119, marynmay 창 안
 	 * 10,427행): 이 규모에선 DB 실행(EXPLAIN 21ms)이 아니라 <b>행×컬럼 값 전송·매핑</b>이 지배
 	 * 비용이고, 그 고정비의 본체가 캡션 7.7MB 전송이다. 그래서 마커 매치를 SQL로 내려
 	 * ({@code lower(caption) ~ :markerRegex}) boolean 1컬럼만 돌려받는다 — 캡션 자체는 페이지에 실릴
 	 * 코드만 {@link #findPostMeta}가 다시 읽는다. 판정 트리는 자바와 동일하고({@code
 	 * BrandSponsorshipClassifier.classify(Boolean, boolean)}), SQL↔Java 동치성은 골든 코퍼스 테스트가
 	 * 봉인한다.
+	 *
+	 * <p><b>{@code withCaptions}</b>(2026-08-31 캡션 해시태그 탑재 설계) — 해시태그 추출이 필요한
+	 * 브랜드 게시물 경로({@link BrandPostAssembler#indexForBrand})만 true로 호출해 캡션을 함께 실어
+	 * 오고({@code m.caption}), 그 비용은 {@link BrandIndexCache} 캐시 미스(버전키 변경) 시에만
+	 * 지불한다. 그 외 경로(성과 대시보드 {@code PerformanceContentAssembler.loadPoolIndex} — 캐시
+	 * 없이 매 요청 조회하고 hashtags를 쓰지 않는다)는 false로 호출해 perf119 고정비를 계속 면제받는다
+	 * — record 매핑은 컬럼명 기반이라 캡션 컬럼 자체는 항상 내려야 하므로 false일 땐 {@code NULL}을
+	 * 같은 이름(caption)으로 내린다.
 	 *
 	 * <p>작성자 컬럼을 조인으로 함께 주는 이유: 목록의 인플루언서 필터·패싯이 인덱스 단계에서
 	 * 결정돼야 페이지 슬라이스가 성립한다(하이드레이트는 이미 잘린 페이지만 본다). 조인 키가 null인
@@ -148,16 +156,22 @@ public class BrandReadRepository {
 	 *
 	 * @param markerRegex {@code BrandSponsorshipClassifier.postgresMarkerRegex()} 산출물 — 소문자
 	 *        캡션에 대한 ARE 정규식이다(호출부가 상수를 재작성하지 않게 그 메서드만 쓴다).
+	 * @param withCaptions true면 {@code m.caption}을 실어 온다(해시태그 추출용, perf119 고정비
+	 *        재지불), false면 같은 이름의 컬럼에 {@code NULL}을 내린다(record는 컬럼명 매핑이라 존재는
+	 *        해야 한다).
 	 */
 	public List<BrandPostIndexRow> findBrandPostIndex(long brandId, OffsetDateTime cutoff,
-			boolean enrichedOnly, String markerRegex) {
+			boolean enrichedOnly, String markerRegex, boolean withCaptions) {
 		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
+		String captionColumn = withCaptions ? "m.caption," : "NULL AS caption,";
 		return jdbc.sql("""
 				SELECT t.short_code, t.taken_at, t.tag_detected_at, t.direct_registered_at,
 				       t.hashtag_detected_at, t.unavailable_at, t.author_username AS raw_author_username,
 				       t.author_ig_user_id,
 				       m.is_paid_partnership,
 				       (m.caption IS NOT NULL AND lower(m.caption) ~ :markerRegex) AS caption_marker,
+				       """ + captionColumn + """
+
 				       m.content_type, m.ad_verdict,
 				       a.username AS author_username, a.full_name AS author_full_name,
 				       a.profile_pic_url AS author_profile_pic_url,
@@ -189,7 +203,8 @@ public class BrandReadRepository {
 						rs.getString("author_full_name"),
 						rs.getString("author_profile_pic_url"),
 						rs.getString("author_image_object_path"),
-						rs.getObject("author_followers", Long.class)))
+						rs.getObject("author_followers", Long.class),
+						rs.getString("caption")))
 				.list();
 	}
 
@@ -650,12 +665,17 @@ public class BrandReadRepository {
 	 *
 	 * <p>{@code unavailableAt}·{@code authorIgUserId}는 성과 대시보드 인덱스(2026-08-27 목록 최적화
 	 * 설계)의 상태(hidden)·작성자 판정 입력이다 — 브랜드 표면은 쓰지 않는다.
+	 *
+	 * <p>{@code caption}(2026-08-31 캡션 해시태그 탑재)은 {@code findBrandPostIndex}의
+	 * {@code withCaptions} 인자가 true일 때만 값이 있다 — false로 호출한 경로(성과 대시보드)는 항상
+	 * null이고, 이건 "메타 미보강"과 구분되지 않는 값이니 caption null을 "캡션이 원래 없다"는 판정에
+	 * 쓰면 안 된다(그 판정은 captionMarker가 이미 SQL에서 끝냈다).
 	 */
 	public record BrandPostIndexRow(String shortCode, OffsetDateTime takenAt, OffsetDateTime tagDetectedAt,
 			OffsetDateTime directRegisteredAt, OffsetDateTime hashtagDetectedAt, OffsetDateTime unavailableAt,
 			String rawAuthorUsername, String authorIgUserId, Boolean isPaidPartnership, boolean captionMarker,
 			String contentType, String adVerdict, String authorUsername, String authorFullName,
-			String authorProfilePicUrl, String authorImageObjectPath, Long authorFollowers) {
+			String authorProfilePicUrl, String authorImageObjectPath, Long authorFollowers, String caption) {
 	}
 
 	/**
