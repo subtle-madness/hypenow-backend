@@ -1,6 +1,7 @@
 package com.celfit.was.v1.perfdashboard;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.entry;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -30,6 +31,7 @@ import com.celfit.was.v1.monitoring.TrackingItemResponse.SnapshotResponse;
 import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler.DashboardRef;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -818,6 +820,47 @@ class PerformanceContentAssemblerTest {
 		assertThat(refs).extracting(DashboardRef::contentKey).containsExactlyInAnyOrder("bt_NEW", "bt_DIR");
 	}
 
+	/**
+	 * 합류자 공유 전제(2026-08-31) — 인덱스 인스턴스 하나를 {@code DashboardIndexCoalescer}가 여러
+	 * 요청 스레드에 그대로 나눠 주므로, 컬렉션 필드는 전부 생성 시점에 불변으로 굳어 있어야 한다.
+	 *
+	 * <p>스텁 세팅은 {@code index는_남이_등록한_direct_전용_게시물을_노출하지_않는다}의 준비 코드에
+	 * 커버리지 클램프 테스트의 <b>비어 있지 않은</b> 등록 원장 스텁을 얹은 것이다 — 브랜드 1개 +
+	 * 원장 1건이 실려야 {@code ownedShortCodes} 단정이 실제로 돈다(브랜드가 없거나 원장이 비면
+	 * 공회전한다). 캠페인도 한 건 실어 {@code campaignsById} 단정을 빈 맵 위에서 돌리지 않는다.
+	 * 원장 스텁은 운영 리포지토리({@code BrandDirectPostRepository.shortCodesByUser})와 같이
+	 * <b>가변</b> {@link LinkedHashSet}을 돌려준다 — 불변 스텁을 쓰면 방어 복사 없이도 통과하는
+	 * 가짜 테스트가 된다.
+	 */
+	@Test
+	void 인덱스의_컬렉션은_전부_불변이다_합류자_공유_전제() {
+		givenLegacy();
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(OWN_LINK));
+		given(campaignRepository.findByUser(USER_ID)).willReturn(
+				List.of(new CampaignRow(7L, USER_ID, "여름 캠페인", null, null, null, null, null, null, null)));
+		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(OWN_ACCOUNT));
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any())).willReturn(List.of(
+				taggedRow("NEW", "2026-08-06T09:00:00+09:00"),
+				directRow("DIR", "2026-08-01T09:00:00+09:00")));
+		given(brandPostAssembler.directRegisteredShortCodes(USER_ID))
+				.willReturn(new LinkedHashSet<>(List.of("DIR")));
+		given(brandReadRepository.findLatestSnapshotsForBrand(eq(BRAND_ID), any(), eq(false)))
+				.willReturn(List.of());
+
+		var index = assembler().index(USER_ID);
+
+		// 단정이 공회전하지 않는다는 전제 자체를 먼저 고정한다.
+		assertThat(index.campaignsById()).isNotEmpty();
+		assertThat(index.brandsById()).isNotEmpty();
+		assertThatThrownBy(() -> index.campaignsById().put(999L, null))
+				.isInstanceOf(UnsupportedOperationException.class);
+		index.brandsById().values().forEach(brand -> {
+			assertThat(brand.ownedShortCodes()).isNotEmpty();
+			assertThatThrownBy(() -> brand.ownedShortCodes().add("XXX"))
+					.isInstanceOf(UnsupportedOperationException.class);
+		});
+	}
+
 	/** 노출 필터(등록자 전용 노출, 08-19) — direct-only 행은 등록한 유저에게만 보인다. */
 	@Test
 	void index는_남이_등록한_direct_전용_게시물을_노출하지_않는다() {
@@ -1008,7 +1051,7 @@ class PerformanceContentAssemblerTest {
 	 */
 	private static BrandPostResponse hiddenSponsoredPoolPost() {
 		SnapshotResponse latest = snapshot("2026-08-04", 300L, 30L, 3L);
-		return new BrandPostResponse("POOL2", String.valueOf(BRAND_ID), "tagged",
+		return new BrandPostResponse("POOL2", String.valueOf(BRAND_ID), "tagged", null,
 				"https://www.instagram.com/reel/POOL2/", "POOL2", "reels",
 				"2026-08-04T09:00:00+09:00", "브랜드 태그 캡션", null, null, null,
 				"https://www.instagram.com/creator/", "creator", "크리에이터",
@@ -1168,7 +1211,7 @@ class PerformanceContentAssemblerTest {
 			String caption, boolean commentsHidden, long brandId, List<String> campaignIds, String trackingStatus,
 			String authorFullName, String authorProfilePicUrl) {
 		SnapshotResponse latest = snapshots.isEmpty() ? null : snapshots.get(snapshots.size() - 1);
-		return new BrandPostResponse(shortcode, String.valueOf(brandId), source,
+		return new BrandPostResponse(shortcode, String.valueOf(brandId), source, null,
 				"https://www.instagram.com/reel/" + shortcode + "/", shortcode, "reels",
 				"2026-08-06T09:00:00+09:00", caption, null, null, null,
 				"https://www.instagram.com/creator/", "creator", authorFullName, authorProfilePicUrl, false, 1000L,

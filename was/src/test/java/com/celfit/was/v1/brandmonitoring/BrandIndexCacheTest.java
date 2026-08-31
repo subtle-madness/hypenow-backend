@@ -38,7 +38,7 @@ class BrandIndexCacheTest {
 			12, null, false, null);
 
 	private static BrandPostAssembler.BrandPostIndex index(String code) {
-		return new BrandPostAssembler.BrandPostIndex(List.of(), Set.of(code), Map.of(), Set.of());
+		return new BrandPostAssembler.BrandPostIndex(List.of(), Set.of(code), Map.of(), Set.of(), Map.of());
 	}
 
 	@BeforeEach

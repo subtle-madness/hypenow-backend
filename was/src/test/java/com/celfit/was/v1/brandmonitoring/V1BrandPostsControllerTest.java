@@ -1,5 +1,6 @@
 package com.celfit.was.v1.brandmonitoring;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -40,6 +41,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.hamcrest.Matchers;
@@ -577,6 +579,30 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.meta.counts.hashtag").value(0));
 	}
 
+	/**
+	 * matchedTags 배지(2026-08-31, 해시태그 감지 태그 노출) — hashtag 게시물은 게시물이 여러 태그로
+	 * 매칭돼도 <b>조회자 본인 장부와 겹치는 태그만</b> 응답에 싣는다(남의 태그 이름 비노출). tagged
+	 * 게시물은 hashtag 성분이 없어 matchedTags가 항상 null이다(계약 무결성 규칙 #1 — 키는 생략하지
+	 * 않고 명시적 null로 내려간다).
+	 */
+	@Test
+	void 게시물_목록의_해시태그_게시물은_matchedTags를_장부_교집합으로_싣고_tagged는_null이다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"),
+				hashtagOnlyRow("HHH", "2026-08-05T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
+		given(hashtagTagRepository.findByUserAndBrand(7L, 100L)).willReturn(Set.of("cclime"));
+		given(brandReadRepository.findMatchedTags(eq(100L), any())).willReturn(List.of(
+				new BrandReadRepository.MatchedTagRow("HHH", "끌리메"),
+				new BrandReadRepository.MatchedTagRow("HHH", "cclime")));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[?(@.shortcode=='HHH')].matchedTags")
+						.value(Matchers.contains(Matchers.contains("cclime"))))
+				.andExpect(jsonPath("$.data[?(@.shortcode=='AAA')].matchedTags")
+						.value(Matchers.contains(Matchers.nullValue())));
+	}
+
 	@Test
 	void 업로드_기간_필터는_KST_날짜로_자른다() throws Exception {
 		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-01T01:00:00Z"));
@@ -734,6 +760,51 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.meta.facets.source.tagged").value(2))
 				.andExpect(jsonPath("$.meta.facets.source.direct").value(0))
 				.andExpect(jsonPath("$.meta.facets.adRisk").value(0));
+	}
+
+	/**
+	 * FE 리포트(2026-08-31) — {@code facets.source}가 {@code hashtag} 버킷을 몰라(axisMap이 값
+	 * 목록에 SOURCE_HASHTAG를 안 받음) hashtag 게시물이 {@code all}엔 잡히는데 {@code tagged}·
+	 * {@code direct} 어느 버킷에도 안 실렸다 — {@code computeIfPresent}가 미리 등록 안 된 키를 조용히
+	 * 떨구는 관용구라 컴파일 에러 없이 숫자만 샜다({@code {"all":1611,"tagged":1516,"direct":1}},
+	 * 94건 실종). 버킷 3종 합이 항상 {@code all}과 같아야 한다는 게 FE 가드가 실제로 검사하는
+	 * 불변식이라 개별 값 확인에 더해 그 합계 자체를 단언한다.
+	 */
+	@Test
+	void facets_source는_hashtag_버킷을_포함하고_버킷_합계가_all과_같다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"),
+				directRow("BBB", "2026-08-05T01:00:00Z"),
+				hashtagOnlyRow("HHH", "2026-08-04T01:00:00Z"));
+		givenOwnedByPrincipal("BBB");
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				meta("AAA", "REELS", null), meta("BBB", "REELS", null)));
+		givenMyTagMatch("HHH");
+
+		var result = mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.meta.facets.source.all").value(3))
+				.andExpect(jsonPath("$.meta.facets.source.tagged").value(1))
+				.andExpect(jsonPath("$.meta.facets.source.direct").value(1))
+				.andExpect(jsonPath("$.meta.facets.source.hashtag").value(1))
+				.andReturn();
+
+		@SuppressWarnings("unchecked")
+		Map<String, Number> source = com.jayway.jsonpath.JsonPath.read(
+				result.getResponse().getContentAsString(), "$.meta.facets.source");
+		long bucketSum = source.get("tagged").longValue() + source.get("direct").longValue()
+				+ source.get("hashtag").longValue();
+		assertThat(bucketSum).isEqualTo(source.get("all").longValue());
+	}
+
+	/** hashtag 게시물이 하나도 없어도 FE 키 부재 방어 관용구대로 hashtag 버킷은 0으로 존재해야 한다. */
+	@Test
+	void facets_source는_해시태그_게시물이_없어도_hashtag_키를_0으로_싣는다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(meta("AAA", "REELS", null)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.meta.facets.source.hashtag").value(0));
 	}
 
 	@Test
