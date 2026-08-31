@@ -14,7 +14,7 @@ class SelfErrorClassifierTest {
 		assertThat(SelfErrorClassifier.ofStatus(429, "")).isEqualTo(SelfErrorClass.RATE_LIMIT_429);
 		assertThat(SelfErrorClassifier.ofStatus(400, "")).isEqualTo(SelfErrorClass.STRUCTURAL_400);
 		assertThat(SelfErrorClassifier.ofStatus(404, "")).isEqualTo(SelfErrorClass.NOT_FOUND);
-		assertThat(SelfErrorClassifier.ofStatus(403, "")).isEqualTo(SelfErrorClass.OTHER);
+		assertThat(SelfErrorClassifier.ofStatus(403, "")).isEqualTo(SelfErrorClass.FORBIDDEN_403);
 	}
 
 	@Test

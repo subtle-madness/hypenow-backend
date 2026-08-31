@@ -10,6 +10,8 @@ public enum SelfErrorClass {
 	RECOVERABLE_401,
 	/** 429 봇판정/과열 — 재시도(새 터널). */
 	RATE_LIMIT_429,
+	/** 403 하드블록(doc_id 만료·IP 차단) — 재시도 무의미, 서킷 계상 후 Hiker 폴백. */
+	FORBIDDEN_403,
 	/** 전송 실패(TLS/Connect/Proxy/Protocol/Timeout) — geo:kr + 새 터널 1회 재시도. */
 	TRANSPORT,
 	/** 200인데 로그인 벽 HTML — 이 표면 소진, 다음 표면/Hiker. */
@@ -18,6 +20,6 @@ public enum SelfErrorClass {
 	STRUCTURAL_400,
 	/** 404 — 계정/게시물 부재. 종료(스킵), 폴백 안 함. */
 	NOT_FOUND,
-	/** 403·기타 — Hiker 폴백. */
+	/** 기타 — Hiker 폴백. */
 	OTHER
 }

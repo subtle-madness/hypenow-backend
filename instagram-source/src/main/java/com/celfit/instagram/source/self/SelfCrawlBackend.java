@@ -110,7 +110,8 @@ public class SelfCrawlBackend implements InstagramSource {
 
 	private void recordIfBlock(String surface, SelfCrawlException e) {
 		switch (e.errorClass()) {
-			case RECOVERABLE_401, RATE_LIMIT_429, TRANSPORT, LOGIN_WALL -> circuit.recordBlock(surface);
+			case RECOVERABLE_401, RATE_LIMIT_429, TRANSPORT, LOGIN_WALL, FORBIDDEN_403 ->
+					circuit.recordBlock(surface);
 			default -> {
 				// NOT_FOUND·STRUCTURAL_400·OTHER은 서킷 카운트 안 함
 			}

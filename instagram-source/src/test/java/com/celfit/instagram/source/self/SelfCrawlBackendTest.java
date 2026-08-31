@@ -183,6 +183,30 @@ class SelfCrawlBackendTest {
 	}
 
 	@Test
+	void FORBIDDEN_403은_재시도_없이_전파되고_서킷에_계상돼_트립시킨다() {
+		// 항상 403 — 재시도 무의미(하드블록)라 fetchPost 1회 = fetcher 1콜 + 블록 1회 기록.
+		ScriptedFetch embedFetch =
+				new ScriptedFetch(List.of(throwing(SelfErrorClass.FORBIDDEN_403)));
+		SelfCrawlBackend backend = backend(embedFetch);
+
+		for (int i = 0; i < 5; i++) {
+			assertThatThrownBy(() -> backend.fetchPost("SHORT"))
+					.isInstanceOf(SelfCrawlException.class)
+					.extracting(e -> ((SelfCrawlException) e).errorClass())
+					.isEqualTo(SelfErrorClass.FORBIDDEN_403);
+		}
+		// 재시도 없음: 5회 호출 = fetcher 5콜(15가 아님).
+		assertThat(embedFetch.calls).isEqualTo(5);
+
+		// 블록 5회 = 임계값 도달 — 6번째는 fetcher를 건드리지 않고 가드에서 OTHER.
+		assertThatThrownBy(() -> backend.fetchPost("SHORT"))
+				.isInstanceOf(SelfCrawlException.class)
+				.extracting(e -> ((SelfCrawlException) e).errorClass())
+				.isEqualTo(SelfErrorClass.OTHER);
+		assertThat(embedFetch.calls).isEqualTo(5);
+	}
+
+	@Test
 	void NOT_FOUND는_재시도_없이_전파되고_서킷을_트립시키지_않는다() {
 		ScriptedFetch embedFetch = new ScriptedFetch(List.of(
 				throwing(SelfErrorClass.NOT_FOUND),

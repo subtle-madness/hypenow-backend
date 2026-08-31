@@ -22,6 +22,7 @@ public final class SelfErrorClassifier {
 		return switch (status) {
 			case 401 -> SelfErrorClass.RECOVERABLE_401;
 			case 429 -> SelfErrorClass.RATE_LIMIT_429;
+			case 403 -> SelfErrorClass.FORBIDDEN_403;
 			case 400 -> SelfErrorClass.STRUCTURAL_400;
 			case 404 -> SelfErrorClass.NOT_FOUND;
 			default -> SelfErrorClass.OTHER;
