@@ -65,13 +65,15 @@ import tools.jackson.databind.node.ObjectNode;
 @ConditionalOnProperty(name = {"monitoring.enabled", "monitoring.brand.ai.enabled"}, havingValue = "true")
 public class V1BrandAiMessagesController {
 
-	/** 동기 응답 상한(설계 §5). */
-	private static final int RESPONSE_TIMEOUT_SECONDS = 60;
+	/** 응답 상한(스펙 §4, 2026-08-31 재도출) - 시간 뿌리 90초. SSE emitter 타임아웃·완결 경로
+	 * future.get·followUps 잔여 예산이 전부 이 값에서 파생된다. */
+	private static final int RESPONSE_TIMEOUT_SECONDS = 90;
 	/** 분당 질문 수 기준값 - 마이그레이션이 시드한 app_setting {@value #PER_MINUTE_LIMIT_KEY}(기본값
 	 * {@value #DEFAULT_PER_MINUTE_LIMIT}), 런타임 조정은 그 행 UPDATE로(AiChatQuota.DAILY_LIMIT_KEY와
-	 * 동일 관용구, FE 변경요청서 2026-08-28 §9.1). */
+	 * 동일 관용구, FE 변경요청서 2026-08-28 §9.1). 기준값 5→10 상향은 2026-08-31 한계 재도출(스펙 §4) -
+	 * 운영자가 손댄 값은 마이그레이션이 존중하고 시드 기본값 그대로인 행만 올린다. */
 	static final String PER_MINUTE_LIMIT_KEY = "ai.chat.per-minute-limit";
-	static final int DEFAULT_PER_MINUTE_LIMIT = 5;
+	static final int DEFAULT_PER_MINUTE_LIMIT = 10;
 	private static final int MAX_TEXT_LENGTH = 2_000;
 	private static final int BUSY_RETRY_AFTER_SECONDS = 10;
 	/** 이력 복원 상한(FE §8) - 질문+답변 1행이 한 턴이라 6행 = 최근 6턴. 토큰 예산 보호(설계 §요구). */
@@ -160,7 +162,7 @@ public class V1BrandAiMessagesController {
 			throw failure.apiException();
 		}
 
-		// F3 - followUps는 60초 응답 예산 안에서만 만든다(공통 로직은 followUpsFor로 추출 - SSE 경로도
+		// F3 - followUps는 90초 응답 예산 안에서만 만든다(공통 로직은 followUpsFor로 추출 - SSE 경로도
 		// 그대로 재사용한다, T4).
 		List<AiMessagesResponse.FollowUp> followUps = followUpsFor(outcome, validated.text(), startedAt);
 		List<AiMessagesResponse.Reference> references = toReferences(outcome);
@@ -183,10 +185,10 @@ public class V1BrandAiMessagesController {
 	 * 예외를 전역 {@code V1ExceptionAdvice}에 맡기지 않고 직접 JSON으로 써서 응답한다 -
 	 * {@link #writeJsonError} 참조.
 	 *
-	 * <p>실행 풀 제출·F2 대화 생성 시점(풀 수용 확정 후에만 INSERT)·60초 데드라인·followUps 잔여 예산·
+	 * <p>실행 풀 제출·F2 대화 생성 시점(풀 수용 확정 후에만 INSERT)·90초 데드라인·followUps 잔여 예산·
 	 * 로그 적재·touch는 전부 완결 경로와 같은 원칙을 공유한다({@link #followUpsFor}·{@link #toReferences}
 	 * 공통 메서드, 그리고 {@link SseEmitter}의 타임아웃을 {@value #RESPONSE_TIMEOUT_SECONDS}초로 맞춘
-	 * 것) - 다만 완결 경로가 {@code future.get(60, SECONDS)}로 요청 스레드에서 동기 대기하는 것과 달리,
+	 * 것) - 다만 완결 경로가 {@code future.get(90, SECONDS)}로 요청 스레드에서 동기 대기하는 것과 달리,
 	 * 이 경로는 이미 전용 실행기 스레드 안에서 실행되므로 그 데드라인 역할을 {@link SseEmitter}의 자체
 	 * 타임아웃(만료 시 onTimeout → abort 플래그)이 대신한다.
 	 *
@@ -358,7 +360,7 @@ public class V1BrandAiMessagesController {
 		}
 	}
 
-	/** followUps 생성 공통 로직(F3, T4 리팩터) - 완결 JSON·SSE 두 경로가 그대로 공유한다. 60초 응답
+	/** followUps 생성 공통 로직(F3, T4 리팩터) - 완결 JSON·SSE 두 경로가 그대로 공유한다. 90초 응답
 	 * 예산 중 남은 시간을 계산해 min(5초, 남은 예산)만 주고, 1초 미만 남았으면 생성 자체를 생략한다
 	 * (빈 배열) - 완성된 답변을 followUps 때문에 더 늦게 돌려줄 이유가 없다. */
 	private List<AiMessagesResponse.FollowUp> followUpsFor(BrandAiAgent.AgentOutcome outcome, String question,
@@ -378,13 +380,14 @@ public class V1BrandAiMessagesController {
 	}
 
 	/**
-	 * 전용 풀에서 이미 돌고 있는 작업을 60초에 끊는다(C2). {@code future.cancel(true)}는 실행 중인 작업을
+	 * 전용 풀에서 이미 돌고 있는 작업을 90초에 끊는다(C2). {@code future.cancel(true)}는 실행 중인 작업을
 	 * 인터럽트하지 <b>않는다</b> - {@link CompletableFuture}의 {@code cancel}은 명세상
 	 * {@code mayInterruptIfRunning}을 무시하고 항상 미래(future)만 예외적으로 완료시키므로, 이 호출
 	 * 뒤에도 작업 스레드는 계속 돈다(2 스레드 풀이라 반복되면 여전히 429 위험이 남는다는 한계가
-	 * 있다). 실질적인 방어는 여기가 아니라 에이전트 내부 벽시계 예산(BrandAiAgent, 55초)과 Vertex
-	 * 요청 타임아웃 단축(BrandAiConfig, 45초)이고, 이 60초 get()은 그 두 안전장치가 실패했을 때
-	 * 최소한 HTTP 응답만이라도 제때 끊어 사용자를 기다리게 하지 않는 최후 방어선이다.
+	 * 있다). 실질적인 방어는 여기가 아니라 에이전트 내부 벽시계 예산(BrandAiAgent, 85초, 2026-08-31
+	 * 한계 재도출)과 Vertex 요청 타임아웃 단축(BrandAiConfig, 45초)이고, 이 90초 get()은 그 두
+	 * 안전장치가 실패했을 때 최소한 HTTP 응답만이라도 제때 끊어 사용자를 기다리게 하지 않는 최후
+	 * 방어선이다.
 	 *
 	 * <p><b>F2(2026-08-30 리뷰) outcome 세분화</b> - 실패 원인별로 {@link ChatFailure}에 실린 outcome이
 	 * 갈린다: 타임아웃은 {@link AiChatLogEntry#OUTCOME_TIMEOUT}(토큰이 실제 소모됐으므로 일일 상한
