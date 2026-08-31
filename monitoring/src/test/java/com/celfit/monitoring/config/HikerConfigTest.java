@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.instagram.source.InstagramSource;
 import com.celfit.monitoring.hiker.BrandCallContext;
+import com.celfit.monitoring.hiker.InstagramProxyProperties;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.RawPayloadRepository;
@@ -33,9 +34,12 @@ class HikerConfigTest {
 	@Test
 	void 조립된_InstagramSource_콜은_external_call_타이머에_기록된다() {
 		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		// selfEnabled=false — 자체 백엔드는 조립만 되고 콜은 전량 Hiker 경로(운영 기본과 동일)
+		InstagramProxyProperties proxyProps =
+				new InstagramProxyProperties("", "", null, false, false, "", "");
 		InstagramSource client = new HikerConfig().instagramSource(path -> "{\"user\":{\"pk\":1}}",
 				new NoopPayloadRepo(), new BrandCallContext(), new BrandCallCountRepository(null),
-				new TargetCallContext(), new TargetCallCountRepository(null), registry);
+				new TargetCallContext(), new TargetCallCountRepository(null), registry, proxyProps);
 
 		client.fetchProfile("hypenow");
 

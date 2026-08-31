@@ -49,6 +49,14 @@ monitoring:
     request-timeout: 15s
     max-retries: 2       # 일시 오류(5xx·IO) 전용. 404는 재시도하지 않는다
     retry-backoff: 2s    # 회차마다 × n (2s → 4s)
+  proxy:
+    residential-url: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:}
+    mobile-url: ${DATAIMPULSE_MOBILE_PROXY_URL:}
+    request-timeout: 15s
+    geo-kr: false          # C 실측 전 기본 off(스펙 §10-1)
+    self-enabled: false    # 마일스톤 B: 자체 경로 미개통(=Hiker). C에서 점진 on
+    comment-doc-id: ${IG_COMMENT_DOC_ID:}
+    comment-friendly-name: ${IG_COMMENT_FRIENDLY_NAME:}
   sweep:
     retry-rounds: 3      # 스윕 말미 일시 실패 계정 재시도 라운드 수
     retry-interval: 10m  # 라운드 간격 × 라운드 번호 (10m → 20m → 30m)

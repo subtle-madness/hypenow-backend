@@ -304,6 +304,12 @@ services:
       SPRING_DATASOURCE_USERNAME: ${MONITORING_DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${MONITORING_DB_PASSWORD}
       HIKER_API_KEY: ${HIKER_API_KEY}
+      # 자체크롤 프록시·댓글 graphql 파라미터(마일스톤 B 배선 — self-enabled 기본 false라 미개통,
+      # 개통은 마일스톤 C). DATAIMPULSE_*는 crawler와 같은 .env 키를 공유한다.
+      DATAIMPULSE_RESIDENTIAL_PROXY_URL: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:-}
+      DATAIMPULSE_MOBILE_PROXY_URL: ${DATAIMPULSE_MOBILE_PROXY_URL:-}
+      IG_COMMENT_DOC_ID: ${IG_COMMENT_DOC_ID:-}
+      IG_COMMENT_FRIENDLY_NAME: ${IG_COMMENT_FRIENDLY_NAME:-}
       # 브랜드 해시태그 감지·광고 표기 LLM 판정(BrandMentionJudge·AdDisclosureExtractorGemini) —
       # 2026-08-18 Vertex 전환: SA 키(GOOGLE_APPLICATION_CREDENTIALS)가 있으면 Vertex, 없으면
       # 이 GEMINI_API_KEY로 AI Studio 폴백(fail-closed 전 판정 UNCERTAIN=비노출, 최초 1회 warn).
