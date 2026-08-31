@@ -1,0 +1,101 @@
+package com.celfit.instagram.source.self;
+
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.PrivateAccountException;
+import com.celfit.instagram.source.ProfileInfo;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * web_profile_info 프로필 fetcher — 프로필 스냅샷 + 최근 12건을 JSON 한 방으로 뽑는다(로그인 불필요).
+ *
+ * <p>이 표면은 401-민감이라 MOBILE 티어로 나간다(모바일 IP 예산 — ProxyTier 주석). 비공개 계정은
+ * HikerBackend 프로필 계약과 동일하게 PrivateAccountException으로 승격한다 — 비공개는 관측값이지
+ * 자체크롤 실패가 아니므로 폴백 라우팅에 태우지 않는다.
+ */
+public class WpiProfileFetcher {
+
+	private static final JsonMapper MAPPER = JsonMapper.builder().build();
+	// x-ig-app-id 없이는 web_profile_info가 로그인 벽 HTML로 응답한다(웹앱 공개 식별자).
+	private static final Map<String, String> HEADERS = Map.of(
+			"x-ig-app-id", "936619743392459",
+			"Accept", "*/*",
+			"Accept-Language", "en-US,en;q=0.9");
+
+	private final EmbedPostFetcher.SelfFetch http;
+
+	public WpiProfileFetcher(EmbedPostFetcher.SelfFetch http) {
+		this.http = http;
+	}
+
+	public ProfileInfo fetchProfile(String username) {
+		JsonNode user = fetchUser(username);
+		return new ProfileInfo(user.path("username").asString(null), user.path("id").asString(null),
+				count(user, "edge_followed_by"), count(user, "edge_follow"),
+				count(user, "edge_owner_to_timeline_media"),
+				user.path("full_name").asString(null), user.path("profile_pic_url").asString(null),
+				user.path("biography").asString(null),
+				nullableBoolean(user, "is_verified"), user.path("external_url").asString(null));
+	}
+
+	public List<PostInfo> fetchRecentPosts(String username) {
+		JsonNode user = fetchUser(username);
+		String profileUsername = user.path("username").asString(username);
+		List<PostInfo> posts = new ArrayList<>();
+		for (JsonNode edge : user.path("edge_owner_to_timeline_media").path("edges")) {
+			posts.add(toPost(edge.path("node"), profileUsername));
+		}
+		return posts;
+	}
+
+	private JsonNode fetchUser(String username) {
+		String url = "https://www.instagram.com/api/v1/users/web_profile_info/?username="
+				+ URLEncoder.encode(username, StandardCharsets.UTF_8);
+		SelfResponse res = http.fetch(url, ProxyTier.MOBILE, HEADERS);
+		String body = res.body() == null ? "" : res.body();
+		if (res.status() != 200) {
+			throw new SelfCrawlException(SelfErrorClassifier.ofStatus(res.status(), body),
+					"web_profile_info 실패 status=" + res.status() + " username=" + username);
+		}
+		JsonNode user = MAPPER.readTree(body).path("data").path("user");
+		if (user.isMissingNode() || user.isNull() || user.isEmpty()) {
+			// 존재하지 않는 계정도 200 + user:null로 온다 — 폴백 없이 NOT_FOUND.
+			throw new SelfCrawlException(SelfErrorClass.NOT_FOUND,
+					"web_profile_info user 부재: " + username);
+		}
+		if (user.path("is_private").asBoolean(false)) {
+			throw new PrivateAccountException("비공개 계정: " + username);
+		}
+		return user;
+	}
+
+	private static PostInfo toPost(JsonNode node, String username) {
+		boolean video = node.path("is_video").asBoolean(false);
+		Long likes = count(node, "edge_media_preview_like");
+		Long views = node.path("video_view_count").isNumber()
+				? node.path("video_view_count").asLong() : null;
+		return new PostInfo(node.path("shortcode").asString(null), username, null, null, null,
+				video ? "REELS" : "FEED", null, null,
+				node.path("taken_at_timestamp").isNumber()
+						? node.path("taken_at_timestamp").asLong() : null,
+				likes, count(node, "edge_media_to_comment"), views,
+				null, null, null, null, null, null, null,
+				views != null, likes == null, false);
+	}
+
+	/** edge_* 래퍼의 count — 부재·비숫자는 null(HikerBackend firstLong과 같은 규칙). */
+	private static Long count(JsonNode node, String edge) {
+		JsonNode v = node.path(edge).path("count");
+		return v.isNumber() ? v.asLong() : null;
+	}
+
+	private static Boolean nullableBoolean(JsonNode node, String field) {
+		JsonNode v = node.path(field);
+		return v.isMissingNode() || v.isNull() ? null : v.asBoolean();
+	}
+}
