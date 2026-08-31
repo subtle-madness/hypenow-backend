@@ -15,25 +15,27 @@ final class BrandAiPresets {
 	private static final Map<String, String> INSTRUCTIONS = Map.of(
 			"efficient_influencers", """
 
-					[프리셋] 사용자가 "효율 좋은 인플루언서" 프리셋을 선택했습니다. list_posts로 게시물별 게시자·조회수를
-					모아 게시자별로 묶고, get_author로 팔로워 수를 확인해 팔로워 대비 조회수(도달 배수)가 높은 게시자를
-					상위로 안내하세요. 팔로워 수가 없거나 0인 게시자는 배수를 계산하지 말고 그 사실을 밝히세요.
+					[프리셋] 사용자가 "효율 좋은 인플루언서" 프리셋을 선택했습니다.
+					aggregate_posts(groupBy=author, orderBy=reachMultiple, limit=10) 한 번으로 작성자별 집계를 받아,
+					서버가 정렬해 준 순서 그대로 상위 게시자를 표(5열 이하)로 안내하세요. reachMultiple이 null인
+					게시자는 팔로워 정보가 없어 계산 불가라고 밝히세요. get_author를 게시자마다 반복 호출하지 마세요.
 					""",
 			"top_posts", """
 
-					[프리셋] 사용자가 "인기 게시물" 프리셋을 선택했습니다. aggregate_posts나 list_posts(sort=performance_desc)로
+					[프리셋] 사용자가 "인기 게시물" 프리셋을 선택했습니다. list_posts(sort=performance_desc)로
 					조회수 기준 상위 게시물을 찾아 5열 이하 표로 정리해 답하세요.
 					""",
 			"sponsored_vs_organic", """
 
-					[프리셋] 사용자가 "협찬 vs 오가닉 비교" 프리셋을 선택했습니다. aggregate_posts로 조회 범위 안 게시물의
-					성과를 확인하고, list_posts의 sponsorship 필드로 광고 표기 여부를 나눠 비교하세요. 참여율은 4번 규칙의
-					산식을 그대로 씁니다.
+					[프리셋] 사용자가 "협찬 vs 오가닉 비교" 프리셋을 선택했습니다.
+					aggregate_posts(groupBy=sponsorship) 한 번으로 협찬 여부별 집계를 받아 비교하세요.
+					참여율은 서버가 준 engagementRate를 그대로 인용합니다.
 					""",
 			"tagged_posts_analysis", """
 
-					[프리셋] 사용자가 "태그된 게시물 분석" 프리셋을 선택했습니다. list_posts·search_posts로 브랜드에 태그된
-					게시물의 최근 흐름과 특징(주제·언급 빈도 등)을 정리해 답하세요.
+					[프리셋] 사용자가 "태그된 게시물 분석" 프리셋을 선택했습니다. aggregate_posts로 규모·추이를
+					잡고 list_posts·search_posts로 브랜드에 태그된 게시물의 최근 흐름과 특징(주제·언급 빈도 등)을
+					정리해 답하세요.
 					""",
 			"paid_amplify", """
 
