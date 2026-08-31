@@ -2,6 +2,7 @@ package com.celfit.was.v1.admin;
 
 import com.celfit.was.monitoring.CampaignRepository;
 import com.celfit.was.monitoring.MonitoringItemRepository;
+import com.celfit.was.v1.common.FeatureOverridesCodec;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.saved.V1SavedRepository;
 import java.util.List;
@@ -20,13 +21,16 @@ public class AdminUserAssembler {
 	private final MonitoringItemRepository itemRepository;
 	private final V1SavedRepository savedRepository;
 	private final AdminMonitoringHealthService healthService;
+	private final FeatureOverridesCodec featureOverridesCodec;
 
 	public AdminUserAssembler(CampaignRepository campaignRepository, MonitoringItemRepository itemRepository,
-			V1SavedRepository savedRepository, AdminMonitoringHealthService healthService) {
+			V1SavedRepository savedRepository, AdminMonitoringHealthService healthService,
+			FeatureOverridesCodec featureOverridesCodec) {
 		this.campaignRepository = campaignRepository;
 		this.itemRepository = itemRepository;
 		this.savedRepository = savedRepository;
 		this.healthService = healthService;
+		this.featureOverridesCodec = featureOverridesCodec;
 	}
 
 	public List<AdminUserSummary> assemble(List<AdminUserRow> rows) {
@@ -47,7 +51,8 @@ public class AdminUserAssembler {
 						row.signupRoute(), KstTimestamps.toKstIso(row.createdAt()),
 						KstTimestamps.toKstIso(row.lastActiveAt()), campaignCounts.getOrDefault(row.id(), 0L),
 						monitoringCounts.getOrDefault(row.id(), 0L), savedCounts.getOrDefault(row.id(), 0L),
-						health.getOrDefault(row.id(), "ok")))
+						health.getOrDefault(row.id(), "ok"),
+						featureOverridesCodec.read(row.featureOverrides())))
 				.toList();
 	}
 
