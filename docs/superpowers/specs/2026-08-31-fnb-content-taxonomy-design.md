@@ -50,6 +50,21 @@ if (!Boolean.TRUE.equals(raw.isBeauty())) {
 F&B 콘텐츠는 LLM이 `isBeauty=false`로 답하므로 어휘를 넣어도 `main_category`가 전부 null이 된다.
 **어휘 추가만으로는 아무 일도 일어나지 않는다.**
 
+**문 3. 미러에 없는 후보는 조용히 스킵된다.**
+`ContentAnalysisJob.resolveTargets()`에 세 번째 게이트가 있다:
+
+```java
+Set<String> mirrored = new HashSet<>(analysis.queryForList("SELECT short_code FROM contents", String.class));
+...
+if (!mirrored.contains(shortCode)) { mirrorMissing++; continue; }
+```
+
+`contents`는 뷰티 게이트를 통과한 **미러 테이블**이라 F&B 후보는 100% 여기서 걸러진다.
+문 1·2를 열어도 로그 한 줄("미러 부재 후보 N건 스킵") 남기고 전부 사라진다.
+분석 재료(캡션·지표·핸들)를 미러에서 읽는 구조 자체가 원인이며 — `analyzeOne`·`submitBatch`
+둘 다 `SELECT … FROM contents WHERE short_code = ?`로 재료를 가져온다 — **재료를 후보 뷰에서
+직접 읽으면 게이트가 불필요해진다**(§6-1). 미러 지연 스킵도 함께 사라져 뷰티 경로도 개선된다.
+
 ## 2. 설계 원칙 — 축은 어휘가 안다
 
 카테고리는 앞으로 계속 는다(다음은 홈/리빙, 계정 판정 축은 08-27에 이미 3축이다).
@@ -206,6 +221,22 @@ F&B가 랭킹 API에 뜬다.** 그래서 02는 손대지 않고 04에 자체 소
 
 `v_analysis_candidates`는 `v_contents` 대신 이 뷰를 읽고, 나머지 자격 로직(캡션·성숙·timely·
 최적화 배리어 `OFFSET 0`)은 **그대로 승계**한다.
+
+### 6-1. 분석 재료도 미러에서 뗀다
+
+§1-1의 문 3을 여기서 닫는다. `resolveTargets()`가 short_code만 뽑고 `analyzeOne`·`submitBatch`가
+미러에서 재료를 다시 읽는 대신, **후보 뷰가 재료까지 함께 돌려주게** 한다.
+
+`v_analysis_candidates`는 이미 구 `contents` 조회가 쓰던 컬럼을 전부 갖고 있다 —
+`account_handle`·`caption`·`content_type`·`thumbnail_url`·`views`·`likes`·`comments`·`ad_marked`.
+키 이름을 그대로 유지하면 하위 조립(`GeminiBatchLines`)은 무접촉이다.
+
+부수 효과 둘 다 이득이다: 콘텐츠당 조회 1회가 사라지고(배치 제출 시 N회 왕복 제거),
+미러 지연으로 뷰티 후보가 하루 밀리던 스킵도 없어진다. 미러 미도달 게이트는 제거한다 —
+그 게이트의 목적이 "미러에 없는 후보를 조회 실패로 만들지 않기"였는데, 재료를 미러에서
+안 읽으면 그 실패가 구조적으로 발생하지 않는다.
+
+기준선(`Baselines`)·댓글 분류 분포는 각각 raw·analysis DB의 다른 경로라 무변경이다.
 
 홈/리빙 추가 시 이 뷰의 모수에 OR 한 항이 는다. 계정 축은 crawler 컬럼이라 어휘에서 유도할 수
 없어 여기만 명시적 열거로 남는다 — `v_base_influencer`가 이미 3축을 노출하고 있어 한 줄이다.
