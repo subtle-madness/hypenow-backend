@@ -40,6 +40,8 @@ public final class BeautyTaxonomy {
 	private final Set<String> midAndSubLabels;
 	private final Set<String> subLabels;
 	private final Map<String, String> labelToMain; // mid·sub 라벨 → 단일 대분류(애매하면 제외)
+	private final Map<String, Set<String>> midAndSubLabelsByMain; // 대분류 → 그 소속 mid·sub 라벨
+	private final Map<String, Set<String>> subLabelsByMain;       // 대분류 → 그 소속 sub 라벨
 	private final List<String> mainOrder;          // 대분류 최초 등장 순서(분류표 순 tie-break)
 	private final Map<String, String> mainAxis;    // 대분류 slug → 축 (is_beauty 파생 근거)
 	private final Map<String, String> distributorAxis; // 유통사 이름 → 축 (삽입 순서 = 프롬프트 순서)
@@ -73,6 +75,18 @@ public final class BeautyTaxonomy {
 		});
 		this.labelToMain = Map.copyOf(single);
 		this.mainOrder = List.copyOf(order);
+
+		Map<String, Set<String>> midSubByMain = new HashMap<>();
+		Map<String, Set<String>> subByMain = new HashMap<>();
+		for (Entry e : entries) {
+			midSubByMain.computeIfAbsent(e.mainValue(), k -> new HashSet<>()).add(e.midLabel());
+			midSubByMain.get(e.mainValue()).add(e.subLabel());
+			subByMain.computeIfAbsent(e.mainValue(), k -> new HashSet<>()).add(e.subLabel());
+		}
+		midSubByMain.replaceAll((k, v) -> Set.copyOf(v));
+		subByMain.replaceAll((k, v) -> Set.copyOf(v));
+		this.midAndSubLabelsByMain = Map.copyOf(midSubByMain);
+		this.subLabelsByMain = Map.copyOf(subByMain);
 
 		Map<String, String> axes = new LinkedHashMap<>();
 		for (Entry e : entries) {
@@ -118,6 +132,19 @@ public final class BeautyTaxonomy {
 	/** detected_product_categories 어휘 — 소분류 라벨만 (카드 칩). */
 	public Set<String> allSubLabels() {
 		return subLabels;
+	}
+
+	/**
+	 * 확정 대분류에 소속된 mid·sub 라벨 — sanitize의 대분류 정합 필터 재료(2026-09-01 FE #6).
+	 * 어휘 밖 대분류면 빈 집합(전부 드랍이 안전한 쪽 — main 검증은 호출 전에 끝나 있다).
+	 */
+	public Set<String> midAndSubLabelsOf(String mainValue) {
+		return midAndSubLabelsByMain.getOrDefault(mainValue, Set.of());
+	}
+
+	/** 확정 대분류에 소속된 sub 라벨 — detected_product_categories 정합 필터 재료. */
+	public Set<String> subLabelsOf(String mainValue) {
+		return subLabelsByMain.getOrDefault(mainValue, Set.of());
 	}
 
 	/**

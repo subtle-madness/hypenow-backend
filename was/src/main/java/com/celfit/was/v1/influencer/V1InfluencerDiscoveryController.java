@@ -58,14 +58,15 @@ public class V1InfluencerDiscoveryController {
 			@RequestParam(required = false) String contact,
 			@RequestParam(required = false) String sort,
 			@RequestParam(required = false) Integer limit,
-			@RequestParam(required = false) Integer offset) {
+			@RequestParam(required = false) Integer offset,
+			@RequestParam(required = false) String vertical) {
 		if (!rateLimiter.tryAcquire(rateLimitKey("influencers-list", principal, httpRequest),
 				principal == null ? ANON_PER_MINUTE : AUTH_PER_MINUTE)) {
 			throw V1ApiException.rateLimited();
 		}
 		V1InfluencerDiscoveryQuery query = V1InfluencerDiscoveryQuery.of(q, mainCategory,
 				midCategory, subCategory, follower, activity, sponsored, contact, sort, limit,
-				offset);
+				offset, vertical);
 		DiscoveryPage page = pageService.page(query);
 		if (PagePrefetcher.hasNextPage(page.cards().size(), query.limit(), query.offset(), page.total())) {
 			prefetcher.prefetch(() -> pageService.page(query.next()));

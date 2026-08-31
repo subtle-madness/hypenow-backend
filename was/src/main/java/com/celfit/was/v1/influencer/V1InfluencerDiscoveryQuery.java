@@ -13,7 +13,8 @@ import java.util.Set;
  */
 public record V1InfluencerDiscoveryQuery(List<String> keywords, String mainCategory,
 		String midCategory, String subCategory, String follower, Integer activityDays,
-		String sponsored, boolean contactOpen, String sort, int limit, int offset) {
+		String sponsored, boolean contactOpen, String sort, int limit, int offset,
+		String vertical) {
 
 	private static final Set<String> SORTS = Set.of("reach", "views", "followers", "hype");
 	private static final Set<String> FOLLOWERS = Set.of("500-3k", "3k-10k", "10k-30k", "30k-50k");
@@ -23,11 +24,23 @@ public record V1InfluencerDiscoveryQuery(List<String> keywords, String mainCateg
 
 	public static V1InfluencerDiscoveryQuery of(String q, String mainCategory, String midCategory,
 			String subCategory, String follower, String activity, String sponsored, String contact,
-			String sort, Integer limit, Integer offset) {
+			String sort, Integer limit, Integer offset, String vertical) {
 		String so = defaulted(sort, "reach");
 		String main = allToNull(mainCategory);
 		String mid = main == null ? null : allToNull(midCategory);   // main=all이면 무시 (스펙 6.21)
-		String sub = mid == null ? null : allToNull(subCategory);    // mid=all이면 무시
+		String sub = mid == null ? null : allToNull(subCategory);
+		// 상위 없는 subCategory는 무시가 아니라 400 (2026-09-01 FE 피드백 #4 — 조용한 무시는
+		// "필터를 걸었는데 전체가 나오는" 화면 버그로 이어진다). mid=all·main=all로 지워진 경우 포함.
+		if (allToNull(subCategory) != null && sub == null) {
+			throw V1ApiException.validation("subCategory는 mainCategory·midCategory와 함께 보내야 합니다.");
+		}
+		String vert = allToNull(vertical);
+		require(vert == null || MainCategories.VERTICALS.contains(vert), "vertical");
+		// vertical은 축 전체 조회, mainCategory는 그 안의 좁힘 — 동시 지정은 의미가 겹치거나
+		// 모순(vertical=beauty&mainCategory=snack)이라 400 (2026-09-01 FE 피드백 #1).
+		if (vert != null && main != null) {
+			throw V1ApiException.validation("vertical과 mainCategory는 동시에 보낼 수 없습니다.");
+		}
 		String fo = allToNull(follower);
 		String ac = allToNull(activity);
 		String sp = allToNull(sponsored);
@@ -44,7 +57,7 @@ public record V1InfluencerDiscoveryQuery(List<String> keywords, String mainCateg
 		require(off >= 0, "offset");
 		return new V1InfluencerDiscoveryQuery(keywords(q), main, mid, sub, fo,
 				ac == null ? null : Integer.valueOf(ac.substring(0, ac.length() - 1)),
-				sp, co != null, so, lim, off);
+				sp, co != null, so, lim, off, vert);
 	}
 
 	/**
@@ -54,13 +67,14 @@ public record V1InfluencerDiscoveryQuery(List<String> keywords, String mainCateg
 	 */
 	public String cacheKey() {
 		return CacheKeys.sha256(CacheKeys.canonical(keywords, mainCategory, midCategory,
-				subCategory, follower, activityDays, sponsored, contactOpen, sort, limit, offset));
+				subCategory, follower, activityDays, sponsored, contactOpen, sort, limit, offset,
+				vertical));
 	}
 
 	/** 다음 페이지 쿼리 — 프리페치용(스펙 §5). */
 	public V1InfluencerDiscoveryQuery next() {
 		return new V1InfluencerDiscoveryQuery(keywords, mainCategory, midCategory, subCategory,
-				follower, activityDays, sponsored, contactOpen, sort, limit, offset + limit);
+				follower, activityDays, sponsored, contactOpen, sort, limit, offset + limit, vertical);
 	}
 
 	/** 쉼표 분리 후 트림, 빈 조각 제거 — 키워드 안 쉼표는 프론트 입력에서 차단(스펙 6.21). */

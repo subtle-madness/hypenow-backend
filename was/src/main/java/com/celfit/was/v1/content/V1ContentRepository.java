@@ -37,16 +37,15 @@ public class V1ContentRepository {
 	}
 
 	/**
-	 * meta.distributors 옵션 — <b>뷰티 축</b> 어휘, id(슬러그) 오름차순 (스펙 6.1).
-	 *
-	 * <p>축 필터가 필요한 이유: 어휘 테이블은 F&amp;B 유통사(편의점·마트)도 함께 담는데
-	 * (2026-08-31 F&amp;B 어휘 추가), 필터 없이 읽으면 뷰티 랭킹 화면의 유통사 드롭다운에
-	 * 편의점이 노출된다. 지금 이 API는 뷰티만 서빙하므로 뷰티 축으로 고정한다 —
-	 * F&amp;B 서빙을 열 때 요청 축에 따라 고르도록 바꾼다(설계 2026-08-31 §8-1).
+	 * meta.distributors 옵션 — 요청 축의 어휘, id(슬러그) 오름차순 (스펙 6.1).
+	 * 축 인자는 2026-09-01 FE 버티컬 피드백 #5로 도입 — 구(08-31)엔 뷰티 고정이었다.
+	 * 어휘 테이블이 두 축의 유통사를 함께 담으므로(뷰티 2·F&amp;B 11) 축 필터가 없으면
+	 * 상대 축 유통사가 드롭다운에 섞인다.
 	 */
-	public List<Map<String, Object>> findDistributorOptions() {
+	public List<Map<String, Object>> findDistributorOptions(String axis) {
 		return jdbcClient.sql(
-						"SELECT slug, name FROM beauty_distributors WHERE axis = 'beauty' ORDER BY slug")
+						"SELECT slug, name FROM beauty_distributors WHERE axis = :axis ORDER BY slug")
+				.param("axis", axis)
 				.query((rs, i) -> Map.<String, Object>of("id", rs.getString("slug"), "name", rs.getString("name")))
 				.list();
 	}
@@ -80,8 +79,13 @@ public class V1ContentRepository {
 			// 파생돼 있어 동치이고, F&B slug면 is_beauty=false라 기존 게이트와 모순이라 빼야 나온다.
 			sb.append(" AND an.main_category = :mainCategory");
 			params.put("mainCategory", q.mainCategory());
+		} else if ("fnb".equals(q.vertical())) {
+			// 버티컬 전체(2026-09-01 FE 요청) — F&B는 "main이 F&B slug"가 곧 축 판정이라 IN이 정확.
+			sb.append(" AND an.main_category IN (:verticalMains)");
+			params.put("verticalMains", com.celfit.was.v1.common.MainCategories.FNB);
 		} else {
-			// 무필터 = 뷰티(기본 화면 불변) — 미러에 F&B가 들어와도 여기서 걸러진다.
+			// 무필터·vertical=beauty = 뷰티(기본 화면과 동치) — is_beauty가 뷰티 축 판정 그 자체라
+			// IN(뷰티 slug)보다 넓다(대분류 미도출 뷰티 게시물 포함, 기존 노출 유지).
 			sb.append(" AND an.is_beauty = true");
 		}
 		if (q.midCategory() != null) {

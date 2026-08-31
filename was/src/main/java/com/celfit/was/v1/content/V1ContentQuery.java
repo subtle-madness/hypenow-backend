@@ -16,7 +16,7 @@ import java.util.Set;
 public record V1ContentQuery(OffsetDateTime startInstant, OffsetDateTime endExclusive,
 		String contentType, String mainCategory, String midCategory, String subCategory,
 		String follower, String keyword, String adType, String distributorId,
-		String sort, int limit, int offset) {
+		String sort, int limit, int offset, String vertical) {
 
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 	private static final Set<String> CONTENT_TYPES = Set.of("reels", "feed");
@@ -29,7 +29,7 @@ public record V1ContentQuery(OffsetDateTime startInstant, OffsetDateTime endExcl
 	public static V1ContentQuery of(LocalDate startDate, LocalDate endDate, String contentType,
 			String mainCategory, String midCategory, String subCategory, String follower,
 			String keyword, String adType, String distributorId, String sort, Integer limit,
-			Integer offset) {
+			Integer offset, String vertical) {
 		if (startDate.isAfter(endDate)) {
 			throw V1ApiException.validation("조회 기간이 올바르지 않습니다.");
 		}
@@ -38,6 +38,18 @@ public record V1ContentQuery(OffsetDateTime startInstant, OffsetDateTime endExcl
 		String main = allToNull(mainCategory);
 		String mid = main == null ? null : allToNull(midCategory);   // main=all이면 무시 (스펙 6.1)
 		String sub = mid == null ? null : allToNull(subCategory);    // mid=all이면 무시
+		// 구(2026-09-01 이전)는 mid 없는 sub를 계층 규칙으로 조용히 무시했다 — FE가 빈 결과의
+		// 원인을 못 찾는 실수 유발이라 명시 거부로 변경(FE 버티컬 피드백 #4).
+		if (allToNull(subCategory) != null && mid == null) {
+			throw V1ApiException.validation("subCategory는 mainCategory·midCategory와 함께 보내야 합니다.");
+		}
+		String vert = allToNull(vertical);
+		// vertical: 축 전체 조회(FE "전체" 탭 — 2026-09-01 신설). mainCategory와 동시 지정은
+		// 의미가 모호(교집합? 우선?)해 명시 거부 — 프론트 팬아웃 우회(6배 호출·total 부풀림)의 대체.
+		require(vert == null || MainCategories.VERTICALS.contains(vert), "vertical");
+		if (vert != null && main != null) {
+			throw V1ApiException.validation("vertical과 mainCategory는 동시에 보낼 수 없습니다.");
+		}
 		String fo = allToNull(follower);
 		String ad = allToNull(adType);
 		String dist = allToNull(distributorId);
@@ -53,7 +65,7 @@ public record V1ContentQuery(OffsetDateTime startInstant, OffsetDateTime endExcl
 		return new V1ContentQuery(
 				startDate.atStartOfDay(KST).toOffsetDateTime().withOffsetSameInstant(ZoneOffset.UTC),
 				endDate.plusDays(1).atStartOfDay(KST).toOffsetDateTime().withOffsetSameInstant(ZoneOffset.UTC),
-				ct, main, mid, sub, fo, blankToNull(keyword), ad, dist, so, lim, off);
+				ct, main, mid, sub, fo, blankToNull(keyword), ad, dist, so, lim, off, vert);
 	}
 
 	/**
@@ -64,13 +76,25 @@ public record V1ContentQuery(OffsetDateTime startInstant, OffsetDateTime endExcl
 	public String cacheKey() {
 		return CacheKeys.sha256(CacheKeys.canonical(startInstant, endExclusive, contentType,
 				mainCategory, midCategory, subCategory, follower, keyword, adType, distributorId,
-				sort, limit, offset));
+				sort, limit, offset, vertical));
+	}
+
+	/**
+	 * 이 요청이 보고 있는 유통사 축 — meta.distributors 옵션용(2026-09-01).
+	 * vertical이 있으면 그 축, mainCategory가 있으면 그 대분류의 축, 무필터면 뷰티(기본 화면).
+	 */
+	public String distributorAxis() {
+		if (vertical != null) {
+			return vertical;
+		}
+		return MainCategories.isFnb(mainCategory) ? "fnb" : "beauty";
 	}
 
 	/** 다음 페이지 쿼리 — 프리페치용(스펙 §5). */
 	public V1ContentQuery next() {
 		return new V1ContentQuery(startInstant, endExclusive, contentType, mainCategory, midCategory,
-				subCategory, follower, keyword, adType, distributorId, sort, limit, offset + limit);
+				subCategory, follower, keyword, adType, distributorId, sort, limit, offset + limit,
+				vertical);
 	}
 
 	private static void require(boolean ok, String name) {

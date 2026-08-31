@@ -26,7 +26,7 @@ class AnthropicContentAttributeAnalyzerTest {
 		return new ContentAttributes(List.of(new ContentAttributes.Brand("브랜드A", "화면 노출")), level,
 				List.of("협찬 표기"), "표기 있음", List.of("클렌징폼"),
 				List.of(new ContentAttributes.Product("딥클렌징폼", "브랜드A")),
-				List.of(new ContentAttributes.Attribute("무드", "화사함")), "skincare",
+				List.of(new ContentAttributes.Attribute("무드", "화사함")), "cleansing",
 				List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), adType, true, null);
 	}
 
@@ -40,7 +40,7 @@ class AnthropicContentAttributeAnalyzerTest {
 		assertNull(sanitized.adType());
 		// 나머지 필드는 유지된다
 		assertEquals("브랜드A", sanitized.detectedBrands().get(0).name());
-		assertEquals("skincare", sanitized.mainCategory());
+		assertEquals("cleansing", sanitized.mainCategory());
 		assertEquals("표기 있음", sanitized.adDisclosure());
 	}
 
@@ -51,7 +51,7 @@ class AnthropicContentAttributeAnalyzerTest {
 
 		assertEquals("high", sanitized.sponsoredSignalLevel());
 		assertEquals("sponsored", sanitized.adType());
-		assertEquals("skincare", sanitized.mainCategory());
+		assertEquals("cleansing", sanitized.mainCategory());
 		assertEquals(List.of("클렌징폼/젤", "클렌징폼"), sanitized.subCategories());
 		assertEquals(List.of("클렌징폼"), sanitized.detectedProductCategories());
 		assertEquals(List.of("올리브영"), sanitized.detectedDistributors());
@@ -166,6 +166,21 @@ class AnthropicContentAttributeAnalyzerTest {
 		// product 카테고리 어휘는 소분류만 — 중분류(립메이크업)·비어휘(틴트제품) 제거
 		assertEquals(List.of("립틴트"), sanitized.detectedProductCategories());
 		assertEquals(List.of("올리브영"), sanitized.detectedDistributors());
+	}
+
+	@Test
+	void 확정_대분류_밖_라벨은_드랍된다() {
+		// 2026-09-01 FE #6 — 어휘엔 있지만 다른 대분류(다른 축 포함) 소속인 라벨은 확정 대분류
+		// 기준으로 걸러낸다. 뷰티 게시물에 F&B 중분류(음료)가 붙는 교차 오염이 실측 원인.
+		ContentAttributes sanitized = AnthropicContentAttributeAnalyzer.sanitize(
+				new ContentAttributes(List.of(), "low", List.of(), "표기 없음",
+						List.of("탄산", "립틴트"), List.of(), List.of(), "makeup",
+						List.of("립메이크업", "음료", "스킨/토너"), List.of(), "organic", true, null),
+				TAXONOMY);
+
+		assertEquals("makeup", sanitized.mainCategory());
+		assertEquals(List.of("립메이크업"), sanitized.subCategories());
+		assertEquals(List.of("립틴트"), sanitized.detectedProductCategories());
 	}
 
 	@Test

@@ -62,8 +62,10 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 				- mainCategory: 아래 분류표의 대분류 영문 값 중 하나. 분류표는 [축] 표기로 계열을 밝힌다.
 				  ※ 섭취하는 제품(건강기능식품·단백질·다이어트 식품·이너뷰티 포함)은 뷰티 목적이어도
 				    fnb 축으로 분류하라 — 제형이 아니라 섭취 여부가 기준이다.
-				- subCategories: 이 콘텐츠에 해당하는 중분류·소분류 라벨 전부 — 분류표의 표기 그대로
-				  (예: 립틴트 콘텐츠면 ["립메이크업","립틴트"])
+				- subCategories: 이 콘텐츠에 해당하는 중분류·소분류 라벨 전부 — 분류표의 표기 그대로.
+				  중분류만 적고 끝내지 마라 — 해당하는 소분류(각 중분류의 대괄호 안 라벨)까지 반드시
+				  포함하라. 소분류를 하나도 특정할 수 없을 때만 중분류 단독을 허용한다.
+				  (예: 립틴트 콘텐츠면 ["립메이크업","립틴트"], 밀키트 소개면 ["가공/간편식","밀키트"])
 				- detectedProductCategories: 확인되는 제품들의 소분류 라벨 — 분류표의 표기 그대로
 				- detectedProducts: 확인되는 제품명 {name(상품명), brand(그 제품의 브랜드, 미상이면 null)}
 				- detectedDistributors: 확인되는 유통 채널 — %s 만, 그 외 상호는 제외.
@@ -166,6 +168,14 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 		// 축이 늘어도 이 규칙은 그대로다 — "main_category 있음 ⇒ 어떤 축엔가 속함"이 생산자 불변식.
 		if (!Boolean.TRUE.equals(raw.isRelevant())) {
 			main = null;
+		}
+		// 대분류 확정 후 서브 라벨을 그 대분류 소속으로 좁힌다 (2026-09-01 FE #6 — 축·대분류가
+		// 다른 라벨은 필터 확장 매칭(t.main_value=:main AND jsonb_exists)에 안 걸리는 노이즈이자,
+		// F&B 중분류가 뷰티 게시물에 붙는 교차 오염의 원인이었다). 역유도(deriveMain)는 전역
+		// 필터 결과를 재료로 이미 끝난 뒤라 순서 안전. main 미확정(무관 콘텐츠)은 기존대로 전역만.
+		if (main != null) {
+			subs = filterToVocabulary(subs, taxonomy.midAndSubLabelsOf(main));
+			prodCats = filterToVocabulary(prodCats, taxonomy.subLabelsOf(main));
 		}
 		String axis = taxonomy.axisOf(main);
 		// is_beauty는 파생 (2026-08-31 축 일반화) — was 소비처(랭킹·카테고리 믹스·발굴 게이트)가
