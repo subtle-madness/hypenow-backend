@@ -142,6 +142,10 @@ public class BrandReadRepository {
 	 * caption_marker는 좌항 IS NOT NULL 가드 덕에 false). 정렬은 호출부(자바) 몫이라 ORDER BY를 두지
 	 * 않는다.
 	 *
+	 * <p>매핑은 수동 람다다(2026-08-31) — 창 안 전 행(운영 1.6만 행대)을 싣는 쿼리라
+	 * {@code query(Class)}의 이름 기반 리플렉션 매핑(행당 ~47µs 실측, raw 대비 20배)이 지배 비용이
+	 * 된다. 조립 8.4초 분해는 2026-08-31 수동 RowMapper 설계 §1 참조.
+	 *
 	 * @param markerRegex {@code BrandSponsorshipClassifier.postgresMarkerRegex()} 산출물 — 소문자
 	 *        캡션에 대한 ARE 정규식이다(호출부가 상수를 재작성하지 않게 그 메서드만 쓴다).
 	 */
@@ -168,7 +172,24 @@ public class BrandReadRepository {
 				.param("brandId", brandId)
 				.param("cutoff", cutoff)
 				.param("markerRegex", markerRegex)
-				.query(BrandPostIndexRow.class)
+				.query((rs, i) -> new BrandPostIndexRow(
+						rs.getString("short_code"),
+						rs.getObject("taken_at", OffsetDateTime.class),
+						rs.getObject("tag_detected_at", OffsetDateTime.class),
+						rs.getObject("direct_registered_at", OffsetDateTime.class),
+						rs.getObject("hashtag_detected_at", OffsetDateTime.class),
+						rs.getObject("unavailable_at", OffsetDateTime.class),
+						rs.getString("raw_author_username"),
+						rs.getString("author_ig_user_id"),
+						rs.getObject("is_paid_partnership", Boolean.class),
+						rs.getBoolean("caption_marker"),
+						rs.getString("content_type"),
+						rs.getString("ad_verdict"),
+						rs.getString("author_username"),
+						rs.getString("author_full_name"),
+						rs.getString("author_profile_pic_url"),
+						rs.getString("author_image_object_path"),
+						rs.getObject("author_followers", Long.class)))
 				.list();
 	}
 
