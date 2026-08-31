@@ -139,7 +139,7 @@ class V1BrandPostsControllerTest {
 		// 인덱스 패스 경량 프로젝션(2026-08-27 목록 타임아웃 해소)은 기존 시드 관용구(givenTagged의
 		// findBrandPostsInWindow + findPostMeta·findSnapshots 고정)에서 파생시킨다 — 시드를 그대로
 		// 재사용하고, 두 산지의 값이 어긋나 counts·정렬이 풀 조립과 불일치하는 시드 실수도 원천 차단한다.
-		given(brandReadRepository.findBrandPostIndex(anyLong(), any(), anyBoolean(), any())).willAnswer(inv -> {
+		given(brandReadRepository.findBrandPostIndex(anyLong(), any(), anyBoolean(), any(), anyBoolean())).willAnswer(inv -> {
 			var metaByCode = new java.util.LinkedHashMap<String, BrandPostMetaRow>();
 			for (BrandPostMetaRow m : brandReadRepository.findPostMeta(List.of())) {
 				metaByCode.putIfAbsent(m.shortCode(), m);
@@ -171,7 +171,7 @@ class V1BrandPostsControllerTest {
 								a == null ? null : a.fullName(),
 								a == null ? null : a.profilePicUrl(),
 								a == null ? null : a.imageObjectPath(),
-								a == null ? null : a.followers());
+								a == null ? null : a.followers(), caption);
 					})
 					.toList();
 		});
@@ -763,6 +763,42 @@ class V1BrandPostsControllerTest {
 	}
 
 	/**
+	 * 해시태그 필터·facet(5번째 필터 축, 스펙 2026-08-31) — 캡션에서 파생된 태그가 카드 hashtags에
+	 * 실리고, meta.facets.hashtags가 {tag, count} 목록으로 집계되며, ?hashtag= 필터는 자기 축을
+	 * 해제해 다른 태그 칩 숫자가 죽지 않는다(기존 4축과 동형 — 자기 축 해제 패턴).
+	 */
+	@Test
+	void 해시태그_필터는_목록을_좁히고_facet은_자기_축을_해제한다() throws Exception {
+		givenTagged(taggedRow("AAA", "2026-08-06T01:00:00Z"), taggedRow("BBB", "2026-08-05T01:00:00Z"));
+		given(brandReadRepository.findPostMeta(any())).willReturn(List.of(
+				metaWithCaption("AAA", "REELS", "#세일 #올영"),
+				metaWithCaption("BBB", "REELS", "#세일")));
+
+		// ① 목록 아이템 hashtags 배열에 시딩 태그가 실린다(캡션 등장 순).
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data[?(@.shortcode=='AAA')].hashtags")
+						.value(Matchers.contains(Matchers.contains("세일", "올영"))))
+				.andExpect(jsonPath("$.data[?(@.shortcode=='BBB')].hashtags")
+						.value(Matchers.contains(Matchers.contains("세일"))))
+				// ② meta.facets.hashtags는 {tag, count} 목록 — 세일=2건, 올영=1건, 건수 내림차순.
+				.andExpect(jsonPath("$.meta.facets.hashtags[0].tag").value("세일"))
+				.andExpect(jsonPath("$.meta.facets.hashtags[0].count").value(2))
+				.andExpect(jsonPath("$.meta.facets.hashtags[1].tag").value("올영"))
+				.andExpect(jsonPath("$.meta.facets.hashtags[1].count").value(1));
+
+		// ③ ?hashtag=올영 필터 — 목록은 AAA만 남지만, facet은 자기 축 해제라 세일·올영 둘 다 그대로다.
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?hashtag=올영").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1))
+				.andExpect(jsonPath("$.data[0].shortcode").value("AAA"))
+				.andExpect(jsonPath("$.meta.facets.hashtags[0].tag").value("세일"))
+				.andExpect(jsonPath("$.meta.facets.hashtags[0].count").value(2))
+				.andExpect(jsonPath("$.meta.facets.hashtags[1].tag").value("올영"))
+				.andExpect(jsonPath("$.meta.facets.hashtags[1].count").value(1));
+	}
+
+	/**
 	 * FE 리포트(2026-08-31) — {@code facets.source}가 {@code hashtag} 버킷을 몰라(axisMap이 값
 	 * 목록에 SOURCE_HASHTAG를 안 받음) hashtag 게시물이 {@code all}엔 잡히는데 {@code tagged}·
 	 * {@code direct} 어느 버킷에도 안 실렸다 — {@code computeIfPresent}가 미리 등록 안 된 키를 조용히
@@ -1041,7 +1077,7 @@ class V1BrandPostsControllerTest {
 				.andExpect(status().isForbidden())
 				.andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
 
-		then(brandReadRepository).should(never()).findBrandPostIndex(anyLong(), any(), anyBoolean(), any());
+		then(brandReadRepository).should(never()).findBrandPostIndex(anyLong(), any(), anyBoolean(), any(), anyBoolean());
 	}
 
 	@Test
@@ -1329,6 +1365,12 @@ class V1BrandPostsControllerTest {
 
 	private static BrandPostMetaRow meta(String code, String contentType, Boolean paid) {
 		return meta(code, contentType, paid, null);
+	}
+
+	/** 캡션 원문을 갈아 끼운 메타 — 해시태그 필터·패싯 시드 전용(hashtags는 캡션에서 파생). */
+	private static BrandPostMetaRow metaWithCaption(String code, String contentType, String caption) {
+		return new BrandPostMetaRow(code, "glowdeep_92", contentType, LocalDate.of(2026, 8, 6),
+				caption, "https://cdn/thumb.jpg", "https://cdn/video.mp4", 15.5, null, null, null, null, null);
 	}
 
 	/** 광고 표기 판정(adVerdict)까지 실은 메타 — adRisk 필터·패싯 시드 전용. */
