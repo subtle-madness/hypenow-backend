@@ -137,7 +137,8 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 	 * LLM이 어휘 밖 값을 지어낸 경우 제거한다 — 스칼라는 null로, 배열은 어휘 밖 원소만 걸러낸다
 	 * (was가 verbatim 매칭하므로 어휘 밖 라벨은 필터에 안 잡히는 노이즈).
 	 * 단 mainCategory는 어휘 밖이면 유효 서브라벨로 역유도 복구한다(드랍 아님).
-	 * 비뷰티(isBeauty≠true)면 대분류를 확정하지 않는다(생산자 불변식).
+	 * 분류 대상이 아니면(isRelevant≠true) 대분류를 확정하지 않는다(생산자 불변식).
+	 * 확정된 대분류의 축에서 is_beauty를 파생하고, 유통사도 그 축의 것만 남긴다(2026-08-31).
 	 * detectedBrands·detectedProducts는 자유 텍스트라 통과. Synthesis의 등급 방어와 대칭.
 	 */
 	static ContentAttributes sanitize(ContentAttributes raw, BeautyTaxonomy taxonomy) {
@@ -155,12 +156,21 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 			}
 			main = taxonomy.deriveMain(signal);
 		}
-		// 비뷰티(isBeauty≠true)는 대분류를 확정하지 않는다 — "main_category 있음 ⇒ 뷰티" 불변식을
-		// 생산자에서 보장해, main_category만 읽는 소비처(카테고리 믹스 등)가 별도 필터 없이 비뷰티를
-		// 자동 제외하게 한다. (설계 §3-4)
-		if (!Boolean.TRUE.equals(raw.isBeauty())) {
+		// 분류표 어느 대분류에도 해당하지 않는 콘텐츠(일상·여행 등)는 대분류를 확정하지 않는다.
+		// 축이 늘어도 이 규칙은 그대로다 — "main_category 있음 ⇒ 어떤 축엔가 속함"이 생산자 불변식.
+		if (!Boolean.TRUE.equals(raw.isRelevant())) {
 			main = null;
 		}
+		String axis = taxonomy.axisOf(main);
+		// is_beauty는 파생 (2026-08-31 축 일반화) — was 소비처(랭킹·카테고리 믹스·발굴 게이트)가
+		// 이 컬럼 하나로 비뷰티를 걸러내므로, 축이 beauty일 때만 true여야 F&B가 서빙에 새지 않는다.
+		boolean isBeauty = "beauty".equals(axis);
+		// 유통사는 그 콘텐츠 축의 것만 남긴다 — 뷰티 게시물에 붙은 'GS25'는 드랍.
+		// 축을 판정 못 한 콘텐츠(main=null)는 어느 축 필터에도 안 걸리는 고아 값이 되므로 비운다.
+		List<String> dists = raw.detectedDistributors() == null ? null
+				: raw.detectedDistributors().stream()
+						.filter(d -> axis != null && axis.equals(taxonomy.distributorAxisOf(d)))
+						.toList();
 		return new ContentAttributes(
 				raw.detectedBrands(),
 				keepIfIn(raw.sponsoredSignalLevel(), SIGNAL_LEVELS),
@@ -171,9 +181,10 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 				raw.vlmAttributes(),
 				main,
 				subs,
-				filterToVocabulary(raw.detectedDistributors(), taxonomy.distributors()),
+				dists,
 				keepIfIn(raw.adType(), AD_TYPES),
-				raw.isBeauty());
+				raw.isRelevant(),
+				isBeauty);
 	}
 
 	private static String keepIfIn(String value, Set<String> vocabulary) {

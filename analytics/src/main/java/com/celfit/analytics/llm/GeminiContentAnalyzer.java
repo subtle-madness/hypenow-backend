@@ -173,7 +173,7 @@ public final class GeminiContentAnalyzer implements ContentInsightPort {
 		ContentAttributes attrs = AnthropicContentAttributeAnalyzer.sanitize(new ContentAttributes(
 				o.detectedBrands(), o.sponsoredSignalLevel(), o.sponsoredSignalReasons(), o.adDisclosure(),
 				o.detectedProductCategories(), o.detectedProducts(), o.vlmAttributes(), o.mainCategory(),
-				o.subCategories(), o.detectedDistributors(), o.adType(), o.isBeauty()), taxonomy);
+				o.subCategories(), o.detectedDistributors(), o.adType(), o.isBeauty(), null), taxonomy);
 		String grade = defendGrade(o.commentAuthenticityGrade());
 		return new ContentInsight(attrs, new Synthesis(o.aiContentSummary(), o.contentsPattern(),
 				o.aiCommentInsight(), grade, o.commentAuthenticityNote()));

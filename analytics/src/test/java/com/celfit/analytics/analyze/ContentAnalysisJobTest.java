@@ -91,7 +91,7 @@ class ContentAnalysisJobTest {
 							List.of("협찬 표기 있음"), "표기 있음", List.of("클렌징폼"),
 							List.of(new ContentAttributes.Product("딥클렌징폼", "브랜드A")),
 							List.of(new ContentAttributes.Attribute("무드", "화사함")), "cleansing",
-							List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), "sponsored", true),
+							List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), "sponsored", true, true),
 					new Synthesis("요약: " + content.shortCode(), "패턴 해석", "댓글 인사이트", "high", "판정 근거"));
 		};
 	}
@@ -736,8 +736,9 @@ class ContentAnalysisJobTest {
 		// isBeauty=false + mainCategory=null(비뷰티라 자연 null) — 행은 기록되되 서빙에서 제외될 값
 		rewireJob((content, thumbnailUrl) -> {
 			insightCalls.add(content);
+			// 포트 구현(sanitize)이 채웠을 파생값을 직접 넣는다 — isRelevant=false면 is_beauty=false
 			ContentAttributes nonBeauty = new ContentAttributes(List.of(), null, List.of(), "표기 없음",
-					List.of(), List.of(), List.of(), null, List.of(), List.of(), "organic", false);
+					List.of(), List.of(), List.of(), null, List.of(), List.of(), "organic", false, false);
 			return new ContentInsightPort.ContentInsight(nonBeauty,
 					new Synthesis("요약: " + content.shortCode(), "패턴", "인사이트", "normal", "근거"));
 		}, false);
@@ -761,11 +762,11 @@ class ContentAnalysisJobTest {
 		rewireJob((content, thumbnailUrl) -> {
 			insightCalls.add(content);
 			ContentAttributes beautyNoCat = new ContentAttributes(List.of(), null, List.of(), "표기 없음",
-					List.of(), List.of(), List.of(), null, List.of(), List.of(), "organic", true);
+					List.of(), List.of(), List.of(), null, List.of(), List.of(), "organic", true, null);
 			Synthesis s = new Synthesis("요약: " + content.shortCode(), "패턴", "인사이트", "normal", "근거");
 			ContentAttributes attrs = content.shortCode().equals("post_a") ? beautyNoCat
 					: new ContentAttributes(List.of(), null, List.of(), "표기 없음", List.of(), List.of(),
-							List.of(), "makeup", List.of(), List.of(), "organic", true); // post_b는 정상
+							List.of(), "makeup", List.of(), List.of(), "organic", true, null); // post_b는 정상
 			return new ContentInsightPort.ContentInsight(attrs, s);
 		}, false);
 
