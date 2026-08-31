@@ -72,6 +72,11 @@ class BrandDirectCollectServiceTest {
 		}
 
 		@Override
+		public void touchProgress(long brandId) {
+			// 진행 워터마크(08-31) — 이 테스트의 관심 밖, DB 없는 fake라 no-op.
+		}
+
+		@Override
 		public void updateCoverage(long brandId, boolean capped, Instant coveredUntil) {
 			// no-op
 		}

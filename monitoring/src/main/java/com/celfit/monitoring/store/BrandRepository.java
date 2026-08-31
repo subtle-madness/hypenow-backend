@@ -209,6 +209,20 @@ public class BrandRepository {
 	}
 
 	/**
+	 * 진행 워터마크(2026-08-31 등록 백필 캐시 고착 수리) — 페이지 정산(markEnriched)마다
+	 * last_swept_at을 전진시킨다. was 버전키(DashboardVersion.brandWatermarks)의 브랜드 입력이
+	 * 이 컬럼이라, 안 움직이면 백필 도중(첫 페이지 markServing ~ 완주 touchSwept 사이 수 분)
+	 * 폴링이 전부 캐시에 붙어 게시물이 완주 시점에 한꺼번에 나타난다(08-31 skinfood 실측).
+	 * markServing과 달리 가드 없이 무조건 전진한다 — 재가입·기간 확장 재백필(last_swept_at이
+	 * 이미 찬 상태)도 같은 고착에 걸리기 때문. last_swept_at의 의미는 이 개정으로 "완주 시각"에서
+	 * "마지막 수집 활동 시각"으로 넓어졌다(완주 판정은 원래부터 last_swept_on·backfill_completed_at
+	 * 몫이라 판정 로직 영향 없음, was lastCollectedAt 표기는 오히려 정확해진다).
+	 */
+	public void touchProgress(long brandId) {
+		db.update("UPDATE brand_account SET last_swept_at = now() WHERE id = ?", brandId);
+	}
+
+	/**
 	 * 초기 백필 실패 기록 — was 폴링이 "수집 중"에서 빠져나올 신호(계약 §5-2).
 	 * last_swept_on이 이미 찬 브랜드(= 한 번이라도 완주한 ready 상태)는 덮지 않는다:
 	 * 그쪽은 이미 보여줄 데이터가 있어서 실패를 사용자 화면에 띄울 이유가 없다.
