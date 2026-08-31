@@ -190,23 +190,38 @@ class ContentAnalysisJobTest {
 
 		// raw 대역: 후보 뷰(v_analysis_candidates)와 같은 소비 컬럼의 fixture 기반 뷰 —
 		// 캘린더일 timely 판정·성숙·윈도우 게이트는 뷰 소관(SQL 하니스 04가 검증)이라
-		// 잡 테스트는 뷰가 주는 (short_code, timely) 결과만 신뢰하고 소비한다 (07-28 정합).
+		// 잡 테스트는 뷰가 주는 결과만 신뢰하고 소비한다 (07-28 정합).
+		// 2026-08-31: 분석 재료(캡션·지표·핸들)도 이 뷰에서 읽는다 — 구 버전은 analysis DB의
+		// 미러 테이블 contents에서 다시 읽었는데, 미러는 뷰티 서빙 모수라 F&B 후보가 전부
+		// "미러 부재"로 스킵됐다. 그래서 fixture가 재료 컬럼까지 갖는다.
 		db.update("""
 				CREATE TABLE analytics.candidates_fixture (
 				    short_code         text PRIMARY KEY,
 				    timely             boolean NOT NULL,
-				    metric_captured_at timestamptz
+				    metric_captured_at timestamptz,
+				    account_handle     text,
+				    caption            text,
+				    content_type       text,
+				    thumbnail_url      text,
+				    views              bigint,
+				    likes              bigint,
+				    comments           bigint,
+				    ad_marked          boolean
 				)""");
 		db.update("""
 				CREATE VIEW analytics.v_analysis_candidates AS SELECT * FROM analytics.candidates_fixture""");
 		db.update("""
 				INSERT INTO analytics.candidates_fixture VALUES
-				  ('post_a', true, now() - interval '6 days 18 hours'),
-				  ('post_b', true, now() - interval '6 days 6 hours'),
-				  ('post_c', true, now() - interval '6 days 12 hours')""");
+				  ('post_a', true, now() - interval '6 days 18 hours', 'acct1', '캡션A', 'reels',
+				   'https://img/a.jpg', 11000, 520, 52, true),
+				  ('post_b', true, now() - interval '6 days 6 hours', 'acct1', '캡션B', 'feed',
+				   'https://img/b.jpg', NULL, 2000, 100, false),
+				  ('post_c', true, now() - interval '6 days 12 hours', 'acct1', '캡션C', 'reels',
+				   'https://img/c.jpg', 7000, 300, 30, false)""");
 
 		// 분석 DB 시드: contents(미러) 3행 + content_comments·comment_classifications로 대상 조건 구성.
-		// 후보 자격은 위 candidates_fixture(timely 컬럼)가 결정 — contents는 analyzeOne이 읽는 미러 대역.
+		// 후보 자격·재료는 위 candidates_fixture가 결정한다 — contents는 08-31부터 이 잡의 입력이
+		// 아니고(미러 의존 제거), 다른 소비자(미러 계약)를 위해 남겨둔 대역이다.
 		// post_a: 댓글 있고 분류 완료 (대상 O), post_b: 댓글 없음 (대상 O), post_c: 댓글 있고 미분류 (대상 X)
 		// metric_captured_at은 fixture와 동일하게 유지 — 수집 최신순 정렬(ORDER BY metric_captured_at
 		// DESC)이 post_b를 먼저 뽑는지 검증하기 위함 (b가 가장 최신).
@@ -354,7 +369,9 @@ class ContentAnalysisJobTest {
 		// 속성 산출은 폐기해 컬럼 NULL 유지 (행 자체는 생성돼 배치 슬롯 잠식 방지)
 		// thumbnailArgs 위치 동등성을 검증하므로 concurrency=1로 완료 순서를 고정한다.
 		pinSequentialConcurrency();
-		db.update("UPDATE contents SET caption = NULL, thumbnail_url = NULL WHERE short_code = 'post_a'");
+		// 08-31: 재료 원천이 미러(contents)에서 후보 뷰로 바뀌었다 — 픽스처 쪽을 비워야 한다.
+		db.update("UPDATE analytics.candidates_fixture SET caption = NULL, thumbnail_url = NULL"
+				+ " WHERE short_code = 'post_a'");
 		rewireJob(fakeInsightPort(), true);
 
 		int processed = job.run().processed();
@@ -399,7 +416,8 @@ class ContentAnalysisJobTest {
 				VALUES ('post_0', 'acct1', 'https://img/0.jpg', '캡션0', 'reels', now() - interval '10 days', now() - interval '6 days 20 hours', 5000, 100, 10)""");
 		db.update("""
 				INSERT INTO analytics.candidates_fixture VALUES
-				  ('post_0', true, now() - interval '6 days 20 hours')""");
+				  ('post_0', true, now() - interval '6 days 20 hours', 'acct1', '캡션0', 'reels',
+				   'https://img/0.jpg', 5000, 100, 10, false)""");
 		db.update("""
 				INSERT INTO content_comments (id, short_code, author_masked, body, like_count)
 				VALUES (10, 'post_0', 'ddd***', '굿', 0)""");
@@ -476,7 +494,8 @@ class ContentAnalysisJobTest {
 				VALUES ('post_0', 'acct1', 'https://img/0.jpg', '캡션0', 'reels', now() - interval '10 days', now() - interval '6 days 22 hours', 5000, 100, 10)""");
 		db.update("""
 				INSERT INTO analytics.candidates_fixture VALUES
-				  ('post_0', true, now() - interval '6 days 22 hours')""");
+				  ('post_0', true, now() - interval '6 days 22 hours', 'acct1', '캡션0', 'reels',
+				   'https://img/0.jpg', 5000, 100, 10, false)""");
 		db.update("""
 				INSERT INTO content_comments (id, short_code, author_masked, body, like_count)
 				VALUES (10, 'post_0', 'ddd***', '굿', 0)""");
@@ -701,18 +720,26 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
-	void 후보가_미러에_없으면_스킵하고_실패로_세지_않는다() {
-		// 라이브 뷰(후보)와 미러(19:30 스냅샷) 사이 간극 가드 — analyzeOne이 미러에서 행을
-		// 못 찾아 실패 카운트를 오염시키는 대신 대상에서 조용히 빠지고, 다음 미러 후 자연 재대상.
+	void 미러에_없는_후보도_재료를_후보뷰에서_읽어_분석한다() {
+		// 2026-08-31 미러 의존 제거. 구 버전은 "미러(contents)에 없으면 스킵"이 가드였는데,
+		// 미러는 뷰티 서빙 모수라 F&B 후보가 100% 여기서 걸러졌다 — 04 모수를 넓혀도
+		// 로그 한 줄("미러 부재 후보 N건 스킵") 남기고 전부 사라지는 구조였다.
+		// 이제 재료를 후보 뷰에서 직접 읽으므로 미러에 없어도 정상 분석된다.
 		db.update("""
 				INSERT INTO analytics.candidates_fixture VALUES
-				  ('post_ghost', true, now() - interval '1 hour')""");
+				  ('fnb_only_1', true, now() - interval '1 hour', 'acct_fnb', '오늘의 밀키트 후기',
+				   'reels', 'https://img/fnb.jpg', 8000, 300, 30, false)""");
 
 		var result = job.run();
 
-		assertEquals(2, result.processed()); // post_a·post_b — post_ghost는 스킵
+		assertEquals(3, result.processed()); // post_a·post_b + fnb_only_1(미러 부재)
 		assertEquals(0, result.failed());
-		assertFalse(insightCalls.stream().anyMatch(c -> c.shortCode().equals("post_ghost")));
+		assertTrue(insightCalls.stream().anyMatch(c -> c.shortCode().equals("fnb_only_1")));
+		// 재료가 후보 뷰에서 왔는지 — 캡션이 미러가 아니라 fixture 값이어야 한다
+		assertEquals("오늘의 밀키트 후기", insightCalls.stream()
+				.filter(c -> c.shortCode().equals("fnb_only_1")).findFirst().orElseThrow().caption());
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'fnb_only_1'", Long.class));
 	}
 
 	@Test
