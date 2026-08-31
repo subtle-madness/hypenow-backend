@@ -1571,7 +1571,7 @@ class BrandPostAssemblerTest {
 				hashtagDetectedAt == null ? null : OffsetDateTime.parse(hashtagDetectedAt),
 				null, "glowdeep_92", null, paid,
 				caption != null && BrandSponsorshipClassifier.containsSponsorshipMarker(caption),
-				null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, caption);
 	}
 
 	/**
@@ -1586,7 +1586,7 @@ class BrandPostAssemblerTest {
 				OffsetDateTime.parse("2026-08-06T01:00:00Z"), OffsetDateTime.parse("2026-08-06T02:00:00Z"),
 				null, null, null, code.toLowerCase(Locale.ROOT) + "_user", null, null, false, contentType,
 				adVerdict, authorUsername, authorFullName, authorProfilePicUrl, authorImageObjectPath,
-				authorFollowers);
+				authorFollowers, null);
 	}
 
 	/** 과도기 폴백 원본(레거시 TrackingItem) — 브랜드 ref가 읽는 게시자·매체 필드만 채운다. */

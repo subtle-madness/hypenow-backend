@@ -154,6 +154,7 @@ public class BrandReadRepository {
 				       t.author_ig_user_id,
 				       m.is_paid_partnership,
 				       (m.caption IS NOT NULL AND lower(m.caption) ~ :markerRegex) AS caption_marker,
+				       m.caption,
 				       m.content_type, m.ad_verdict,
 				       a.username AS author_username, a.full_name AS author_full_name,
 				       a.profile_pic_url AS author_profile_pic_url,
@@ -613,7 +614,7 @@ public class BrandReadRepository {
 			OffsetDateTime directRegisteredAt, OffsetDateTime hashtagDetectedAt, OffsetDateTime unavailableAt,
 			String rawAuthorUsername, String authorIgUserId, Boolean isPaidPartnership, boolean captionMarker,
 			String contentType, String adVerdict, String authorUsername, String authorFullName,
-			String authorProfilePicUrl, String authorImageObjectPath, Long authorFollowers) {
+			String authorProfilePicUrl, String authorImageObjectPath, Long authorFollowers, String caption) {
 	}
 
 	/**

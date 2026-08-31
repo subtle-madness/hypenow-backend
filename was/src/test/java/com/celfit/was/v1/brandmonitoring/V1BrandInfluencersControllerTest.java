@@ -537,7 +537,7 @@ class V1BrandInfluencersControllerTest {
 		OffsetDateTime detectedAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
 		return new BrandPostIndexRow(code, OffsetDateTime.parse(takenAt), detectedAt, null, null, null,
 				username, null, paid, false, "REELS", null, username, fullName,
-				"https://cdn/" + username + ".jpg", null, followers);
+				"https://cdn/" + username + ".jpg", null, followers, null);
 	}
 
 	private static LatestSnapshotRow metrics(String code, Long views, Long likes) {

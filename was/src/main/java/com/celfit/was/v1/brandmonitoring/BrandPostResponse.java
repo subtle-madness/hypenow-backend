@@ -66,6 +66,8 @@ public record BrandPostResponse(
 		@Schema(allowableValues = {"DISCLOSED", "NOT_DISCLOSED", "INSUFFICIENT", "UNCERTAIN"}) String adDisclosure,
 		List<String> adViolations,
 		List<AdEvidence> adEvidence,
+		@Schema(description = "캡션 추출 해시태그(등장 순, 정규화 키 dedup) — BrandCaptionHashtags")
+		List<String> hashtags,
 		boolean seededAuthor) {
 
 	/** 판정 근거 문구 1건 — monitoring ad_evidence jsonb 원소와 1:1(스펙 §4). */
@@ -83,7 +85,7 @@ public record BrandPostResponse(
 				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
 				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
 				commentsHidden, commentsCollectedCount, recentComments, campaignIds, createdAt, updatedAt,
-				adDisclosure, adViolations, adEvidence, seededAuthor);
+				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor);
 	}
 
 	/**
@@ -98,7 +100,7 @@ public record BrandPostResponse(
 				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
 				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
 				commentsHidden, 0L, List.of(), campaignIds, createdAt, updatedAt,
-				adDisclosure, adViolations, adEvidence, seededAuthor);
+				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor);
 	}
 
 	/**
@@ -115,7 +117,7 @@ public record BrandPostResponse(
 				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
 				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
 				commentsHidden, commentsCollectedCount, recentComments, campaignIds, createdAt, updatedAt,
-				adDisclosure, adViolations, adEvidence, seededAuthor);
+				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor);
 	}
 
 	/**
@@ -131,6 +133,6 @@ public record BrandPostResponse(
 				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
 				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
 				commentsHidden, commentsCollectedCount, recentComments, campaignIds, createdAt, updatedAt,
-				adDisclosure, adViolations, adEvidence, seededAuthor);
+				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor);
 	}
 }

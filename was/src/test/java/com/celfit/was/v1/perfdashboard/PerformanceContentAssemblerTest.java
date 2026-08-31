@@ -1059,14 +1059,14 @@ class PerformanceContentAssemblerTest {
 				"sponsored", true, "hidden", "2026-08-04T09:30:00+09:00", null, latest, List.of(latest),
 				latest.comments(), false, 0L, List.of(), List.of("7", "8"),
 				"2026-08-04T09:30:00+09:00", "2026-08-07T03:00:00+09:00",
-				null, List.of(), List.of(), false);
+				null, List.of(), List.of(), List.of(), false);
 	}
 
 	/** 태그 감지 행(전원 노출) — 캡션·유료협찬 관측은 브랜드 풀 픽스처와 같은 값(협찬 unknown). */
 	private static BrandPostIndexRow taggedRow(String shortCode, String takenAt) {
 		return new BrandPostIndexRow(shortCode, OffsetDateTime.parse(takenAt),
 				OffsetDateTime.parse("2026-08-06T09:30:00+09:00"), null, null, null, "creator", "ig-1",
-				null, false, null, null, null, null, null, null, null);
+				null, false, null, null, null, null, null, null, null, null);
 	}
 
 	/** 삭제·비공개 감지 + 유료협찬 관측 행 — status(hidden)·sponsorship(sponsored) 파생 판별용. */
@@ -1074,14 +1074,14 @@ class PerformanceContentAssemblerTest {
 		return new BrandPostIndexRow(shortCode, OffsetDateTime.parse(takenAt),
 				OffsetDateTime.parse("2026-08-04T09:30:00+09:00"), null, null,
 				OffsetDateTime.parse("2026-08-07T01:00:00+09:00"), "creator", "ig-1",
-				true, false, null, null, null, null, null, null, null);
+				true, false, null, null, null, null, null, null, null, null);
 	}
 
 	/** 직접 등록 전용 행(tag_detected_at 없음) — 등록자에게만 보이고 커버리지 클램프 면제 대상이다. */
 	private static BrandPostIndexRow directRow(String shortCode, String takenAt) {
 		return new BrandPostIndexRow(shortCode, OffsetDateTime.parse(takenAt), null,
 				OffsetDateTime.parse("2026-08-06T09:30:00+09:00"), null, null, "creator", "ig-1",
-				null, false, null, null, null, null, null, null, null);
+				null, false, null, null, null, null, null, null, null, null);
 	}
 
 	private static LatestSnapshotRow latestSnapshot(String shortCode, Long views, Long likes, Long comments) {
@@ -1218,6 +1218,6 @@ class PerformanceContentAssemblerTest {
 				"unknown", null, trackingStatus, "2026-08-06T09:30:00+09:00", null, latest, snapshots,
 				latest == null ? null : latest.comments(), commentsHidden, 0L, List.of(), campaignIds,
 				"2026-08-06T09:30:00+09:00", "2026-08-07T03:00:00+09:00",
-				null, List.of(), List.of(), false);
+				null, List.of(), List.of(), List.of(), false);
 	}
 }

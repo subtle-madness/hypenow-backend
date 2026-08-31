@@ -171,7 +171,7 @@ class V1BrandPostsControllerTest {
 								a == null ? null : a.fullName(),
 								a == null ? null : a.profilePicUrl(),
 								a == null ? null : a.imageObjectPath(),
-								a == null ? null : a.followers());
+								a == null ? null : a.followers(), caption);
 					})
 					.toList();
 		});
