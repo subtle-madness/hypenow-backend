@@ -304,8 +304,8 @@ services:
       SPRING_DATASOURCE_USERNAME: ${MONITORING_DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${MONITORING_DB_PASSWORD}
       HIKER_API_KEY: ${HIKER_API_KEY}
-      # 자체크롤 프록시·댓글 graphql 파라미터(마일스톤 B 배선 — self-enabled 기본 false라 미개통,
-      # 개통은 마일스톤 C). DATAIMPULSE_*는 crawler와 같은 .env 키를 공유한다.
+      # 자체크롤 프록시·댓글 graphql 파라미터. 개통 토글은 app_setting(ig-source.self-enabled,
+      # ig-source.force-hiker)이 런타임 관장 — 기본 off라 미개통. DATAIMPULSE_*는 crawler와 같은 .env 키 공유.
       DATAIMPULSE_RESIDENTIAL_PROXY_URL: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:-}
       DATAIMPULSE_MOBILE_PROXY_URL: ${DATAIMPULSE_MOBILE_PROXY_URL:-}
       IG_COMMENT_DOC_ID: ${IG_COMMENT_DOC_ID:-}
