@@ -2,6 +2,7 @@ package com.celfit.monitoring.hiker;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.instagram.source.HashtagPage;
 import com.celfit.instagram.source.SubjectNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -52,7 +53,7 @@ class HikerClientHashtagTest {
 
 	@Test
 	void 섹션_셰이프에서_게시물과_커서를_파싱한다() {
-		HikerClient.HashtagPage page = client(sectionsBody("p2",
+		HashtagPage page = client(sectionsBody("p2",
 				media("AAA", 1786000000L, "poster1", null),
 				media("BBB", 1786000001L, "poster2", "cclime_official")))
 				.fetchHashtagRecentPage("끌리메", null);
@@ -75,7 +76,7 @@ class HikerClientHashtagTest {
 
 	@Test
 	void 마지막_페이지는_커서가_null이다() {
-		HikerClient.HashtagPage page = client(sectionsBody(null,
+		HashtagPage page = client(sectionsBody(null,
 				media("AAA", 1786000000L, "poster1", null)))
 				.fetchHashtagRecentPage("cclime", null);
 		assertThat(page.nextPageId()).isNull();
@@ -86,14 +87,14 @@ class HikerClientHashtagTest {
 		HikerClient client = new HikerClient(path -> {
 			throw new SubjectNotFoundException("Entries not found");
 		});
-		HikerClient.HashtagPage page = client.fetchHashtagRecentPage("없는태그", null);
+		HashtagPage page = client.fetchHashtagRecentPage("없는태그", null);
 		assertThat(page.posts()).isEmpty();
 		assertThat(page.nextPageId()).isNull();
 	}
 
 	@Test
 	void usertags의_username은_소문자로_정규화한다() {
-		HikerClient.HashtagPage page = client(sectionsBody(null,
+		HashtagPage page = client(sectionsBody(null,
 				media("AAA", 1786000000L, "poster1", "CClime_Official")))
 				.fetchHashtagRecentPage("cclime", null);
 		assertThat(page.posts().get(0).taggedUsernames()).containsExactly("cclime_official");
@@ -106,7 +107,7 @@ class HikerClientHashtagTest {
 	 */
 	@Test
 	void 실측_원본_셰이프_축약본을_파싱한다() {
-		HikerClient.HashtagPage page = client(fixture("hashtag-recent.json"))
+		HashtagPage page = client(fixture("hashtag-recent.json"))
 				.fetchHashtagRecentPage("끌리메", null);
 
 		assertThat(page.posts()).extracting(hp -> hp.post().shortCode())
@@ -128,7 +129,7 @@ class HikerClientHashtagTest {
 		String body = "{\"response\":{\"items\":[" + media("CCC", 1786000002L, "poster3", "cclime_official")
 				+ "],\"more_available\":false}}";
 
-		HikerClient.HashtagPage page = client(body).fetchHashtagRecentPage("cclime", null);
+		HashtagPage page = client(body).fetchHashtagRecentPage("cclime", null);
 
 		assertThat(page.posts()).hasSize(1);
 		assertThat(page.posts().get(0).post().shortCode()).isEqualTo("CCC");

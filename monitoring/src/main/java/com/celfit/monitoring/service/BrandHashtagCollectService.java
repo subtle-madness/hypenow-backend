@@ -1,5 +1,7 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.instagram.source.HashtagPage;
+import com.celfit.instagram.source.HashtagPost;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.HikerClient;
@@ -147,12 +149,12 @@ public class BrandHashtagCollectService {
 		int created = 0;
 		String cursor = null;
 		for (int page = 0; page < maxPages; page++) {
-			HikerClient.HashtagPage result = hiker.fetchHashtagRecentPage(tag, cursor);
+			HashtagPage result = hiker.fetchHashtagRecentPage(tag, cursor);
 			if (result.posts().isEmpty()) {
 				break;
 			}
 			List<PostInfo> pagePosts = distinctByShortCode(result.posts().stream()
-					.map(HikerClient.HashtagPost::post).toList());
+					.map(HashtagPost::post).toList());
 			// 이 페이지에서 이미 hashtag 성분이 있는 코드 — 행이 있으니 매칭 태그는 남길 수 있다(FK 만족).
 			Set<String> alreadyHashtag = new LinkedHashSet<>();
 			for (PostInfo p : pagePosts) {

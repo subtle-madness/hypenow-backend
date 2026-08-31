@@ -1,7 +1,11 @@
 package com.celfit.monitoring.hiker;
 
 import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.ClipCounts;
 import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.CommentsFetch;
+import com.celfit.instagram.source.HashtagPage;
+import com.celfit.instagram.source.HashtagPost;
 import com.celfit.instagram.source.HikerBadRequestException;
 import com.celfit.instagram.source.HikerFetchException;
 import com.celfit.instagram.source.HikerHttp;
@@ -12,6 +16,7 @@ import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.instagram.source.ShareLinkUnresolvedException;
 import com.celfit.instagram.source.ShortCodes;
 import com.celfit.instagram.source.SubjectNotFoundException;
+import com.celfit.instagram.source.TaggedPage;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -40,19 +45,6 @@ public class HikerClient {
 
 	public HikerClient(HikerHttp http) {
 		this.http = http;
-	}
-
-	/**
-	 * 코드별 관측 지표 — igPlays는 IG 전용, fbPlays는 null(키 부재)과 0(관측된 0)을 구분한다.
-	 * saves·shares·reposts도 함께 나른다(08-04): 저장·리포스트 키는 세션 복권(콜 단위 전부/전무,
-	 * clips 존재율 ~45%)이라 clips 관측을 버리면 medias(~30%)보다 좋은 공급원을 매일 흘리게 된다.
-	 */
-	public record ClipCounts(Long igPlays, Long fbPlays, Long saves, Long shares, Long reposts) {
-
-		/** 저장·공유·리포스트 중 하나라도 실렸는가 — 세션 복권 당첨 판정(재시도 중단 기준). */
-		public boolean hasMetricKeys() {
-			return saves != null || shares != null || reposts != null;
-		}
 	}
 
 	/** 클립 보강 결과 — complete=false면 조회수 null이 "부재"가 아니라 "미취득"이다(오탐 방지 근거). */
@@ -215,9 +207,6 @@ public class HikerClient {
 		return new ClipPlays(plays, items, true);
 	}
 
-	/** 태그 열거 1페이지 — posts는 응답 순서 그대로(태그된 시점 순 — 중단 판정은 호출자가 페이지 단위로 한다). */
-	public record TaggedPage(List<PostInfo> posts, String nextPageId) {}
-
 	/**
 	 * 계정에 태그된 게시물 열거 — /v2/user/tag/medias(findings §11). 1페이지 1콜만 하고 커서를
 	 * 그대로 반환한다: 감지(매일 1콜)·트래킹(105개 깊이)·백필(90일 컷)의 중단 규칙이 서로 달라
@@ -246,11 +235,6 @@ public class HikerClient {
 		String cursor = moreAvailable(root) ? nextPageId(root) : null;
 		return new TaggedPage(posts, cursor);
 	}
-
-	/** 해시태그 recent 스트림 게시물 + 사진 태그된 계정 목록(소문자 정규화). */
-	public record HashtagPost(PostInfo post, List<String> taggedUsernames) {}
-
-	public record HashtagPage(List<HashtagPost> posts, String nextPageId) {}
 
 	/**
 	 * 해시태그 recent 열거 1페이지(스펙 2026-08-11 §3) — 섹션 셰이프
@@ -292,13 +276,6 @@ public class HikerClient {
 		}
 		return post;
 	}
-
-	/**
-	 * 댓글 수집 결과 — complete=false면 중간 페이지 콜 실패로 뒤 페이지를 못 받은 부분 결과다.
-	 * 받은 페이지분은 그대로 저장 가능하지만, 브랜드 워터마크처럼 "이 게시물 댓글을 다 봤다"를
-	 * 전제하는 갱신은 하면 안 된다(다음 스윕이 재시도할 근거를 지운다).
-	 */
-	public record CommentsFetch(List<CommentInfo> comments, boolean complete) {}
 
 	/**
 	 * 추적 게시물 댓글 — /v2/media/comments?id=<media pk>(findings §10-1). media pk는 저장 없이

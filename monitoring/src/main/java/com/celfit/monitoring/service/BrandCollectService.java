@@ -1,8 +1,10 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.instagram.source.CommentsFetch;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.instagram.source.SubjectNotFoundException;
+import com.celfit.instagram.source.TaggedPage;
 import com.celfit.monitoring.ad.AdDisclosureJudgeService;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.HikerClient;
@@ -208,7 +210,7 @@ public class BrandCollectService {
 		boolean coveredCutoff = false;
 		boolean cappedThisRun = false;   // 수집 개수 상한으로 끊겼는가 — 백필 커버리지 기록 입력(스펙 §7-1)
 		while (true) {
-			HikerClient.TaggedPage page = hiker.fetchTaggedPage(brand.igUserId(), cursor);
+			TaggedPage page = hiker.fetchTaggedPage(brand.igUserId(), cursor);
 			if (page.posts().isEmpty()) {
 				// 태그 0건(404 → 빈 페이지)·커서 종료는 자연 종료. 반대로 아직 커서가 살아 있는데
 				// 빈 페이지가 오는 건 일시 오류와 구분할 수 없어 커버로 치지 않는다(보수적 판정).
@@ -690,7 +692,7 @@ public class BrandCollectService {
 			}
 			tasks.add(CompletableFuture.runAsync(() -> callContext.runScoped(brandId, () -> {
 				try {
-					HikerClient.CommentsFetch fetch = hiker.fetchComments(p.shortCode(), p.username(),
+					CommentsFetch fetch = hiker.fetchComments(p.shortCode(), p.username(),
 							commentPages, comments.findIds(p.shortCode()));
 					comments.upsertForPost(p.shortCode(), fetch.comments());
 					// 저장값은 열거 관측치로 갱신한다 — 다음 게이트가 "그 사이 증가분"만 보게.

@@ -1,5 +1,6 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.instagram.source.ClipCounts;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.monitoring.hiker.HikerClient;
@@ -111,10 +112,10 @@ public class CollectService {
 			return posts;
 		}
 		log.info("FB 몫 미관측 신규 릴스 감지 — clips 1회 재조회: user_id {}", userId);
-		Map<String, HikerClient.ClipCounts> retried = hiker.fetchClipCounts(userId, enumeratePages);
+		Map<String, ClipCounts> retried = hiker.fetchClipCounts(userId, enumeratePages);
 		return posts.stream()
 				.map(p -> {
-					HikerClient.ClipCounts c = retried.get(p.shortCode());
+					ClipCounts c = retried.get(p.shortCode());
 					return p.fbPlays() == null && c != null && c.fbPlays() != null
 							? p.withFbPlays(c.fbPlays()) : p;
 				})
@@ -326,10 +327,10 @@ public class CollectService {
 	/** clips 복권 1회 — 창 밖 판정 게시물은 {@code singleNext}로 넘긴다. @return 다음 시도의 clips 대기분. */
 	private List<PostInfo> retryClipsOnce(String userId, List<PostInfo> pending,
 			List<PostInfo> singleNext, int attempt) {
-		Map<String, HikerClient.ClipCounts> observed = hiker.fetchClipCounts(userId, enumeratePages);
+		Map<String, ClipCounts> observed = hiker.fetchClipCounts(userId, enumeratePages);
 		List<PostInfo> next = new ArrayList<>();
 		for (PostInfo p : pending) {
-			HikerClient.ClipCounts c = observed.get(p.shortCode());
+			ClipCounts c = observed.get(p.shortCode());
 			if (c == null) {
 				if (!observed.isEmpty()) {
 					// 응답은 정상인데 이 게시물이 없다 — 최근 릴스 창 밖. clips 재콜 대신 단건 복권으로.
@@ -422,7 +423,7 @@ public class CollectService {
 	}
 
 	private void collectComments(String shortCode, String postUsername, int pages) {
-		// 중간 페이지 실패는 부분 결과로 돌아온다(HikerClient.CommentsFetch) — 캠페인 경로는
+		// 중간 페이지 실패는 부분 결과로 돌아온다(CommentsFetch) — 캠페인 경로는
 		// 워터마크가 없어 받은 만큼 upsert하면 끝(누적 합집합이라 다음 스윕이 이어 붙인다).
 		comments.upsertForPost(shortCode, hiker.fetchComments(shortCode, postUsername, pages).comments());
 	}
