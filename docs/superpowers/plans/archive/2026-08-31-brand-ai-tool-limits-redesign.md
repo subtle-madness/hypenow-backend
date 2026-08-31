@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 스펙: docs/superpowers/specs/2026-08-31-brand-ai-tool-limits-redesign-design.md
+> 상태: ✅ 실행 완료(2026-08-31) · 스펙: docs/superpowers/specs/2026-08-31-brand-ai-tool-limits-redesign-design.md
 
 **Goal:** 브랜드 AI 어시스턴트의 집합 연산을 서버로 옮기고(조합형 aggregate_posts·댓글 배치·파생 지표 서버 계산), 가드레일 한계를 뿌리(시간 90초·토큰 10만)에서 재도출한다.
 
