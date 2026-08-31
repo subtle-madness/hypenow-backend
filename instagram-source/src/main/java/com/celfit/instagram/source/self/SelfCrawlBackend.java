@@ -26,17 +26,23 @@ public class SelfCrawlBackend implements InstagramSource {
 
 	private final EmbedPostFetcher embed;
 	private final WpiProfileFetcher wpi;
+	private final OgProfileFetcher og;
 	private final DirectCommentFetcher comments;
 	private final SurfaceCircuitBreaker circuit;
 	private final SelfRetry retry;
+	// 프로필 표면 런타임 토글("og"/"wpi") — 매 콜 재평가라 app_setting 전환이 즉시 반영된다.
+	private final Supplier<String> profileSurface;
 
-	public SelfCrawlBackend(EmbedPostFetcher embed, WpiProfileFetcher wpi,
-			DirectCommentFetcher comments, SurfaceCircuitBreaker circuit, SelfRetry retry) {
+	public SelfCrawlBackend(EmbedPostFetcher embed, WpiProfileFetcher wpi, OgProfileFetcher og,
+			DirectCommentFetcher comments, SurfaceCircuitBreaker circuit, SelfRetry retry,
+			Supplier<String> profileSurface) {
 		this.embed = embed;
 		this.wpi = wpi;
+		this.og = og;
 		this.comments = comments;
 		this.circuit = circuit;
 		this.retry = retry;
+		this.profileSurface = profileSurface;
 	}
 
 	@Override
@@ -46,11 +52,15 @@ public class SelfCrawlBackend implements InstagramSource {
 
 	@Override
 	public ProfileInfo fetchProfile(String username) {
+		if ("og".equals(profileSurface.get())) {
+			return run("og", () -> og.fetchProfile(username));
+		}
 		return run("wpi", () -> wpi.fetchProfile(username));
 	}
 
 	@Override
 	public List<PostInfo> fetchRecentPosts(String username, String userId, int pages) {
+		// 최근 게시물 정본은 wpi(og 파싱 미채택) — 프로필 표면 토글과 무관하게 wpi 고정.
 		return run("wpi", () -> wpi.fetchRecentPosts(username));
 	}
 

@@ -73,16 +73,25 @@ class SelfCrawlBackendTest {
 		}
 	}
 
+	// og 문서 표면 fake 본문 — username이 wpi(nasa)와 달라 어느 fetcher로 갔는지 판별된다.
+	private static final String OG_OK = "{\"follower_count\":777,\"username\":\"og-side\"}";
+
 	private static SelfCrawlBackend backend(EmbedPostFetcher.SelfFetch embedFetch) {
 		return backend(embedFetch, new ScriptedFetch(List.of(ok(WPI_OK))));
 	}
 
 	private static SelfCrawlBackend backend(EmbedPostFetcher.SelfFetch embedFetch,
 			EmbedPostFetcher.SelfFetch wpiFetch) {
+		return backend(embedFetch, wpiFetch, () -> "wpi");
+	}
+
+	private static SelfCrawlBackend backend(EmbedPostFetcher.SelfFetch embedFetch,
+			EmbedPostFetcher.SelfFetch wpiFetch, Supplier<String> profileSurface) {
 		return new SelfCrawlBackend(new EmbedPostFetcher(embedFetch),
 				new WpiProfileFetcher(wpiFetch),
+				new OgProfileFetcher(new ScriptedFetch(List.of(ok(OG_OK)))),
 				new DirectCommentFetcher(new FakeTransport(), "DOC", "FRIENDLY"),
-				new SurfaceCircuitBreaker(5), new SelfRetry(3));
+				new SurfaceCircuitBreaker(5), new SelfRetry(3), profileSurface);
 	}
 
 	@Test
@@ -101,6 +110,39 @@ class SelfCrawlBackendTest {
 		assertThat(profile.username()).isEqualTo("nasa");
 		assertThat(profile.userId()).isEqualTo("42");
 		assertThat(profile.followers()).isEqualTo(100L);
+	}
+
+	@Test
+	void 프로필_표면_토글이_og면_fetchProfile은_og_fetcher로_위임한다() {
+		ProfileInfo profile = backend(new ScriptedFetch(List.of(ok(EMBED_OK))),
+				new ScriptedFetch(List.of(ok(WPI_OK))), () -> "og")
+				.fetchProfile("nasa");
+
+		assertThat(profile.username()).isEqualTo("og-side");
+		assertThat(profile.followers()).isEqualTo(777L);
+		// og 표면은 userId를 채택하지 않는다(정본은 wpi).
+		assertThat(profile.userId()).isNull();
+	}
+
+	@Test
+	void 프로필_표면_토글이_wpi면_fetchProfile은_wpi_fetcher로_위임한다() {
+		ProfileInfo profile = backend(new ScriptedFetch(List.of(ok(EMBED_OK))),
+				new ScriptedFetch(List.of(ok(WPI_OK))), () -> "wpi")
+				.fetchProfile("nasa");
+
+		assertThat(profile.username()).isEqualTo("nasa");
+		assertThat(profile.userId()).isEqualTo("42");
+	}
+
+	@Test
+	void 프로필_표면이_og여도_fetchRecentPosts는_wpi로_간다() {
+		// 최근 게시물 정본은 wpi(og 파싱 미채택) — 토글과 무관하게 wpi 고정.
+		List<PostInfo> posts = backend(new ScriptedFetch(List.of(ok(EMBED_OK))),
+				new ScriptedFetch(List.of(ok(WPI_OK))), () -> "og")
+				.fetchRecentPosts("nasa", "42", 3);
+
+		assertThat(posts).hasSize(1);
+		assertThat(posts.get(0).shortCode()).isEqualTo("ABC");
 	}
 
 	@Test
