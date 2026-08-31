@@ -87,7 +87,7 @@ class V1BrandAccountsControllerTest {
 	private static UserProfile profileOf(String userType, String companyName) {
 		return new UserProfile(7L, "user@example.com", "테스트유저", null, userType, "EMAIL", null, null,
 				companyName, null, null, null, false, null, null,
-				OffsetDateTime.parse("2026-06-01T00:00:00Z"), "USER");
+				OffsetDateTime.parse("2026-06-01T00:00:00Z"), "USER", "{}");
 	}
 
 	private static BrandLinkRow link(long userId, long brandId) {

@@ -30,3 +30,24 @@
 - **`GET /v1/admin/users` 목록에 `companyName` 추가** — 상세엔 이미 있던 필드의 목록 노출(N+1 방지
   요청). `AdminUserSummary`가 직접 들고 상세(`AdminUserDetail`)는 Summary에서 물려받도록 바꿔
   두 표면이 구조적으로 어긋날 수 없게 함. 미설정은 상세와 동일하게 ''(NOT NULL DEFAULT '').
+
+## 08-31 후속 (유저별 기능 플래그)
+
+프론트 요청 5건 — 저장·조회뿐이라 기존 엔드포인트 동작 변경 없음, 프론트가 읽기 전까지 무영향.
+
+- **`app.users.feature_overrides jsonb NOT NULL DEFAULT '{}'` 신설**(V20260831032920, expand-only).
+  "미설정"을 null과 `{}` 두 값으로 쪼개지 않기 위해 NOT NULL — 응답 계약(항상 객체·null 금지)이
+  저장 계층에서부터 성립한다.
+- **`GET /v1/me`·`GET /v1/admin/users/{id}`에 `featureOverrides` 추가** — 컬럼 값 그대로, 비면 `{}`.
+  `/v1/me`는 role과 같이 매 요청 DB를 읽으므로(`UserProfile`) **어드민이 바꾼 값이 세션 갱신 없이
+  즉시 반영**된다(재로그인·세션 재발급 불필요).
+- **`PUT /v1/admin/users/{id}/features` 신설** — `{"overrides": ...}` **전체 교체**(PATCH 병합 아님).
+  값 타입은 `boolean | string[]`만, 그 외 400 `VALIDATION_FAILED`. **키 문자열은 검증하지 않는다**
+  (기능 목록·기본값의 정본은 프론트 — DB가 어휘를 고정하면 기능이 늘 때마다 마이그레이션이 따라붙는다).
+  본문 상한 8KB. 인가는 기존 `/v1/admin/**`과 동일(SecurityConfig `hasRole(ADMIN)` +
+  `AdminRoleFreshnessFilter` DB role 재확인) — 별도 가드 없음. 쓰기라 CSRF 토큰(`X-XSRF-TOKEN`)이 필요하다.
+  응답은 요청 원문이 아니라 **DB에 저장된 값**을 되돌려준다(jsonb 키 순서 정규화·중복 키 제거).
+- **감사 기록은 기존 `app.admin_audit_logs` 재사용** — 컬럼 추가 없이 `path`로 구분된다.
+  `ActAsUserFilter`는 `/v1/admin/*` 경로를 애초에 기록하지 않으므로(어드민 표면은 사칭 의미가 없다),
+  `path`가 `/v1/admin/users/{id}/features`인 행은 기능 플래그 변경뿐이다. 변경과 기록은 한 트랜잭션 —
+  act-as 기록의 best-effort와 달리 여기는 상태를 바꾸는 요청이라 "기록 없는 변경"을 허용하지 않는다.

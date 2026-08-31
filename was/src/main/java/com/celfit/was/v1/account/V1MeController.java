@@ -5,6 +5,7 @@ import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.auth.UserProfile;
 import com.celfit.was.auth.UserRepository;
 import com.celfit.was.v1.common.ApiResponse;
+import com.celfit.was.v1.common.FeatureOverridesCodec;
 import com.celfit.was.v1.common.V1ApiException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -49,16 +50,19 @@ public class V1MeController {
 	private final SessionService sessionService;
 	private final ProfileImageStore profileImageStore;
 	private final AccountDeletionService accountDeletionService;
+	private final FeatureOverridesCodec featureOverridesCodec;
 
 	public V1MeController(UserRepository userRepository, PasswordEncoder passwordEncoder,
 			SignupValidator signupValidator, SessionService sessionService,
-			ProfileImageStore profileImageStore, AccountDeletionService accountDeletionService) {
+			ProfileImageStore profileImageStore, AccountDeletionService accountDeletionService,
+			FeatureOverridesCodec featureOverridesCodec) {
 		this.userRepository = userRepository;
 		this.passwordEncoder = passwordEncoder;
 		this.signupValidator = signupValidator;
 		this.sessionService = sessionService;
 		this.profileImageStore = profileImageStore;
 		this.accountDeletionService = accountDeletionService;
+		this.featureOverridesCodec = featureOverridesCodec;
 	}
 
 	record PasswordChangeRequest(String currentPassword, String newPassword) {
@@ -72,7 +76,7 @@ public class V1MeController {
 
 	@GetMapping("/v1/me")
 	public ApiResponse<MeResponse> me(@AuthenticationPrincipal AppUserDetails principal) {
-		return ApiResponse.ok(MeResponse.from(requireProfile(principal.getUserId())));
+		return ApiResponse.ok(meResponse(requireProfile(principal.getUserId())));
 	}
 
 	/**
@@ -120,9 +124,9 @@ public class V1MeController {
 		}
 		if (columns.isEmpty()) {
 			// 갱신할 허용 키가 없으면 현재 프로필 그대로 — 멱등 no-op
-			return ApiResponse.ok(MeResponse.from(requireProfile(principal.getUserId())));
+			return ApiResponse.ok(meResponse(requireProfile(principal.getUserId())));
 		}
-		return ApiResponse.ok(MeResponse.from(userRepository.patchProfile(principal.getUserId(), columns)));
+		return ApiResponse.ok(meResponse(userRepository.patchProfile(principal.getUserId(), columns)));
 	}
 
 	/**
@@ -217,6 +221,11 @@ public class V1MeController {
 		} catch (RuntimeException e) {
 			log.warn("탈퇴 DB 삭제는 완료, 커밋 후 프로필 이미지 정리 실패 — userId={}", principal.getUserId(), e);
 		}
+	}
+
+	/** featureOverrides(2026-08-31)는 jsonb 원문을 매 요청 파싱해 내보낸다 — 비어 있으면 {}. */
+	private MeResponse meResponse(UserProfile profile) {
+		return MeResponse.from(profile, featureOverridesCodec.read(profile.featureOverrides()));
 	}
 
 	private UserProfile requireProfile(long userId) {
