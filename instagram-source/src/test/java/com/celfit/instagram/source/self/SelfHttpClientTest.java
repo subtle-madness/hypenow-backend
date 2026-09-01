@@ -1,6 +1,7 @@
 package com.celfit.instagram.source.self;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -75,5 +76,27 @@ class SelfHttpClientTest {
 		SelfResponse res = client().get(base + "/x", ProxyTier.RESIDENTIAL, Map.of());
 		assertThat(res.header("set-cookie")).anyMatch(v -> v.contains("csrftoken=ABC123"));
 		assertThat(res.header("Set-Cookie")).anyMatch(v -> v.contains("csrftoken=ABC123"));
+	}
+
+	@Test
+	void 프록시_URL에_포트가_없으면_SelfCrawlException으로_실패한다() {
+		// InetSocketAddress(host, -1) — F2 결함(URI.create/newClient가 try 밖에 있어 그대로 새던 지점).
+		ProxyConfig proxy = new ProxyConfig("http://user:pass@127.0.0.1", null, Duration.ofSeconds(5), false);
+		SelfHttpClient client = new SelfHttpClient(proxy);
+		assertThatThrownBy(() -> client.get("http://127.0.0.1/x", ProxyTier.RESIDENTIAL, Map.of()))
+				.isInstanceOf(SelfCrawlException.class)
+				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
+						.isEqualTo(SelfErrorClass.OTHER));
+	}
+
+	@Test
+	void 프록시_URL에_URI_파싱을_깨는_문자가_있으면_SelfCrawlException으로_실패한다() {
+		// 비밀번호에 공백 등 URI.create가 거부하는 문자가 실린 경우(ProxyUrls javadoc이 경고하는 케이스).
+		ProxyConfig proxy = new ProxyConfig("http://user:pa ss@127.0.0.1:8080", null, Duration.ofSeconds(5), false);
+		SelfHttpClient client = new SelfHttpClient(proxy);
+		assertThatThrownBy(() -> client.get("http://127.0.0.1/x", ProxyTier.RESIDENTIAL, Map.of()))
+				.isInstanceOf(SelfCrawlException.class)
+				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
+						.isEqualTo(SelfErrorClass.OTHER));
 	}
 }

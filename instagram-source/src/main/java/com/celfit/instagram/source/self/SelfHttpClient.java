@@ -75,8 +75,17 @@ public class SelfHttpClient implements SelfTransport {
 	}
 
 	private SelfResponse exchange(HttpRequest req, ProxyTier tier) {
-		String proxyUrl = proxy.urlFor(tier);
-		HttpClient client = newClient(proxyUrl);
+		HttpClient client;
+		try {
+			client = newClient(proxy.urlFor(tier));
+		} catch (RuntimeException e) {
+			// 프록시 URL 파싱 실패(URI.create의 IllegalArgumentException, 포트 누락 시
+			// InetSocketAddress의 IllegalArgumentException, ProxyUrls.withCountry의
+			// StringIndexOutOfBoundsException 등) — 설정 오류라 재시도 무의미, OTHER로 분류한다.
+			// 이 구간이 try 밖에 있으면 SelfCrawlException으로 안 싸이고 그대로 새어 폴백망을 우회한다(F2).
+			throw new SelfCrawlException(SelfErrorClass.OTHER,
+					"프록시 URL 설정 오류: " + e.getMessage(), e);
+		}
 		try {
 			HttpResponse<byte[]> res = client.send(req, HttpResponse.BodyHandlers.ofByteArray());
 			String enc = res.headers().firstValue("content-encoding").orElse("");

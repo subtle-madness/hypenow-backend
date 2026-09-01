@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 수집 정책 계층 — 자체크롤 1순위 + Hiker 폴백 + 에러 taxonomy 라우팅(스펙 §4·§8). selfEnabled는
@@ -14,6 +16,8 @@ import java.util.function.Supplier;
  * InstagramSourceMetrics로 관측한다. selfEnabled가 false를 주면 전량 Hiker(행동 변화 0).
  */
 public class FailoverInstagramSource implements InstagramSource {
+
+	private static final Logger log = LoggerFactory.getLogger(FailoverInstagramSource.class);
 
 	private final InstagramSource self;
 	private final InstagramSource hiker;
@@ -121,6 +125,14 @@ public class FailoverInstagramSource implements InstagramSource {
 			}
 			T r = hikerCall.get();
 			metrics.record(path, "hiker", "fallback:" + e.errorClass());
+			return r;
+		} catch (RuntimeException e) {
+			// SelfCrawlException·UnsupportedOperationException으로 분류되지 못하고 self 호출에서
+			// 그대로 샌 예외(예: 미처 못 잡은 설정 오류) — 분류 불가라 서킷 계상은 하지 않지만,
+			// 폴백망 누수(F2)는 막아야 하므로 Hiker로는 태운다. 원인 추적용으로 태그를 구분한다.
+			log.warn("자체크롤 {} 예상 못한 런타임 예외 — hiker로 폴백: {}", path, e.getMessage(), e);
+			T r = hikerCall.get();
+			metrics.record(path, "hiker", "fallback:UNEXPECTED");
 			return r;
 		}
 	}

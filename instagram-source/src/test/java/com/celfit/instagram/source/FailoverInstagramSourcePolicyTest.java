@@ -130,6 +130,49 @@ class FailoverInstagramSourcePolicyTest {
 	}
 
 	@Test
+	void self가_예상외_RuntimeException을_던지면_hiker로_폴백한다() {
+		// SelfCrawlException·UnsupportedOperationException 외의 RuntimeException(예: 프록시 URL 파싱
+		// 실패가 어딘가에서 안 잡히고 샌 경우)도 폴백망에 태워야 한다 — F2 결함(캐치올 부재)의 회귀 방지.
+		InstagramSource self = new ThrowingSource("self") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				throw new IllegalStateException("예상 못한 런타임 오류");
+			}
+		};
+		PostInfo hikerPost = post("HIKER");
+		InstagramSource hiker = new ThrowingSource("hiker") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				return hikerPost;
+			}
+		};
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, () -> true);
+		assertThat(source.fetchPost("ABC")).isSameAs(hikerPost);
+	}
+
+	@Test
+	void 예상외_RuntimeException_폴백은_fallback_UNEXPECTED로_관측된다() {
+		InstagramSource self = new ThrowingSource("self") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				throw new IllegalStateException("예상 못한 런타임 오류");
+			}
+		};
+		InstagramSource hiker = new ThrowingSource("hiker") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				return post("HIKER");
+			}
+		};
+		RecordingMetrics metrics = new RecordingMetrics();
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, () -> true, metrics);
+
+		source.fetchPost("ABC");
+
+		assertThat(metrics.records).containsExactly("fetchPost|hiker|fallback:UNEXPECTED");
+	}
+
+	@Test
 	void self가_NOT_FOUND면_폴백하지_않고_SubjectNotFoundException으로_종료한다() {
 		InstagramSource self = new ThrowingSource("self") {
 			@Override
