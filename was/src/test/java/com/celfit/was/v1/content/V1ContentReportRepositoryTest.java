@@ -71,16 +71,19 @@ class V1ContentReportRepositoryTest extends IntegrationTest {
 				    main_order int  NOT NULL,
 				    mid_order  int  NOT NULL,
 				    sub_order  int  NOT NULL,
+				    axis       text NOT NULL DEFAULT 'beauty',
 				    PRIMARY KEY (main_value, mid_label, sub_label)
 				)""");
 		jdbcTemplate.update("""
-				INSERT INTO beauty_taxonomy VALUES
-				 ('makeup', '메이크업', '립메이크업', '립틴트', 3, 1, 1),
-				 ('makeup', '메이크업', '아이메이크업', '아이라이너', 3, 3, 1),
-				 ('skincare', '스킨케어', '크림', '크림', 1, 3, 1)""");
+				INSERT INTO beauty_taxonomy (main_value, main_label, mid_label, sub_label,
+				  main_order, mid_order, sub_order, axis) VALUES
+				 ('makeup', '메이크업', '립메이크업', '립틴트', 3, 1, 1, 'beauty'),
+				 ('makeup', '메이크업', '아이메이크업', '아이라이너', 3, 3, 1, 'beauty'),
+				 ('skincare', '스킨케어', '크림', '크림', 1, 3, 1, 'beauty'),
+				 ('snack', '간식류', '간식류', '과자', 11, 1, 1, 'fnb')""");
 		jdbcTemplate.update("INSERT INTO account_summaries VALUES ('alpha', 10000)");
 
-		// makeup 표본 후보 7건 + skincare 1건. 표본에 남는 건 m1·m2·m3·mlegacy 넷.
+		// makeup 표본 후보 6건 + snack 1건(mnb) + skincare 1건. makeup 표본에 남는 건 m1·m2·m3·mlegacy 넷.
 		jdbcTemplate.update("""
 				INSERT INTO contents (short_code, account_handle, content_type, views, likes, comments) VALUES
 				 ('m1',      'alpha', 'reels', 1000,  100, 10),
@@ -91,6 +94,7 @@ class V1ContentReportRepositoryTest extends IntegrationTest {
 				 ('mlate',   'alpha', 'reels', 99999, 999, 99),
 				 ('mnb',     'alpha', 'reels', 7000,  700, 70),
 				 ('s1',      'alpha', 'reels', 2000,  200, 20)""");
+		// mnb는 F&B 분석분(is_beauty=false ∧ snack) — makeup 표본에 안 섞이고 snack 표본이 된다
 		jdbcTemplate.update("""
 				INSERT INTO content_analyses (short_code, main_category, is_beauty, metric_timeliness,
 				  ai_content_summary, recent_contents_count) VALUES
@@ -100,7 +104,7 @@ class V1ContentReportRepositoryTest extends IntegrationTest {
 				 ('mlegacy', 'makeup',   true,  NULL,            '요약', 12),
 				 ('mfeed',   'makeup',   true,  'timely',        '요약', 12),
 				 ('mlate',   'makeup',   true,  'late_backfill', '요약', 12),
-				 ('mnb',     'makeup',   false, 'timely',        '요약', 12),
+				 ('mnb',     'snack',    false, 'timely',        '요약', 12),
 				 ('s1',      'skincare', true,  'timely',        '요약', 12)""");
 	}
 
@@ -109,7 +113,7 @@ class V1ContentReportRepositoryTest extends IntegrationTest {
 		var ctx = repository.findCategoryContext("makeup", 1000L);
 
 		// m1(1000)·m2(3000)·m3(500)·mlegacy(800) → 4건, 평균 1325.
-		// 빠지는 것: mfeed(피드 views NULL) · mlate(늦크롤 백필) · mnb(비뷰티) · s1(다른 대분류)
+		// 빠지는 것: mfeed(피드 views NULL) · mlate(늦크롤 백필) · mnb(다른 대분류·F&B) · s1(다른 대분류)
 		assertThat(ctx.sampleSize()).isEqualTo(4L);
 		assertThat(ctx.avgViews()).isEqualTo(1325L);
 		assertThat(ctx.higherCount()).isEqualTo(1L); // 나(1000)보다 높은 건 m2뿐
@@ -121,6 +125,17 @@ class V1ContentReportRepositoryTest extends IntegrationTest {
 
 		assertThat(ctx.sampleSize()).isEqualTo(4L);
 		assertThat(ctx.avgViews()).isEqualTo(1325L);
+	}
+
+	@Test
+	void FnB_대분류도_같은_카테고리_표본을_받는다() {
+		// mnb(snack, is_beauty=false, timely, views 7000)가 유일한 snack 표본 —
+		// 구 쿼리의 is_beauty=true 게이트가 남아 있으면 0건으로 "현재 준비중" 화면이 된다.
+		var ctx = repository.findCategoryContext("snack", 1000L);
+
+		assertThat(ctx.sampleSize()).isEqualTo(1L);
+		assertThat(ctx.avgViews()).isEqualTo(7000L);
+		assertThat(ctx.higherCount()).isEqualTo(1L); // 나(1000)보다 높은 mnb
 	}
 
 	@Test
