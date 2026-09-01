@@ -1,0 +1,33 @@
+package com.celfit.was.v1.brandmonitoring.ai;
+
+/**
+ * 용어 → 데이터 축 매핑의 단일 정본(Genie BUSINESS DEFINITIONS 패턴, 스펙 §5) - 규칙 추가는
+ * 프롬프트가 아니라 여기에 한다. "광고 게시물"·"참여율" 같은 사용자 표현이 어느 데이터 축·서버
+ * 계산값에 대응하는지를 산발적 프롬프트 규칙이 아니라 이 한 파일에서 관리해, 모델이 표현 못 하는
+ * 질문을 만나면 가장 가까운 축으로 티 안 내고 뭉개는 조용한 근사(silent approximation, 스펙 §1
+ * 실측 실패 3건의 공통 패턴)를 구조로 막는다.
+ *
+ * <p>{@link BrandAiAgent#buildBasePrompt}가 이 섹션을 프리셋·세션 brandId 유무와 무관하게 모든
+ * 질문의 시스템 프롬프트에 상시 주입한다({@link BrandAiPrompt#SYSTEM} 바로 뒤).
+ *
+ * <p>사용자에게 그대로 노출될 수 있는 문안이므로 엠대시를 쓰지 않는다(전역 카피 규칙).
+ */
+public final class BrandAiGlossary {
+
+	public static final String SECTION = """
+
+			[용어 정의]
+			광고 게시물, 협찬 게시물, 스폰서드는 전부 sponsorship 축의 sponsored를 뜻합니다. 캡션에 '광고'라는 글자가 있는지와는 무관합니다. keyword로 세거나 거르지 않고 sponsorship 인자를 씁니다.
+			오가닉은 sponsorship 축의 organic을 뜻합니다.
+			참여율은 aggregate_posts가 돌려주는 engagementRate(서버 계산값)를 그대로 인용합니다. 직접 계산하지 않습니다.
+			도달 배수는 aggregate_posts가 돌려주는 reachMultiple(서버 계산값)를 그대로 인용합니다. 직접 계산하지 않습니다.
+			조회수는 릴스 게시물만 모수로 삼습니다. 피드 게시물은 조회수가 항상 없습니다.
+			반응이 좋다, 인기처럼 모호한 질문은 릴스 조회수 기준을 우선으로 답하고, 참여율을 함께 밝힐 수 있습니다.
+			인플루언서 랭킹, 작성자 랭킹은 aggregate_posts(groupBy=author) 한 번으로 답합니다. get_author를 반복 호출하지 않습니다.
+			랭킹표나 비교표에는 각 행의 표본 수(viewsSampleCount 또는 postCount)를 반드시 함께 적습니다.
+			이 사전에 없는 용어를 데이터 축에 대응시켜야 할 때는 어떤 축으로 근사했는지 답변에 명시합니다.
+			""";
+
+	private BrandAiGlossary() {
+	}
+}

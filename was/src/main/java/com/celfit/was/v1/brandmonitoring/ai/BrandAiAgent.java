@@ -114,12 +114,15 @@ public class BrandAiAgent {
 	}
 
 	/**
-	 * 시스템 프롬프트 조립(스펙 §6) - 세션 brandId가 있으면 브랜드 컨텍스트를 선주입한다. 두 run()
-	 * 오버로드(완결·스트리밍)가 이 헬퍼를 공유해 조립 로직이 갈리지 않게 한다.
+	 * 시스템 프롬프트 조립(스펙 §5·§6) - {@link BrandAiGlossary#SECTION}(용어 사전)은 세션 brandId
+	 * 유무와 무관하게 항상 실린다(스펙 §5, 프리셋과 무관 전 질문 적용). 세션 brandId가 있으면 그
+	 * 뒤에 브랜드 컨텍스트를 이어 선주입한다. 두 run() 오버로드(완결·스트리밍)가 이 헬퍼를 공유해
+	 * 조립 로직이 갈리지 않게 한다.
 	 */
 	private String buildBasePrompt(long userId, Long sessionBrandId, String extraSystemPrompt) {
 		String context = sessionBrandId == null ? "" : toolbox.brandContextLine(userId, sessionBrandId);
-		return BrandAiPrompt.SYSTEM + context + (extraSystemPrompt == null ? "" : extraSystemPrompt);
+		return BrandAiPrompt.SYSTEM + BrandAiGlossary.SECTION + context
+				+ (extraSystemPrompt == null ? "" : extraSystemPrompt);
 	}
 
 	/**

@@ -378,6 +378,28 @@ class BrandAiAgentTest {
 				.contains("[브랜드 컨텍스트] 이 대화의 브랜드: brandId=7");
 	}
 
+	/**
+	 * 용어 사전 상시 주입(2026-09-01 구조 개선, 스펙 §5) - {@link BrandAiGlossary#SECTION}이 세션
+	 * brandId 유무와 무관하게 시스템 프롬프트에 항상 실려야 한다(프리셋과 무관 전 질문 적용).
+	 */
+	@Test
+	void 시스템_프롬프트에_용어_정의_섹션이_상시_주입된다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.brandContextLine(1L, 7L)).willReturn("\n\n[브랜드 컨텍스트] 이 대화의 브랜드: brandId=7");
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(List.of(textAnswer("답변1"), textAnswer("답변2")), captured, toolbox);
+
+		agent.run(1L, List.of(new AiChatMessage("user", "알려줘")), 7L, null, "");
+		agent.run(1L, List.of(new AiChatMessage("user", "알려줘")), null, null, "");
+
+		assertThat(captured).hasSize(2);
+		for (String body : captured) {
+			String systemText = om.readTree(body).path("systemInstruction").path("parts").path(0).path("text")
+					.asString();
+			assertThat(systemText).contains("[용어 정의]").contains("sponsorship");
+		}
+	}
+
 	/** extraSystemPrompt(scope 요약·프리셋 지시문, T3·T4)는 시스템 프롬프트 뒤에 그대로 이어붙는다. */
 	@Test
 	void extraSystemPrompt는_시스템_프롬프트_뒤에_붙는다() {
