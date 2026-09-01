@@ -32,7 +32,10 @@ class AccountCategoryStatsViewTest {
 		Flyway.configure().dataSource(ds).locations("classpath:db/migration/analysis").load().migrate();
 		db = new JdbcTemplate(ds);
 		// 최근창(account_content_series) 5건: a는 makeup 2 + skincare 1, b는 makeup 1.
-		// a4는 비뷰티(is_beauty=false), a5는 뷰티지만 대분류 NULL → 둘 다 믹스에서 빠진다.
+		// a4는 비뷰티(F&B 대분류 snack, is_beauty=false)라 fnb 축으로 빠지고, a5는 대분류 NULL이라
+		// 축과 무관하게 믹스에서 빠진다 — 2026-09-01 축 인지화 이후 "뷰티 믹스"는 axis='beauty' 투영.
+		// (뷰 게이트가 is_beauty에서 어휘 축으로 바뀌었으므로 시드도 불변식
+		//  `main NOT NULL ∧ axis=beauty ⟺ is_beauty=true ∧ main NOT NULL`을 지키는 값으로 둔다.)
 		db.update("""
 				INSERT INTO account_content_series
 				  (short_code, account_handle, posted_at, content_type, views, likes, comments, sponsored)
@@ -48,7 +51,7 @@ class AccountCategoryStatsViewTest {
 				VALUES ('a1','t','makeup',true),
 				       ('a2','t','makeup',true),
 				       ('a3','t','skincare',true),
-				       ('a4','t','makeup',false),
+				       ('a4','t','snack',false),
 				       ('a5','t',NULL,true),
 				       ('b1','t','makeup',true)""");
 		// x1은 분석 자체가 없다 — 미분석 게시물은 믹스에 안 잡힌다.
@@ -58,7 +61,8 @@ class AccountCategoryStatsViewTest {
 	void 대분류_한글라벨로_최근창_건수를_집계한다() {
 		List<Map<String, Object>> rows = db.queryForList("""
 				SELECT main_group, content_count FROM account_category_stats
-				WHERE account_handle = 'acc_a' ORDER BY content_count DESC, main_group""");
+				WHERE account_handle = 'acc_a' AND axis = 'beauty'
+				ORDER BY content_count DESC, main_group""");
 
 		assertEquals(2, rows.size());
 		assertEquals("메이크업", rows.get(0).get("main_group"));
@@ -69,9 +73,13 @@ class AccountCategoryStatsViewTest {
 
 	@Test
 	void 비뷰티_무대분류_미분석은_제외된다() {
-		assertEquals(3L, db.queryForObject(
-				"SELECT sum(content_count) FROM account_category_stats WHERE account_handle = 'acc_a'",
-				Long.class));
+		// 비뷰티(a4)는 뷰티 축 투영에서 빠지고 fnb 축으로 간다. 무대분류(a5)·미분석(x1)은 양축 모두 없다.
+		assertEquals(3L, db.queryForObject("""
+				SELECT sum(content_count) FROM account_category_stats
+				WHERE account_handle = 'acc_a' AND axis = 'beauty'""", Long.class));
+		assertEquals(1L, db.queryForObject("""
+				SELECT sum(content_count) FROM account_category_stats
+				WHERE account_handle = 'acc_a' AND axis = 'fnb'""", Long.class));
 		assertEquals(0, db.queryForObject(
 				"SELECT count(*) FROM account_category_stats WHERE account_handle = 'acc_x'",
 				Integer.class));
