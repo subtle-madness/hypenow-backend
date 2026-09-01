@@ -76,6 +76,31 @@ env 오버라이드(전부 선택):
   자체가 실패하면(스키마 변경·데이터 없음 등) 그 케이스의 수치 검증만 SKIP 표시하고 러너는
   죽지 않는다** - 나머지 tools/forbid/answerContains 채점은 그대로 진행된다.
 
+## 전역 답변 denylist(내부 구현 용어 유출 차단, 2026-09-01 실측 id75·id70 후속)
+
+`GLOBAL_ANSWER_DENYLIST`(run.sh 상단)는 케이스별 `expectAnswerNotContains`와 별개로 **모든 케이스의
+답변에 항상** 적용되는 전역 검사다. "`list_posts` 툴은 최대 30건...", "도달 배수(reachMultiple)"처럼
+툴 이름·인자·필드명이 사용자 답변에 그대로 새는 것을 잡는다(프롬프트 쪽 대응은
+`BrandAiPrompt.SYSTEM` 규칙 11-1). 현재 목록:
+
+```
+list_posts, aggregate_posts, search_posts, get_comments, get_author, list_brands,
+groupBy, reachMultiple, viewsSampleCount, minSample, "sponsorship 인자"
+```
+
+FAIL 상세에는 걸린 용어가 그대로 찍힌다(`전역 denylist 위반(내부 용어 노출: <용어>)`).
+
+**`get_post`는 이 목록에 없다** - 실존하는 툴 이름(`BrandAiToolSpecs.GET_POST`)이지만, 일반적인
+한국어 답변 문장에 `get_post`가 부분 문자열로 등장할 자연스러운 경로가 없고, `shortCode` 병기
+의무(규칙 7)가 요구하는 값도 shortCode 자체(영숫자 코드)이지 `get_post`라는 문자열이 아니라서
+오탐 여지가 없다고 보고 뺐다. 반대로 넣었을 때의 이득도 없다(이미 안 새는 걸 감시하는 셈) -
+넣는 비용(목록이 길어짐)만 있고 얻는 게 없어 제외했다.
+
+내부 용어가 정당하게 필요한 케이스가 생기면(예: 사용자가 먼저 툴 이름을 언급하며 물어봐서 그
+용어를 답변에서 되풀이해야 하는 경우) 그때 케이스 스키마에 per-case 예외 필드(예:
+`allowGlobalDenylistTerms`)를 추가한다 - 지금은 그런 케이스가 없으므로 전역 목록에 예외 없이
+전부 적용한다.
+
 ## 채점은 전부 결정론(1단계, 설계 §7-2)
 
 LLM judge 없음 - `expectTools`/`forbidTools`는 `app.ai_chat_logs.tool_calls`(jsonb, 실행된 툴 호출의

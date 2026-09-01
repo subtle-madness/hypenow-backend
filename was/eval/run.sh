@@ -30,6 +30,14 @@ APP_DB="${APP_DB:-analysis}"
 MONITORING_DB="${MONITORING_DB:-monitoring}"
 
 GOLDSET="goldset.json"
+# 답변에 새면 안 되는 내부 구현 용어(툴 이름·인자·필드명) - 케이스별 expectAnswerNotContains와
+# 별개로 모든 케이스의 답변에 항상 적용한다(2026-09-01 실측 id75·id70 후속 - "list_posts 툴은
+# 최대 30건", "도달 배수(reachMultiple)" 같은 내부 용어 유출). 정당하게 필요한 예외가 생기면
+# 그때 케이스 스키마에 per-case 예외 필드를 추가한다(README 참고) - 지금은 예외 없이 전역 적용.
+GLOBAL_ANSWER_DENYLIST=(
+	"list_posts" "aggregate_posts" "search_posts" "get_comments" "get_author" "list_brands"
+	"groupBy" "reachMultiple" "viewsSampleCount" "minSample" "sponsorship 인자"
+)
 DAILY_LIMIT_KEY="ai.chat.daily-limit"
 PER_MIN_KEY="ai.chat.per-minute-limit"
 BASE_DAILY_LIMIT=30
@@ -126,6 +134,24 @@ check_answer_not_contains() {
 		*) ;;
 		esac
 	done < <(printf '%s' "$needles_json" | jq -r '.[]')
+	return 0
+}
+
+# GLOBAL_ANSWER_DENYLIST 검사(케이스별 expectAnswerNotContains와 별개, 모든 케이스에 항상 적용) -
+# 답변에 걸린 첫 용어를 stdout으로 출력하고 exit 1, 하나도 안 걸리면 아무것도 출력하지 않고 exit 0.
+# 호출부는 반환값이 아니라 stdout(걸린 용어) 유무로 판정한다 - `|| true`로 set -e에 안 걸리게 감싼다.
+check_global_denylist() {
+	local answer="$1"
+	shift
+	local term
+	for term in "$@"; do
+		case "$answer" in
+		*"$term"*)
+			printf '%s' "$term"
+			return 1
+			;;
+		esac
+	done
 	return 0
 }
 
@@ -226,6 +252,17 @@ run_self_test() {
 		check_answer_not_contains "shortCode를 알려주시면 조회할게요" '["shortCode를 알려", "알 수 없습니다"]'
 	assert_false "목록 중 하나만 걸려도 실패" \
 		check_answer_not_contains "죄송해요, 알 수 없습니다" '["shortCode를 알려", "알 수 없습니다"]'
+
+	echo "== check_global_denylist(2026-09-01 실측 id75·id70 후속 - 답변 내부 용어 유출 전역 검사) =="
+	local test_denylist=("list_posts" "reachMultiple" "sponsorship 인자")
+	assert_true "내부 용어가 없으면 통과(exit 0, stdout 없음)" \
+		check_global_denylist "author_x님의 릴스 6개를 도달 배수 기준으로 정리했어요" "${test_denylist[@]}"
+	assert_false "필드명(reachMultiple)이 새면 실패" \
+		check_global_denylist "도달 배수(reachMultiple)가 null이라 계산할 수 없어요" "${test_denylist[@]}"
+	assert_false "툴 이름(list_posts)이 새면 실패" \
+		check_global_denylist "list_posts 툴은 최대 30건만 반환해요" "${test_denylist[@]}"
+	assert_eq "걸린 용어를 stdout으로 반환" "list_posts" \
+		"$(check_global_denylist "list_posts 툴은 최대 30건만 반환해요" "${test_denylist[@]}" || true)"
 
 	echo "== check_ground_truth(콤마 유무 두 포맷 허용) =="
 	assert_true "콤마 포맷 매치" check_ground_truth "총 1,234건이에요" "1234"
@@ -356,6 +393,12 @@ process_case() {
 	if ! check_answer_not_contains "$answer" "$expect_answer_not"; then
 		ok=0
 		details+=("expectAnswerNotContains 위반(금지 $expect_answer_not)")
+	fi
+	local global_hit=""
+	global_hit=$(check_global_denylist "$answer" "${GLOBAL_ANSWER_DENYLIST[@]}") || true
+	if [[ -n "$global_hit" ]]; then
+		ok=0
+		details+=("전역 denylist 위반(내부 용어 노출: ${global_hit})")
 	fi
 
 	local gt_note=""
