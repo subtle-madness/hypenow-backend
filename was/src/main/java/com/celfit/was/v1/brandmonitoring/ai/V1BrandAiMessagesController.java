@@ -9,6 +9,7 @@ import com.celfit.was.v1.common.ApiResponse;
 import com.celfit.was.v1.common.V1ApiException;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -259,6 +260,9 @@ public class V1BrandAiMessagesController {
 	private void writeJsonError(HttpServletResponse response, V1ApiException e) throws IOException {
 		response.setStatus(e.status().value());
 		response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+		// 서블릿 writer의 기본 인코딩은 ISO-8859-1이라 명시하지 않으면 한글 메시지가 깨진다
+		// (2026-09-01 실측 - 일일 한도 429 문구 mojibake). 컨버터를 안 거치는 이 경로만의 의무다.
+		response.setCharacterEncoding(StandardCharsets.UTF_8.name());
 		if (e.retryAfterSeconds() != null) {
 			response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(e.retryAfterSeconds()));
 		}
