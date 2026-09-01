@@ -116,9 +116,7 @@ public class V1InfluencerDiscoveryRepository {
 		// vertical=fnb는 대분류 없이 축 전체 조회(2026-09-01 FE 피드백 #1) — 비중 게이트 없이
 		// COALESCE(a.fnb, false)만 적용된다(아래 mainCategory 블록이 안 붙는다). vertical=beauty는
 		// 뷰티 경로 그대로(무필터와 동치).
-		boolean fnbAxis = com.celfit.was.v1.common.MainCategories.isFnb(q.mainCategory())
-				|| "fnb".equals(q.vertical());
-		if (fnbAxis) {
+		if (q.fnbAxis()) {
 			where.append(" AND COALESCE(a.fnb, false)");
 			// 뷰티 게시물 비율 게이트는 F&B축에 적용하지 않는다 — F&B 계정은 뷰티 비율이 0이라
 			// 걸면 전멸한다. 오판 계정 방어는 아래 F&B 비중 20% 게이트가 같은 역할(실측 게시물 기반).
@@ -246,8 +244,14 @@ public class V1InfluencerDiscoveryRepository {
 		};
 	}
 
-	/** categoryShares 재료 — 분모는 창 내 "뷰티 판정 + 대분류 보유" 게시물 수, 비중 내림차순. */
-	public List<ShareRow> findShares(List<String> handles) {
+	/**
+	 * categoryShares 재료 — 요청 축의 대분류만, 분모는 창 내 "그 축 대분류 보유" 게시물 수,
+	 * 비중 내림차순. 축 소속은 어휘(beauty_taxonomy.axis)가 정본(2026-08-31 F&B 분류 설계 §2) —
+	 * 뷰티 축은 구 게이트 is_beauty IS TRUE와 동치(불변식: main NOT NULL ∧ axis=beauty ⟺
+	 * is_beauty=true ∧ main NOT NULL, account_category_share 재정의와 같은 근거), F&B 축은
+	 * F&B 분류분이 새로 나온다(2026-09-01 FE "카테고리 정보 준비 중" 해소).
+	 */
+	public List<ShareRow> findShares(List<String> handles, boolean fnbAxis) {
 		if (handles.isEmpty()) {
 			return List.of();
 		}
@@ -257,11 +261,14 @@ public class V1InfluencerDiscoveryRepository {
 						             sum(count(*)) OVER (PARTITION BY s.account_handle) AS total
 						      FROM account_content_series s
 						      JOIN content_analyses an ON an.short_code = s.short_code
-						      WHERE s.account_handle IN (:handles)
-						        AND an.is_beauty IS TRUE AND an.main_category IS NOT NULL
+						      JOIN (SELECT DISTINCT main_value, axis FROM beauty_taxonomy) t
+						           ON t.main_value = an.main_category
+						      WHERE s.account_handle IN (:handles) AND t.axis = :axis
 						      GROUP BY s.account_handle, an.main_category) x
 						ORDER BY account_handle, pct DESC, main_category
-						""").param("handles", handles).query(ShareRow.class).list();
+						""").param("handles", handles)
+				.param("axis", fnbAxis ? "fnb" : "beauty")
+				.query(ShareRow.class).list();
 	}
 
 	/** collaboratedBrands 재료 — 협찬(ad_type='sponsored') 콘텐츠의 detected_brands name, 빈도 내림차순. */
