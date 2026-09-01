@@ -4,13 +4,15 @@ import com.celfit.monitoring.store.AppSettingRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
  * 자체크롤 런타임 토글 — app_setting을 짧은 TTL(기본 5초)로 캐시해 재확인한다(킬스위치는 TTL만큼
- * 지연 반영, 08-31 F4). self-enabled이고 NOT force-hiker일 때만 자체 1순위. 키 부재/이상값은 안전측
+ * 지연 반영, 08-31 F4). self-enabled이고 NOT force-hiker이고 프록시(레지덴셜) URL이 설정돼 있을 때만
+ * 자체 1순위(08-31 F5 — 프록시 미설정 상태에서 데이터센터 IP 직결 차단). 키 부재/이상값은 안전측
  * (false=Hiker). 프로필 표면은 og/wpi(기본 wpi).
  *
  * <p>app_setting 조회가 DataAccessException 등으로 실패하면(DB 장애) 직전 캐시값을 유지하고, 캐시가
@@ -31,6 +33,7 @@ public class IgSourceSettings {
 	private final InstagramProxyProperties proxyProps;
 	private final Clock clock;
 	private final Duration ttl;
+	private final AtomicBoolean proxyMissingWarned = new AtomicBoolean(false);
 
 	private volatile Snapshot cache;
 
@@ -49,10 +52,17 @@ public class IgSourceSettings {
 
 	public boolean selfEnabled() {
 		Snapshot s = snapshot();
-		if (s.forceHiker()) {
+		if (s.forceHiker() || !s.selfEnabledRaw()) {
 			return false;
 		}
-		return s.selfEnabledRaw();
+		if (!proxyConfigured()) {
+			if (proxyMissingWarned.compareAndSet(false, true)) {
+				log.warn("자체크롤 self-enabled=true지만 레지덴셜 프록시 URL 미설정 — Hiker로 강제"
+						+ "(데이터센터 IP 직결·egress 평판 훼손 방지)");
+			}
+			return false;
+		}
+		return true;
 	}
 
 	public String profileSurface() {
@@ -65,6 +75,12 @@ public class IgSourceSettings {
 
 	public String commentFriendlyName() {
 		return snapshot().commentFriendlyName();
+	}
+
+	/** 레지덴셜 프록시 최소 요건 — 모바일은 선택, 레지덴셜 부재면 자체크롤 금지(F5). */
+	private boolean proxyConfigured() {
+		String url = proxyProps.residentialUrl();
+		return url != null && !url.isBlank();
 	}
 
 	private synchronized Snapshot snapshot() {

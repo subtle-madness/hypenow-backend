@@ -17,7 +17,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * 자체크롤 런타임 토글·킬스위치 판정 — app_setting 시드 기준값(전량 off)과 TTL 캐시(5초) 기준
- * 재시작 없는 반영·DB 장애 fail-safe를 검증한다.
+ * 재시작 없는 반영·DB 장애 fail-safe·프록시 미설정 게이트를 검증한다.
  */
 class IgSourceSettingsTest {
 
@@ -113,8 +113,9 @@ class IgSourceSettingsTest {
 		db = new JdbcTemplate(ds);
 		TestDb.resetAndMigrate(db, ds);
 		repo = new AppSettingRepository(db);
-		proxyProps = new InstagramProxyProperties(
-				null, null, Duration.ofSeconds(15), false, "ENV_DOC_ID", "ENV_FRIENDLY_NAME");
+		// 레지덴셜 프록시가 설정된 상태 — F5(프록시 미설정 게이트)는 별도 테스트에서 null로 검증.
+		proxyProps = new InstagramProxyProperties("http://residential.proxy:8080", null,
+				Duration.ofSeconds(15), false, "ENV_DOC_ID", "ENV_FRIENDLY_NAME");
 		clock = new SteppingClock();
 	}
 
@@ -247,6 +248,18 @@ class IgSourceSettingsTest {
 
 		// TTL 경과 후에는 반영된다.
 		clock.advance(TTL.plusSeconds(1));
+		assertThat(settings.selfEnabled()).isFalse();
+	}
+
+	// ── F5: 프록시 미설정이면 자체크롤 금지 ──────────────────────────────
+
+	@Test
+	void 프록시_URL이_비어있으면_self_enabled여도_selfEnabled는_false다() {
+		InstagramProxyProperties noProxy = new InstagramProxyProperties(null, null,
+				Duration.ofSeconds(15), false, "ENV_DOC_ID", "ENV_FRIENDLY_NAME");
+		repo.upsert("ig-source.self-enabled", "true");
+		IgSourceSettings settings = new IgSourceSettings(repo, noProxy, clock, TTL);
+
 		assertThat(settings.selfEnabled()).isFalse();
 	}
 }
