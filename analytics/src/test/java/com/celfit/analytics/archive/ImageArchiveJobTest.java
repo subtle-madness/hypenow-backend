@@ -247,6 +247,28 @@ class ImageArchiveJobTest {
 		assertThat(rows).isZero();
 	}
 
+	/**
+	 * 메모리 계약(2026-09-01): 대상 선정은 v_contents 전량을 자바 리스트로 적재하지 않는다 —
+	 * 커서 스트리밍(읽기전용 트랜잭션 + fetchSize) + 상한 크기 후보만 유지한다. 전량 적재 구현은
+	 * 드라이버 버퍼와 Target 리스트가 행 수에 비례해 이중으로 쌓인다(미러 08-31 OOM과 같은 패턴).
+	 * 시드는 3000행 × 100KB URL ≈ 300MB — Gradle 테스트 JVM 기본 힙(512m) 전제에서 전량
+	 * 적재(버퍼+UTF-16 문자열 ≈ 2배)면 OOM, 스트리밍이면 fetch 창(500행)+상한(5건)만 남는다.
+	 */
+	@Test
+	void 대상이_힙보다_커도_상한만큼만_유지한다() {
+		db.execute("""
+				INSERT INTO analytics.v_contents
+				SELECT 'c' || i, 'https://cdn.example/v/' || repeat('x', 100000) || i || '_n.jpg'
+				FROM generate_series(1, 3000) i
+				""");
+
+		JobResult result = job(5).run();
+
+		assertThat(result.processed()).isEqualTo(5);
+		assertThat(result.failed()).isZero();
+		assertThat(result.carriedOver()).isTrue();
+	}
+
 	@Test
 	void 파싱_불가_URL은_그_건만_실패하고_나머지는_계속() {
 		seedAccount("broken", "https://cdn.example/v/463 111_n.jpg?sig=1"); // 공백 — URI 파싱 불가
