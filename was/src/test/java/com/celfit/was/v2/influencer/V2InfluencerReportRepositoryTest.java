@@ -45,6 +45,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 	void setUpTables() {
 		// 분석 DB 형상 DDL 사본(필요 컬럼만) — V1·V3·V10·V20·V30·V34·V35·V39·V40·V45 참조
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_peer_stats");
+		jdbcTemplate.execute("DROP VIEW IF EXISTS account_peer_axis_stats");
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_category_stats");
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_beauty_ratio");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS account_analyses");
@@ -57,7 +58,9 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("""
 				CREATE TABLE accounts (
 				    handle    text PRIMARY KEY,
-				    followers bigint
+				    followers bigint,
+				    beauty    boolean,
+				    fnb       boolean
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE account_summaries (
@@ -112,76 +115,47 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				    main_order int  NOT NULL,
 				    mid_order  int  NOT NULL,
 				    sub_order  int  NOT NULL,
+				    axis       text NOT NULL DEFAULT 'beauty',
 				    PRIMARY KEY (main_value, mid_label, sub_label)
 				)""");
-		// 아래 두 뷰 DDL은 analytics V35(account_category_stats)·V39(account_peer_stats) 마이그레이션의
-		// verbatim 사본이다 — 원본 마이그레이션이 바뀌면 이 사본도 같이 갱신할 것. 어긋나면 이 테스트는
-		// 실DB와 다른 로직을 검증하게 된다.
-		// V35 그대로 — account_peer_stats(V39)가 이 뷰에 의존한다.
+		// 아래 두 뷰 DDL은 analytics V35 계열(account_category_stats)·V<UTC>(account_peer_axis_stats,
+		// 2026-09-01 축 인지화) 마이그레이션의 사본이다 — 원본이 바뀌면 같이 갱신할 것. 실뷰의
+		// 퍼센타일·중앙값 컬럼은 was 미소비라 생략(기존 사본 관례).
 		jdbcTemplate.execute("""
 				CREATE VIEW account_category_stats AS
 				SELECT s.account_handle,
 				       COALESCE(t.main_label, a.main_category) AS main_group,
-				       count(*)                                AS content_count
+				       count(*)                                AS content_count,
+				       COALESCE(t.axis, CASE WHEN a.is_beauty THEN 'beauty' ELSE 'fnb' END) AS axis
 				FROM account_content_series s
 				JOIN content_analyses a ON a.short_code = s.short_code
-				LEFT JOIN (SELECT DISTINCT main_value, main_label FROM beauty_taxonomy) t
+				LEFT JOIN (SELECT DISTINCT main_value, main_label, axis FROM beauty_taxonomy) t
 				       ON t.main_value = a.main_category
-				WHERE a.is_beauty IS TRUE
-				  AND a.main_category IS NOT NULL
-				GROUP BY s.account_handle, COALESCE(t.main_label, a.main_category)
+				WHERE a.main_category IS NOT NULL
+				GROUP BY s.account_handle, COALESCE(t.main_label, a.main_category),
+				         COALESCE(t.axis, CASE WHEN a.is_beauty THEN 'beauty' ELSE 'fnb' END)
 				""");
-		// V39 그대로.
 		jdbcTemplate.execute("""
-				CREATE VIEW account_peer_stats AS
+				CREATE VIEW account_peer_axis_stats AS
 				WITH cat AS (
-				  SELECT DISTINCT ON (account_handle) account_handle, main_group
+				  SELECT DISTINCT ON (account_handle, axis) account_handle, axis, main_group
 				  FROM account_category_stats
-				  ORDER BY account_handle, content_count DESC, main_group
-				),
-				ad AS (
-				  SELECT s.account_handle,
-				         round(avg(s.views) FILTER (WHERE s.views > 0))::bigint                            AS ad_avg_views,
-				         round(avg((s.likes + s.comments)::numeric / NULLIF(su.followers, 0)) * 100, 1)    AS ad_avg_er_pct,
-				         round(avg(s.likes))::bigint                                                        AS ad_avg_likes,
-				         round(avg(s.comments))::bigint                                                     AS ad_avg_comments
-				  FROM account_content_series s
-				  JOIN content_analyses an ON an.short_code = s.short_code AND an.ad_type = 'sponsored'
-				  JOIN account_summaries su ON su.handle = s.account_handle
-				  GROUP BY s.account_handle
+				  ORDER BY account_handle, axis, content_count DESC, main_group
 				),
 				base AS (
-				  SELECT su.handle,
+				  SELECT su.handle, ax.axis,
 				         COALESCE(c.main_group, '미분류') AS peer_category,
 				         CASE WHEN su.followers IS NULL   THEN '미상'
 				              WHEN su.followers >= 500000 THEN '50만+'
 				              WHEN su.followers >= 100000 THEN '10만-50만'
 				              WHEN su.followers >=  50000 THEN '5만-10만'
 				              WHEN su.followers >=  10000 THEN '1만-5만'
-				              ELSE '1만 미만' END          AS follower_bucket,
-				         su.avg_views, su.avg_er_pct, su.avg_likes, su.avg_comments,
-				         ad.ad_avg_views, ad.ad_avg_er_pct, ad.ad_avg_likes, ad.ad_avg_comments
+				              ELSE '1만 미만' END          AS follower_bucket
 				  FROM account_summaries su
-				  LEFT JOIN cat c ON c.account_handle = su.handle
-				  LEFT JOIN ad   ON ad.account_handle = su.handle
-				),
-				med AS (
-				  SELECT peer_category, follower_bucket,
-				         percentile_cont(0.5) WITHIN GROUP (ORDER BY avg_er_pct) AS peer_median_er_pct
-				  FROM base
-				  GROUP BY peer_category, follower_bucket
-				),
-				gmed AS (
-				  SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY avg_er_pct) AS global_median_er_pct FROM base
+				  CROSS JOIN (VALUES ('beauty'), ('fnb')) AS ax(axis)
+				  LEFT JOIN cat c ON c.account_handle = su.handle AND c.axis = ax.axis
 				)
-				SELECT b.handle, b.peer_category, b.follower_bucket,
-				       count(*) OVER peer AS peer_size,
-				       round(m.peer_median_er_pct::numeric, 1)   AS peer_median_er_pct,
-				       round(g.global_median_er_pct::numeric, 1) AS global_median_er_pct
-				FROM base b
-				JOIN med m ON m.peer_category = b.peer_category AND m.follower_bucket = b.follower_bucket
-				CROSS JOIN gmed g
-				WINDOW peer AS (PARTITION BY b.peer_category, b.follower_bucket)
+				SELECT handle, axis, peer_category, follower_bucket FROM base
 				""");
 		// V45 그대로 — 유사 인플루언서 후보 게이트가 이 뷰를 조인한다(findSimilarHandles).
 		jdbcTemplate.execute("""
@@ -309,6 +283,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		// 다른 클래스의 DROP TABLE content_analyses 등(CASCADE 없음)이 의존성 오류로 깨진다 —
 		// 클래스 실행 순서가 비결정적이라 간헐 실패로만 드러난다. peer가 category에 의존하므로 역순 드랍.
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_peer_stats");
+		jdbcTemplate.execute("DROP VIEW IF EXISTS account_peer_axis_stats");
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_category_stats");
 		jdbcTemplate.execute("DROP VIEW IF EXISTS account_beauty_ratio");
 	}
@@ -404,7 +379,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		// sim_true(overlap 3, diff 500) > sim_mid(overlap 2, diff 40000)
 		//   > sim_dup(overlap 1 — distinct라 raw 4가 아님, diff 1) > sim_far_tie(overlap 1, diff 80000)
 		// sim_other_cat은 traits 완전 일치지만 카테고리(메이크업)가 달라 제외. sim_me 자신도 제외.
-		assertThat(repository.findSimilarHandles("sim_me"))
+		assertThat(repository.findSimilarHandles("sim_me", false))
 				.containsExactly("sim_true", "sim_mid", "sim_dup", "sim_far_tie");
 	}
 
@@ -451,7 +426,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		// partial: 교집합 1/합집합 5 = 0.2 → 0.12+0.4 = 0.52
 		seedSimAccount("partial", 20_000, "[\"정보형 리뷰\",\"감성 콘텐츠\",\"일상 브이로그\"]", "탄력케어", "10");
 
-		assertThat(repository.findSimilarHandles("me")).containsExactly("full", "partial");
+		assertThat(repository.findSimilarHandles("me", false)).containsExactly("full", "partial");
 	}
 
 	@Test
@@ -461,7 +436,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		seedSimAccount("tagged", 99_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
 		seedSimAccount("mixonly", 11_000, "[\"감성 콘텐츠\"]", "탄력케어", "10");
 
-		assertThat(repository.findSimilarHandles("me")).containsExactly("tagged", "mixonly");
+		assertThat(repository.findSimilarHandles("me", false)).containsExactly("tagged", "mixonly");
 	}
 
 	@Test
@@ -471,7 +446,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		// 겹치는 성분은 min(1.0, 0.6)=0.6 → 0.4×0.6=0.24 + 태그 무겹침 = 0.24 < 0.30.
 		seedSimAccount("faroff", 10_000, "[\"감성 콘텐츠\"]", "탄력케어", "6", "모발케어", "4");
 
-		assertThat(repository.findSimilarHandles("me")).isEmpty();
+		assertThat(repository.findSimilarHandles("me", false)).isEmpty();
 	}
 
 	@Test
@@ -481,7 +456,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 			seedSimAccount("cand" + i, 10_000 + i, "[\"감성 콘텐츠\"]", "탄력케어", "10");
 		}
 
-		assertThat(repository.findSimilarHandles("me")).hasSize(10);
+		assertThat(repository.findSimilarHandles("me", false)).hasSize(10);
 	}
 
 	@Test
@@ -491,7 +466,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		seedSimAccount("near", 15_000, "[\"감성 콘텐츠\"]", "탄력케어", "10");
 		seedSimAccount("far", 60_000, "[\"일상 브이로그\"]", "탄력케어", "10");
 
-		assertThat(repository.findSimilarHandles("me")).containsExactly("near", "far");
+		assertThat(repository.findSimilarHandles("me", false)).containsExactly("near", "far");
 	}
 
 	@Test
@@ -506,12 +481,12 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		seedSimAccount("nomixTagged", 12_000, "[\"정보형 리뷰\"]");
 		seedSimAccount("nomixBare", 12_000, "[\"감성 콘텐츠\"]");
 
-		assertThat(repository.findSimilarHandles("me")).containsExactly("nomixTagged");
+		assertThat(repository.findSimilarHandles("me", false)).containsExactly("nomixTagged");
 	}
 
 	@Test
 	void 기준_계정이_없으면_빈_목록() {
-		assertThat(repository.findSimilarHandles("ghost")).isEmpty();
+		assertThat(repository.findSimilarHandles("ghost", false)).isEmpty();
 	}
 
 	@Test
@@ -520,7 +495,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		// traits·믹스가 완전 일치해도 피어 카테고리(모발케어)가 다르면 후보 자체가 아니다(스펙 ② 경계 유지).
 		seedSimAccount("other", 10_000, "[\"정보형 리뷰\"]", "모발케어", "10");
 
-		assertThat(repository.findSimilarHandles("me")).isEmpty();
+		assertThat(repository.findSimilarHandles("me", false)).isEmpty();
 	}
 
 	@Test
@@ -529,7 +504,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "3", "모발케어", "1");
 		seedSimAccount("edge", 10_000, "[\"감성 콘텐츠\"]", "탄력케어", "3", "향케어", "1");
 
-		assertThat(repository.findSimilarHandles("me")).containsExactly("edge");
+		assertThat(repository.findSimilarHandles("me", false)).containsExactly("edge");
 	}
 
 	@Test
@@ -543,7 +518,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				INSERT INTO account_analyses (handle, analyzed_at, traits)
 				VALUES ('stale', now() - interval '1 hour', '["정보형 리뷰"]'::jsonb)""");
 
-		assertThat(repository.findSimilarHandles("me")).isEmpty();
+		assertThat(repository.findSimilarHandles("me", false)).isEmpty();
 	}
 
 	@Test
@@ -553,7 +528,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		seedSimAccount("bb", 12_000, "[\"감성 콘텐츠\"]", "탄력케어", "10");
 		seedSimAccount("aa", 12_000, "[\"일상 브이로그\"]", "탄력케어", "10");
 
-		assertThat(repository.findSimilarHandles("me")).containsExactly("aa", "bb");
+		assertThat(repository.findSimilarHandles("me", false)).containsExactly("aa", "bb");
 	}
 
 	@Test
@@ -569,7 +544,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				"탄력케어", "1", "향수케어", "1", "허브케어", "1", "홈케어", "1");
 		seedSimAccount("skewed", 10_000, "[\"감성 콘텐츠\"]", "탄력케어", "4");
 
-		assertThat(repository.findSimilarHandles("me")).isEmpty();
+		assertThat(repository.findSimilarHandles("me", false)).isEmpty();
 	}
 
 	@Test
@@ -581,7 +556,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		jdbcTemplate.update(
 				"UPDATE account_summaries SET last_posted_at = now() - interval '4 months' WHERE handle = 'dormant'");
 
-		assertThat(repository.findSimilarHandles("me")).containsExactly("active");
+		assertThat(repository.findSimilarHandles("me", false)).containsExactly("active");
 	}
 
 	@Test
@@ -591,18 +566,18 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		seedSimAccount("unknown", 11_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
 		jdbcTemplate.update("UPDATE account_summaries SET last_posted_at = NULL WHERE handle = 'unknown'");
 
-		assertThat(repository.findSimilarHandles("me")).isEmpty();
+		assertThat(repository.findSimilarHandles("me", false)).isEmpty();
 	}
 
 	@Test
 	void 요약_행_없는_후보는_제외된다() {
-		// account_peer_stats(V39)가 account_summaries를 base로 파생되므로 요약 행이 없는 계정은
+		// account_peer_axis_stats가 account_summaries를 base로 파생되므로 요약 행이 없는 계정은
 		// 후보 풀 자체에 없다 — 휴면 필터 도입 전에도 성립하던 불변식의 회귀 그물.
 		seedSimAccount("me", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
 		seedSimAccount("nosummary", 11_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
 		jdbcTemplate.update("DELETE FROM account_summaries WHERE handle = 'nosummary'");
 
-		assertThat(repository.findSimilarHandles("me")).isEmpty();
+		assertThat(repository.findSimilarHandles("me", false)).isEmpty();
 	}
 
 	@Test
@@ -613,7 +588,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		jdbcTemplate.update(
 				"UPDATE account_summaries SET last_posted_at = now() - interval '4 months' WHERE handle = 'me'");
 
-		assertThat(repository.findSimilarHandles("me")).containsExactly("active");
+		assertThat(repository.findSimilarHandles("me", false)).containsExactly("active");
 	}
 
 	@Test
@@ -626,7 +601,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		seedSimAccountWithBeautyRatio("goodcand", 12_000, "[\"정보형 리뷰\"]", 100, 25, "탄력케어");
 		seedSimAccountWithBeautyRatio("badcand", 12_000, "[\"정보형 리뷰\"]", 100, 15, "탄력케어");
 
-		assertThat(repository.findSimilarHandles("me")).containsExactly("goodcand");
+		assertThat(repository.findSimilarHandles("me", false)).containsExactly("goodcand");
 	}
 
 	/** 뷰티 비율 게이트 검증 전용 — analyzedCount건 중 앞 beautyCount건만 is_beauty=true, 나머지는 false. */
@@ -649,5 +624,79 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 					  detected_brands) VALUES (?, ?, ?, 'organic', NULL)""",
 					shortCode, i < beautyCount, category);
 		}
+	}
+
+	/** F&B 유사 시드 — is_beauty=false + F&B 대분류(snack 등), accounts.fnb=true·beauty=false. */
+	private void seedFnbSimAccount(String handle, long followers, String traitsJson, String... mixCounts) {
+		jdbcTemplate.update("INSERT INTO accounts (handle, followers, beauty, fnb) VALUES (?, ?, false, true)",
+				handle, followers);
+		jdbcTemplate.update("INSERT INTO account_summaries (handle, followers, last_posted_at) VALUES (?, ?, now())",
+				handle, followers);
+		jdbcTemplate.update(
+				"INSERT INTO account_analyses (handle, analyzed_at, traits) VALUES (?, now(), ?::jsonb)",
+				handle, traitsJson);
+		int post = 0;
+		for (int i = 0; i < mixCounts.length; i += 2) {
+			String category = mixCounts[i];
+			int count = Integer.parseInt(mixCounts[i + 1]);
+			for (int j = 0; j < count; j++) {
+				String shortCode = handle + "_f" + (post++);
+				jdbcTemplate.update("""
+						INSERT INTO account_content_series (short_code, account_handle, posted_at,
+						  content_type, views, likes, comments, sponsored) VALUES
+						  (?, ?, now(), 'reels', 1000, 10, 1, false)""", shortCode, handle);
+				jdbcTemplate.update("""
+						INSERT INTO content_analyses (short_code, is_beauty, main_category, ad_type,
+						  detected_brands) VALUES (?, false, ?, 'organic', NULL)""", shortCode, category);
+			}
+		}
+	}
+
+	@Test
+	void FnB_축_유사는_FnB_계정끼리_뷰티_비율_게이트_없이_동작한다() {
+		// beauty_taxonomy에 fnb 어휘 시드(운영 V20260831032411의 축약)
+		jdbcTemplate.update("""
+				INSERT INTO beauty_taxonomy (main_value, main_label, mid_label, sub_label,
+				  main_order, mid_order, sub_order, axis) VALUES
+				  ('snack', '간식류', '간식류', '과자', 11, 1, 1, 'fnb')""");
+		seedFnbSimAccount("fme", 10_000, "[\"정보형 리뷰\"]", "snack", "10");
+		// fcand: traits 완전 일치 + 같은 fnb 피어(간식류). 뷰티 비율 0%지만 F&B 축은 그 게이트를
+		// 안 문다 — 걸리면 전멸(스펙 §4). 분석은 10건이라 표본 부족 보류도 아니다.
+		seedFnbSimAccount("fcand", 12_000, "[\"정보형 리뷰\"]", "snack", "10");
+		// bcand: 뷰티 계정(간식류 아님) — traits가 같아도 축이 달라 후보 자체가 아니어야 한다.
+		seedSimAccount("bcand", 12_000, "[\"정보형 리뷰\"]", "skincare", "10");
+
+		assertThat(repository.findSimilarHandles("fme", true)).containsExactly("fcand");
+	}
+
+	@Test
+	void 뷰티_축_유사에_FnB_계정은_섞이지_않는다() {
+		jdbcTemplate.update("""
+				INSERT INTO beauty_taxonomy (main_value, main_label, mid_label, sub_label,
+				  main_order, mid_order, sub_order, axis) VALUES
+				  ('snack', '간식류', '간식류', '과자', 11, 1, 1, 'fnb')""");
+		// 뷰티 쪽 어휘는 공유 픽스처와 겹치지 않는 전용 라벨(탄력케어) — skincare를 쓰면 @BeforeEach의
+		// sim_*(스킨케어 100%·활동 중·accounts 등재)가 믹스 1.0(=0.40)으로 컷을 넘어 함께 딸려온다.
+		seedSimAccount("bme", 10_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		seedSimAccount("bcand", 12_000, "[\"정보형 리뷰\"]", "탄력케어", "10");
+		// F&B 계정 — 뷰티 축 피어는 '미분류'라 탄력케어 풀과 안 겹치고, 뷰티 비율 게이트로도 걸러진다.
+		seedFnbSimAccount("fnoise", 12_000, "[\"정보형 리뷰\"]", "snack", "10");
+
+		assertThat(repository.findSimilarHandles("bme", false)).containsExactly("bcand");
+	}
+
+	@Test
+	void findFnbAxis는_FnB_단독만_true다() {
+		jdbcTemplate.update("""
+				INSERT INTO accounts (handle, followers, beauty, fnb) VALUES
+				  ('fnb_only', 1000, false, true),
+				  ('mixed_axis', 1000, true, true),
+				  ('beauty_only', 1000, true, false),
+				  ('legacy', 1000, NULL, NULL)""");
+		assertThat(repository.findFnbAxis("fnb_only")).isTrue();
+		assertThat(repository.findFnbAxis("mixed_axis")).isFalse(); // 혼합은 beauty(기존 화면 불변)
+		assertThat(repository.findFnbAxis("beauty_only")).isFalse();
+		assertThat(repository.findFnbAxis("legacy")).isFalse();     // 레거시 null은 뷰티 모수 출신
+		assertThat(repository.findFnbAxis("ghost")).isFalse();      // 행 부재 → 기본 beauty
 	}
 }

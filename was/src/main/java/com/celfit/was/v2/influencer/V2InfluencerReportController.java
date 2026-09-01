@@ -105,7 +105,7 @@ public class V2InfluencerReportController {
 			if (repository.findSummary(influencerId).isEmpty()) {
 				throw V1ApiException.notFound("인플루언서를 찾을 수 없습니다.");
 			}
-			List<String> handles = repository.findSimilarHandles(influencerId);
+			List<String> handles = repository.findSimilarHandles(influencerId, false);
 			List<InfluencerCard> cards = discoveryAssembler.toCards(
 					discoveryRepository.findCardsByHandles(handles),
 					// 유사 후보는 뷰티 코퍼스 기반(account_peer_stats, V35 뷰티 게이트) — 축은 뷰티 고정.

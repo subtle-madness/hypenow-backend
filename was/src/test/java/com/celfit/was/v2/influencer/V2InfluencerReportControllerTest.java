@@ -120,7 +120,7 @@ class V2InfluencerReportControllerTest {
 	@Test
 	void 유사_인플루언서는_6_21_카드를_유사도_순으로() throws Exception {
 		given(repository.findSummary("haeun.log")).willReturn(Optional.of(fullSummary()));
-		given(repository.findSimilarHandles("haeun.log")).willReturn(List.of("b", "a"));
+		given(repository.findSimilarHandles("haeun.log", false)).willReturn(List.of("b", "a"));
 		// discoveryRepository.findCardsByHandles가 ["a","b"] 순(비유사도 순)으로 돌려줘도 응답은 ["b","a"]
 		given(discoveryRepository.findCardsByHandles(List.of("b", "a"))).willReturn(List.of(
 				new CardRow("a", "A", null, 1000L, 10L, 5L, "bio-a", null, null, null, null, null, null, 77L, 0L, null,
@@ -193,7 +193,7 @@ class V2InfluencerReportControllerTest {
 	@Test
 	void similar_익명_요청은_IP_키_로그인_요청은_사용자_키로_레이트리밋된다() throws Exception {
 		given(repository.findSummary("haeun.log")).willReturn(Optional.of(fullSummary()));
-		given(repository.findSimilarHandles("haeun.log")).willReturn(List.of());
+		given(repository.findSimilarHandles("haeun.log", false)).willReturn(List.of());
 
 		mockMvc.perform(get("/v2/influencers/haeun.log/similar")).andExpect(status().isOk());
 		mockMvc.perform(get("/v2/influencers/haeun.log/similar").with(user(principal())))
@@ -255,7 +255,7 @@ class V2InfluencerReportControllerTest {
 	@Test
 	void similar_정상_처리_후_permit이_release된다() throws Exception {
 		given(repository.findSummary("haeun.log")).willReturn(Optional.of(fullSummary()));
-		given(repository.findSimilarHandles("haeun.log")).willReturn(List.of());
+		given(repository.findSimilarHandles("haeun.log", false)).willReturn(List.of());
 
 		mockMvc.perform(get("/v2/influencers/haeun.log/similar")).andExpect(status().isOk());
 
