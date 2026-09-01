@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -37,6 +38,8 @@ public class IgSourceSettings {
 
 	private volatile Snapshot cache;
 
+	// 테스트 전용 4-arg 생성자가 함께 있어 후보가 2개라 Spring이 암묵 선택을 못 한다 — 명시 지정 필수.
+	@Autowired
 	public IgSourceSettings(AppSettingRepository settings, InstagramProxyProperties proxyProps) {
 		this(settings, proxyProps, Clock.systemUTC(), DEFAULT_TTL);
 	}
