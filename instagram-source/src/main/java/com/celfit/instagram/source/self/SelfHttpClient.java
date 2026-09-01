@@ -28,8 +28,16 @@ public class SelfHttpClient implements SelfTransport {
 			+ "(KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 	private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(3); // fastfail(죽은 IP 꼬리 절단)
 
+	/*
+	 * 프록시 CONNECT 터널의 Basic auth를 JDK 기본이 끈다 — 클리어해야 자격증명이 실린다(crawler와 동일).
+	 * 정본은 각 소비 모듈의 main()에서 SpringApplication.run 이전에 선설정하는 것(crawler
+	 * CrawlerApplication, monitoring MonitoringApplication 참고) — jdk.internal.net.http.common.Utils가
+	 * 이 프로퍼티를 최초 HttpClient 생성 시점에 1회만 캐싱하기 때문에, Spring 배선상 다른 HttpClient
+	 * (예: JdkHikerHttp)가 SelfHttpClient보다 먼저 초기화되면 이 static 블록은 이미 캐싱된 뒤라
+	 * 무효하다(실증됨: monitoring에서 407 전량 실패). 이 블록은 main()에서 미처 선설정하지 못한
+	 * 다른 소비자를 위한 최선노력 보험일 뿐 — 새 소비 모듈을 추가할 때 이 블록만 믿지 말 것.
+	 */
 	static {
-		// 프록시 CONNECT 터널의 Basic auth를 JDK 기본이 끈다 — 클리어해야 자격증명이 실린다(crawler와 동일).
 		if (System.getProperty("jdk.http.auth.tunneling.disabledSchemes") == null) {
 			System.setProperty("jdk.http.auth.tunneling.disabledSchemes", "");
 		}
