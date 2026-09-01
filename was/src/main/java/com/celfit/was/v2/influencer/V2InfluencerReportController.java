@@ -105,12 +105,12 @@ public class V2InfluencerReportController {
 			if (repository.findSummary(influencerId).isEmpty()) {
 				throw V1ApiException.notFound("인플루언서를 찾을 수 없습니다.");
 			}
-			List<String> handles = repository.findSimilarHandles(influencerId);
+			// 축은 대상 계정에서 파생(F&B 단독 → fnb) — 후보 풀·믹스·카드 비중이 같은 축을 따라간다.
+			boolean fnbAxis = repository.findFnbAxis(influencerId);
+			List<String> handles = repository.findSimilarHandles(influencerId, fnbAxis);
 			List<InfluencerCard> cards = discoveryAssembler.toCards(
 					discoveryRepository.findCardsByHandles(handles),
-					// 유사 후보는 뷰티 코퍼스 기반(account_peer_stats, V35 뷰티 게이트) — 축은 뷰티 고정.
-					// F&B 유사 추천 개방 시 대상 계정 축 파생으로 바꾼다.
-					discoveryRepository.findShares(handles, false),
+					discoveryRepository.findShares(handles, fnbAxis),
 					discoveryRepository.findBrands(handles),
 					discoveryRepository.findThumbs(handles),
 					discoveryRepository.findEngagements(handles));
