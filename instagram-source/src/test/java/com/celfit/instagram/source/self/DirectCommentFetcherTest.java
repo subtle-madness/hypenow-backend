@@ -193,4 +193,30 @@ class DirectCommentFetcherTest {
 		assertThat(partial.complete()).isFalse();
 		assertThat(partial.comments()).hasSize(15);
 	}
+
+	@Test
+	void doc_id_만료_errors_배열_응답은_1페이지분을_보존한_부분_결과() {
+		// 200 + 유효 JSON이지만 data=null + errors=[{code:1675002}](doc_id 만료). 파싱은 성공하므로
+		// 기존 잭슨-예외 분기(103행)에 안 걸린다 — complete=true 가짜 완주를 별도로 막아야 한다.
+		String ssrPaged = paged(fixture("post_page_comments.html"), "SSR_CURSOR");
+		FakeTransport fake = new FakeTransport(okWithCsrf(ssrPaged, "CSRF1"),
+				ok(fixture("graphql_doc_id_expired_errors.json")));
+		CommentsFetch partial = fetcher(fake).fetch("DYtaeT4TPYu", "someowner", 5);
+
+		assertThat(partial.complete()).isFalse();
+		assertThat(partial.comments()).hasSize(15);
+	}
+
+	@Test
+	void data_xig_polaris_media가_null인_응답은_1페이지분을_보존한_부분_결과() {
+		// 200 + errors 없이 data.xig_polaris_media만 null인 변형 — comments_connection 체인이
+		// MissingNode로 흘러 빈 페이지(edges=0)로 오독되면 그대로 complete=true가 나가버린다.
+		String ssrPaged = paged(fixture("post_page_comments.html"), "SSR_CURSOR");
+		FakeTransport fake = new FakeTransport(okWithCsrf(ssrPaged, "CSRF1"),
+				ok(fixture("graphql_media_null.json")));
+		CommentsFetch partial = fetcher(fake).fetch("DYtaeT4TPYu", "someowner", 5);
+
+		assertThat(partial.complete()).isFalse();
+		assertThat(partial.comments()).hasSize(15);
+	}
 }

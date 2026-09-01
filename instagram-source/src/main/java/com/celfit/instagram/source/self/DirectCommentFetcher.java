@@ -94,14 +94,22 @@ public class DirectCommentFetcher {
 				// 중간 페이지 실패 — 받은 페이지분은 보존하되 미완주로 표시.
 				return new CommentsFetch(out, false);
 			}
-			JsonNode pageConnection;
+			JsonNode root;
 			try {
-				pageConnection = MAPPER.readTree(r.body())
-						.path("data").path("xig_polaris_media").path("comments_connection");
+				root = MAPPER.readTree(r.body());
 			} catch (RuntimeException e) {
 				// 중간 페이지 파스 실패 — 비200 중간 실패와 같은 규칙으로 받은 분을 보존한다.
 				return new CommentsFetch(out, false);
 			}
+			if (isGraphqlFailure(root)) {
+				// 200 + 유효 JSON이지만 data 부재/null 또는 최상위 errors(doc_id 만료 등, code
+				// 1675002 "Unauthorized logged out query" 실측) — 파싱은 성공하므로 위 catch에
+				// 안 걸리고, comments_connection 체인이 MissingNode로 흘러 빈 페이지(0건)로 오독되면
+				// break 후 complete=true가 나가버린다. 그러면 워터마크가 닫혀 영구 재수집 불가가
+				// 되므로, 기존 부분 실패 처리(비200·파스실패)와 동일하게 받은 분을 보존한 미완주로 반환.
+				return new CommentsFetch(out, false);
+			}
+			JsonNode pageConnection = root.path("data").path("xig_polaris_media").path("comments_connection");
 			int before = out.size();
 			appendComments(pageConnection, out);
 			if (out.size() == before) {
@@ -114,6 +122,20 @@ public class DirectCommentFetcher {
 			cursor = next;
 		}
 		return new CommentsFetch(out, true);
+	}
+
+	/**
+	 * doc_id 만료 등 GraphQL 레벨 실패 감지 — 최상위 {@code errors} 배열 존재, 또는
+	 * {@code data.xig_polaris_media.comments_connection}이 부재/null인 경우. 진짜로 댓글이 0건인
+	 * 정상 응답은 {@code comments_connection}이 존재하고 {@code edges}만 빈 배열이라 구분된다.
+	 */
+	private static boolean isGraphqlFailure(JsonNode root) {
+		JsonNode errors = root.path("errors");
+		if (errors.isArray() && !errors.isEmpty()) {
+			return true;
+		}
+		JsonNode connection = root.path("data").path("xig_polaris_media").path("comments_connection");
+		return connection.isMissingNode() || connection.isNull();
 	}
 
 	private static void appendComments(JsonNode connection, List<CommentInfo> out) {
