@@ -409,7 +409,7 @@ echo "app_setting 한도 임시 상향 중 (daily/per-minute -> ${TEMP_LIMIT})..
 app_psql -c "UPDATE app.app_setting SET value='${TEMP_LIMIT}' WHERE key='${DAILY_LIMIT_KEY}';"
 app_psql -c "UPDATE app.app_setting SET value='${TEMP_LIMIT}' WHERE key='${PER_MIN_KEY}';"
 
-# ---------- 3. 로그인(CSRF 쿠키 확보 -> /api/auth/login) ----------
+# ---------- 3. 로그인(CSRF 쿠키 확보 -> /v1/auth/login) ----------
 COOKIE_JAR=$(mktemp)
 # CSRF 토큰은 지연 발급이다(SpaCsrfTokenRequestHandler) - 아무 요청이나 한 번 태워야 XSRF-TOKEN
 # 쿠키가 내려온다. 401이 나도 무시한다(쿠키 발급이 목적이지 인증이 아니다).
@@ -419,7 +419,7 @@ login_tmp=$(mktemp)
 if ! login_code=$(curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
 	-H "Content-Type: application/json" -H "X-XSRF-TOKEN: $(xsrf_token)" \
 	-o "$login_tmp" -w '%{http_code}' \
-	-X POST "$WAS_BASE/api/auth/login" \
+	-X POST "$WAS_BASE/v1/auth/login" \
 	-d "$(jq -n --arg email "$EVAL_EMAIL" --arg password "$EVAL_PASSWORD" '{email: $email, password: $password}')"); then
 	login_code="000"
 fi
@@ -444,10 +444,10 @@ echo
 print_row "CASE" "STATUS" "DETAIL"
 print_row "----" "------" "------"
 
-while IFS= read -r case_json; do
-	process_case "$case_json"
+while IFS= read -r -u 3 case_json; do
+	process_case "$case_json" </dev/null
 	sleep 1
-done < <(jq -c '.[]' "$GOLDSET")
+done 3< <(jq -c '.[]' "$GOLDSET")
 
 echo
 echo "PASS=${pass_count} FAIL=${fail_count} SKIP=${skip_count}"
