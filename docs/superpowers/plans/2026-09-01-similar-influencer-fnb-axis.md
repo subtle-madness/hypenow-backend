@@ -590,7 +590,86 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: 모듈 검증·운영 사전 대조·문서·PR
+### Task 4: was — 콘텐츠 리포트 카테고리 비교 축 개방 (2026-09-01 사용자 추가 요청)
+
+**Files:**
+- Modify: `was/src/main/java/com/celfit/was/v1/content/V1ContentReportRepository.java:56-81` (`findCategoryContext`)
+- Test: `was/src/test/java/com/celfit/was/v1/content/V1ContentReportRepositoryTest.java`
+
+**Interfaces:**
+- Consumes: 없음(독립 — 라이브 집계 쿼리 단독 수정)
+- Produces: 시그니처 불변 — `findCategoryContext(String mainCategory, Long views)` 그대로, 모수만 축 중립
+
+**배경:** 콘텐츠 상세(6.x)의 "이 콘텐츠 vs 같은 카테고리 콘텐츠" 섹션이 F&B 게시물에서 "현재 준비중입니다"로 비어 있다(운영 실측 moobocke 게시물). `findCategoryContext`의 `AND an.is_beauty = true`가 원인 — F&B 분석분은 `is_beauty=false`라 표본 0건. `main_category = :mc`가 이미 대분류 하나로 모수를 고정하고 대분류가 축을 결정하므로(불변식, 서빙 개방 §2) `is_beauty` 조건은 뷰티 카테고리에선 잉여, F&B 카테고리에선 치명이다 — 제거해도 뷰티 결과는 동치.
+
+- [ ] **Step 1: 테스트 갱신 + 신규 실패 테스트**
+
+`V1ContentReportRepositoryTest` 픽스처(94~104행)의 `mnb` 행은 "makeup + is_beauty=false"로 **불변식 위반 상태를 모델링**하고 있다(운영에 존재 불가 — sanitize가 축 파생으로 보장). F&B 실데이터 형상으로 교체:
+
+① `beauty_taxonomy` 시드(76~80행)에 axis 컬럼 추가가 필요하므로 테이블 DDL(66~75행)에 `axis text NOT NULL DEFAULT 'beauty'` 컬럼을 추가하고, 시드에 fnb 행 1개 추가:
+
+```java
+jdbcTemplate.update("""
+		INSERT INTO beauty_taxonomy (main_value, main_label, mid_label, sub_label,
+		  main_order, mid_order, sub_order, axis) VALUES
+		 ('makeup', '메이크업', '립메이크업', '립틴트', 3, 1, 1, 'beauty'),
+		 ('makeup', '메이크업', '아이메이크업', '아이라이너', 3, 3, 1, 'beauty'),
+		 ('skincare', '스킨케어', '크림', '크림', 1, 3, 1, 'beauty'),
+		 ('snack', '간식류', '간식류', '과자', 11, 1, 1, 'fnb')""");
+```
+
+② `mnb` 행을 F&B 분석분으로 교체 — contents 시드는 그대로 두고 content_analyses의 `('mnb', 'makeup', false, ...)` → `('mnb', 'snack', false, 'timely', '요약', 12)`. 주석 갱신: `// mnb는 F&B 분석분(is_beauty=false ∧ snack) — makeup 표본에 안 섞이고 snack 표본이 된다`.
+
+③ 기존 테스트 3개의 기대값은 **불변**(makeup 표본은 여전히 m1·m2·m3·mlegacy 4건·평균 1325 — mnb는 이제 다른 대분류라 제외 사유만 "비뷰티"→"다른 대분류"로 주석 수정). `카테고리_표본은_...` 테스트의 주석에서 `mnb(비뷰티)` → `mnb(다른 대분류·F&B)`.
+
+④ 신규 테스트:
+
+```java
+@Test
+void FnB_대분류도_같은_카테고리_표본을_받는다() {
+	// mnb(snack, is_beauty=false, timely, views 7000)가 유일한 snack 표본 —
+	// 구 쿼리의 is_beauty=true 게이트가 남아 있으면 0건으로 "현재 준비중" 화면이 된다.
+	var ctx = repository.findCategoryContext("snack", 1000L);
+
+	assertThat(ctx.sampleSize()).isEqualTo(1L);
+	assertThat(ctx.avgViews()).isEqualTo(7000L);
+	assertThat(ctx.higherCount()).isEqualTo(1L); // 나(1000)보다 높은 mnb
+}
+```
+
+- [ ] **Step 2: 실패 확인**
+
+Run: `./gradlew :was:test --tests "com.celfit.was.v1.content.V1ContentReportRepositoryTest"`
+Expected: 신규 테스트 FAIL(sampleSize 0 — is_beauty 게이트), 기존 3개는 PASS 유지.
+
+- [ ] **Step 3: 쿼리 수정**
+
+`findCategoryContext`에서 `AND an.is_beauty = true` 한 줄 삭제. Javadoc 모수 규칙 첫 불릿을:
+
+```
+* <li>같은 대분류(main_category) 분석분만 — 대분류가 축을 결정하므로(불변식: main 있음 ⇒ 축
+*     확정, 서빙 개방 §2) 구 is_beauty=true 게이트는 뷰티 대분류에선 잉여, F&B에선 표본 0건을
+*     만들어 제거(2026-09-01). 카테고리는 beauty_taxonomy 대분류.
+```
+
+- [ ] **Step 4: 테스트 통과 확인**
+
+Run: `./gradlew :was:test --tests "com.celfit.was.v1.content.V1ContentReportRepositoryTest"`
+Expected: PASS (기존 + 신규 전부).
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add was/src/main/java/com/celfit/was/v1/content/V1ContentReportRepository.java \
+        was/src/test/java/com/celfit/was/v1/content/V1ContentReportRepositoryTest.java
+git commit -m "feat(was): 콘텐츠 리포트 카테고리 비교를 축 중립으로 — F&B '현재 준비중' 해소
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 5: 모듈 검증·운영 사전 대조·문서·PR
 
 **Files:**
 - Modify: `DECISIONS.md`(맨 위 행 추가), `docs/tracks/LL2-fnb-콘텐츠-분류.md`(후속 갱신)
@@ -624,7 +703,7 @@ Expected: `0`. (피어 뷰는 카테고리 스탯 동치 + 순수 함수 변환�
 
 - [ ] **Step 3: 문서 갱신**
 
-DECISIONS.md 표 맨 위에 1행:
+DECISIONS.md 표 맨 위에 1행(콘텐츠 리포트 카테고리 비교 축 중립화도 한 문장 포함할 것):
 
 ```markdown
 | 2026-09-01 | **유사 인플루언서 추천 축 인지화** — F&B 리포트의 유사 추천이 '미분류' 풀 잡탕이던 것(muk_gyumato 실측)을 해소: `account_category_stats`에 axis 컬럼(게이트 제거, 뷰티 투영 동치), `account_peer_axis_stats` 신설(계정×축 피어, 구 이름은 뷰티 투영 유지 — 롤링 안전), was는 `findFnbAxis`(F&B 단독→fnb, 혼합·레거시→beauty)로 축을 파생해 유사 핸들·카드 비중에 전파. F&B 축 후보 게이트는 `a.fnb`(뷰티 비율 게이트는 뷰티 축만). 부수: 계정 카피 LLM 입력에 F&B 카테고리 분포 유입 시작. 피어 퍼센타일 컬럼은 소비자 0건(죽은 컬럼) 확인 — 축별 준비만, 서빙은 FE 명세 후 | [스펙](docs/superpowers/specs/2026-09-01-similar-influencer-fnb-axis-design.md), 트랙 [LL2](docs/tracks/LL2-fnb-콘텐츠-분류.md) |
