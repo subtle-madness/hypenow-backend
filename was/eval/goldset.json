@@ -1,0 +1,165 @@
+[
+  {
+    "id": "ad-posts-top10",
+    "note": "실측 사고 1 (설계 §1) - 모델이 keyword='광고' 캡션 검색으로 조용히 근사하던 사고. sponsorship 축을 강제로 고르게 한다.",
+    "question": "광고 게시물로 10명 정리해줘",
+    "presetId": null,
+    "expectTools": [
+      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author", "sponsorship": "sponsored"}}
+    ],
+    "forbidTools": [
+      {"name": "aggregate_posts", "argsInclude": {"keyword": "광고"}},
+      {"name": "search_posts", "argsInclude": {"query": "광고"}}
+    ],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "fit-influencer",
+    "note": "실측 사고 2 (설계 §1) - 정성 질문을 도달 배수 1위로 환원해 팔로워 3명·릴스 1개 계정을 추천하던 사고. trajectory만 확인(정성 답변은 결정론 채점 불가).",
+    "question": "우리 브랜드에 어울리는 인플루언서 추천해줘",
+    "presetId": null,
+    "expectTools": [
+      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author"}}
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "low-sample-ranking",
+    "note": "실측 사고 3 (설계 §1) - 릴스 표본 1개짜리 극단값이 랭킹 상위를 도배하고 표본 수가 표에서 탈락하던 사고. 사용자가 '1개짜리도 보여줘'라고 명시했으니 minSample로 걸러선 안 되고, 서버 강제 caveat(설계 §4)이 답변에 반영돼야 한다.",
+    "question": "릴스 조회수 평균 기준으로 인플루언서 랭킹 보여줘. 표본 1개짜리 계정도 다 보여줘",
+    "presetId": null,
+    "expectTools": [
+      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author", "orderBy": "avgViews"}}
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": ["표본"],
+    "groundTruthSql": null
+  },
+  {
+    "id": "top10-reach",
+    "note": "기존 검증 시나리오 - N명 지정(10)이 limit 인자로 그대로 전달되는지.",
+    "question": "도달 배수 기준으로 상위 10명 인플루언서 알려줘",
+    "presetId": null,
+    "expectTools": [
+      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author", "orderBy": "reachMultiple", "limit": 10}}
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "top30-reach",
+    "note": "기존 검증 시나리오 - N명 지정(30, 기본 limit 10을 넘는 값)이 그대로 전달되는지. 30명 전체 나열 여부는 데이터 의존이라 trajectory만.",
+    "question": "도달 배수 기준으로 상위 30명 정리해줘",
+    "presetId": null,
+    "expectTools": [
+      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author", "orderBy": "reachMultiple", "limit": 30}}
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "over-limit-request",
+    "note": "기존 검증 시나리오 - N>limit(사용자가 최대 50을 넘는 값을 요청). 서버가 limit을 얼마로 클램프하는지는 구현 세부사항이라 강제하지 않고, groupBy=author 경로를 탔는지만 trajectory로 확인한다. totalGroups 고지 문구는 데이터 의존이라 검증하지 않는다.",
+    "question": "인플루언서 100명 전부 랭킹으로 정리해줘",
+    "presetId": null,
+    "expectTools": [
+      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author"}}
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "month-compare",
+    "note": "기존 검증 시나리오 - 기간 비교 질문이 groupBy=month로 가는지.",
+    "question": "최근 두 달 성과를 월별로 비교해줘",
+    "presetId": null,
+    "expectTools": [
+      {"name": "aggregate_posts", "argsInclude": {"groupBy": "month"}}
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "caption-count",
+    "note": "기존 검증 시나리오 - 캡션 키워드 총 매칭 건수. list_posts(30건 상한)로 눈대중 세면 안 되고 search_posts의 totalMatches를 그대로 인용해야 한다. groundTruthSql은 러너가 BRAND_ID를 채워 실행 - 값이 실제로 몇이든(0 포함) 그 값이 답변에 등장하는지만 본다. 로컬 데이터에 '이벤트'라는 캡션 언급이 거의 없으면 케이스의 keyword를 실측 데이터에 맞게 교체할 것(README '케이스 추가 규칙' 참고).",
+    "question": "캡션에 '이벤트'라는 단어가 들어간 게시물이 총 몇 개야?",
+    "presetId": null,
+    "expectTools": [
+      {"name": "search_posts", "argsInclude": {"query": "이벤트"}}
+    ],
+    "forbidTools": [
+      {"name": "list_posts"}
+    ],
+    "expectAnswerContains": [],
+    "groundTruthSql": "SELECT count(DISTINCT t.short_code) FROM brand_tagged_post t JOIN brand_post_meta m ON m.short_code = t.short_code WHERE t.brand_id = :BRAND_ID AND t.enriched_at IS NOT NULL AND m.caption IS NOT NULL AND replace(m.caption, ' ', '') ILIKE '%이벤트%'"
+  },
+  {
+    "id": "sponsored-vs-organic",
+    "note": "기존 검증 시나리오 - 협찬 vs 오가닉 비교가 groupBy=sponsorship으로 가는지(keyword='협찬' 캡션 검색으로 새는 걸 방지).",
+    "question": "협찬 게시물이랑 오가닉 게시물 성과 비교해줘",
+    "presetId": null,
+    "expectTools": [
+      {"name": "aggregate_posts", "argsInclude": {"groupBy": "sponsorship"}}
+    ],
+    "forbidTools": [
+      {"name": "aggregate_posts", "argsInclude": {"keyword": "협찬"}}
+    ],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "comments-summary",
+    "note": "기존 검증 시나리오 - 여러 게시물 댓글 여론 종합이 get_comments를 게시물마다 반복 호출하지 않고 shortCodes 배열 1회 호출로 가는지.",
+    "question": "최근 인기 게시물 3개의 댓글 반응을 종합해서 알려줘",
+    "presetId": null,
+    "expectTools": [
+      {"name": "get_comments", "argsHasKeys": ["shortCodes"]}
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "preset-efficient",
+    "note": "verified 플랜(설계 §6) - efficient_influencers 프리셋의 선실행 호출(aggregate_posts groupBy=author orderBy=reachMultiple limit=10 minSample=2)이 로그에 남는지.",
+    "question": "효율 좋은 인플루언서 알려줘",
+    "presetId": "efficient_influencers",
+    "expectTools": [
+      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author", "orderBy": "reachMultiple", "limit": 10, "minSample": 2}}
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "preset-sponsored-vs-organic",
+    "note": "verified 플랜(설계 §6) - sponsored_vs_organic 프리셋의 선실행 호출(aggregate_posts groupBy=sponsorship)이 로그에 남는지.",
+    "question": "협찬 vs 오가닉 비교해줘",
+    "presetId": "sponsored_vs_organic",
+    "expectTools": [
+      {"name": "aggregate_posts", "argsInclude": {"groupBy": "sponsorship"}}
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "preset-top-posts",
+    "note": "verified 플랜(설계 §6) - top_posts 프리셋의 선실행 호출(list_posts sort=performance_desc)이 로그에 남는지.",
+    "question": "인기 게시물 보여줘",
+    "presetId": "top_posts",
+    "expectTools": [
+      {"name": "list_posts", "argsInclude": {"sort": "performance_desc"}}
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  }
+]
