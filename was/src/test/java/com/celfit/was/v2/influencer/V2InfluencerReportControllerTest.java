@@ -127,7 +127,7 @@ class V2InfluencerReportControllerTest {
 						new BigDecimal("77.7000"), null),
 				new CardRow("b", "B", null, 2000L, 20L, 6L, "bio-b", null, null, null, null, null, null, null, 0L, null,
 						null, null)));
-		given(discoveryRepository.findShares(List.of("b", "a"))).willReturn(List.of());
+		given(discoveryRepository.findShares(List.of("b", "a"), false)).willReturn(List.of());
 		given(discoveryRepository.findBrands(List.of("b", "a"))).willReturn(List.of());
 		given(discoveryRepository.findThumbs(List.of("b", "a"))).willReturn(List.of());
 		given(discoveryRepository.findEngagements(List.of("b", "a"))).willReturn(List.of());

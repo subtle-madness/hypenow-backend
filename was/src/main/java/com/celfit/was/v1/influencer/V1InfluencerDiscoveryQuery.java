@@ -71,6 +71,11 @@ public record V1InfluencerDiscoveryQuery(List<String> keywords, String mainCateg
 				vertical));
 	}
 
+	/** F&B 축 여부 — F&B 대분류 필터 또는 vertical=fnb. 발굴 게이트 분기·카테고리 비중 보강이 공유. */
+	public boolean fnbAxis() {
+		return MainCategories.isFnb(mainCategory) || "fnb".equals(vertical);
+	}
+
 	/** 다음 페이지 쿼리 — 프리페치용(스펙 §5). */
 	public V1InfluencerDiscoveryQuery next() {
 		return new V1InfluencerDiscoveryQuery(keywords, mainCategory, midCategory, subCategory,

@@ -108,7 +108,9 @@ public class V2InfluencerReportController {
 			List<String> handles = repository.findSimilarHandles(influencerId);
 			List<InfluencerCard> cards = discoveryAssembler.toCards(
 					discoveryRepository.findCardsByHandles(handles),
-					discoveryRepository.findShares(handles),
+					// 유사 후보는 뷰티 코퍼스 기반(account_peer_stats, V35 뷰티 게이트) — 축은 뷰티 고정.
+					// F&B 유사 추천 개방 시 대상 계정 축 파생으로 바꾼다.
+					discoveryRepository.findShares(handles, false),
 					discoveryRepository.findBrands(handles),
 					discoveryRepository.findThumbs(handles),
 					discoveryRepository.findEngagements(handles));
