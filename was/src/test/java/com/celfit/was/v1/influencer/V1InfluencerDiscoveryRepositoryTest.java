@@ -509,9 +509,36 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 
 	@Test
 	void 보강_카테고리_비중은_분류_모수_기준_내림차순() {
-		var shares = repository.findShares(List.of("glow"));
-		assertThat(shares).extracting(r -> r.mainCategory() + ":" + r.pct())
-				.containsExactly("skincare:80", "makeup:20");
+		// 뷰티 축 — F&B 단독 계정(fbfood)은 행 없음(카드 조립이 축 밖 비중을 안 싣는다)
+		var shares = repository.findShares(List.of("glow", "fbfood"), false);
+		assertThat(shares)
+				.extracting(r -> r.accountHandle() + ":" + r.mainCategory() + ":" + r.pct())
+				.containsExactly("glow:skincare:80", "glow:makeup:20");
+	}
+
+	@Test
+	void 보강_카테고리_비중_FnB축은_FnB_분류분이_분모다() {
+		// 혼합 계정 검증 재료 — calm(뷰티 3건)에 F&B 분류 1건 추가. 축별 분모가 분리되지 않으면
+		// F&B축 비중이 25%(전체 분류 4건 분모)로 나온다.
+		jdbcTemplate.update("""
+				INSERT INTO account_content_series (short_code, account_handle, posted_at,
+				  content_type, views, likes, comments, sponsored)
+				VALUES ('c4', 'calm', now() - interval '13 days', 'reels', 20000, 400, 20, false)""");
+		jdbcTemplate.update("""
+				INSERT INTO content_analyses (short_code, is_beauty, main_category, sub_categories,
+				  ad_type, detected_brands)
+				VALUES ('c4', false, 'convenience', NULL, 'organic', NULL)""");
+
+		var fnbShares = repository.findShares(List.of("glow", "calm", "fbfood"), true);
+		// 뷰티 단독 glow는 F&B축에 행 없음, calm·fbfood는 F&B 분류분만 분모(각 100%)
+		assertThat(fnbShares)
+				.extracting(r -> r.accountHandle() + ":" + r.mainCategory() + ":" + r.pct())
+				.containsExactly("calm:convenience:100", "fbfood:convenience:100");
+
+		// 같은 계정의 뷰티축 비중은 F&B 게시물과 무관하게 유지된다
+		assertThat(repository.findShares(List.of("calm"), false))
+				.extracting(r -> r.mainCategory() + ":" + r.pct())
+				.containsExactly("skincare:100");
 	}
 
 	@Test
