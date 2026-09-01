@@ -160,7 +160,9 @@ public class V2InfluencerReportRepository {
 				  SELECT account_handle, main_group, content_count FROM account_category_stats
 				  WHERE axis = :axis
 				),
-				me AS (
+				-- MATERIALIZED 필수(09-01 운영 실측): 1행짜리 me가 오추정(피어 est 1행)에 밀려 후보별
+				-- 재평가(peers 12,055행 스캔 × 후보 12,054회 ≈ 12초)로 풀렸다 — 강제 1회 평가로 고정.
+				me AS MATERIALIZED (
 				  SELECT p.peer_category, ac.followers, la.traits
 				  FROM peers p
 				  JOIN accounts ac ON ac.handle = p.handle
