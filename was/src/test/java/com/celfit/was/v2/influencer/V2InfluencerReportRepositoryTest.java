@@ -118,7 +118,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				    axis       text NOT NULL DEFAULT 'beauty',
 				    PRIMARY KEY (main_value, mid_label, sub_label)
 				)""");
-		// 아래 두 뷰 DDL은 analytics V35 계열(account_category_stats)·V<UTC>(account_peer_axis_stats,
+		// 아래 두 뷰 DDL은 analytics V35 계열(account_category_stats)·V20260901060734(account_peer_axis_stats,
 		// 2026-09-01 축 인지화) 마이그레이션의 사본이다 — 원본이 바뀌면 같이 갱신할 것. 실뷰의
 		// 퍼센타일·중앙값 컬럼은 was 미소비라 생략(기존 사본 관례).
 		jdbcTemplate.execute("""
