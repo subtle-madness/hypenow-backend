@@ -76,9 +76,19 @@ public class BrandAiConfig {
 		};
 	}
 
+	/**
+	 * thinkingBudget 구성(2026-09-01, 모델 실험③ 차단 요소 해소) - 기본 0(flash 계열, I7: dynamic
+	 * thinking이 maxOutputTokens를 잠식하는 것을 막는다). <b>gemini-2.5-pro 계열은 thinking을
+	 * 비활성화할 수 없다</b> - thinkingBudget=0을 보내면 Vertex가 "The model does not support
+	 * setting thinking_budget to 0" 400을 돌려준다(2026-09-01 실측, BRAND_AI_MODEL=gemini-2.5-pro
+	 * 기동 시 전 호출 재현). pro로 실험할 때는 음수(예: -1)를 넘겨 thinkingConfig 자체를 생략한다
+	 * (모델 기본 동적 thinking에 맡김).
+	 */
 	@Bean
-	public GeminiChatClient brandAiChatClient(ChatTransport brandAiChatTransport, ObjectMapper objectMapper) {
-		return new GeminiChatClient(brandAiChatTransport, objectMapper);
+	public GeminiChatClient brandAiChatClient(ChatTransport brandAiChatTransport, ObjectMapper objectMapper,
+			@Value("${monitoring.brand.ai.thinking-budget:0}") int thinkingBudgetRaw) {
+		Integer thinkingBudget = thinkingBudgetRaw < 0 ? null : thinkingBudgetRaw;
+		return new GeminiChatClient(brandAiChatTransport, objectMapper, thinkingBudget);
 	}
 
 	@Bean

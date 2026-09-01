@@ -53,6 +53,35 @@ class GeminiChatClientTest {
 	}
 
 	@Test
+	void thinkingBudget이_null이면_thinkingConfig_자체를_생략한다() {
+		List<String> sent = new ArrayList<>();
+		GeminiChatClient client = new GeminiChatClient(body -> {
+			sent.add(body);
+			return "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"끝\"}]}}]}";
+		}, om, null);
+
+		client.generate("시스템", List.of(client.userContent("질문")), List.of());
+
+		// pro 계열은 thinkingBudget=0을 보내면 400이 난다(2026-09-01 실측) - null이면 필드 자체를 뺀다.
+		assertThat(om.readTree(sent.get(0)).path("generationConfig").has("thinkingConfig")).isFalse();
+	}
+
+	@Test
+	void generateStructured도_thinkingBudget이_null이면_thinkingConfig를_생략한다() {
+		List<String> sent = new ArrayList<>();
+		GeminiChatClient client = new GeminiChatClient(body -> {
+			sent.add(body);
+			return "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"[]\"}]}}]}";
+		}, om, null);
+		JsonNode schema = om.readTree("{\"type\":\"array\"}");
+
+		client.generateStructured("시스템 지시", "질문", schema, 256);
+
+		// followUp 경로도 같은 모델을 쓰므로 pro에서 같이 400이 난다 - 여기도 생략해야 한다.
+		assertThat(om.readTree(sent.get(0)).path("generationConfig").has("thinkingConfig")).isFalse();
+	}
+
+	@Test
 	void 강제답변_모드에서는_tools를_유지하되_toolConfig로_호출만_막는다() {
 		List<String> sent = new ArrayList<>();
 		GeminiChatClient client = new GeminiChatClient(body -> {

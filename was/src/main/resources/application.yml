@@ -113,3 +113,5 @@ monitoring:
       vertex-project: ${BRAND_AI_VERTEX_PROJECT:}   # 켤 때 필수. SA 키는 GOOGLE_APPLICATION_CREDENTIALS
       vertex-location: ${BRAND_AI_VERTEX_LOCATION:global}
       model: ${BRAND_AI_MODEL:gemini-2.5-flash}     # function calling 지원 모델이어야 한다
+      thinking-budget: ${BRAND_AI_THINKING_BUDGET:0}   # flash는 0=끔(I7 잠식 방지), pro 계열은
+                       # thinking 비활성 불가(2026-09-01 실측 400) - -1로 넘겨 생략 필수

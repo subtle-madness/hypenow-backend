@@ -23,10 +23,24 @@ public class GeminiChatClient {
 
 	private final ChatTransport transport;
 	private final ObjectMapper objectMapper;
+	private final Integer thinkingBudget;
 
+	/** 기존 2-인자 생성자 - thinkingBudget=0으로 위임한다(테스트·기존 호출부 호환, 기본값도 0). */
 	public GeminiChatClient(ChatTransport transport, ObjectMapper objectMapper) {
+		this(transport, objectMapper, 0);
+	}
+
+	/**
+	 * thinkingBudget이 null이면 thinkingConfig 자체를 요청에 싣지 않는다(모델 기본 동적 thinking에
+	 * 맡긴다) - gemini-2.5-pro 계열은 thinking을 끌 수 없어 thinkingBudget=0을 보내면 Vertex가 400
+	 * "The model does not support setting thinking_budget to 0"을 돌려준다(2026-09-01 실측,
+	 * BRAND_AI_MODEL=gemini-2.5-pro 기동 시 전 호출 재현). flash 계열은 기존대로 0을 넘겨
+	 * dynamic thinking이 maxOutputTokens를 잠식하는 것(I7)을 막는다.
+	 */
+	public GeminiChatClient(ChatTransport transport, ObjectMapper objectMapper, Integer thinkingBudget) {
 		this.transport = transport;
 		this.objectMapper = objectMapper;
+		this.thinkingBudget = thinkingBudget;
 	}
 
 	/** tools가 비면 tools 필드를 싣지 않는다 - 툴 정의 자체가 없는 호출용(현재 실사용처 없음, 방어적으로 유지). */
@@ -117,7 +131,7 @@ public class GeminiChatClient {
 				resolvedFinishReason);
 	}
 
-	/** generate()·generateStream() 공통 요청 본문 조립(T2 리팩터) - I7 thinkingBudget=0 고정,
+	/** generate()·generateStream() 공통 요청 본문 조립(T2 리팩터) - I7 thinkingBudget 기본값 0,
 	 * I8 강제 답변 턴에서도 tools 유지 등 기존 규칙을 그대로 지킨다. */
 	private ObjectNode buildBody(String systemPrompt, List<JsonNode> contents, List<AiToolSpec> tools,
 			boolean toolCallsDisabled) {
@@ -142,10 +156,20 @@ public class GeminiChatClient {
 		ObjectNode generation = body.putObject("generationConfig");
 		generation.put("temperature", TEMPERATURE);
 		generation.put("maxOutputTokens", MAX_OUTPUT_TOKENS);
-		// thinkingBudget=0(I7) - gemini-2.5는 dynamic thinking이 기본이라 미지정 시 thinking 토큰이
-		// maxOutputTokens를 잠식해 finishReason=MAX_TOKENS로 parts 없이 끝날 수 있다.
-		generation.putObject("thinkingConfig").put("thinkingBudget", 0);
+		applyThinkingConfig(generation);
 		return body;
+	}
+
+	/**
+	 * thinkingBudget=0(I7) - gemini-2.5-flash는 dynamic thinking이 기본이라 미지정 시 thinking
+	 * 토큰이 maxOutputTokens를 잠식해 finishReason=MAX_TOKENS로 parts 없이 끝날 수 있다.
+	 * thinkingBudget이 null이면(pro 계열, 2026-09-01 실측) thinkingConfig 자체를 생략해 모델
+	 * 기본 동적 thinking에 맡긴다 - 0을 보내면 400이 난다.
+	 */
+	private void applyThinkingConfig(ObjectNode generation) {
+		if (thinkingBudget != null) {
+			generation.putObject("thinkingConfig").put("thinkingBudget", thinkingBudget);
+		}
 	}
 
 	/**
@@ -166,7 +190,7 @@ public class GeminiChatClient {
 		generation.put("maxOutputTokens", maxOutputTokens);
 		generation.put("responseMimeType", "application/json");
 		generation.set("responseSchema", responseSchema);
-		generation.putObject("thinkingConfig").put("thinkingBudget", 0);
+		applyThinkingConfig(generation);
 		return transport.post(body.toString());
 	}
 

@@ -134,15 +134,19 @@ trajectory(툴 선택)만 확인하고 답변 품질은 사람이 읽는다.
 같은 골드셋을 돌리려면 was를 그 값으로 재기동한 뒤 `run.sh`을 다시 실행하면 된다:
 
 ```bash
-MONITORING_BRAND_AI_MODEL=gemini-2.5-pro ./gradlew :was:bootRun
+BRAND_AI_MODEL=gemini-2.5-pro BRAND_AI_THINKING_BUDGET=-1 ./gradlew :was:bootRun
 # 다른 터미널에서
 ./run.sh
 ```
 
-(계획 문서의 `BRAND_AI_MODEL`은 편의상 줄임 표기이고, 실제 스프링 프로퍼티 바인딩은 위
-`MONITORING_BRAND_AI_MODEL` 환경변수다.) 결과 표의 PASS/FAIL 개수를 모델 간에 비교하는 것이
-"③ 모델 실험"의 실체다(스펙 §7-2) - 정성적 우열은 실패한 케이스의 실제 답변을 사람이 대조해서
-판단한다.
+(`application.yml`의 `monitoring.brand.ai.model` 플레이스홀더가 정본이라 `BRAND_AI_MODEL`이
+정식 환경변수 이름이다 - `MONITORING_BRAND_AI_MODEL`도 Spring relaxed binding으로 같은
+프로퍼티에 바인딩되어 동작은 하지만, 표기는 위 이름을 쓸 것.) **pro 계열로 실험할 때는
+`BRAND_AI_THINKING_BUDGET=-1`이 필수다** - gemini-2.5-pro는 thinking을 비활성화할 수 없어
+기본값 0(flash 전용)을 그대로 두면 Vertex가 "The model does not support setting
+thinking_budget to 0" 400을 전 호출에서 돌려준다(2026-09-01 실측, `BrandAiConfig` 참고). 결과
+표의 PASS/FAIL 개수를 모델 간에 비교하는 것이 "③ 모델 실험"의 실체다(스펙 §7-2) - 정성적
+우열은 실패한 케이스의 실제 답변을 사람이 대조해서 판단한다.
 
 ## 범위 밖(설계 §7-3)
 
