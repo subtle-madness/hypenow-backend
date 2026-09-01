@@ -152,7 +152,7 @@ class V1BrandAiMessagesControllerTest {
 	@Test
 	void 신규_대화를_만들고_messageId를_돌려준다() throws Exception {
 		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(123L);
-		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString())).willReturn(okOutcome("3건이에요"));
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(), any())).willReturn(okOutcome("3건이에요"));
 		given(logRepository.insert(any())).willReturn(456L);
 		given(followUpGenerator.generate(anyString(), anyString(), anyLong()))
 				.willReturn(List.of(new AiMessagesResponse.FollowUp("더 볼까요?", "deepen"),
@@ -182,7 +182,7 @@ class V1BrandAiMessagesControllerTest {
 		given(conversationRepository.findOwnedActive(123L, USER_ID))
 				.willReturn(Optional.of(new AiConversationRepository.ConversationRow(123L, BRAND_ID, "제목",
 						OffsetDateTime.now())));
-		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString())).willReturn(okOutcome("답변"));
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(), any())).willReturn(okOutcome("답변"));
 		given(logRepository.insert(any())).willReturn(789L);
 
 		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
@@ -278,7 +278,7 @@ class V1BrandAiMessagesControllerTest {
 	@Test
 	void 미등록_presetId는_무시되고_자유_질의로_처리된다() throws Exception {
 		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(123L);
-		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString())).willReturn(okOutcome("답변"));
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(), any())).willReturn(okOutcome("답변"));
 		given(logRepository.insert(any())).willReturn(1L);
 
 		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
@@ -290,6 +290,26 @@ class V1BrandAiMessagesControllerTest {
 		then(logRepository).should(times(1)).insert(captor.capture());
 		// presetId는 미등록이어도 로그엔 원본 그대로 남는다(계측 정본) - 지시문만 빈 문자열로 폴백한다.
 		assertThat(captor.getValue().presetId()).isEqualTo("no_such_preset");
+	}
+
+	/** verified 플랜 선실행 주입(스펙 §6) - 플랜을 보유한 presetId면 컨트롤러가 그 플랜을
+	 * {@link BrandAiPresets#planFor}로 조회해 agent.run에 그대로 실어 보낸다. */
+	@Test
+	void presetId가_플랜을_가지면_agent에_플랜이_전달된다() throws Exception {
+		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(123L);
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(), any())).willReturn(okOutcome("답변"));
+		given(logRepository.insert(any())).willReturn(1L);
+
+		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"accountIds\":[\"45\"],\"presetId\":\"efficient_influencers\",\"text\":\"알려줘\"}"))
+				.andExpect(status().isOk());
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<BrandAiPresets.PlannedCall>> planCaptor = ArgumentCaptor.forClass(List.class);
+		then(agent).should(times(1)).run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(), planCaptor.capture());
+		assertThat(planCaptor.getValue()).isEqualTo(BrandAiPresets.planFor("efficient_influencers"));
+		assertThat(planCaptor.getValue()).isNotEmpty();
 	}
 
 	@Test
@@ -317,7 +337,7 @@ class V1BrandAiMessagesControllerTest {
 					om.createArrayNode(), om.createArrayNode(), OffsetDateTime.now()));
 		}
 		given(logRepository.findByConversation(123L)).willReturn(rows);
-		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString())).willReturn(okOutcome("최종 답변"));
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(), any())).willReturn(okOutcome("최종 답변"));
 		given(logRepository.insert(any())).willReturn(1L);
 
 		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
@@ -327,7 +347,8 @@ class V1BrandAiMessagesControllerTest {
 
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<List<AiChatMessage>> contentsCaptor = ArgumentCaptor.forClass(List.class);
-		then(agent).should(times(1)).run(eq(USER_ID), contentsCaptor.capture(), eq(BRAND_ID), any(), anyString());
+		then(agent).should(times(1)).run(eq(USER_ID), contentsCaptor.capture(), eq(BRAND_ID), any(), anyString(),
+				any());
 		List<AiChatMessage> contents = contentsCaptor.getValue();
 		// 8행 중 최근 6행(질문+답변 쌍 12건) + 새 질문 1건 = 13건. 가장 오래된 질문1·질문2는 빠진다.
 		assertThat(contents).hasSize(13);
@@ -338,7 +359,7 @@ class V1BrandAiMessagesControllerTest {
 	@Test
 	void LLM_실패는_502_재시도_안내이고_실패도_로그로_남는다() throws Exception {
 		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(123L);
-		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString()))
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(), any()))
 				.willThrow(new IllegalStateException("Vertex HTTP 500"));
 
 		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
@@ -404,9 +425,9 @@ class V1BrandAiMessagesControllerTest {
 	@Test
 	void SSE_요청은_meta_status_delta_done_순서로_이벤트를_보낸다() throws Exception {
 		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(321L);
-		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(),
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(), any(),
 				any(BrandAiAgent.StreamListener.class), any())).willAnswer(invocation -> {
-					BrandAiAgent.StreamListener listener = invocation.getArgument(5);
+					BrandAiAgent.StreamListener listener = invocation.getArgument(6);
 					listener.onToolCall("search_posts", 1);
 					listener.onAnswerDelta("안녕하세요");
 					return new BrandAiAgent.AgentOutcome("안녕하세요", List.of(), List.of(), List.of(), 10, 5, BRAND_ID,
@@ -454,7 +475,7 @@ class V1BrandAiMessagesControllerTest {
 	@Test
 	void SSE_에이전트_실패는_error_이벤트를_보내고_로그에_남는다() throws Exception {
 		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(321L);
-		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(),
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(), any(),
 				any(BrandAiAgent.StreamListener.class), any()))
 				.willThrow(new IllegalStateException("Vertex HTTP 500"));
 
@@ -477,7 +498,7 @@ class V1BrandAiMessagesControllerTest {
 	@Test
 	void Accept_미지정_요청은_여전히_완결_JSON_응답이다() throws Exception {
 		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(1L);
-		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString())).willReturn(okOutcome("답변"));
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(), any())).willReturn(okOutcome("답변"));
 		given(logRepository.insert(any())).willReturn(2L);
 
 		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())
@@ -486,7 +507,7 @@ class V1BrandAiMessagesControllerTest {
 				.andExpect(jsonPath("$.success").value(true))
 				.andExpect(jsonPath("$.data.content").value("답변"));
 
-		then(agent).should(times(0)).run(anyLong(), any(), anyLong(), any(), anyString(),
+		then(agent).should(times(0)).run(anyLong(), any(), anyLong(), any(), anyString(), any(),
 				any(BrandAiAgent.StreamListener.class), any());
 	}
 
@@ -496,7 +517,7 @@ class V1BrandAiMessagesControllerTest {
 	@Test
 	void 강제_답변이면_응답에_limitReached가_실린다() throws Exception {
 		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(123L);
-		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString()))
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(), any()))
 				.willReturn(limitReachedOutcome("예산 안에서 답변드려요", "budget"));
 		given(logRepository.insert(any())).willReturn(456L);
 
@@ -510,7 +531,7 @@ class V1BrandAiMessagesControllerTest {
 	@Test
 	void 정상_완료면_limitReached가_null이다() throws Exception {
 		given(conversationRepository.create(eq(USER_ID), eq(BRAND_ID), anyString())).willReturn(123L);
-		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString())).willReturn(okOutcome("답변"));
+		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(), any())).willReturn(okOutcome("답변"));
 		given(logRepository.insert(any())).willReturn(456L);
 
 		mockMvc.perform(post("/v1/brand-monitoring/ai/messages").with(user(principal())).with(csrf())

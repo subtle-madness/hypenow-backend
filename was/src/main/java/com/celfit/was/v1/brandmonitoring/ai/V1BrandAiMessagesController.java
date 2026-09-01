@@ -140,7 +140,9 @@ public class V1BrandAiMessagesController {
 		CompletableFuture<BrandAiAgent.AgentOutcome> future;
 		try {
 			future = CompletableFuture.supplyAsync(
-					() -> agent.run(userId, contents, validated.brandId(), validated.scope(), extraPrompt), executor);
+					() -> agent.run(userId, contents, validated.brandId(), validated.scope(), extraPrompt,
+							BrandAiPresets.planFor(request.presetId())),
+					executor);
 		} catch (RejectedExecutionException e) {
 			// F2 - 접수 자체가 거절됐다. 아직 대화를 만들지 않았으니(신규든 기존 검증뿐이든) 로그도 대화
 			// 갱신도 하지 않는다 - 이 요청은 시스템에 아무 흔적도 남기지 않는다.
@@ -296,8 +298,8 @@ public class V1BrandAiMessagesController {
 
 		BrandAiAgent.AgentOutcome outcome;
 		try {
-			outcome = agent.run(userId, contents, validated.brandId(), validated.scope(), extraPrompt, listener,
-					aborted::get);
+			outcome = agent.run(userId, contents, validated.brandId(), validated.scope(), extraPrompt,
+					BrandAiPresets.planFor(request.presetId()), listener, aborted::get);
 		} catch (RuntimeException e) {
 			if (e instanceof LlmQuotaExhaustedException) {
 				log.warn("AI 챗 스트리밍 Vertex 쿼터 소진 - userId={}", userId);

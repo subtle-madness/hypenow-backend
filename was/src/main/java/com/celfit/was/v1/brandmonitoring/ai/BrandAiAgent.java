@@ -105,12 +105,12 @@ public class BrandAiAgent {
 
 	/** 기존 2-인자 관용구 유지(호환) - scope 없음(무필터)·brandId 제한 없음·추가 프롬프트 없음과 동일하다. */
 	public AgentOutcome run(long userId, List<AiChatMessage> messages) {
-		return run(userId, messages, null, null, "");
+		return run(userId, messages, null, null, "", List.of());
 	}
 
 	/** 기존 4-인자 관용구 유지(호환, F1 이전 호출부·단발 테스트 전용) - brandId 제한 없음과 동일하다. */
 	public AgentOutcome run(long userId, List<AiChatMessage> messages, AiScope scope, String extraSystemPrompt) {
-		return run(userId, messages, null, scope, extraSystemPrompt);
+		return run(userId, messages, null, scope, extraSystemPrompt, List.of());
 	}
 
 	/**
@@ -126,6 +126,45 @@ public class BrandAiAgent {
 	}
 
 	/**
+	 * 프리셋 verified 플랜 선실행 주입(스펙 §6, Genie Trusted Assets 패턴의 우리식 적용) - 에이전트
+	 * 루프에 진입하기 전에 검증된 호출을 먼저 실행해 functionCall/functionResponse 쌍으로 대화에
+	 * 주입한다. 핵심 수치가 검증된 호출에서 나오므로 프리셋 질문은 툴 선택·인자 조합을 틀릴 수 없다.
+	 * 이후 루프는 기존과 동일하게 진행되고, 모델은 주입된 결과 위에서 답하되 필요하면 추가 조회도
+	 * 할 수 있다.
+	 *
+	 * <p>brandId는 플랜에 하드코딩돼 있지 않다 - 이 세션의 sessionBrandId로 매 호출 인자에 실행 시점에
+	 * 채워 넣는다. 플랜 실행이 실패하면(예: 소유 검증·인자 오류) 그 지점에서 멈추고 <b>이미 주입된
+	 * 선행 호출은 그대로 유지한 채</b> 기존 자유 경로로 폴백한다 - 이미 성공한 선행 호출까지 무효화할
+	 * 이유가 없다. 선실행분도 tool_calls 로그·shortCode 회수에 그대로 포함해 관측 일관성을 지킨다.
+	 *
+	 * @param listener 스트리밍 경로면 각 선실행 호출 직전에 {@link StreamListener#onToolCall}을
+	 *                 통지해 FE 진행 표시를 일반 툴 호출과 동일하게 유지한다. 완결 경로는 null을 넘긴다.
+	 */
+	private void injectPlannedCalls(List<BrandAiPresets.PlannedCall> plannedCalls,
+			BrandAiToolbox.ToolSession toolSession, long userId, Long sessionBrandId, List<JsonNode> contents,
+			List<AiChatLogEntry.ToolCallLog> toolCalls, LinkedHashSet<String> shortCodes, StreamListener listener) {
+		for (BrandAiPresets.PlannedCall call : plannedCalls) {
+			ObjectNode args = (ObjectNode) objectMapper.readTree(call.argsJson());
+			if (sessionBrandId != null) {
+				args.put("brandId", sessionBrandId);
+			}
+			if (listener != null) {
+				listener.onToolCall(call.toolName(), toolCalls.size() + 1);
+			}
+			AiToolResult result = toolbox.execute(toolSession, userId, call.toolName(), args);
+			if (result.failed()) {
+				log.warn("프리셋 플랜 선실행 실패 - toolName={}, userId={}", call.toolName(), userId);
+				break;
+			}
+			toolCalls.add(new AiChatLogEntry.ToolCallLog(call.toolName(), args, result.rowCount()));
+			shortCodes.addAll(result.shortCodes());
+			contents.add(client.modelToolCallContent(List.of(new LlmTurn.ToolCall(call.toolName(), args))));
+			contents.add(client.toolResultContent(
+					List.of(new GeminiChatClient.ToolResponse(call.toolName(), result.payloadJson()))));
+		}
+	}
+
+	/**
 	 * @param sessionBrandId     대화가 스코프된 brandId(F1, 2026-08-30 리뷰) - 컨트롤러가 accountIds[0]을
 	 *                           검증해 얻은 값을 그대로 넘긴다. null이면 무제한(위 두 호환 오버로드
 	 *                           전용 경로). 툴 실행 세션에 실려 brandId를 인자로 받는 툴이 이 값과 다른
@@ -137,9 +176,11 @@ public class BrandAiAgent {
 	 *                           게시물 계열 툴 전부에 강제된다({@link BrandAiToolbox.ToolSession}).
 	 * @param extraSystemPrompt  시스템 프롬프트 뒤에 이어붙일 문구(scope 요약 1줄 + 프리셋 지시문,
 	 *                           T3·T4) - 빈 문자열이면 기존 프롬프트와 동일하다.
+	 * @param plannedCalls       프리셋 verified 플랜(스펙 §6) - 루프 진입 전에 선실행해 결과를 대화에
+	 *                           주입한다. 빈 목록이면 기존 자유 경로와 동일하다.
 	 */
 	public AgentOutcome run(long userId, List<AiChatMessage> messages, Long sessionBrandId, AiScope scope,
-			String extraSystemPrompt) {
+			String extraSystemPrompt, List<BrandAiPresets.PlannedCall> plannedCalls) {
 		List<JsonNode> contents = new ArrayList<>();
 		for (AiChatMessage message : messages) {
 			contents.add(AiChatMessage.ROLE_ASSISTANT.equals(message.role())
@@ -160,6 +201,8 @@ public class BrandAiAgent {
 		int promptTokens = 0;
 		int outputTokens = 0;
 		long deadline = clock.millis() + TIME_BUDGET_MILLIS;
+
+		injectPlannedCalls(plannedCalls, toolSession, userId, sessionBrandId, contents, toolCalls, shortCodes, null);
 
 		for (int llmCall = 1; llmCall <= MAX_LLM_CALLS; llmCall++) {
 			// 매 호출 전에 남은 예산을 확인한다(C2) - 부족하면 이번 호출을 마지막으로 삼아 답변을 강제한다.
@@ -272,9 +315,14 @@ public class BrandAiAgent {
 	 * 직전에 {@code abortSignal}을 확인해 참이면 즉시 {@link AiChatLogEntry#OUTCOME_ABORTED}로
 	 * 멈춘다(T4 - 컨트롤러가 SSE emitter의 onError/onCompletion/onTimeout에서 세운 플래그를 넘긴다).
 	 * 진행 중인 HTTP 호출 자체를 강제 중단하지는 않는다 - 다음 확인 지점에서 멈추는 협조적 취소다.
+	 *
+	 * @param plannedCalls 프리셋 verified 플랜(스펙 §6) - 완결 경로와 동일하게 루프 진입 전에 선실행해
+	 *                     결과를 대화에 주입한다. 선실행 각 호출 전에 {@link StreamListener#onToolCall}도
+	 *                     통지해 FE 진행 표시를 일반 툴 호출과 동일하게 유지한다.
 	 */
 	public AgentOutcome run(long userId, List<AiChatMessage> messages, Long sessionBrandId, AiScope scope,
-			String extraSystemPrompt, StreamListener listener, BooleanSupplier abortSignal) {
+			String extraSystemPrompt, List<BrandAiPresets.PlannedCall> plannedCalls, StreamListener listener,
+			BooleanSupplier abortSignal) {
 		List<JsonNode> contents = new ArrayList<>();
 		for (AiChatMessage message : messages) {
 			contents.add(AiChatMessage.ROLE_ASSISTANT.equals(message.role())
@@ -291,6 +339,9 @@ public class BrandAiAgent {
 		int promptTokens = 0;
 		int outputTokens = 0;
 		long deadline = clock.millis() + TIME_BUDGET_MILLIS;
+
+		injectPlannedCalls(plannedCalls, toolSession, userId, sessionBrandId, contents, toolCalls, shortCodes,
+				listener);
 
 		for (int llmCall = 1; llmCall <= MAX_LLM_CALLS; llmCall++) {
 			if (abortSignal.getAsBoolean()) {

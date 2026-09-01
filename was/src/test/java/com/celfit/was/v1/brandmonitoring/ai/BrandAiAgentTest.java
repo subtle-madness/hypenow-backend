@@ -293,6 +293,69 @@ class BrandAiAgentTest {
 		assertThat(outcome.brandId()).isNull();
 	}
 
+	// ---------- 프리셋 verified 플랜 선실행 주입(스펙 §6) ----------
+
+	/**
+	 * 플랜 선실행 주입 - 프리셋에 verified 플랜이 있으면 에이전트 루프(첫 LLM 호출)에 들어가기 전에
+	 * 그 플랜을 먼저 실행해 functionCall/functionResponse 쌍으로 대화에 심어 넣는다. 그 결과 모델은
+	 * 첫 호출부터 이미 채워진 데이터를 보게 되므로, 스크립트가 텍스트 답변만 줘도(추가 툴 호출 없이)
+	 * 바로 끝나야 한다.
+	 */
+	@Test
+	void 프리셋_플랜이_있으면_첫_LLM_호출_전에_선실행_결과가_대화에_주입된다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(),
+				org.mockito.ArgumentMatchers.eq("aggregate_posts"), any()))
+				.willReturn(AiToolResult.ok("{\"groups\":[]}", 5, List.of("ABC")));
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(List.of(textAnswer("상위 인플루언서 10명이에요")), captured, toolbox);
+		List<BrandAiPresets.PlannedCall> plan = List.of(new BrandAiPresets.PlannedCall("aggregate_posts",
+				"{\"groupBy\":\"author\",\"orderBy\":\"reachMultiple\",\"limit\":10,\"minSample\":2}"));
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "효율 좋은 인플루언서")), 7L,
+				null, "", plan);
+
+		var argsCaptor = org.mockito.ArgumentCaptor.forClass(JsonNode.class);
+		then(toolbox).should(times(1)).execute(any(BrandAiToolbox.ToolSession.class),
+				org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.eq("aggregate_posts"),
+				argsCaptor.capture());
+		// brandId는 플랜에 하드코딩돼 있지 않다 - 실행 시 세션 brandId(7L)로 채워진다.
+		assertThat(argsCaptor.getValue().path("groupBy").asString()).isEqualTo("author");
+		assertThat(argsCaptor.getValue().path("brandId").asLong()).isEqualTo(7L);
+		// 첫 LLM 요청 본문에 이미 선실행 functionCall/functionResponse 쌍이 실려 있어야 한다.
+		assertThat(captured.get(0)).contains("functionCall").contains("aggregate_posts").contains("functionResponse");
+		// 선실행분도 tool_calls 로그에 포함된다(관측 일관성, 스펙 §6).
+		assertThat(outcome.toolCalls()).hasSize(1);
+		assertThat(outcome.toolCalls().get(0).name()).isEqualTo("aggregate_posts");
+		assertThat(outcome.answer()).isEqualTo("상위 인플루언서 10명이에요");
+		// 선실행 결과만으로 답이 나와 모델은 딱 1번만 불렸다(추가 조회 없음).
+		assertThat(captured).hasSize(1);
+	}
+
+	/**
+	 * 플랜 실행 실패 폴백 - 선실행이 실패하면(예: 소유 검증 실패) 대화에 아무 것도 주입하지 않고 기존
+	 * 자유 경로 그대로 진행한다. 실패한 선실행은 tool_calls 로그에도 남지 않는다.
+	 */
+	@Test
+	void 플랜_실행이_실패하면_주입_없이_기존_경로로_폴백한다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.failure("{\"error\":\"권한 없음\"}"));
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(List.of(textAnswer("확인하지 못했어요")), captured, toolbox);
+		List<BrandAiPresets.PlannedCall> plan = List.of(
+				new BrandAiPresets.PlannedCall("aggregate_posts", "{\"groupBy\":\"sponsorship\"}"));
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "협찬 비교")), 7L, null, "",
+				plan);
+
+		// 선실행이 실패했으니 첫 요청 본문에 functionResponse가 실리지 않는다(주입 없음).
+		assertThat(captured.get(0)).doesNotContain("functionResponse");
+		// 실패한 선실행은 로그에도 남지 않는다 - 성공한 것만 기록한다.
+		assertThat(outcome.toolCalls()).isEmpty();
+		assertThat(outcome.answer()).isEqualTo("확인하지 못했어요");
+	}
+
 	/**
 	 * 참조 shortCode 필터(N7, 2026-08-28) - 툴이 이번 실행에서 건드린 코드 전부가 아니라 답변 텍스트에
 	 * 실제로 등장하는 코드만 referencedShortCodes에 남아야 한다. 3건(ABC·DEF·GHI) 중 답변은 ABC만
@@ -371,7 +434,7 @@ class BrandAiAgentTest {
 		List<String> captured = new ArrayList<>();
 		BrandAiAgent agent = agentWith(List.of(textAnswer("답변")), captured, toolbox);
 
-		agent.run(1L, List.of(new AiChatMessage("user", "알려줘")), 7L, null, "");
+		agent.run(1L, List.of(new AiChatMessage("user", "알려줘")), 7L, null, "", List.of());
 
 		JsonNode body = om.readTree(captured.get(0));
 		assertThat(body.path("systemInstruction").path("parts").path(0).path("text").asString())
@@ -389,8 +452,8 @@ class BrandAiAgentTest {
 		List<String> captured = new ArrayList<>();
 		BrandAiAgent agent = agentWith(List.of(textAnswer("답변1"), textAnswer("답변2")), captured, toolbox);
 
-		agent.run(1L, List.of(new AiChatMessage("user", "알려줘")), 7L, null, "");
-		agent.run(1L, List.of(new AiChatMessage("user", "알려줘")), null, null, "");
+		agent.run(1L, List.of(new AiChatMessage("user", "알려줘")), 7L, null, "", List.of());
+		agent.run(1L, List.of(new AiChatMessage("user", "알려줘")), null, null, "", List.of());
 
 		assertThat(captured).hasSize(2);
 		for (String body : captured) {
@@ -534,7 +597,7 @@ class BrandAiAgentTest {
 		List<String> toolCalls = new ArrayList<>();
 
 		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "질문")), null, null, "",
-				listener(deltas, toolCalls), () -> false);
+				List.of(), listener(deltas, toolCalls), () -> false);
 
 		// 청크별로 "앞"·"뒤"가 따로 나가지 않고, 턴 완성 후 합쳐진 텍스트 1건만 나간다.
 		assertThat(deltas).containsExactly("앞뒤");
@@ -553,7 +616,7 @@ class BrandAiAgentTest {
 		List<String> deltas = new ArrayList<>();
 
 		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "질문")), null, null, "",
-				listener(deltas, new ArrayList<>()), () -> false);
+				List.of(), listener(deltas, new ArrayList<>()), () -> false);
 
 		// 청크마다 즉시 나간다 - 합쳐진 텍스트가 끝에 다시 나가면 안 된다(중복 방지).
 		assertThat(deltas).containsExactly("강", "제");
@@ -579,7 +642,7 @@ class BrandAiAgentTest {
 		BrandAiAgent agent = new BrandAiAgent(new GeminiChatClient(transport, om), toolbox, om, Clock.systemUTC());
 
 		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "질문")), null, null, "",
-				listener(new ArrayList<>(), new ArrayList<>()), () -> true);
+				List.of(), listener(new ArrayList<>(), new ArrayList<>()), () -> true);
 
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_ABORTED);
 		assertThat(outcome.answer()).isNull();
@@ -605,7 +668,7 @@ class BrandAiAgentTest {
 		BrandAiAgent agent = streamingAgentWith(chunkScript, toolbox, Clock.systemUTC());
 
 		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "질문")), null, null, "",
-				listener(new ArrayList<>(), new ArrayList<>()), abortAfterFirstTool::get);
+				List.of(), listener(new ArrayList<>(), new ArrayList<>()), abortAfterFirstTool::get);
 
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_ABORTED);
 		assertThat(outcome.toolCalls()).hasSize(1);
