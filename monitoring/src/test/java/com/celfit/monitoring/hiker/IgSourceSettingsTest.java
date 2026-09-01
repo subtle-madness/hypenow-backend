@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.monitoring.store.AppSettingRepository;
 import com.celfit.monitoring.testsupport.TestDb;
+import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -21,7 +22,9 @@ class IgSourceSettingsTest {
 		db = new JdbcTemplate(ds);
 		TestDb.resetAndMigrate(db, ds);
 		repo = new AppSettingRepository(db);
-		settings = new IgSourceSettings(repo);
+		InstagramProxyProperties proxyProps = new InstagramProxyProperties(
+				null, null, Duration.ofSeconds(15), false, "ENV_DOC_ID", "ENV_FRIENDLY_NAME");
+		settings = new IgSourceSettings(repo, proxyProps);
 	}
 
 	/** 마이그레이션 시드 기준값(self-enabled=false) — 개통 전 행동 변화 0. */
@@ -48,5 +51,29 @@ class IgSourceSettingsTest {
 		assertThat(settings.profileSurface()).isEqualTo("wpi");
 		repo.upsert("ig-source.profile-surface", "og");
 		assertThat(settings.profileSurface()).isEqualTo("og");
+	}
+
+	/** 마이그레이션 시드값(V20260901~ig_source_comment_doc_id) — env 폴백보다 app_setting이 우선. */
+	@Test
+	void commentDocId_는_마이그레이션_시드값이다() {
+		assertThat(settings.commentDocId()).isEqualTo("27659279553772821");
+		assertThat(settings.commentFriendlyName())
+				.isEqualTo("PolarisLoggedOutDesktopWWWPostCommentsPaginationQuery");
+	}
+
+	@Test
+	void commentDocId_upsert하면_재시작_없이_반영된다() {
+		repo.upsert("ig-source.comment-doc-id", "NEW_DOC_ID");
+		repo.upsert("ig-source.comment-friendly-name", "NewFriendlyName");
+		assertThat(settings.commentDocId()).isEqualTo("NEW_DOC_ID");
+		assertThat(settings.commentFriendlyName()).isEqualTo("NewFriendlyName");
+	}
+
+	@Test
+	void commentDocId_app_setting이_비어있으면_env_폴백() {
+		db.update("DELETE FROM app_setting WHERE key IN "
+				+ "('ig-source.comment-doc-id', 'ig-source.comment-friendly-name')");
+		assertThat(settings.commentDocId()).isEqualTo("ENV_DOC_ID");
+		assertThat(settings.commentFriendlyName()).isEqualTo("ENV_FRIENDLY_NAME");
 	}
 }

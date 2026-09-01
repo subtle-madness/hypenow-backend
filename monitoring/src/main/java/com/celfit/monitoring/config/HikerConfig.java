@@ -62,7 +62,7 @@ public class HikerConfig {
 				new WpiProfileFetcher(httpClient::get),
 				new OgProfileFetcher(httpClient::get),
 				new FeedUserPostsFetcher(httpClient::get),
-				new DirectCommentFetcher(httpClient, proxyProps.commentDocId(), proxyProps.commentFriendlyName()),
+				new DirectCommentFetcher(httpClient, igSettings::commentDocId, igSettings::commentFriendlyName),
 				new SurfaceCircuitBreaker(5),
 				new SelfRetry(3),
 				igSettings::profileSurface);

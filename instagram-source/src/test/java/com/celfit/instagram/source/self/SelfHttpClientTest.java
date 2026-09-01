@@ -27,10 +27,17 @@ class SelfHttpClientTest {
 	}
 
 	private String start(int status, String body) throws IOException {
+		return start(status, body, null);
+	}
+
+	private String start(int status, String body, String setCookie) throws IOException {
 		server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
 		server.createContext("/", ex -> {
 			seenUa.set(ex.getRequestHeaders().getFirst("User-Agent"));
 			seenAppId.set(ex.getRequestHeaders().getFirst("x-ig-app-id"));
+			if (setCookie != null) {
+				ex.getResponseHeaders().add("Set-Cookie", setCookie);
+			}
 			byte[] b = body.getBytes(StandardCharsets.UTF_8);
 			ex.sendResponseHeaders(status, b.length);
 			ex.getResponseBody().write(b);
@@ -60,5 +67,13 @@ class SelfHttpClientTest {
 		String base = start(404, "not found");
 		SelfResponse res = client().get(base + "/x", ProxyTier.RESIDENTIAL, Map.of());
 		assertThat(res.status()).isEqualTo(404);
+	}
+
+	@Test
+	void 응답_헤더가_대소문자_무관으로_조회된다() throws IOException {
+		String base = start(200, "{}", "csrftoken=ABC123; Path=/; Secure");
+		SelfResponse res = client().get(base + "/x", ProxyTier.RESIDENTIAL, Map.of());
+		assertThat(res.header("set-cookie")).anyMatch(v -> v.contains("csrftoken=ABC123"));
+		assertThat(res.header("Set-Cookie")).anyMatch(v -> v.contains("csrftoken=ABC123"));
 	}
 }

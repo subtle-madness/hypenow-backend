@@ -14,7 +14,11 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
-/** 자체 댓글 fetcher — 커밋된 실 GraphQL 응답 픽스처(15건 단일 페이지) 기준 정확값 검증. */
+/**
+ * 자체 댓글 fetcher — 1페이지는 부트스트랩 GET(SSR HTML)에서, 2페이지부터는 GraphQL 커서
+ * 페이지네이션으로 얻는다. 커밋된 실 응답 픽스처(post_page_comments.html=SSR 1페이지 15건,
+ * comments_response.json=GraphQL 페이지 15건) 기준 정확값 검증.
+ */
 class DirectCommentFetcherTest {
 
 	private static String fixture(String name) {
@@ -25,7 +29,13 @@ class DirectCommentFetcherTest {
 		}
 	}
 
-	/** get은 게시물 페이지(LSD), post는 GraphQL 댓글 응답을 차례로 돌려주는 fake 전송. */
+	/** 1페이지짜리(hasNext=false) SSR 픽스처를 hasNext=true+커서로 바꾼다. */
+	private static String paged(String html, String cursor) {
+		return html.replace("\"end_cursor\":null,\"has_next_page\":false",
+				"\"end_cursor\":\"" + cursor + "\",\"has_next_page\":true");
+	}
+
+	/** get은 게시물 페이지(LSD+CSRF 쿠키+1페이지 댓글 SSR), post는 GraphQL 댓글 응답을 차례로 돌려주는 fake 전송. */
 	private static final class FakeTransport implements SelfTransport {
 		final SelfResponse getResponse;
 		final List<SelfResponse> postResponses;
@@ -56,15 +66,25 @@ class DirectCommentFetcherTest {
 		return new SelfResponse(200, body);
 	}
 
+	/** SSR 부트스트랩 GET 응답 — Set-Cookie로 csrftoken을 함께 실어 보낸다(실측 헤더 계약). */
+	private static SelfResponse okWithCsrf(String body, String csrfToken) {
+		return new SelfResponse(200, body,
+				Map.of("set-cookie", List.of("csrftoken=" + csrfToken + "; Path=/; Secure",
+						"datr=xxx; Path=/")));
+	}
+
+	private static DirectCommentFetcher fetcher(SelfTransport transport) {
+		return new DirectCommentFetcher(transport, () -> "DOC", () -> "FRIENDLY");
+	}
+
 	@Test
-	void 단일_페이지_15건을_정확값으로_파싱한다() {
-		FakeTransport fake = new FakeTransport(ok(fixture("post_page_lsd.html")),
-				ok(fixture("comments_response.json")));
-		CommentsFetch result = new DirectCommentFetcher(fake, "DOC", "FRIENDLY")
-				.fetch("DYtaeT4TPYu", "someowner", 1);
+	void 단일_페이지_15건을_SSR_HTML에서_정확값으로_파싱한다() {
+		FakeTransport fake = new FakeTransport(okWithCsrf(fixture("post_page_comments.html"), "CSRF1"));
+		CommentsFetch result = fetcher(fake).fetch("DYtaeT4TPYu", "someowner", 1);
 
 		assertThat(result.complete()).isTrue();
 		assertThat(result.comments()).hasSize(15);
+		assertThat(fake.postCalls).isZero();   // 1페이지만 요청하면 추가 POST가 전혀 없다.
 		CommentInfo first = result.comments().get(0);
 		assertThat(first.id()).isEqualTo("18108559372934377");
 		assertThat(first.author()).isEqualTo("songsariiiii");
@@ -75,89 +95,101 @@ class DirectCommentFetcherTest {
 	}
 
 	@Test
-	void graphql_바디에_lsd와_media_id_변수가_실린다() {
-		FakeTransport fake = new FakeTransport(ok(fixture("post_page_lsd.html")),
+	void graphql_바디에_lsd_doc_id_media_id와_X_CSRFToken_헤더가_실린다() {
+		// SSR 1페이지가 hasNext=true라야 2페이지 POST가 나간다.
+		String ssrPaged = paged(fixture("post_page_comments.html"), "SSR_CURSOR");
+		FakeTransport fake = new FakeTransport(okWithCsrf(ssrPaged, "CSRFVALUE"),
 				ok(fixture("comments_response.json")));
-		new DirectCommentFetcher(fake, "DOC", "FRIENDLY").fetch("DYtaeT4TPYu", "someowner", 1);
+		fetcher(fake).fetch("DYtaeT4TPYu", "someowner", 2);
 
 		assertThat(fake.postBodies).hasSize(1);
 		String body = fake.postBodies.get(0);
 		assertThat(body).contains("lsd=AdTzcKuUhG5YtLSOMQnpsn-LIEs");
 		assertThat(body).contains("doc_id=DOC");
 		assertThat(body).contains("fb_api_req_friendly_name=FRIENDLY");
-		// variables는 JSON 직렬화 후 URL 인코딩 — media_id는 문자열 값이다.
+		// variables는 JSON 직렬화 후 URL 인코딩 — media_id는 문자열 값, after는 SSR 1페이지의 커서.
 		assertThat(body).contains("3903892884139341358");
+		assertThat(body).contains("SSR_CURSOR");
 		Map<String, String> headers = fake.postHeaders.get(0);
 		assertThat(headers).containsEntry("x-fb-lsd", "AdTzcKuUhG5YtLSOMQnpsn-LIEs");
 		assertThat(headers).containsEntry("x-ig-app-id", "936619743392459");
 		assertThat(headers).containsEntry("Sec-Fetch-Site", "same-origin");
+		assertThat(headers).containsEntry("X-CSRFToken", "CSRFVALUE");
+	}
+
+	@Test
+	void csrf_쿠키가_없으면_X_CSRFToken_헤더_없이_시도한다() {
+		String ssrPaged = paged(fixture("post_page_comments.html"), "SSR_CURSOR");
+		FakeTransport fake = new FakeTransport(ok(ssrPaged), ok(fixture("comments_response.json")));
+		fetcher(fake).fetch("DYtaeT4TPYu", "someowner", 2);
+
+		assertThat(fake.postHeaders.get(0)).doesNotContainKey("X-CSRFToken");
 	}
 
 	@Test
 	void 두번째_페이지로_전진하고_커서_미전진에서_멈춘다() {
-		// 픽스처를 has_next_page=true + 커서 CUR로 바꿔 2페이지째를 유도 —
-		// 2페이지도 같은 커서를 돌려주므로 미전진 가드가 3페이지 호출을 막아야 한다.
-		String paged = fixture("comments_response.json")
-				.replace("\"end_cursor\":null,\"has_next_page\":false",
-						"\"end_cursor\":\"CUR\",\"has_next_page\":true");
-		FakeTransport fake = new FakeTransport(ok(fixture("post_page_lsd.html")), ok(paged));
-		CommentsFetch result = new DirectCommentFetcher(fake, "DOC", "FRIENDLY")
-				.fetch("DYtaeT4TPYu", "someowner", 5);
+		// SSR 1페이지(커서 SSR_CURSOR) → POST 1페이지(커서 CUR, 새 커서라 전진) →
+		// POST 2페이지(같은 픽스처 재사용 → 커서 CUR 그대로 → 무진행 가드로 정지).
+		String ssrPaged = paged(fixture("post_page_comments.html"), "SSR_CURSOR");
+		String graphqlPaged = paged(fixture("comments_response.json"), "CUR");
+		FakeTransport fake = new FakeTransport(okWithCsrf(ssrPaged, "CSRF1"), ok(graphqlPaged));
+		CommentsFetch result = fetcher(fake).fetch("DYtaeT4TPYu", "someowner", 5);
 
 		assertThat(fake.postCalls).isEqualTo(2);
 		assertThat(result.complete()).isTrue();
-		assertThat(result.comments()).hasSize(30);
-		// 2페이지 요청 바디에 after 커서가 실렸는지 확인한다.
+		assertThat(result.comments()).hasSize(45);   // SSR 15 + POST 15 + POST 15(같은 커서에서 정지)
+		assertThat(fake.postBodies.get(0)).contains("SSR_CURSOR");
 		assertThat(fake.postBodies.get(1)).contains("CUR");
 	}
 
 	@Test
 	void 부트스트랩_비200은_상태_분류_예외() {
-		FakeTransport fake = new FakeTransport(new SelfResponse(429, ""),
-				ok(fixture("comments_response.json")));
-		assertThatThrownBy(() -> new DirectCommentFetcher(fake, "DOC", "FRIENDLY")
-				.fetch("DYtaeT4TPYu", "someowner", 1))
+		FakeTransport fake = new FakeTransport(new SelfResponse(429, ""));
+		assertThatThrownBy(() -> fetcher(fake).fetch("DYtaeT4TPYu", "someowner", 1))
 				.isInstanceOf(SelfCrawlException.class)
 				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
 						.isEqualTo(SelfErrorClass.RATE_LIMIT_429));
 	}
 
 	@Test
-	void graphql_200_로그인벽_HTML은_LOGIN_WALL_예외() {
-		FakeTransport fake = new FakeTransport(ok(fixture("post_page_lsd.html")),
-				ok("<!DOCTYPE html><html><body>login</body></html>"));
-		assertThatThrownBy(() -> new DirectCommentFetcher(fake, "DOC", "FRIENDLY")
-				.fetch("DYtaeT4TPYu", "someowner", 1))
+	void SSR_HTML에_comments_connection이_없으면_LOGIN_WALL_예외() {
+		// LSD는 있지만 comments_connection이 없는 셸(로그인 벽 의심) — post_page_lsd.html 그대로 재사용.
+		FakeTransport fake = new FakeTransport(ok(fixture("post_page_lsd.html")));
+		assertThatThrownBy(() -> fetcher(fake).fetch("DYtaeT4TPYu", "someowner", 1))
 				.isInstanceOf(SelfCrawlException.class)
 				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
 						.isEqualTo(SelfErrorClass.LOGIN_WALL));
 	}
 
 	@Test
-	void graphql_200_비JSON은_잭슨_예외가_아닌_SelfCrawlException() {
-		// 파스 실패가 unchecked Jackson 예외로 새면 폴백망(Failover 라우팅)을 우회한다.
-		FakeTransport fake = new FakeTransport(ok(fixture("post_page_lsd.html")),
-				ok("not json {{{"));
-		assertThatThrownBy(() -> new DirectCommentFetcher(fake, "DOC", "FRIENDLY")
-				.fetch("DYtaeT4TPYu", "someowner", 1))
-				.isInstanceOf(SelfCrawlException.class);
+	void graphql_200_로그인벽_HTML은_LOGIN_WALL_예외() {
+		String ssrPaged = paged(fixture("post_page_comments.html"), "SSR_CURSOR");
+		FakeTransport fake = new FakeTransport(okWithCsrf(ssrPaged, "CSRF1"),
+				ok("<!DOCTYPE html><html><body>login</body></html>"));
+		CommentsFetch result = fetcher(fake).fetch("DYtaeT4TPYu", "someowner", 2);
+
+		// 중간 페이지(2페이지) 실패는 예외가 아니라 1페이지분을 보존한 부분 결과다.
+		assertThat(result.complete()).isFalse();
+		assertThat(result.comments()).hasSize(15);
 	}
 
 	@Test
-	void 첫_페이지_비200은_예외_중간_페이지_비200은_부분_결과() {
-		FakeTransport failFirst = new FakeTransport(ok(fixture("post_page_lsd.html")),
-				new SelfResponse(429, ""));
-		assertThatThrownBy(() -> new DirectCommentFetcher(failFirst, "DOC", "FRIENDLY")
-				.fetch("DYtaeT4TPYu", "someowner", 1))
-				.isInstanceOf(SelfCrawlException.class);
+	void graphql_200_비JSON은_잭슨_예외가_아닌_부분_결과() {
+		// 파스 실패가 unchecked Jackson 예외로 새면 폴백망(Failover 라우팅)을 우회한다.
+		String ssrPaged = paged(fixture("post_page_comments.html"), "SSR_CURSOR");
+		FakeTransport fake = new FakeTransport(okWithCsrf(ssrPaged, "CSRF1"), ok("not json {{{"));
+		CommentsFetch result = fetcher(fake).fetch("DYtaeT4TPYu", "someowner", 2);
 
-		String paged = fixture("comments_response.json")
-				.replace("\"end_cursor\":null,\"has_next_page\":false",
-						"\"end_cursor\":\"CUR\",\"has_next_page\":true");
-		FakeTransport failSecond = new FakeTransport(ok(fixture("post_page_lsd.html")),
-				ok(paged), new SelfResponse(500, ""));
-		CommentsFetch partial = new DirectCommentFetcher(failSecond, "DOC", "FRIENDLY")
-				.fetch("DYtaeT4TPYu", "someowner", 5);
+		assertThat(result.complete()).isFalse();
+		assertThat(result.comments()).hasSize(15);
+	}
+
+	@Test
+	void 중간_페이지_비200은_1페이지분을_보존한_부분_결과() {
+		String ssrPaged = paged(fixture("post_page_comments.html"), "SSR_CURSOR");
+		FakeTransport fake = new FakeTransport(okWithCsrf(ssrPaged, "CSRF1"), new SelfResponse(500, ""));
+		CommentsFetch partial = fetcher(fake).fetch("DYtaeT4TPYu", "someowner", 5);
+
 		assertThat(partial.complete()).isFalse();
 		assertThat(partial.comments()).hasSize(15);
 	}

@@ -52,7 +52,11 @@ class SelfCrawlBackendTest {
 			"edge_owner_to_timeline_media":{"count":1,"edges":[
 			{"node":{"shortcode":"ABC","is_video":false,"taken_at_timestamp":1700000000}}]}}}}
 			""";
-	private static final String COMMENT_PAGE = "\"LSD\",[],{\"token\":\"TKN\"}";
+	// 1페이지는 부트스트랩 GET(SSR HTML)에서 바로 파싱한다 — LSD 토큰 + 인라인 comments_connection.
+	private static final String COMMENT_PAGE = """
+			"LSD",[],{"token":"TKN"}
+			"comments_connection":{"edges":[{"node":{"id":"c1","text":"hi","user":{"username":"u"},"created_at":100}}],"page_info":{"has_next_page":false}}
+			""";
 	private static final String COMMENT_JSON = """
 			{"data":{"xig_polaris_media":{"comments_connection":{
 			"edges":[{"node":{"id":"c1","text":"hi","user":{"username":"u"},"created_at":100}}],
@@ -103,7 +107,7 @@ class SelfCrawlBackendTest {
 				new WpiProfileFetcher(wpiFetch),
 				new OgProfileFetcher(new ScriptedFetch(List.of(ok(OG_OK)))),
 				new FeedUserPostsFetcher(feedFetch),
-				new DirectCommentFetcher(new FakeTransport(), "DOC", "FRIENDLY"),
+				new DirectCommentFetcher(new FakeTransport(), () -> "DOC", () -> "FRIENDLY"),
 				new SurfaceCircuitBreaker(5), new SelfRetry(3), profileSurface);
 	}
 

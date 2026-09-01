@@ -75,7 +75,7 @@ public class SelfHttpClient implements SelfTransport {
 			String body = "gzip".equalsIgnoreCase(enc.trim())
 					? gunzip(res.body())
 					: new String(res.body(), StandardCharsets.UTF_8);
-			return new SelfResponse(res.statusCode(), body);
+			return new SelfResponse(res.statusCode(), body, res.headers().map());
 		} catch (Exception e) {
 			if (isInterceptedUnauthorized(e)) {
 				return new SelfResponse(401, "");

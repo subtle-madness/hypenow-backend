@@ -56,7 +56,7 @@ class HikerConfigTest {
 		InstagramSource client = new HikerConfig().instagramSource(path -> "{\"user\":{\"pk\":1}}",
 				new NoopPayloadRepo(), new BrandCallContext(), new BrandCallCountRepository(null),
 				new TargetCallContext(), new TargetCallCountRepository(null), registry, proxyProps,
-				new IgSourceSettings(new EmptySettingsRepo()));
+				new IgSourceSettings(new EmptySettingsRepo(), proxyProps));
 
 		client.fetchProfile("hypenow");
 
