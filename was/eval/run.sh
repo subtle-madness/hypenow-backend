@@ -73,7 +73,9 @@ add_commas() {
 }
 
 # 툴 호출 1건이 rule(name + 선택적 argsInclude/argsHasKeys)에 매치하는 호출을 tool_calls_json
-# 안에서 하나라도 찾으면 exit 0. argsInclude는 부분매치(rule에 있는 키만 값 일치를 요구),
+# 안에서 하나라도 찾으면 exit 0. name 생략(또는 빈 문자열) 시 어떤 툴이든 인자만 맞으면 매치 -
+# 같은 질문을 list_posts로도 aggregate_posts로도 유효하게 답할 수 있는 케이스용(09-01 pro 파일럿 실측).
+# argsInclude는 부분매치(rule에 있는 키만 값 일치를 요구),
 # argsHasKeys는 값과 무관하게 키 존재만 확인(예: get_comments의 shortCodes 배열 사용 여부).
 tools_match_rule() {
 	local calls_json="$1" rule_json="$2"
@@ -81,7 +83,7 @@ tools_match_rule() {
 		def argsMatch($a; $r):
 			(($r.argsInclude // {}) | to_entries | all(($a[.key] // null) == .value))
 			and (($r.argsHasKeys // []) | all(. as $k | $a | has($k)));
-		[$calls[] | select(.name == $rule.name and argsMatch(.args // {}; $rule))] | length > 0
+		[$calls[] | select((($rule.name // "") == "" or .name == $rule.name) and argsMatch(.args // {}; $rule))] | length > 0
 	' >/dev/null 2>&1
 }
 

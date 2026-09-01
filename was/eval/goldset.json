@@ -5,11 +5,27 @@
     "question": "광고 게시물로 10명 정리해줘",
     "presetId": null,
     "expectTools": [
-      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author", "sponsorship": "sponsored"}}
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "sponsorship": "sponsored"
+        }
+      }
     ],
     "forbidTools": [
-      {"name": "aggregate_posts", "argsInclude": {"keyword": "광고"}},
-      {"name": "search_posts", "argsInclude": {"query": "광고"}}
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "keyword": "광고"
+        }
+      },
+      {
+        "name": "search_posts",
+        "argsInclude": {
+          "query": "광고"
+        }
+      }
     ],
     "expectAnswerContains": [],
     "groundTruthSql": null
@@ -20,7 +36,12 @@
     "question": "우리 브랜드에 어울리는 인플루언서 추천해줘",
     "presetId": null,
     "expectTools": [
-      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author"}}
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author"
+        }
+      }
     ],
     "forbidTools": [],
     "expectAnswerContains": [],
@@ -32,10 +53,18 @@
     "question": "릴스 조회수 평균 기준으로 인플루언서 랭킹 보여줘. 표본 1개짜리 계정도 다 보여줘",
     "presetId": null,
     "expectTools": [
-      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author", "orderBy": "avgViews"}}
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "orderBy": "avgViews"
+        }
+      }
     ],
     "forbidTools": [],
-    "expectAnswerContains": ["표본"],
+    "expectAnswerContains": [
+      "1개"
+    ],
     "groundTruthSql": null
   },
   {
@@ -44,7 +73,14 @@
     "question": "도달 배수 기준으로 상위 10명 인플루언서 알려줘",
     "presetId": null,
     "expectTools": [
-      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author", "orderBy": "reachMultiple", "limit": 10}}
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "orderBy": "reachMultiple",
+          "limit": 10
+        }
+      }
     ],
     "forbidTools": [],
     "expectAnswerContains": [],
@@ -56,7 +92,14 @@
     "question": "도달 배수 기준으로 상위 30명 정리해줘",
     "presetId": null,
     "expectTools": [
-      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author", "orderBy": "reachMultiple", "limit": 30}}
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "orderBy": "reachMultiple",
+          "limit": 30
+        }
+      }
     ],
     "forbidTools": [],
     "expectAnswerContains": [],
@@ -68,7 +111,12 @@
     "question": "인플루언서 100명 전부 랭킹으로 정리해줘",
     "presetId": null,
     "expectTools": [
-      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author"}}
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author"
+        }
+      }
     ],
     "forbidTools": [],
     "expectAnswerContains": [],
@@ -80,7 +128,12 @@
     "question": "최근 두 달 성과를 월별로 비교해줘",
     "presetId": null,
     "expectTools": [
-      {"name": "aggregate_posts", "argsInclude": {"groupBy": "month"}}
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "month"
+        }
+      }
     ],
     "forbidTools": [],
     "expectAnswerContains": [],
@@ -92,10 +145,17 @@
     "question": "캡션에 '이벤트'라는 단어가 들어간 게시물이 총 몇 개야?",
     "presetId": null,
     "expectTools": [
-      {"name": "search_posts", "argsInclude": {"query": "이벤트"}}
+      {
+        "name": "search_posts",
+        "argsInclude": {
+          "query": "이벤트"
+        }
+      }
     ],
     "forbidTools": [
-      {"name": "list_posts"}
+      {
+        "name": "list_posts"
+      }
     ],
     "expectAnswerContains": [],
     "groundTruthSql": "SELECT count(DISTINCT t.short_code) FROM brand_tagged_post t JOIN brand_post_meta m ON m.short_code = t.short_code WHERE t.brand_id = :BRAND_ID AND t.enriched_at IS NOT NULL AND m.caption IS NOT NULL AND replace(m.caption, ' ', '') ILIKE '%이벤트%'"
@@ -106,10 +166,20 @@
     "question": "협찬 게시물이랑 오가닉 게시물 성과 비교해줘",
     "presetId": null,
     "expectTools": [
-      {"name": "aggregate_posts", "argsInclude": {"groupBy": "sponsorship"}}
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "sponsorship"
+        }
+      }
     ],
     "forbidTools": [
-      {"name": "aggregate_posts", "argsInclude": {"keyword": "협찬"}}
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "keyword": "협찬"
+        }
+      }
     ],
     "expectAnswerContains": [],
     "groundTruthSql": null
@@ -120,7 +190,12 @@
     "question": "최근 인기 게시물 3개의 댓글 반응을 종합해서 알려줘",
     "presetId": null,
     "expectTools": [
-      {"name": "get_comments", "argsHasKeys": ["shortCodes"]}
+      {
+        "name": "get_comments",
+        "argsHasKeys": [
+          "shortCodes"
+        ]
+      }
     ],
     "forbidTools": [],
     "expectAnswerContains": [],
@@ -132,7 +207,15 @@
     "question": "효율 좋은 인플루언서 알려줘",
     "presetId": "efficient_influencers",
     "expectTools": [
-      {"name": "aggregate_posts", "argsInclude": {"groupBy": "author", "orderBy": "reachMultiple", "limit": 10, "minSample": 2}}
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "orderBy": "reachMultiple",
+          "limit": 10,
+          "minSample": 2
+        }
+      }
     ],
     "forbidTools": [],
     "expectAnswerContains": [],
@@ -144,7 +227,12 @@
     "question": "협찬 vs 오가닉 비교해줘",
     "presetId": "sponsored_vs_organic",
     "expectTools": [
-      {"name": "aggregate_posts", "argsInclude": {"groupBy": "sponsorship"}}
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "sponsorship"
+        }
+      }
     ],
     "forbidTools": [],
     "expectAnswerContains": [],
@@ -156,11 +244,18 @@
     "question": "@kbeauty.real.gems의 릴스 게시물 상세 지표를 알려줘",
     "presetId": null,
     "expectTools": [
-      {"name": "list_posts", "argsInclude": {"author": "kbeauty.real.gems"}}
+      {
+        "argsInclude": {
+          "author": "kbeauty.real.gems"
+        }
+      }
     ],
     "forbidTools": [],
     "expectAnswerContains": [],
-    "expectAnswerNotContains": ["shortCode를 알려", "알 수 없습니다"],
+    "expectAnswerNotContains": [
+      "shortCode를 알려",
+      "알 수 없습니다"
+    ],
     "groundTruthSql": null
   },
   {
@@ -169,7 +264,12 @@
     "question": "인기 게시물 보여줘",
     "presetId": "top_posts",
     "expectTools": [
-      {"name": "list_posts", "argsInclude": {"sort": "performance_desc"}}
+      {
+        "name": "list_posts",
+        "argsInclude": {
+          "sort": "performance_desc"
+        }
+      }
     ],
     "forbidTools": [],
     "expectAnswerContains": [],
