@@ -151,6 +151,19 @@
     "groundTruthSql": null
   },
   {
+    "id": "author-posts-detail",
+    "note": "실측 사고 4 (2026-09-01, ai_chat_logs id=75) - '@showmethe._.a의 릴스 게시물 6개 상세 지표' 질문에 모델이 list_posts는 30건뿐이고 작성자 필터가 없다며 사용자에게 shortCode 입력을 요구한 사고. author는 로컬 DB(brand_id=128)에 실존하는 작성자(kbeauty.real.gems, 31건)로 채웠다. argsInclude.author는 정규화 전 원문 값과 정확히 일치해야 매치되는데, 모델이 '@' 접두를 붙인 채로 인자를 넘기면(서버는 정규화해 정상 동작해도) 이 rule은 실패할 수 있다 - README '케이스 추가 규칙' 참고, 실패 시 argsInclude를 빼고 forbidTools(shortCode 요구 패턴)만으로 조정할 것.",
+    "question": "@kbeauty.real.gems의 릴스 게시물 상세 지표를 알려줘",
+    "presetId": null,
+    "expectTools": [
+      {"name": "list_posts", "argsInclude": {"author": "kbeauty.real.gems"}}
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "expectAnswerNotContains": ["shortCode를 알려", "알 수 없습니다"],
+    "groundTruthSql": null
+  },
+  {
     "id": "preset-top-posts",
     "note": "verified 플랜(설계 §6) - top_posts 프리셋의 선실행 호출(list_posts sort=performance_desc)이 로그에 남는지.",
     "question": "인기 게시물 보여줘",

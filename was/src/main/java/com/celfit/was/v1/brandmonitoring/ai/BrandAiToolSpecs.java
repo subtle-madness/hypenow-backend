@@ -35,12 +35,14 @@ public final class BrandAiToolSpecs {
 							+ "brandId가 필요한 다른 툴을 쓰기 전에 먼저 호출한다.",
 					null),
 			new AiToolSpec(LIST_POSTS,
-					"브랜드에 태그된 게시물 목록을 최근 순 또는 성과 순으로 최대 30건 돌려준다. "
+					"브랜드에 태그된 게시물 목록을 최근 순 또는 성과 순으로 기본 30건, limit 인자로 최대 100건까지 돌려준다. "
 							+ "각 항목은 shortCode·업로드일·유료협찬 표기 여부·캡션 앞부분·좋아요/댓글수/조회수를 담는다. "
 							+ "피드 게시물의 조회수는 항상 null이다. 최근 흐름을 훑어보거나 톱N을 뽑을 때 쓰고, "
 							+ "캡션에서 제품명·키워드 언급을 세거나 찾을 때는 절대 이 툴로 세지 말고 search_posts를 쓴다. "
 							+ "광고·협찬 게시물만 보려면 캡션에서 '광고'라는 글자를 찾지 말고 sponsorship 인자를 쓴다 - "
 							+ "협찬 표기 판정은 캡션 문자열 검색이 아니라 서버가 계산한 축이다. "
+							+ "특정 작성자(인플루언서)의 게시물만 볼 때는 author 인자를 쓴다 - shortCode를 몰라도, "
+							+ "사용자에게 shortCode를 요구하지 않아도 작성자 아이디만으로 그 사람 게시물만 걸러 볼 수 있다. "
 							+ "days 생략 시 수집 기간 전체를 대상으로 한다. 사용자가 기간을 명시했을 때만 days를 넘겨라.",
 					"""
 					{"type":"object","properties":{
@@ -49,7 +51,9 @@ public final class BrandAiToolSpecs {
 					  "sort":{"type":"string","enum":["uploaded_desc","performance_desc"],
 					          "description":"uploaded_desc는 최신순, performance_desc는 조회수 높은 순. 생략하면 최신순"},
 					  "sponsorship":{"type":"string","enum":["sponsored","organic","unknown"],
-					                 "description":"협찬 표기 축 필터 - sponsored=협찬표기, organic=오가닉, unknown=판정미상. 광고·협찬 게시물 질문은 keyword가 아니라 이 인자로 거른다"}
+					                 "description":"협찬 표기 축 필터 - sponsored=협찬표기, organic=오가닉, unknown=판정미상. 광고·협찬 게시물 질문은 keyword가 아니라 이 인자로 거른다"},
+					  "author":{"type":"string","description":"특정 작성자(인플루언서)의 게시물만 볼 때 그 인스타그램 아이디를 넣는다(@ 있어도 없어도 됨, 대소문자 무시, 정확 일치). shortCode를 몰라도 이 인자로 바로 좁혀 조회한다"},
+					  "limit":{"type":"integer","description":"돌려줄 게시물 수. 생략하면 30, 최대 100. 사용자가 N개를 명시하면 그 값을 그대로 넘겨라(최대 100까지)"}
 					},"required":["brandId"]}
 					"""),
 			new AiToolSpec(SEARCH_POSTS,
@@ -60,6 +64,7 @@ public final class BrandAiToolSpecs {
 							+ "매칭 상위 20건만 담기지만 totalMatches 숫자는 그대로 인용한다. 검색어의 공백 유무는 흡수한다. "
 							+ "query는 캡션 문자 매칭일 뿐 광고·협찬 여부 판정이 아니다 - 광고·협찬 게시물을 찾을 때는 "
 							+ "query에 '광고'를 넣지 말고 sponsorship 인자를 쓴다(query와 함께 쓰면 교집합). "
+							+ "특정 작성자(인플루언서)의 게시물 안에서만 찾을 때는 author 인자를 함께 쓴다(query와 교집합). "
 							+ "days 생략 시 수집 기간 전체를 대상으로 한다. 사용자가 기간을 명시했을 때만 days를 넘겨라.",
 					"""
 					{"type":"object","properties":{
@@ -67,7 +72,8 @@ public final class BrandAiToolSpecs {
 					  "query":{"type":"string","description":"캡션에서 찾을 제품명·키워드"},
 					  "days":{"type":"integer","description":"오늘부터 며칠 전까지 볼지. 생략하면 수집된 기간 전체, 최대 365일"},
 					  "sponsorship":{"type":"string","enum":["sponsored","organic","unknown"],
-					                 "description":"협찬 표기 축 필터 - sponsored=협찬표기, organic=오가닉, unknown=판정미상. query와 함께 쓰면 그 조건까지 교집합"}
+					                 "description":"협찬 표기 축 필터 - sponsored=협찬표기, organic=오가닉, unknown=판정미상. query와 함께 쓰면 그 조건까지 교집합"},
+					  "author":{"type":"string","description":"특정 작성자(인플루언서)의 게시물 안에서만 검색할 때 그 인스타그램 아이디(@ 있어도 없어도 됨, 대소문자 무시, 정확 일치). query와 함께 쓰면 교집합"}
 					},"required":["brandId","query"]}
 					"""),
 			new AiToolSpec(AGGREGATE_POSTS,
@@ -84,6 +90,8 @@ public final class BrandAiToolSpecs {
 							+ "groupBy 시 minSample로 그룹의 릴스 표본 수 하한을 걸 수 있다 - 표본 1개짜리 극단값이 랭킹 "
 							+ "상위를 도배하는 걸 막고 싶을 때만 쓰고, '1개짜리라도 보여줘' 같은 질문에는 생략한다. "
 							+ "limit 초과분은 잘리고 totalGroups로 전체 수를 알려주니 '전체 N개 중 상위 M개 기준'을 답변에 명시하라. "
+							+ "특정 작성자(인플루언서) 한 명의 게시물만 모수로 집계할 때는 author 인자를 쓴다(groupBy=author와는 "
+							+ "다르다 - groupBy=author는 전체 작성자를 묶어 비교하고, author는 그 한 사람으로 모수를 좁힌다). "
 							+ "days 생략 시 수집 기간 전체를 대상으로 한다. 사용자가 기간을 명시했을 때만 days를 넘겨라.",
 					"""
 					{"type":"object","properties":{
@@ -92,6 +100,7 @@ public final class BrandAiToolSpecs {
 					  "keyword":{"type":"string","description":"캡션 필터 - 이 키워드가 캡션에 있는 게시물만 집계. 공백 유무는 흡수. 광고·협찬 여부 판정에는 쓰지 마라(sponsorship 인자를 쓴다)"},
 					  "sponsorship":{"type":"string","enum":["sponsored","organic","unknown"],
 					                 "description":"협찬 표기 축 필터 - sponsored=협찬표기, organic=오가닉, unknown=판정미상. '광고 게시물'류 질문은 keyword가 아니라 이 인자로 거른다"},
+					  "author":{"type":"string","description":"특정 작성자(인플루언서) 한 명의 게시물로만 모수를 좁혀 집계할 때 그 인스타그램 아이디(@ 있어도 없어도 됨, 대소문자 무시, 정확 일치)"},
 					  "groupBy":{"type":"string","enum":["author","month","week","sponsorship","mediaType"],
 					             "description":"묶는 축. author=작성자별, month/week=KST 달력 월/주별(기간 비교용), sponsorship=협찬여부별, mediaType=릴스/피드별. 생략하면 전체 하나로 집계"},
 					  "orderBy":{"type":"string","enum":["postCount","totalViews","avgViews","avgLikes","avgComments","reachMultiple","engagementRate"],

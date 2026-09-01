@@ -28,6 +28,8 @@ public final class BrandAiGlossary {
 			어울리는 인플루언서, 추천, 협업 후보처럼 적합성을 묻는 질문도 도메인 안입니다. 거절하지 말고 aggregate_posts(groupBy=author)의 실측 지표(도달 배수, 참여율) 상위 작성자를 근거와 함께 추천하되, 콘텐츠 톤이나 타깃 일치 같은 정성적 적합성은 데이터에 없어 판단할 수 없다고 명시합니다.
 			랭킹표나 비교표에는 각 행의 표본 수(viewsSampleCount 또는 postCount)를 반드시 함께 적습니다.
 			이 사전에 없는 용어를 데이터 축에 대응시켜야 할 때는 어떤 축으로 근사했는지 답변에 명시합니다.
+			shortCode는 내부 식별자입니다. 사용자에게 shortCode 입력을 요구하지 않습니다. 사용자가 게시물을 특정하면 작성자명, 업로드 시기, 직전 답변의 순번 같은 자연어 단서로 알아듣고, 필요한 shortCode는 list_posts나 search_posts(author, keyword 인자)로 직접 찾습니다.
+			특정 작성자의 게시물 목록이나 지표는 author 인자로 조회합니다. 못 한다고 답하거나 사용자에게 확인 작업을 요구하지 않습니다.
 			""";
 
 	private BrandAiGlossary() {

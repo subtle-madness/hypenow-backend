@@ -114,6 +114,21 @@ check_answer_contains() {
 	return 0
 }
 
+# expectAnswerNotContains(2026-09-01 실측 id75 후속 - expectAnswerContains의 대칭) - 목록의 어느
+# 문자열이라도 답변 텍스트에 부분 문자열로 있으면 실패. shortCode 요구·"알 수 없습니다" 같은 금지
+# 표현이 답변에 새는 걸 잡는다.
+check_answer_not_contains() {
+	local answer="$1" needles_json="$2" needle
+	while IFS= read -r needle; do
+		[[ -z "$needle" ]] && continue
+		case "$answer" in
+		*"$needle"*) return 1 ;;
+		*) ;;
+		esac
+	done < <(printf '%s' "$needles_json" | jq -r '.[]')
+	return 0
+}
+
 # groundTruthSql 실행값이 콤마 포맷/무콤마 포맷 둘 중 하나로 답변에 등장하면 통과.
 check_ground_truth() {
 	local answer="$1" value="$2" commafmt
@@ -204,6 +219,14 @@ run_self_test() {
 	assert_false "필요한 문구가 없으면 실패" \
 		check_answer_contains "정상적으로 집계했어요" '["표본"]'
 
+	echo "== check_answer_not_contains(2026-09-01 실측 id75 후속 - expectAnswerContains의 대칭) =="
+	assert_true "금지 문구가 없으면 통과" \
+		check_answer_not_contains "author_x님의 릴스 게시물 6개를 정리했어요" '["shortCode를 알려", "알 수 없습니다"]'
+	assert_false "금지 문구가 하나라도 있으면 실패" \
+		check_answer_not_contains "shortCode를 알려주시면 조회할게요" '["shortCode를 알려", "알 수 없습니다"]'
+	assert_false "목록 중 하나만 걸려도 실패" \
+		check_answer_not_contains "죄송해요, 알 수 없습니다" '["shortCode를 알려", "알 수 없습니다"]'
+
 	echo "== check_ground_truth(콤마 유무 두 포맷 허용) =="
 	assert_true "콤마 포맷 매치" check_ground_truth "총 1,234건이에요" "1234"
 	assert_true "무콤마 포맷 매치" check_ground_truth "총 1234건이에요" "1234"
@@ -250,13 +273,14 @@ cleanup() {
 # 케이스 1건 실행 - 실패해도 스크립트가 죽지 않도록 이 함수 안에서 전부 처리한다(에러는 SKIP/FAIL로 흡수).
 process_case() {
 	local case_json="$1"
-	local id question preset_id expect_tools forbid_tools expect_answer ground_truth_sql
+	local id question preset_id expect_tools forbid_tools expect_answer expect_answer_not ground_truth_sql
 	id=$(jq -r '.id' <<<"$case_json")
 	question=$(jq -r '.question' <<<"$case_json")
 	preset_id=$(jq -r '.presetId // empty' <<<"$case_json")
 	expect_tools=$(jq -c '.expectTools // []' <<<"$case_json")
 	forbid_tools=$(jq -c '.forbidTools // []' <<<"$case_json")
 	expect_answer=$(jq -c '.expectAnswerContains // []' <<<"$case_json")
+	expect_answer_not=$(jq -c '.expectAnswerNotContains // []' <<<"$case_json")
 	ground_truth_sql=$(jq -r '.groundTruthSql // empty' <<<"$case_json")
 
 	local body
@@ -328,6 +352,10 @@ process_case() {
 	if ! check_answer_contains "$answer" "$expect_answer"; then
 		ok=0
 		details+=("expectAnswerContains 불일치($expect_answer)")
+	fi
+	if ! check_answer_not_contains "$answer" "$expect_answer_not"; then
+		ok=0
+		details+=("expectAnswerNotContains 위반(금지 $expect_answer_not)")
 	fi
 
 	local gt_note=""

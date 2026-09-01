@@ -1265,4 +1265,129 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 	void brandContextLine은_링크가_없으면_빈_문자열이다() {
 		assertThat(toolbox.brandContextLine(otherUserId, myBrandId)).isEmpty();
 	}
+
+	// ---------- author 축 인자(2026-09-01 실측 id75 후속) ----------
+	// 실측: "@showmethe._.a의 릴스 게시물 6개 상세 지표"에 모델이 "작성자 필터가 없다"며 shortCode
+	// 입력을 요구했다 - 세 툴이 resolveWindow에서 같은 author 판정을 공유해야 재발하지 않는다.
+
+	@Test
+	void list_posts는_author_인자로_특정_작성자_게시물만_돌려준다() {
+		long brandId = insertBrand(monitoringJdbc, "authorlistbrand");
+		linkRepository.insertLink(userId, brandId, "authorlistbrand", BrandAccountType.OWN, 12);
+		insertTaggedPost(monitoringJdbc, brandId, "AUTHORX1", "author_x", NOW.minusSeconds(3600));
+		insertTaggedPost(monitoringJdbc, brandId, "AUTHORX2", "author_x", NOW.minusSeconds(7200));
+		insertTaggedPost(monitoringJdbc, brandId, "AUTHORY1", "author_y", NOW.minusSeconds(3600));
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.LIST_POSTS,
+				args().put("brandId", brandId).put("author", "author_x"));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).containsExactlyInAnyOrder("AUTHORX1", "AUTHORX2");
+	}
+
+	@Test
+	void search_posts는_author_인자로_그_작성자_게시물_안에서만_검색한다() {
+		long brandId = insertBrand(monitoringJdbc, "authorsearchbrand");
+		linkRepository.insertLink(userId, brandId, "authorsearchbrand", BrandAccountType.OWN, 12);
+		insertSearchablePost(brandId, "ASX1", "author_x", NOW.minusSeconds(3600), "신상 세럼 후기");
+		insertSearchablePost(brandId, "ASY1", "author_y", NOW.minusSeconds(3600), "신상 세럼 후기");
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.SEARCH_POSTS,
+				args().put("brandId", brandId).put("query", "세럼").put("author", "author_x"));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.payloadJson()).contains("\"totalMatches\":1").contains("ASX1").doesNotContain("ASY1");
+	}
+
+	@Test
+	void aggregate_posts는_author_인자로_그_작성자_게시물만_모수로_집계한다() {
+		long brandId = insertBrand(monitoringJdbc, "authoraggbrand");
+		linkRepository.insertLink(userId, brandId, "authoraggbrand", BrandAccountType.OWN, 12);
+		insertMetricPost(brandId, "AAX1", "author_x", NOW.minusSeconds(3600), "x1", "REELS", 1, 1, 1000L);
+		insertMetricPost(brandId, "AAX2", "author_x", NOW.minusSeconds(7200), "x2", "REELS", 1, 1, 2000L);
+		insertMetricPost(brandId, "AAY1", "author_y", NOW.minusSeconds(3600), "y1", "REELS", 1, 1, 9000L);
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", brandId).put("author", "author_x"));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.payloadJson()).contains("\"postCount\":2");
+	}
+
+	/** 모델이 "@xxx" 형태를 그대로 넣는 실측 패턴(id75)을 흡수한다 - 선행 "@" 하나만 벗기고 정확 일치한다. */
+	@Test
+	void author_인자는_선행_골뱅이_접두를_흡수한다() {
+		long brandId = insertBrand(monitoringJdbc, "authoratbrand");
+		linkRepository.insertLink(userId, brandId, "authoratbrand", BrandAccountType.OWN, 12);
+		insertTaggedPost(monitoringJdbc, brandId, "AT1", "author_z", NOW.minusSeconds(3600));
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.LIST_POSTS,
+				args().put("brandId", brandId).put("author", "@author_z"));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).containsExactly("AT1");
+	}
+
+	/** author 인자는 대소문자를 무시하고 정확 일치한다(부분일치 아님 - scope의 q와 다른 축). */
+	@Test
+	void author_인자는_대소문자를_무시하고_정확_일치한다() {
+		long brandId = insertBrand(monitoringJdbc, "authorcasebrand");
+		linkRepository.insertLink(userId, brandId, "authorcasebrand", BrandAccountType.OWN, 12);
+		insertTaggedPost(monitoringJdbc, brandId, "CASE1", "MixedCaseAuthor", NOW.minusSeconds(3600));
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.LIST_POSTS,
+				args().put("brandId", brandId).put("author", "mixedcaseauthor"));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).containsExactly("CASE1");
+	}
+
+	// ---------- list_posts limit 인자(2026-09-01 실측 id75 후속) ----------
+
+	/** limit 생략 시 기존 기본값(30건)과 동일하게 동작한다(하위호환) - 31건을 심어 30건만 반환되는지 확인. */
+	@Test
+	void list_posts는_limit_생략시_기존_기본값_30건을_유지한다() {
+		long brandId = insertBrand(monitoringJdbc, "defaultlimitbrand");
+		linkRepository.insertLink(userId, brandId, "defaultlimitbrand", BrandAccountType.OWN, 12);
+		for (int i = 1; i <= 31; i++) {
+			insertMetricPost(brandId, "DL" + i, "author" + i, NOW.minusSeconds(i * 60L), "본문" + i, "REELS", 1, 1, 1L);
+		}
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.LIST_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).hasSize(30);
+	}
+
+	/** 사용자가 개수를 명시하면(예: 50) limit 인자가 기본값(30)을 넘겨 그대로 반영돼야 한다(실측 id75 - "게시물 6개"). */
+	@Test
+	void list_posts는_limit_인자를_명시하면_기본값_30을_넘겨_반영한다() {
+		long brandId = insertBrand(monitoringJdbc, "customlimitbrand");
+		linkRepository.insertLink(userId, brandId, "customlimitbrand", BrandAccountType.OWN, 12);
+		for (int i = 1; i <= 50; i++) {
+			insertMetricPost(brandId, "CL" + i, "author" + i, NOW.minusSeconds(i * 60L), "본문" + i, "REELS", 1, 1, 1L);
+		}
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.LIST_POSTS,
+				args().put("brandId", brandId).put("limit", 50));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).hasSize(50);
+	}
+
+	/** limit이 상한(100)을 넘게 요청돼도 모델 요청값과 무관하게 100건으로 잘린다(기존 댓글 50건 상한 관용구와 동형). */
+	@Test
+	void list_posts는_limit_100_초과_요청을_100건으로_클램프한다() {
+		long brandId = insertBrand(monitoringJdbc, "overlimitbrand");
+		linkRepository.insertLink(userId, brandId, "overlimitbrand", BrandAccountType.OWN, 12);
+		for (int i = 1; i <= 105; i++) {
+			insertMetricPost(brandId, "OL" + i, "author" + i, NOW.minusSeconds(i * 60L), "본문" + i, "REELS", 1, 1, 1L);
+		}
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.LIST_POSTS,
+				args().put("brandId", brandId).put("limit", 9999));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.shortCodes()).hasSize(100);
+	}
 }

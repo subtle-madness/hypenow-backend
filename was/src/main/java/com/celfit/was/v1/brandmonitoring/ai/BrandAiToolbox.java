@@ -62,8 +62,14 @@ import tools.jackson.databind.node.ObjectNode;
  */
 public class BrandAiToolbox {
 
-	/** 게시물 목록 상한 - 30건이면 "최근 흐름"을 판단하기 충분하고 캡션 발췌 포함 토큰이 통제된다. */
+	/** list_posts 기본 반환 건수 - 30건이면 "최근 흐름"을 판단하기 충분하고 캡션 발췌 포함 토큰이
+	 * 통제된다. limit 인자를 생략했을 때만 쓰인다({@link #LIST_POSTS_MAX_LIMIT} 참조 - 2026-09-01
+	 * 실측 id75, 사용자가 개수를 명시하면 이 기본값을 넘겨야 한다). */
 	private static final int MAX_POSTS = 30;
+	/** list_posts limit 인자의 상한(2026-09-01 실측 id75 후속) - 행당 캡션 발췌 포함 게시물 1건이
+	 * 대략 120토큰이라(캡션 발췌 120자 + 필드 오버헤드), 100건이면 대략 120 × 100 = 12,000토큰으로
+	 * 툴 응답 예산(설계 §7, 10만 토큰) 대비 여유 있게 감당된다. */
+	private static final int LIST_POSTS_MAX_LIMIT = 100;
 	/** 댓글 상한(설계 §7) - 실제 반환 건수는 BrandPostAssembler 서빙 상한(45건)을 넘지 않는다. */
 	private static final int MAX_COMMENTS = 50;
 	private static final int DEFAULT_COMMENTS = 20;
@@ -310,7 +316,10 @@ public class BrandAiToolbox {
 		Comparator<PostRef> order = performanceSort
 				? Comparator.comparing(PostRef::latestViews, Comparator.nullsLast(Comparator.reverseOrder()))
 				: Comparator.comparing(PostRef::uploadedOn, Comparator.nullsLast(Comparator.reverseOrder()));
-		List<PostRef> page = window.inWindow().stream().sorted(order).limit(MAX_POSTS).toList();
+		// limit 인자(2026-09-01 실측 id75) - 사용자가 개수를 명시하면 그 값을 그대로 쓰되 상한을 넘지
+		// 못한다. 생략 시 기존 기본값(MAX_POSTS)과 동일하게 동작한다.
+		int limit = Math.clamp(args.path("limit").asInt(MAX_POSTS), 1, LIST_POSTS_MAX_LIMIT);
+		List<PostRef> page = window.inWindow().stream().sorted(order).limit(limit).toList();
 		List<String> codes = page.stream().map(PostRef::shortcode).toList();
 
 		// hydrate 반환 순서는 입력 codes 순서와 같다(BrandPostAssembler#hydrate 계약) - 위에서 이미
@@ -400,9 +409,30 @@ public class BrandAiToolbox {
 		// 판정을 공유한다. FE scope의 sponsorship(위 matchesScope, 화면 필터·강제)과는 별개 축이라 둘 다
 		// 있으면 교집합이 된다. 유효성은 호출부(invalidSponsorship)가 이미 검증했으므로 여기선 적용만 한다.
 		String sponsorshipArg = args.path("sponsorship").asString("");
-		List<PostRef> inWindow = sponsorshipArg.isEmpty() ? authorScoped
+		List<PostRef> sponsorshipFiltered = sponsorshipArg.isEmpty() ? authorScoped
 				: authorScoped.stream().filter(r -> sponsorshipArg.equalsIgnoreCase(r.sponsorship())).toList();
+
+		// 모델 author 축 필터(2026-09-01 실측 id75 후속) - list_posts·search_posts·aggregate_posts가
+		// 여기서 같은 판정을 공유한다("특정 작성자의 게시물 몇 개?" 질문에 shortCode를 요구하지 않고
+		// 바로 좁혀 답하게 하는 것이 목적). FE scope의 q(부분일치·팔로워 배치 조회)와 달리 이 축은
+		// 사용자가 특정한 계정 1개를 정확히 지목하는 것이라 authorUsername 정확 일치로 판정한다 -
+		// authorUsername이 없는(미수집) 게시물은 필터가 걸려 있으면 제외한다.
+		String authorArg = normalizeAuthorArg(args.path("author").asString(""));
+		List<PostRef> inWindow = authorArg.isEmpty() ? sponsorshipFiltered
+				: sponsorshipFiltered.stream()
+						.filter(r -> r.authorUsername() != null && authorArg.equalsIgnoreCase(r.authorUsername()))
+						.toList();
 		return new BrandWindow(index, inWindow, since, windowKind);
+	}
+
+	/** author 인자 정규화(2026-09-01 실측 id75 후속) - 모델이 "@xxx" 형태로 그대로 넣는 경우를 흡수한다
+	 * (선행 "@" 1개만 벗긴다 - 인스타그램 아이디 자체에는 "@"가 올 수 없다). */
+	private static String normalizeAuthorArg(String raw) {
+		if (raw == null) {
+			return "";
+		}
+		String trimmed = raw.strip();
+		return trimmed.startsWith("@") ? trimmed.substring(1) : trimmed;
 	}
 
 	/** null을 "제약 없음"으로 보는 더 늦은(제약이 더 센) 날짜 - scope.dateFrom과 기존 since 후보 중 결합. */

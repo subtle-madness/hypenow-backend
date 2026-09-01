@@ -24,7 +24,7 @@
 
 ```bash
 cd was/eval
-./run.sh                 # 전체 13케이스 실행(순차, 케이스 간 1초 대기) - 실 Vertex 호출
+./run.sh                 # 전체 14케이스 실행(순차, 케이스 간 1초 대기) - 실 Vertex 호출
 ./run.sh --self-test      # 채점 로직만 mock 데이터로 검증 - 네트워크·DB 접근 없음, 비용 없음
 ```
 
@@ -55,6 +55,7 @@ env 오버라이드(전부 선택):
   "expectTools": [{"name": "aggregate_posts", "argsInclude": {"groupBy": "author", "sponsorship": "sponsored"}}],
   "forbidTools": [{"name": "aggregate_posts", "argsInclude": {"keyword": "광고"}}],
   "expectAnswerContains": ["표본"],
+  "expectAnswerNotContains": ["shortCode를 알려", "알 수 없습니다"],
   "groundTruthSql": "SELECT count(...) ... WHERE t.brand_id = :BRAND_ID ..."
 }
 ```
@@ -67,6 +68,9 @@ env 오버라이드(전부 선택):
   - `expectTools`는 목록의 **모든** rule이 각각 하나 이상의 호출과 매치해야 통과.
   - `forbidTools`는 목록의 rule 중 **하나라도** 매치하는 호출이 있으면 실패.
 - `expectAnswerContains`: 답변 텍스트에 전부 부분 문자열로 있어야 하는 고정 문구.
+- `expectAnswerNotContains`(2026-09-01 실측 id75 후속, `expectAnswerContains`의 대칭): 목록 중 어느
+  하나라도 답변 텍스트에 부분 문자열로 등장하면 실패. shortCode 같은 내부 식별자를 사용자에게
+  요구하거나 "알 수 없습니다"로 물러나는 조용한 회피를 잡을 때 쓴다.
 - `groundTruthSql`: 선택. `monitoring` DB에서 실행하고(러너가 `:BRAND_ID`를 실제 값으로 치환),
   실행값이 콤마 포맷(`1,234`)·무콤마 포맷(`1234`) 둘 중 하나로 답변에 등장하면 통과. **SQL 실행
   자체가 실패하면(스키마 변경·데이터 없음 등) 그 케이스의 수치 검증만 SKIP 표시하고 러너는
@@ -91,6 +95,12 @@ trajectory(툴 선택)만 확인하고 답변 품질은 사람이 읽는다.
 넣은 값이다 - 처음 실행해서 매칭이 0건이거나 부자연스러우면, 실제로 로컬 DB에 여러 건 잡히는
 단어로 바꿀 것(`monitoring_psql`로 `SELECT caption FROM brand_post_meta LIMIT 20` 정도로 훑어보면
 빠르다).
+
+`author-posts-detail`의 `expectTools[0].argsInclude.author`는 모델이 실제로 넘긴 인자 원문과
+정확히 일치해야 매치된다(툴박스의 `@` 접두 정규화는 서버 내부에서만 일어나고 로그
+`tool_calls[].args`는 모델이 넘긴 원문이다) - 모델이 `"@kbeauty.real.gems"`처럼 `@`를 붙인 채로
+호출하면 이 rule이 실패할 수 있다. 처음 실행해서 그렇게 새면 `argsInclude`를 빼고
+`forbidTools`(예: `expectAnswerNotContains`의 "shortCode를 알려" 계열)만으로 좁혀 조정할 것.
 
 ## 모델 실험법
 
