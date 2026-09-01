@@ -26,6 +26,8 @@ import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.RawPayloadRepository;
 import com.celfit.monitoring.store.TargetCallCountRepository;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Duration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -41,12 +43,17 @@ public class HikerConfig {
 	 *
 	 * <p>전송 위임자는 HikerHttp 단일 빈이라, 테스트가 {@code @Primary}로 가짜 전송을 꽂아도
 	 * 같은 데코레이터 체인(과금·원형 적재·타이머)에 그대로 감싸여 실전과 동일 경로로 동작한다.
+	 *
+	 * <p>SelfRetry의 시간 예산(기본 8초, monitoring.self-retry.budget)은 최악 45초(3회 × 15초
+	 * request-timeout)가 동기 등록 경로(was→monitoring read timeout 10s)를 넘겨 사용자가 폴백
+	 * 전에 503을 보는 것을 막는다(F3) — 예산 초과 시 남은 재시도를 포기하고 즉시 Hiker로 넘어간다.
 	 */
 	@Bean
 	public InstagramSource instagramSource(HikerHttp transport, RawPayloadRepository rawPayloads,
 			BrandCallContext brandContext, BrandCallCountRepository brandCounts,
 			TargetCallContext targetContext, TargetCallCountRepository targetCounts,
-			MeterRegistry meterRegistry, InstagramProxyProperties proxyProps, IgSourceSettings igSettings) {
+			MeterRegistry meterRegistry, InstagramProxyProperties proxyProps, IgSourceSettings igSettings,
+			@Value("${monitoring.self-retry.budget:8s}") Duration selfRetryBudget) {
 		// 집계가 바깥 — 원형 적재까지 끝난 "호출자가 성공으로 본 콜"과 집계가 1:1로 맞는다.
 		// 타이머는 최내곽(전송 바로 바깥) — 원형 적재·집계의 DB 쓰기 시간이 외부 구간 지표에 안 섞인다.
 		HikerHttp chain = new CountingHikerHttp(
@@ -64,7 +71,7 @@ public class HikerConfig {
 				new FeedUserPostsFetcher(httpClient::get),
 				new DirectCommentFetcher(httpClient, igSettings::commentDocId, igSettings::commentFriendlyName),
 				new SurfaceCircuitBreaker(5),
-				new SelfRetry(3),
+				new SelfRetry(3, selfRetryBudget),
 				igSettings::profileSurface);
 
 		return new FailoverInstagramSource(self, hikerBackend, igSettings::selfEnabled,

@@ -57,6 +57,11 @@ monitoring:
     # 자체크롤 on/off는 boot 프로퍼티가 아니라 app_setting 'ig-source.self-enabled'(런타임 토글)로 제어
     comment-doc-id: ${IG_COMMENT_DOC_ID:}
     comment-friendly-name: ${IG_COMMENT_FRIENDLY_NAME:}
+  self-retry:
+    # F3: self 재시도(최대 3회 × request-timeout 15s=최악 45s) 총 시간예산 — 초과 시 남은 재시도를
+    # 포기하고 즉시 Hiker로 폴백한다. 동기 등록(was→monitoring read timeout 10s)에서 폴백 전에
+    # 사용자가 503을 보는 걸 막는다. p95 정상 경로(wpi 5.3s 실측)는 예산 안에서 1회 시도로 끝난다.
+    budget: 8s
   sweep:
     retry-rounds: 3      # 스윕 말미 일시 실패 계정 재시도 라운드 수
     retry-interval: 10m  # 라운드 간격 × 라운드 번호 (10m → 20m → 30m)

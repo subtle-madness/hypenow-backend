@@ -14,6 +14,7 @@ import com.celfit.monitoring.store.TargetCallCountRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -56,7 +57,7 @@ class HikerConfigTest {
 		InstagramSource client = new HikerConfig().instagramSource(path -> "{\"user\":{\"pk\":1}}",
 				new NoopPayloadRepo(), new BrandCallContext(), new BrandCallCountRepository(null),
 				new TargetCallContext(), new TargetCallCountRepository(null), registry, proxyProps,
-				new IgSourceSettings(new EmptySettingsRepo(), proxyProps));
+				new IgSourceSettings(new EmptySettingsRepo(), proxyProps), Duration.ofSeconds(8));
 
 		client.fetchProfile("hypenow");
 
