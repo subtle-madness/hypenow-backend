@@ -11,6 +11,7 @@ import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler.BrandPostIndex;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler.PostRef;
 import com.celfit.was.v1.brandmonitoring.BrandPostResponse;
+import com.celfit.was.v1.brandmonitoring.BrandSponsorshipClassifier;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.Clock;
@@ -87,6 +88,20 @@ public class BrandAiToolbox {
 	private static final int TOTAL_BATCH_COMMENTS = 50;
 
 	private static final String SORT_PERFORMANCE_DESC = "performance_desc";
+
+	/** 유효 sponsorship 값(BrandSponsorshipClassifier 상수 그대로, 스펙 §3-1) - 리터럴 복제 금지. */
+	private static final Set<String> SPONSORSHIP_VALUES = Set.of(BrandSponsorshipClassifier.SPONSORED,
+			BrandSponsorshipClassifier.ORGANIC, BrandSponsorshipClassifier.UNKNOWN);
+
+	/** 서버 강제 caveat(스펙 §4) - 고지를 모델 재량에 맡기지 않는다(Knowing-but-Not-Showing 근거,
+	 * arXiv 2605.25284 - 컨텍스트가 붙을수록 모델은 덜 묻고 더 자신 있게 틀린다). */
+	private static final String CAVEAT_KEYWORD =
+			"keyword는 캡션 문자 매칭입니다. 광고·협찬 여부 판정이 아닙니다 - 협찬 여부는 sponsorship 인자를 쓰세요.";
+
+	/** 반환된(페이지 안) 그룹 중 릴스 표본이 1개뿐인 그룹 수를 고지하는 caveat(스펙 §4). */
+	private static String caveatSmallSample(long count) {
+		return "반환된 그룹 중 " + count + "개는 릴스 표본이 1개뿐입니다. 순위 해석에 주의하고 각 행에 표본 수를 함께 표기하세요.";
+	}
 
 	private final BrandLinkRepository linkRepository;
 	private final BrandReadRepository brandReadRepository;
@@ -283,6 +298,10 @@ public class BrandAiToolbox {
 			return error("그 브랜드의 계정 정보가 아직 수집되지 않았습니다.");
 		}
 		BrandAccountRow account = accountOpt.get();
+		Optional<AiToolResult> invalidSponsorship = invalidSponsorship(args);
+		if (invalidSponsorship.isPresent()) {
+			return invalidSponsorship.get();
+		}
 
 		boolean performanceSort = SORT_PERFORMANCE_DESC.equals(args.path("sort").asString());
 		BrandWindow window = resolveWindow(session, userId, link, account, args, performanceSort);
@@ -375,7 +394,14 @@ public class BrandAiToolbox {
 		// scope의 날짜는 위에서 이미 계산한 링크 창/days 창과 별개로 한 번 더 걸어 교집합을 만든다
 		// (direct 게시물의 링크 창 면제와 달리 scope는 예외 없이 전부 적용된다).
 		List<PostRef> scoped = dateWindowRefs.stream().filter(r -> matchesScope(r, scope)).toList();
-		List<PostRef> inWindow = applyAuthorScope(scoped, scope);
+		List<PostRef> authorScoped = applyAuthorScope(scoped, scope);
+
+		// 모델 sponsorship 축 필터(스펙 §3-1) - list_posts·search_posts·aggregate_posts가 여기서 같은
+		// 판정을 공유한다. FE scope의 sponsorship(위 matchesScope, 화면 필터·강제)과는 별개 축이라 둘 다
+		// 있으면 교집합이 된다. 유효성은 호출부(invalidSponsorship)가 이미 검증했으므로 여기선 적용만 한다.
+		String sponsorshipArg = args.path("sponsorship").asString("");
+		List<PostRef> inWindow = sponsorshipArg.isEmpty() ? authorScoped
+				: authorScoped.stream().filter(r -> sponsorshipArg.equalsIgnoreCase(r.sponsorship())).toList();
 		return new BrandWindow(index, inWindow, since, windowKind);
 	}
 
@@ -565,6 +591,10 @@ public class BrandAiToolbox {
 			return error("그 브랜드의 계정 정보가 아직 수집되지 않았습니다.");
 		}
 		BrandAccountRow account = accountOpt.get();
+		Optional<AiToolResult> invalidSponsorship = invalidSponsorship(args);
+		if (invalidSponsorship.isPresent()) {
+			return invalidSponsorship.get();
+		}
 		BrandWindow window = resolveWindow(session, userId, link, account, args, false);
 
 		List<PostRef> matchedRefs = captionMatchedRefs(window, normalizedQuery);
@@ -602,6 +632,9 @@ public class BrandAiToolbox {
 			node.put("likes", latest == null ? null : latest.likes());
 			node.put("views", latest == null ? null : latest.views());
 		}
+		// 서버 강제 caveat(스펙 §4) - search_posts는 본질이 캡션 문자 매칭이라 CAVEAT_KEYWORD 중
+		// "광고·협찬 판정이 아니다" 부분이 그대로 적용된다. query는 항상 있는 인자라 무조건 삽입한다.
+		payload.putArray("caveats").add(CAVEAT_KEYWORD);
 		// rowCount는 다른 툴과 달리 "돌려준" 상위 건수가 아니라 총 매칭 건수다 - 이 툴의 핵심 계약이
 		// 상한 없는 정확한 카운트라, 로그(app.ai_chat_logs.tool_calls[].rows)에도 진짜 수를 남긴다.
 		return AiToolResult.ok(payload.toString(), matchedRefs.size(), codesOut);
@@ -675,6 +708,10 @@ public class BrandAiToolbox {
 			return error("그 브랜드의 계정 정보가 아직 수집되지 않았습니다.");
 		}
 		BrandAccountRow account = accountOpt.get();
+		Optional<AiToolResult> invalidSponsorship = invalidSponsorship(args);
+		if (invalidSponsorship.isPresent()) {
+			return invalidSponsorship.get();
+		}
 		BrandWindow window = resolveWindow(session, userId, link, account, args, false);
 
 		JsonNode groupByNode = args.path("groupBy");
@@ -684,6 +721,9 @@ public class BrandAiToolbox {
 		}
 		String orderBy = args.path("orderBy").asString("postCount");
 		int groupLimit = Math.clamp(args.path("limit").asInt(DEFAULT_GROUP_LIMIT), 1, MAX_GROUP_LIMIT);
+		// minSample(스펙 §3-2) - groupBy 시 그룹의 릴스 표본 수 하한. 기본값 없음(0 = 미적용) - "1개짜리
+		// 바이럴 발굴"류 질문을 막지 않기 위해 강제하지 않고, 필요하면 프리셋·모델이 지정한다.
+		int minSample = Math.max(0, args.path("minSample").asInt(0));
 
 		// keyword 필터(스펙 §3-1) - search_posts와 같은 정규화(공백 흡수)·같은 매칭 헬퍼를 공유한다.
 		String keyword = args.path("keyword").asString("").replace(" ", "");
@@ -742,7 +782,7 @@ public class BrandAiToolbox {
 			return scalarAggregatePayload(link, window, keyword, groups, universe.size());
 		}
 		return groupedAggregatePayload(link, window, groupBy, orderBy, groupLimit, keyword, groups, universe.size(),
-				skippedNoKey);
+				skippedNoKey, minSample);
 	}
 
 	/** 그룹 1개의 누산기(2026-08-31 groupBy 일반화, 스펙 §3-1·§3-2) - 스칼라 경로도 단일 그룹("all")로
@@ -881,6 +921,11 @@ public class BrandAiToolbox {
 		} else {
 			codes = List.of();
 		}
+		// 서버 강제 caveat(스펙 §4) - keyword 사용은 캡션 문자 매칭일 뿐 협찬 판정이 아니라는 고지를
+		// 모델 재량에 맡기지 않는다.
+		if (!keyword.isEmpty()) {
+			payload.putArray("caveats").add(CAVEAT_KEYWORD);
+		}
 		return AiToolResult.ok(payload.toString(), universeSize, codes);
 	}
 
@@ -889,7 +934,28 @@ public class BrandAiToolbox {
 	 * 보고해 "전체 N개 중 상위 M개" 같은 조용한 절단을 막는다. */
 	private AiToolResult groupedAggregatePayload(BrandLinkRow link, BrandWindow window, String groupBy,
 			String orderBy, int groupLimit, String keyword, Map<String, GroupAcc> groups, int universeSize,
-			long skippedNoKey) {
+			long skippedNoKey, int minSample) {
+		// minSample(스펙 §3-2) - 표본(릴스 조회수) 미달 그룹은 정렬 전에 모수에서 제외한다(조용한 절단
+		// 금지 - 제외 수를 filteredOutBySample로 명시). 0이면(기본) 걸지 않는다.
+		List<GroupAcc> candidateGroups;
+		long filteredOutBySample;
+		if (minSample > 0) {
+			List<GroupAcc> kept = new ArrayList<>();
+			long filtered = 0;
+			for (GroupAcc acc : groups.values()) {
+				if (acc.viewsSampleCount < minSample) {
+					filtered++;
+				} else {
+					kept.add(acc);
+				}
+			}
+			candidateGroups = kept;
+			filteredOutBySample = filtered;
+		} else {
+			candidateGroups = new ArrayList<>(groups.values());
+			filteredOutBySample = 0;
+		}
+
 		Function<GroupAcc, Double> sortKey = switch (orderBy) {
 			case "totalViews" -> acc -> (double) acc.totalViews;
 			case "avgViews" -> GroupAcc::avgViews;
@@ -899,7 +965,7 @@ public class BrandAiToolbox {
 			case "engagementRate" -> GroupAcc::engagementRate;
 			default -> acc -> (double) acc.postCount; // postCount 및 알 수 없는 값 폴백
 		};
-		List<GroupAcc> ordered = groups.values().stream()
+		List<GroupAcc> ordered = candidateGroups.stream()
 				.sorted(Comparator.comparing(sortKey, Comparator.nullsLast(Comparator.reverseOrder())))
 				.toList();
 		List<GroupAcc> page = ordered.stream().limit(groupLimit).toList();
@@ -914,10 +980,13 @@ public class BrandAiToolbox {
 			payload.put("keyword", keyword);
 		}
 		payload.put("postCount", universeSize);
-		payload.put("totalGroups", groups.size());
+		payload.put("totalGroups", candidateGroups.size());
 		payload.put("returnedGroups", page.size());
 		if (skippedNoKey > 0) {
 			payload.put("skippedNoKey", skippedNoKey);
+		}
+		if (filteredOutBySample > 0) {
+			payload.put("filteredOutBySample", filteredOutBySample);
 		}
 		payload.put("viewsNote", "피드 게시물은 조회수가 항상 null이라 조회수·도달배수·참여율은 릴스만 대상입니다. "
 				+ "reachMultiple·engagementRate는 서버가 계산한 값이니 그대로 인용하세요.");
@@ -948,9 +1017,23 @@ public class BrandAiToolbox {
 				}
 			}
 		}
+		// 서버 강제 caveat(스펙 §4) - keyword 사용·소표본(릴스 표본 1개) 그룹 반환은 모델 재량 고지에
+		// 맡기지 않는다. 소표본 경고는 실제로 화면에 나가는 page(반환된 그룹) 기준으로 센다.
+		List<String> caveatMessages = new ArrayList<>();
+		if (!keyword.isEmpty()) {
+			caveatMessages.add(CAVEAT_KEYWORD);
+		}
+		long singleSampleCount = page.stream().filter(acc -> acc.viewsSampleCount == 1).count();
+		if (singleSampleCount > 0) {
+			caveatMessages.add(caveatSmallSample(singleSampleCount));
+		}
+		if (!caveatMessages.isEmpty()) {
+			ArrayNode caveats = payload.putArray("caveats");
+			caveatMessages.forEach(caveats::add);
+		}
 		// rowCount는 다른 툴과 달리 반환 그룹 수가 아니라 전체 그룹 수다 - search_posts의 totalMatches
 		// 관용구와 동일하게 "정확한 총 수"를 로그(app.ai_chat_logs.tool_calls[].rows)에도 남긴다.
-		return AiToolResult.ok(payload.toString(), groups.size(), codes);
+		return AiToolResult.ok(payload.toString(), candidateGroups.size(), codes);
 	}
 
 	/**
@@ -1187,6 +1270,25 @@ public class BrandAiToolbox {
 	 * (단발 테스트) 요청 brandId가 아예 없으면(0 이하 - 곧이어 ownedBrand가 그 케이스를 처리한다)
 	 * 검사를 건너뛴다.
 	 */
+	/**
+	 * sponsorship 인자 검증(list_posts·search_posts·aggregate_posts 공유, 스펙 §3-1) - 실제 필터링은
+	 * {@link #resolveWindow}가 담당한다(세 툴이 같은 판정을 공유). FE scope의 sponsorship(화면 필터,
+	 * 강제)과는 별개 축이라 둘 다 있으면 교집합이다. 인자가 없으면 통과.
+	 */
+	private Optional<AiToolResult> invalidSponsorship(JsonNode args) {
+		JsonNode node = args.path("sponsorship");
+		if (node.isMissingNode() || node.isNull()) {
+			return Optional.empty();
+		}
+		String value = node.asString("");
+		for (String valid : SPONSORSHIP_VALUES) {
+			if (valid.equalsIgnoreCase(value)) {
+				return Optional.empty();
+			}
+		}
+		return Optional.of(error("sponsorship은 sponsored·organic·unknown 중 하나여야 합니다."));
+	}
+
 	private Optional<AiToolResult> scopeMismatch(ToolSession session, long requestedBrandId) {
 		Long sessionBrandId = session.brandId();
 		if (sessionBrandId != null && requestedBrandId > 0 && sessionBrandId != requestedBrandId) {

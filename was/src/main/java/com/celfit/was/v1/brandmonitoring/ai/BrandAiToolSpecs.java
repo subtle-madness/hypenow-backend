@@ -39,13 +39,17 @@ public final class BrandAiToolSpecs {
 							+ "각 항목은 shortCode·업로드일·유료협찬 표기 여부·캡션 앞부분·좋아요/댓글수/조회수를 담는다. "
 							+ "피드 게시물의 조회수는 항상 null이다. 최근 흐름을 훑어보거나 톱N을 뽑을 때 쓰고, "
 							+ "캡션에서 제품명·키워드 언급을 세거나 찾을 때는 절대 이 툴로 세지 말고 search_posts를 쓴다. "
+							+ "광고·협찬 게시물만 보려면 캡션에서 '광고'라는 글자를 찾지 말고 sponsorship 인자를 쓴다 - "
+							+ "협찬 표기 판정은 캡션 문자열 검색이 아니라 서버가 계산한 축이다. "
 							+ "days 생략 시 수집 기간 전체를 대상으로 한다. 사용자가 기간을 명시했을 때만 days를 넘겨라.",
 					"""
 					{"type":"object","properties":{
 					  "brandId":{"type":"integer","description":"list_brands가 돌려준 브랜드 id"},
 					  "days":{"type":"integer","description":"오늘부터 며칠 전까지 볼지. 생략하면 수집된 기간 전체, 최대 365일"},
 					  "sort":{"type":"string","enum":["uploaded_desc","performance_desc"],
-					          "description":"uploaded_desc는 최신순, performance_desc는 조회수 높은 순. 생략하면 최신순"}
+					          "description":"uploaded_desc는 최신순, performance_desc는 조회수 높은 순. 생략하면 최신순"},
+					  "sponsorship":{"type":"string","enum":["sponsored","organic","unknown"],
+					                 "description":"협찬 표기 축 필터 - sponsored=협찬표기, organic=오가닉, unknown=판정미상. 광고·협찬 게시물 질문은 keyword가 아니라 이 인자로 거른다"}
 					},"required":["brandId"]}
 					"""),
 			new AiToolSpec(SEARCH_POSTS,
@@ -54,12 +58,16 @@ public final class BrandAiToolSpecs {
 							+ "캡션에서 특정 단어를 몇 번 언급했는지 세거나 찾는 질문에는 반드시 이 툴을 쓴다 - "
 							+ "list_posts로 세면 30건을 넘는 언급을 놓친다. 상세(캡션 발췌·게시자·최신 좋아요/조회수)는 "
 							+ "매칭 상위 20건만 담기지만 totalMatches 숫자는 그대로 인용한다. 검색어의 공백 유무는 흡수한다. "
+							+ "query는 캡션 문자 매칭일 뿐 광고·협찬 여부 판정이 아니다 - 광고·협찬 게시물을 찾을 때는 "
+							+ "query에 '광고'를 넣지 말고 sponsorship 인자를 쓴다(query와 함께 쓰면 교집합). "
 							+ "days 생략 시 수집 기간 전체를 대상으로 한다. 사용자가 기간을 명시했을 때만 days를 넘겨라.",
 					"""
 					{"type":"object","properties":{
 					  "brandId":{"type":"integer","description":"list_brands가 돌려준 브랜드 id"},
 					  "query":{"type":"string","description":"캡션에서 찾을 제품명·키워드"},
-					  "days":{"type":"integer","description":"오늘부터 며칠 전까지 볼지. 생략하면 수집된 기간 전체, 최대 365일"}
+					  "days":{"type":"integer","description":"오늘부터 며칠 전까지 볼지. 생략하면 수집된 기간 전체, 최대 365일"},
+					  "sponsorship":{"type":"string","enum":["sponsored","organic","unknown"],
+					                 "description":"협찬 표기 축 필터 - sponsored=협찬표기, organic=오가닉, unknown=판정미상. query와 함께 쓰면 그 조건까지 교집합"}
 					},"required":["brandId","query"]}
 					"""),
 			new AiToolSpec(AGGREGATE_POSTS,
@@ -69,20 +77,27 @@ public final class BrandAiToolSpecs {
 							+ "orderBy 기준 내림차순 정렬로 돌려준다. 작성자 랭킹·기간 비교·협찬 vs 오가닉 비교는 반드시 이 툴 "
 							+ "1회로 해결한다 - list_posts로 모아 get_author를 반복 호출하며 직접 계산하지 마라. "
 							+ "reachMultiple·engagementRate·totalGroups 등 숫자는 직접 재계산하지 말고 그대로 인용한다. "
-							+ "keyword를 주면 캡션에 그 키워드가 있는 게시물만 모수로 삼는다. "
+							+ "keyword를 주면 캡션에 그 키워드가 있는 게시물만 모수로 삼는다 - keyword는 캡션 문자 매칭일 "
+							+ "뿐 광고·협찬 여부 판정이 아니다. '광고 게시물' 같은 질문은 keyword로 캡션을 세지 말고 반드시 "
+							+ "sponsorship 인자를 쓴다(협찬 표기 축, 서버가 판정). "
 							+ "조회수·도달배수·참여율은 릴스만 집계한다(피드는 조회수가 항상 없다). "
+							+ "groupBy 시 minSample로 그룹의 릴스 표본 수 하한을 걸 수 있다 - 표본 1개짜리 극단값이 랭킹 "
+							+ "상위를 도배하는 걸 막고 싶을 때만 쓰고, '1개짜리라도 보여줘' 같은 질문에는 생략한다. "
 							+ "limit 초과분은 잘리고 totalGroups로 전체 수를 알려주니 '전체 N개 중 상위 M개 기준'을 답변에 명시하라. "
 							+ "days 생략 시 수집 기간 전체를 대상으로 한다. 사용자가 기간을 명시했을 때만 days를 넘겨라.",
 					"""
 					{"type":"object","properties":{
 					  "brandId":{"type":"integer","description":"list_brands가 돌려준 브랜드 id"},
 					  "days":{"type":"integer","description":"오늘부터 며칠 전까지 볼지. 생략하면 수집된 기간 전체, 최대 365일"},
-					  "keyword":{"type":"string","description":"캡션 필터 - 이 키워드가 캡션에 있는 게시물만 집계. 공백 유무는 흡수"},
+					  "keyword":{"type":"string","description":"캡션 필터 - 이 키워드가 캡션에 있는 게시물만 집계. 공백 유무는 흡수. 광고·협찬 여부 판정에는 쓰지 마라(sponsorship 인자를 쓴다)"},
+					  "sponsorship":{"type":"string","enum":["sponsored","organic","unknown"],
+					                 "description":"협찬 표기 축 필터 - sponsored=협찬표기, organic=오가닉, unknown=판정미상. '광고 게시물'류 질문은 keyword가 아니라 이 인자로 거른다"},
 					  "groupBy":{"type":"string","enum":["author","month","week","sponsorship","mediaType"],
 					             "description":"묶는 축. author=작성자별, month/week=KST 달력 월/주별(기간 비교용), sponsorship=협찬여부별, mediaType=릴스/피드별. 생략하면 전체 하나로 집계"},
 					  "orderBy":{"type":"string","enum":["postCount","totalViews","avgViews","avgLikes","avgComments","reachMultiple","engagementRate"],
 					             "description":"그룹 정렬 기준(내림차순, 서버 정렬). 생략하면 postCount"},
-					  "limit":{"type":"integer","description":"돌려줄 그룹 상위 N. 생략하면 10, 최대 50. 사용자가 N명/N개를 명시하면 그 값을 그대로 넘겨라"}
+					  "limit":{"type":"integer","description":"돌려줄 그룹 상위 N. 생략하면 10, 최대 50. 사용자가 N명/N개를 명시하면 그 값을 그대로 넘겨라"},
+					  "minSample":{"type":"integer","description":"groupBy 시 그룹의 릴스 표본 수(viewsSampleCount) 하한. 미달 그룹은 제외되고 filteredOutBySample로 보고된다. 생략하면 제한 없음"}
 					},"required":["brandId"]}
 					"""),
 			new AiToolSpec(GET_POST,

@@ -1084,6 +1084,105 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 		assertThat(payload).doesNotContain("\"groups\"").doesNotContain("\"totalGroups\"");
 	}
 
+	// ---------- sponsorship 인자·minSample·서버 강제 caveat(2026-09-01 구조적 품질 개선, 스펙 §3·§4) ----------
+
+	/**
+	 * sponsorship은 캡션 문자열이 아니라 BrandSponsorshipClassifier 판정 축이다 - #광고 마커가 있으면
+	 * is_paid_partnership이 false여도 협찬으로 판정된다(insertMetricPost는 항상 false로 심는다,
+	 * 기존 scope_sponsorship_필터_테스트와 같은 시드 방법). sponsored 2건(광고 마커)·organic 3건(마커 없음)
+	 * 중 sponsorship="sponsored"면 postCount는 2여야 한다.
+	 */
+	@Test
+	void aggregate_posts_sponsorship_인자는_협찬_게시물만_모수로_삼는다() {
+		long brandId = insertBrand(monitoringJdbc, "sponsoraggbrand");
+		linkRepository.insertLink(userId, brandId, "sponsoraggbrand", BrandAccountType.OWN, 12);
+		insertMetricPost(brandId, "SPONAGG1", "author1", NOW.minusSeconds(3600), "#광고 필수템 추천", "REELS", 1, 1, 1000L);
+		insertMetricPost(brandId, "SPONAGG2", "author2", NOW.minusSeconds(7200), "#광고 요즘 애정템", "REELS", 1, 1, 1000L);
+		insertMetricPost(brandId, "ORGAGG1", "author3", NOW.minusSeconds(3600), "그냥 일상 게시물", "REELS", 1, 1, 1000L);
+		insertMetricPost(brandId, "ORGAGG2", "author4", NOW.minusSeconds(3600), "오늘 하루 기록", "REELS", 1, 1, 1000L);
+		insertMetricPost(brandId, "ORGAGG3", "author5", NOW.minusSeconds(3600), "일상 공유합니다", "REELS", 1, 1, 1000L);
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", brandId).put("sponsorship", "sponsored"));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.payloadJson()).contains("\"postCount\":2");
+	}
+
+	/** sponsorship 필터는 resolveWindow 공유 로직이라 list_posts·search_posts도 같은 판정을 받아야 한다. */
+	@Test
+	void list_posts와_search_posts도_sponsorship_인자를_공유한다() {
+		long brandId = insertBrand(monitoringJdbc, "sponsorsharedbrand");
+		linkRepository.insertLink(userId, brandId, "sponsorsharedbrand", BrandAccountType.OWN, 12);
+		insertSearchablePost(brandId, "SPONSEARCH", "author1", NOW.minusSeconds(3600), "#광고 세럼 후기");
+		insertSearchablePost(brandId, "ORGSEARCH", "author2", NOW.minusSeconds(7200), "오가닉 세럼 후기");
+
+		AiToolResult listResult = toolbox.execute(userId, BrandAiToolSpecs.LIST_POSTS,
+				args().put("brandId", brandId).put("sponsorship", "sponsored"));
+		AiToolResult searchResult = toolbox.execute(userId, BrandAiToolSpecs.SEARCH_POSTS,
+				args().put("brandId", brandId).put("query", "세럼").put("sponsorship", "sponsored"));
+
+		assertThat(listResult.failed()).isFalse();
+		assertThat(listResult.shortCodes()).containsExactly("SPONSEARCH");
+		assertThat(searchResult.failed()).isFalse();
+		assertThat(searchResult.payloadJson()).contains("\"totalMatches\":1").contains("SPONSEARCH")
+				.doesNotContain("ORGSEARCH");
+	}
+
+	/**
+	 * minSample=2 - author_multi(릴스 2건, 표본 2)는 남고, author_single1·author_single2(각 1건, 표본 1)는
+	 * 정렬 전에 제외된다. 제외된 2개 그룹이 filteredOutBySample로 보고돼야 한다(조용한 절단 금지).
+	 */
+	@Test
+	void aggregate_posts_minSample은_표본_미달_그룹을_제외하고_filteredOutBySample로_보고한다() throws Exception {
+		long brandId = insertBrand(monitoringJdbc, "minsamplebrand");
+		linkRepository.insertLink(userId, brandId, "minsamplebrand", BrandAccountType.OWN, 12);
+		insertMetricPost(brandId, "MS1", "author_multi", NOW.minusSeconds(3600), "1", "REELS", 1, 1, 1000L);
+		insertMetricPost(brandId, "MS2", "author_multi", NOW.minusSeconds(7200), "2", "REELS", 1, 1, 2000L);
+		insertMetricPost(brandId, "MS3", "author_single1", NOW.minusSeconds(3600), "3", "REELS", 1, 1, 5000L);
+		insertMetricPost(brandId, "MS4", "author_single2", NOW.minusSeconds(3600), "4", "REELS", 1, 1, 9000L);
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", brandId).put("groupBy", "author").put("minSample", 2));
+
+		assertThat(result.failed()).isFalse();
+		JsonNode payload = objectMapper.readTree(result.payloadJson());
+		assertThat(payload.path("totalGroups").asInt()).isEqualTo(1);
+		assertThat(payload.path("filteredOutBySample").asLong()).isEqualTo(2);
+		assertThat(payload.path("groups")).hasSize(1);
+		assertThat(payload.path("groups").get(0).path("key").asString()).isEqualTo("author_multi");
+	}
+
+	/** keyword 사용은 캡션 문자 매칭일 뿐 협찬 판정이 아니라는 고지가 모델 재량이 아니라 서버 강제여야 한다. */
+	@Test
+	void aggregate_posts_keyword_사용시_caveats에_캡션_매칭_고지가_강제된다() {
+		long brandId = insertBrand(monitoringJdbc, "caveatkeywordbrand");
+		linkRepository.insertLink(userId, brandId, "caveatkeywordbrand", BrandAccountType.OWN, 12);
+		insertSearchablePost(brandId, "CAVKW1", "author1", NOW.minusSeconds(3600), "신상 세럼 후기");
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", brandId).put("keyword", "세럼"));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.payloadJson()).contains("\"caveats\"").contains("sponsorship 인자를 쓰세요");
+	}
+
+	/** 릴스 표본이 1개뿐인 그룹이 반환되면(minSample 미지정) 표본 경고 caveat이 서버 강제로 붙어야 한다. */
+	@Test
+	void aggregate_posts_소표본_그룹_반환시_caveats에_표본_경고가_강제된다() {
+		long brandId = insertBrand(monitoringJdbc, "caveatsamplebrand");
+		linkRepository.insertLink(userId, brandId, "caveatsamplebrand", BrandAccountType.OWN, 12);
+		insertMetricPost(brandId, "CAVS1", "author_x", NOW.minusSeconds(3600), "x", "REELS", 1, 1, 1000L);
+		insertMetricPost(brandId, "CAVS2", "author_y", NOW.minusSeconds(3600), "y", "REELS", 1, 1, 2000L);
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.AGGREGATE_POSTS,
+				args().put("brandId", brandId).put("groupBy", "author"));
+
+		assertThat(result.failed()).isFalse();
+		String payload = result.payloadJson();
+		assertThat(payload).contains("\"caveats\"").contains("2개는 릴스 표본이 1개뿐입니다");
+	}
+
 	// ---------- get_comments 배치화(2026-08-31 툴·한계 재설계, 스펙 §3-3) ----------
 
 	@Test
