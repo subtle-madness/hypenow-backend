@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.instagram.source.self.SelfCrawlException;
 import com.celfit.instagram.source.self.SelfErrorClass;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -281,6 +282,47 @@ class FailoverInstagramSourcePolicyTest {
 		source.fetchPost("ABC");
 
 		assertThat(metrics.records).containsExactly("fetchPost|hiker|fallback:STRUCTURAL_400");
+	}
+
+	/** F9 — 댓글 미완주(complete=false)는 self 호출 자체는 성공이라 폴백 안 하지만 "partial"로 구분 관측된다. */
+	@Test
+	void self_댓글_미완주는_self_partial로_관측된다() {
+		CommentInfo comment = new CommentInfo("1", "u", "text", null, Instant.now(), null);
+		CommentsFetch partial = new CommentsFetch(List.of(comment), false);
+		InstagramSource self = new ThrowingSource("self") {
+			@Override
+			public CommentsFetch fetchComments(String shortCode, String postUsername, int pages) {
+				return partial;
+			}
+		};
+		RecordingMetrics metrics = new RecordingMetrics();
+		FailoverInstagramSource source =
+				new FailoverInstagramSource(self, new ThrowingSource("hiker"), () -> true, metrics);
+
+		CommentsFetch result = source.fetchComments("ABC", "acct", 3);
+
+		assertThat(result).isSameAs(partial);
+		assertThat(metrics.records).containsExactly("fetchComments|self|partial");
+	}
+
+	/** 완주(complete=true)는 그대로 "ok" — partial 구분이 정상 케이스를 오염시키지 않는다. */
+	@Test
+	void self_댓글_완주는_기존대로_self_ok로_관측된다() {
+		CommentInfo comment = new CommentInfo("1", "u", "text", null, Instant.now(), null);
+		CommentsFetch complete = new CommentsFetch(List.of(comment), true);
+		InstagramSource self = new ThrowingSource("self") {
+			@Override
+			public CommentsFetch fetchComments(String shortCode, String postUsername, int pages) {
+				return complete;
+			}
+		};
+		RecordingMetrics metrics = new RecordingMetrics();
+		FailoverInstagramSource source =
+				new FailoverInstagramSource(self, new ThrowingSource("hiker"), () -> true, metrics);
+
+		source.fetchComments("ABC", "acct", 3);
+
+		assertThat(metrics.records).containsExactly("fetchComments|self|ok");
 	}
 
 	@Test

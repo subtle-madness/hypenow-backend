@@ -112,7 +112,11 @@ public class FailoverInstagramSource implements InstagramSource {
 		}
 		try {
 			T r = selfCall.get();
-			metrics.record(path, "self", "ok");
+			// 댓글 미완주(CommentsFetch.complete=false)는 라우팅 자체는 성공이라 폴백하지 않지만,
+			// 커버리지 저하가 "ok"에 묻히면 관측이 안 되므로 별도 outcome으로 구분한다(F9, 서킷·폴백
+			// 동작은 그대로 — 관측만 바뀐다).
+			String outcome = (r instanceof CommentsFetch cf && !cf.complete()) ? "partial" : "ok";
+			metrics.record(path, "self", outcome);
 			return r;
 		} catch (UnsupportedOperationException e) {
 			T r = hikerCall.get();
