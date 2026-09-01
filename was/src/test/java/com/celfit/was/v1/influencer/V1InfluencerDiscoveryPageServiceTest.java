@@ -1,7 +1,9 @@
 package com.celfit.was.v1.influencer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -33,7 +35,7 @@ class V1InfluencerDiscoveryPageServiceTest {
 				null, null, null, null, 50, 0, null);
 
 		given(repository.findCards(query)).willReturn(List.of(row("a"), row("b")));
-		given(repository.findShares(anyList())).willReturn(List.of());
+		given(repository.findShares(anyList(), anyBoolean())).willReturn(List.of());
 		given(repository.findBrands(anyList())).willReturn(List.of());
 		given(repository.findThumbs(anyList())).willReturn(List.of());
 		given(repository.findEngagements(anyList())).willReturn(List.of());
@@ -51,7 +53,7 @@ class V1InfluencerDiscoveryPageServiceTest {
 		ArgumentCaptor<List<String>> brands = ArgumentCaptor.captor();
 		ArgumentCaptor<List<String>> thumbs = ArgumentCaptor.captor();
 		ArgumentCaptor<List<String>> engagements = ArgumentCaptor.captor();
-		verify(repository).findShares(shares.capture());
+		verify(repository).findShares(shares.capture(), eq(false)); // 무필터 = 뷰티 축
 		verify(repository).findBrands(brands.capture());
 		verify(repository).findThumbs(thumbs.capture());
 		verify(repository).findEngagements(engagements.capture());
@@ -61,6 +63,26 @@ class V1InfluencerDiscoveryPageServiceTest {
 		assertThat(brands.getValue()).isEqualTo(expected);
 		assertThat(thumbs.getValue()).isEqualTo(expected);
 		assertThat(engagements.getValue()).isEqualTo(expected);
+	}
+
+	@Test
+	void FnB축_쿼리는_카테고리_비중_보강을_FnB축으로_친다() {
+		// vertical=fnb·F&B 대분류 필터 모두 F&B축 — 카드 categoryShares가 F&B 비중을 실어야
+		// FE "카테고리 정보 준비 중" 플레이스홀더가 풀린다(2026-09-01 FE 피드백).
+		V1InfluencerDiscoveryRepository repository = mock(V1InfluencerDiscoveryRepository.class);
+		V1InfluencerDiscoveryQuery query = V1InfluencerDiscoveryQuery.of(null, null, null, null, null,
+				null, null, null, null, 50, 0, "fnb");
+
+		given(repository.findCards(query)).willReturn(List.of(row("a")));
+		given(repository.findShares(anyList(), anyBoolean())).willReturn(List.of());
+		given(repository.findBrands(anyList())).willReturn(List.of());
+		given(repository.findThumbs(anyList())).willReturn(List.of());
+		given(repository.findEngagements(anyList())).willReturn(List.of());
+
+		new V1InfluencerDiscoveryPageService(repository, new V1InfluencerDiscoveryAssembler())
+				.page(query);
+
+		verify(repository).findShares(eq(List.of("a")), eq(true));
 	}
 
 	@Test
