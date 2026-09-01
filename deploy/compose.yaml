@@ -55,6 +55,10 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 1536m
+    # 병렬 쿼리 DSM(/dev/shm)은 도커 기본 64MB로는 부족하다 — 09-01 유사 추천 신규 쿼리가
+    # "could not resize shared memory segment ... No space left on device"로 전면 500(94% 포화 실측).
+    # mem_limit 안쪽이라 페이지 캐시처럼 cgroup에 과금될 뿐 추가 예산 아님.
+    shm_size: 256m
     oom_score_adj: -800
     networks: [prod]
     # 쿼리 성능 측정(스펙 2026-08-10) — pg_stat_statements는 preload 필수라 command로 주입.
@@ -88,6 +92,7 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 2g   # raw 대용량(덤프 11GiB급) — 미러 잡 페이지 캐시 몫을 analysis보다 여유 있게
+    shm_size: 256m   # 병렬 쿼리 DSM — postgres(analysis)와 동일 사유(위 주석), 예방 동반 적용
     oom_score_adj: -800
     networks: [prod, test]   # test-analytics가 analytics_dev 계정으로 raw를 읽는다 — 의도된 공유 접점
     environment:
