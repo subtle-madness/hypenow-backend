@@ -74,7 +74,13 @@ class SelfCrawlBackendTest {
 	}
 
 	// og 문서 표면 fake 본문 — username이 wpi(nasa)와 달라 어느 fetcher로 갔는지 판별된다.
-	private static final String OG_OK = "{\"follower_count\":777,\"username\":\"og-side\"}";
+	// profilePage_555 마커는 og의 pk 채택(P2) 검증용.
+	private static final String OG_OK =
+			"{\"follower_count\":777,\"username\":\"og-side\",\"profilePage_555\":1}";
+	private static final String FEED_OK = """
+			{"items":[{"code":"XYZ","media_type":1,"like_count":10,"comment_count":2,
+			"taken_at":1700000000,"user":{"username":"nasa"}}]}
+			""";
 
 	private static SelfCrawlBackend backend(EmbedPostFetcher.SelfFetch embedFetch) {
 		return backend(embedFetch, new ScriptedFetch(List.of(ok(WPI_OK))));
@@ -87,9 +93,16 @@ class SelfCrawlBackendTest {
 
 	private static SelfCrawlBackend backend(EmbedPostFetcher.SelfFetch embedFetch,
 			EmbedPostFetcher.SelfFetch wpiFetch, Supplier<String> profileSurface) {
+		return backend(embedFetch, wpiFetch, new ScriptedFetch(List.of(ok(FEED_OK))), profileSurface);
+	}
+
+	private static SelfCrawlBackend backend(EmbedPostFetcher.SelfFetch embedFetch,
+			EmbedPostFetcher.SelfFetch wpiFetch, EmbedPostFetcher.SelfFetch feedFetch,
+			Supplier<String> profileSurface) {
 		return new SelfCrawlBackend(new EmbedPostFetcher(embedFetch),
 				new WpiProfileFetcher(wpiFetch),
 				new OgProfileFetcher(new ScriptedFetch(List.of(ok(OG_OK)))),
+				new FeedUserPostsFetcher(feedFetch),
 				new DirectCommentFetcher(new FakeTransport(), "DOC", "FRIENDLY"),
 				new SurfaceCircuitBreaker(5), new SelfRetry(3), profileSurface);
 	}
@@ -120,8 +133,8 @@ class SelfCrawlBackendTest {
 
 		assertThat(profile.username()).isEqualTo("og-side");
 		assertThat(profile.followers()).isEqualTo(777L);
-		// og 표면은 userId를 채택하지 않는다(정본은 wpi).
-		assertThat(profile.userId()).isNull();
+		// og는 profilePage_ 마커로 pk를 채택한다(P2 — feed/user posts의 pk 공급원).
+		assertThat(profile.userId()).isEqualTo("555");
 	}
 
 	@Test
@@ -135,23 +148,38 @@ class SelfCrawlBackendTest {
 	}
 
 	@Test
-	void 프로필_표면이_og여도_fetchRecentPosts는_wpi로_간다() {
-		// 최근 게시물 정본은 wpi(og 파싱 미채택) — 토글과 무관하게 wpi 고정.
+	void 프로필_표면이_og여도_fetchRecentPosts는_feedUser로_간다() {
+		// 최근 게시물 정본은 feed/user(pk 입력) — 프로필 표면 토글과 무관하게 feed/user 고정.
 		List<PostInfo> posts = backend(new ScriptedFetch(List.of(ok(EMBED_OK))),
 				new ScriptedFetch(List.of(ok(WPI_OK))), () -> "og")
 				.fetchRecentPosts("nasa", "42", 3);
 
 		assertThat(posts).hasSize(1);
-		assertThat(posts.get(0).shortCode()).isEqualTo("ABC");
+		assertThat(posts.get(0).shortCode()).isEqualTo("XYZ");
 	}
 
 	@Test
-	void fetchRecentPosts는_wpi_fetcher로_위임한다() {
+	void fetchRecentPosts는_feedUser_fetcher로_위임한다() {
 		List<PostInfo> posts = backend(new ScriptedFetch(List.of(ok(EMBED_OK))))
 				.fetchRecentPosts("nasa", "42", 3);
 
 		assertThat(posts).hasSize(1);
-		assertThat(posts.get(0).shortCode()).isEqualTo("ABC");
+		assertThat(posts.get(0).shortCode()).isEqualTo("XYZ");
+	}
+
+	@Test
+	void pk가_없으면_feedUser를_부르지_않고_OTHER로_던진다() {
+		SelfCrawlBackend backend = backend(new ScriptedFetch(List.of(ok(EMBED_OK))));
+
+		assertThatThrownBy(() -> backend.fetchRecentPosts("nasa", null, 3))
+				.isInstanceOf(SelfCrawlException.class)
+				.extracting(e -> ((SelfCrawlException) e).errorClass())
+				.isEqualTo(SelfErrorClass.OTHER);
+
+		assertThatThrownBy(() -> backend.fetchRecentPosts("nasa", "  ", 3))
+				.isInstanceOf(SelfCrawlException.class)
+				.extracting(e -> ((SelfCrawlException) e).errorClass())
+				.isEqualTo(SelfErrorClass.OTHER);
 	}
 
 	@Test

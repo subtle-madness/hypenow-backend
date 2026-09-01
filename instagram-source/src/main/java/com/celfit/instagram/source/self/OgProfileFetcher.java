@@ -13,10 +13,11 @@ import java.util.regex.Pattern;
  *
  * <p>문서에 실린 JSON 블롭에서 follower_count·following_count·full_name·is_verified·biography·
  * profile_pic_url을 뽑고, 게시물 수만 og:description 메타("4,900 Posts")에서 뽑는다 — 문서 JSON의
- * media_count는 실리지 않는다. og 페이지는 userId(xig_user_by_username의 pk)·최근 게시물
- * (polaris_ordered_timeline_connection)도 실을 수 있으나, <b>이 표면에선 통계만 채택</b>하고
- * userId·최근12는 wpi를 정본으로 둔다(후속 최적화 여지). 최상위 {@code "id":null}은 로그아웃
- * PolarisViewer의 것이라 프로필 id로 쓰면 안 된다.
+ * media_count는 실리지 않는다. userId는 {@code profilePage_(\d+)} 마커(400계정 5개 전부·
+ * web_profile_info 400에 안 걸리는 문서표면)에서 채택한다 — wpi가 STRUCTURAL_400인 계정도 og는
+ * 이 마커를 실어 pk를 준다(feed/user posts fetcher의 pk 공급원, 콜 추가 없음). 최상위
+ * {@code "id":null}은 로그아웃 PolarisViewer의 것이라 프로필 id로 쓰면 안 된다 — 반드시
+ * profilePage_ 마커에서만 채택한다.
  *
  * <p>오류 분류: 정상 응답도 HTML이라 SelfErrorClassifier의 200-HTML 휴리스틱(LOGIN_WALL)을 그대로
  * 던질 수 없다 — 파싱까지 해보고 통계가 전무한 빈 셸일 때만 LOGIN_WALL(HTML 셸)/NOT_FOUND로
@@ -45,6 +46,7 @@ public class OgProfileFetcher {
 			Pattern.compile("\"profile_pic_url\":\"((?:\\\\.|[^\"\\\\])*)\"");
 	private static final Pattern EXTERNAL_URL = Pattern.compile("\"external_url\":\"([^\"]*)\"");
 	private static final Pattern UNICODE_ESCAPE = Pattern.compile("\\\\u([0-9a-fA-F]{4})");
+	private static final Pattern PROFILE_PAGE_ID = Pattern.compile("profilePage_(\\d+)");
 
 	private final EmbedPostFetcher.SelfFetch fetch;
 
@@ -89,10 +91,11 @@ public class OgProfileFetcher {
 		String biography = unescape(first(BIOGRAPHY, body));
 		String profilePicUrl = unescape(first(PROFILE_PIC_URL, body));
 		String externalUrl = unescape(first(EXTERNAL_URL, body));
+		// profilePage_ 마커에서 pk 채택 — 최상위 "id":null(로그아웃 뷰어)은 쓰지 않는다.
+		String userId = first(PROFILE_PAGE_ID, body);
 
-		// userId=null 고정 — og에도 pk는 실리지만 이 표면의 채택 범위 밖(userId 정본은 wpi).
 		return new ProfileInfo(pageUsername != null && !pageUsername.isBlank()
-						? pageUsername : username, null,
+						? pageUsername : username, userId,
 				followers, following, mediaCount, fullName, profilePicUrl, biography,
 				isVerified, externalUrl);
 	}

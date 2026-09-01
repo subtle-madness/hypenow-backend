@@ -6,6 +6,7 @@ import com.celfit.instagram.source.HikerHttp;
 import com.celfit.instagram.source.InstagramSource;
 import com.celfit.instagram.source.self.DirectCommentFetcher;
 import com.celfit.instagram.source.self.EmbedPostFetcher;
+import com.celfit.instagram.source.self.FeedUserPostsFetcher;
 import com.celfit.instagram.source.self.OgProfileFetcher;
 import com.celfit.instagram.source.self.ProxyConfig;
 import com.celfit.instagram.source.self.SelfCrawlBackend;
@@ -60,6 +61,7 @@ public class HikerConfig {
 				new EmbedPostFetcher(httpClient::get),
 				new WpiProfileFetcher(httpClient::get),
 				new OgProfileFetcher(httpClient::get),
+				new FeedUserPostsFetcher(httpClient::get),
 				new DirectCommentFetcher(httpClient, proxyProps.commentDocId(), proxyProps.commentFriendlyName()),
 				new SurfaceCircuitBreaker(5),
 				new SelfRetry(3),

@@ -28,8 +28,8 @@ class OgProfileFetcherTest {
 	void 프로필_정확_지표를_파싱한다() {
 		ProfileInfo p = fetcher(fixture("og_profile.html"), 200).fetchProfile("nasa");
 		assertThat(p.username()).isEqualTo("nasa");
-		// userId는 이 표면의 채택 범위 밖(정본은 wpi) — 최상위 "id":null(로그아웃 뷰어)을 오독하지 않는다.
-		assertThat(p.userId()).isNull();
+		// userId는 profilePage_ 마커에서 채택(P2) — 최상위 "id":null(로그아웃 뷰어)을 오독하지 않는다.
+		assertThat(p.userId()).isEqualTo("528817151");
 		assertThat(p.followers()).isEqualTo(104_434_301L);
 		assertThat(p.following()).isEqualTo(91L);
 		// JSON media_count가 없어 og:description의 "4,900 Posts"에서 뽑는다.

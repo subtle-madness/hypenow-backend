@@ -21,12 +21,18 @@ import java.util.function.Supplier;
  * 열린 표면은 곧장 SelfCrawlException(OTHER)으로 폴백을 유도하고, run()은 SelfRetry로 회복가능
  * 실패(401·전송·429)를 새 IP로 재시도한 뒤 성공 시 서킷을 리셋, 소진·비회복 시 서킷 블록을
  * 기록하고 전파한다.
+ *
+ * <p>최근 게시물 정본은 feed/user REST(pk 입력)다 — wpi(web_profile_info)는 대형 공개계정 ~40%에서
+ * 계정별 STRUCTURAL_400(IG 버그)에 항상 걸려 자체크롤이 매번 실패하는데, feed/user는 다른
+ * 엔드포인트라 이 400을 피한다. pk가 없으면(userId null/blank) feed/user 경로가 불가하므로
+ * fetcher를 부르지 않고 즉시 Hiker로 폴백한다.
  */
 public class SelfCrawlBackend implements InstagramSource {
 
 	private final EmbedPostFetcher embed;
 	private final WpiProfileFetcher wpi;
 	private final OgProfileFetcher og;
+	private final FeedUserPostsFetcher feedUser;
 	private final DirectCommentFetcher comments;
 	private final SurfaceCircuitBreaker circuit;
 	private final SelfRetry retry;
@@ -34,11 +40,12 @@ public class SelfCrawlBackend implements InstagramSource {
 	private final Supplier<String> profileSurface;
 
 	public SelfCrawlBackend(EmbedPostFetcher embed, WpiProfileFetcher wpi, OgProfileFetcher og,
-			DirectCommentFetcher comments, SurfaceCircuitBreaker circuit, SelfRetry retry,
-			Supplier<String> profileSurface) {
+			FeedUserPostsFetcher feedUser, DirectCommentFetcher comments,
+			SurfaceCircuitBreaker circuit, SelfRetry retry, Supplier<String> profileSurface) {
 		this.embed = embed;
 		this.wpi = wpi;
 		this.og = og;
+		this.feedUser = feedUser;
 		this.comments = comments;
 		this.circuit = circuit;
 		this.retry = retry;
@@ -60,8 +67,12 @@ public class SelfCrawlBackend implements InstagramSource {
 
 	@Override
 	public List<PostInfo> fetchRecentPosts(String username, String userId, int pages) {
-		// 최근 게시물 정본은 wpi(og 파싱 미채택) — 프로필 표면 토글과 무관하게 wpi 고정.
-		return run("wpi", () -> wpi.fetchRecentPosts(username));
+		if (userId == null || userId.isBlank()) {
+			// feed/user는 pk가 입력 — pk가 없으면 자체 경로 불가, Hiker로 폴백한다.
+			throw new SelfCrawlException(SelfErrorClass.OTHER, "feed/user pk 없음 — Hiker 폴백: " + username);
+		}
+		// 최근 게시물 소스 = feed/user REST(pk, page1). wpi STRUCTURAL_400 회피·영상 조회수 내장.
+		return run("feed", () -> feedUser.fetchRecentPosts(username, userId));
 	}
 
 	@Override
