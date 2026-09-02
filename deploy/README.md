@@ -1048,6 +1048,33 @@ ssh ubuntu@<IP> 'rm -f ~/deploy/grafana/provisioning/dashboards/json/{hypenow-di
   `hypenow-brand`·`hypenow-brand-ad`)를 참조하던 대시보드 내부 링크는 이 PR에서 전부 새 착지로
   재지정했다(홈 14곳·운영/모니터링 12곳). 외부에 적어 둔 북마크만 깨진다.
 
+#### 14-2-5. 브랜드 수집 신설 컬럼 GRANT (09-02, ⚠️ **운영 현재 권한 오류 — 즉시 서버 실행 필요**)
+
+09-02 배포분 두 건이 monitoring DB의 신설 컬럼을 대시보드에서 새로 조회하는데 GRANT가 누락됐다
+— 실행 전까지 운영에서 그 컬럼을 읽는 패널이 `permission denied for table ...`로 빈다
+(스탯은 "데이터 없음"/"No data" + 빨간 오류 삼각형으로 표시):
+
+- `brand_account.sweep_completed_at` (완주 시각 분리, `ef010a39` + 마이그레이션
+  `V20260902034452`) — [흐름] 브랜드의 일일 수집 신선도·오늘 수집 소요·미처리 브랜드별·오늘
+  브랜드별 처리 현황, ops 신선도·오늘 수집 소요, 홈 브랜드 신선도. **총 7패널 / 3장.**
+- `brand_tagged_post.tag_detected_at`·`hashtag_detected_at`·`direct_registered_at`
+  (미처리 브랜드별 출처 2열 분리, `9870fbd7`) — [흐름] 브랜드의 미처리 브랜드별.
+
+컬럼 목록은 대시보드 rawSql 기계 추출로 grant 실측과 대조해 검산했다(2026-09-02, 다른 누락
+없음). GRANT는 멱등이라 재실행 무해. 마이그레이션은 운영 반영 확인됨(§14-2-2 전제 충족).
+
+```bash
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
+  -c "GRANT SELECT (sweep_completed_at) ON brand_account TO grafana_reader" \
+  -c "GRANT SELECT (tag_detected_at, hashtag_detected_at, direct_registered_at) ON brand_tagged_post TO grafana_reader"
+```
+
+실행 후 대시보드 새로고침이면 충분하다(재기동 불요 — §14-2-2 반영 절차와 동일).
+
+**재발 관찰**: 대시보드가 새 컬럼을 조회하기 시작하는 PR은 컬럼 마이그레이션과 별개로 **이 절의
+GRANT 런북 추가 + 서버 실행**이 항상 따라붙어야 한다 — grafana_reader는 컬럼 단위
+최소권한(§14-2)이라 테이블 GRANT와 달리 새 컬럼이 자동 포함되지 않는다.
+
 ### 14-3. `.env` 신규 항목 (`.env.example`에도 반영됨)
 
 | 변수 | 설명 |
