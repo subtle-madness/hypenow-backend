@@ -83,7 +83,7 @@ class SelfCrawlBackendTest {
 			"{\"follower_count\":777,\"username\":\"og-side\",\"profilePage_555\":1}";
 	private static final String FEED_OK = """
 			{"items":[{"code":"XYZ","media_type":1,"like_count":10,"comment_count":2,
-			"taken_at":1700000000,"user":{"username":"nasa"}}]}
+			"taken_at":1700000000,"caption":null,"user":{"username":"nasa"}}]}
 			""";
 
 	private static SelfCrawlBackend backend(EmbedPostFetcher.SelfFetch embedFetch) {

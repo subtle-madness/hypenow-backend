@@ -608,6 +608,43 @@ class StoreTest {
 		assertThat(row.get("first_seen_at")).isEqualTo(firstSeenAt);
 	}
 
+	/**
+	 * 캡션 3-상태 계약(트랙 HH) — null=미수집(파싱 실패), ""=확인된 무캡션, 값=원문. null 수집이
+	 * 기존 캡션을 지우면 안 된다(데이터 보호 결함 수정 — 결손 제로 요구, thumbnail_url과 동형 보호).
+	 */
+	@Test
+	void 캡션_null_수집은_기존_캡션을_보존한다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션 원문", "https://cdn/thumb1.jpg");
+
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 29), null, "https://cdn/thumb1.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("caption")).isEqualTo("캡션 원문");
+	}
+
+	/** 빈 문자열("")은 "확인된 무캡션"이라는 정당한 값이므로 기존값 여부와 무관하게 정상적으로 덮인다. */
+	@Test
+	void 캡션_빈문자열은_확인된_무캡션으로_기존값을_덮는다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션 원문", "https://cdn/thumb1.jpg");
+
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 29), "", "https://cdn/thumb1.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("caption")).isEqualTo("");
+	}
+
+	/**
+	 * 신규 게시물 최초 수집이 캡션 미확보(null)면 null로 그대로 삽입된다 — 손실은 없지만(기존 행이
+	 * 없었으므로) "결손" 상태가 남는다(잔여 경계, 보고서 참조). 다음 재수집에서 값이나 ""로 자연 치유.
+	 */
+	@Test
+	void 최초_수집이_캡션_null이면_null로_삽입된다() {
+		postMeta.upsert("SC2", "acct_a", "REELS", LocalDate.of(2026, 7, 28), null, "https://cdn/thumb1.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC2'");
+		assertThat(row.get("caption")).isNull();
+	}
+
 	/** 일시적으로 썸네일을 못 얻은 수집이 기존 유효 URL을 지우면 안 된다(계약 §3 post_meta). */
 	@Test
 	void 썸네일_null_수집은_기존_썸네일_url을_보존한다() {
