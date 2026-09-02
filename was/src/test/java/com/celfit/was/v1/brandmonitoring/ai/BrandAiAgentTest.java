@@ -171,13 +171,14 @@ class BrandAiAgentTest {
 		assertThat(captured.get(2)).contains("\"retry\":false");
 	}
 
-	/** 날조 방지 서버 가드(2026-09-02) - 툴 호출 0회 + 표가 있는 첫 답변은 1회 재시도로 되먹이고,
-	 * 재시도 턴에서 모델이 실제로 툴을 호출한 뒤 그 결과로 답하면 caveat 없이 그대로 통과시킨다. */
+	/** 날조 방지 서버 가드(2026-09-02, "가벼운 층" 재설계) - 툴 호출 0회 + 표가 있는 첫 답변은 1회
+	 * 재시도로 되먹이고, 재시도 턴은 mode ANY(데이터 툴 강제)로 나가 텍스트만으로 끝낼 수 없다. 모델이
+	 * 실제로 툴을 호출한 뒤 그 결과로(표 없는) 답하면 고지 없이 그대로 통과시킨다. */
 	@Test
-	void 날조_의심_답변은_1회_재시도해_툴_호출_후_그라운딩되면_caveat_없이_답한다() {
+	void 날조_의심_답변은_1회_재시도하며_재시도_턴은_mode_ANY로_나간다() {
 		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
 		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
-				.willReturn(AiToolResult.ok("{\"posts\":[]}", 3, List.of("ABC")));
+				.willReturn(AiToolResult.ok("{\"posts\":[{\"authorUsername\":\"yoon_yoon_\"}]}", 3, List.of("ABC")));
 		List<String> captured = new ArrayList<>();
 		BrandAiAgent agent = agentWith(
 				List.of(
@@ -192,29 +193,86 @@ class BrandAiAgentTest {
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_OK);
 		assertThat(outcome.toolCalls()).hasSize(1);
 		assertThat(outcome.toolCalls().get(0).name()).isEqualTo("list_posts");
-		// 재시도 지시(UNGROUNDED_RETRY_NOTE)가 다음 요청 본문에 user 턴으로 실렸는지 확인한다.
-		assertThat(captured.get(1)).contains("검증").contains("조회 없이 답할 수 있는 내용만");
+		// 재시도 지시가 다음 요청 본문에 user 턴으로 실렸는지 확인한다.
+		assertThat(captured.get(1)).contains("검증").contains("yoon_yoon_");
+		// 재시도 턴 요청은 toolConfig.functionCallingConfig.mode=ANY + allowedFunctionNames로
+		// 텍스트만으로 끝낼 수 없게 강제된다(탈출용 빈 함수 없이 데이터 툴 전부를 허용).
+		JsonNode retryBody = om.readTree(captured.get(1));
+		assertThat(retryBody.path("toolConfig").path("functionCallingConfig").path("mode").asString())
+				.isEqualTo("ANY");
+		assertThat(retryBody.path("toolConfig").path("functionCallingConfig").path("allowedFunctionNames").toString())
+				.contains("list_posts").contains("list_brands");
 	}
 
-	/** 재시도 턴에서도 모델이 여전히 툴 없이 표·계정명을 쓰면, 정지 조건(재시도 1회 한도)에 걸려 답변
-	 * 맨 앞에 서버 강제 caveat를 붙여 반환한다. */
+	/** 재시도 후에도 답변 속 계정명이 이번 대화의 툴 결과 어디에도 없으면, 서버는 답변을 손대지 않고
+	 * (고지·스크럽 없음) 그대로 반환하며 warn만 남긴다(2026-09-02 재설계 - 고지 문구 전면 삭제). */
 	@Test
-	void 재시도_후에도_날조_신호가_남으면_답변_앞에_서버_caveat를_붙인다() {
+	void 재시도_후에도_미대조_계정명이_남으면_답변을_그대로_반환한다() {
 		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
 		List<String> captured = new ArrayList<>();
-		BrandAiAgent agent = agentWith(
-				List.of(
-						textAnswer("| 계정 | 게시물 |\\n| @yoon_yoon_ | 11 |"),
-						textAnswer("| 계정 | 게시물 |\\n| @yoon_yoon_ | 11 |")),
-				captured, toolbox);
+		String tableAnswer = "| 계정 | 게시물 |\\n| @yoon_yoon_ | 11 |";
+		BrandAiAgent agent = agentWith(List.of(textAnswer(tableAnswer), textAnswer(tableAnswer)), captured, toolbox);
 
 		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "시딩 우선순위 기준 잡아줘")));
 
-		assertThat(outcome.answer()).startsWith("(자동 검증)");
-		assertThat(outcome.answer()).contains("@yoon_yoon_");
+		assertThat(outcome.answer()).isEqualTo("| 계정 | 게시물 |\n| @yoon_yoon_ | 11 |");
 		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_OK);
 		assertThat(outcome.toolCalls()).isEmpty();
-		// 재시도 1회만 쓰고 끝났다(첫 호출 + 재시도 1회 = 2).
+		// 재시도 1회만 쓰고 끝났다(첫 호출 + 재시도 1회 = 2) - 답변엔 고지·스크럽 없이 원문 그대로다.
+		assertThat(captured).hasSize(2);
+	}
+
+	/** 툴을 1회 호출했더라도, 최종 답변 표에 그 호출 결과 어디에도 없던 계정명이 실리면 여전히 재시도가
+	 * 발동한다(2026-09-02 재설계 - 툴 호출 1회만으로 무조건 통과하던 구 규칙을 대체). */
+	@Test
+	void 툴_1회_호출_후에도_답변_표의_계정명이_결과에_없으면_재시도가_발동한다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.ok("{\"posts\":[{\"authorUsername\":\"real_account\"}]}", 3,
+						List.of("ABC")));
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(
+				List.of(
+						functionCall("list_posts", "{\"brandId\":7}"),
+						textAnswer("| 계정 | 게시물 |\\n| @fake_account | 11 |"),
+						textAnswer("확인했습니다")),
+				captured, toolbox);
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "인기 계정 알려줘")));
+
+		assertThat(outcome.answer()).isEqualTo("확인했습니다");
+		assertThat(outcome.toolCalls()).hasSize(1);
+		assertThat(captured).hasSize(3);
+		// 3번째 요청(재시도 턴)이 미대조 계정명(fake_account)을 지목하며 mode ANY로 나간다.
+		assertThat(captured.get(2)).contains("검증").contains("fake_account");
+		assertThat(om.readTree(captured.get(2)).path("toolConfig").path("functionCallingConfig").path("mode")
+				.asString()).isEqualTo("ANY");
+	}
+
+	/** aggregate_posts groupBy=author 결과의 그룹 키(=계정명)로 표를 쓰면 재시도가 돌지 않는다
+	 * (2026-09-02 갭 보완 - {@link BrandAiToolbox}가 groupBy=author 그룹 페이로드에 "author" 필드를
+	 * 명시하고 {@link BrandAiGroundednessGuard}가 그 필드를 그라운딩 집합에 담는다는 계약을 고정한다.
+	 * 이 경로가 빠지면 인플루언서 랭킹 답변마다 불필요한 mode ANY 재시도가 돈다). */
+	@Test
+	void 툴_1회_호출_aggregate_author_후_그_key로_표를_쓰면_재시도가_없다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.ok(
+						"{\"groupBy\":\"author\",\"groups\":[{\"key\":\"top_influencer\","
+								+ "\"author\":\"top_influencer\",\"postCount\":11}]}",
+						1, List.of()));
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(
+				List.of(
+						functionCall("aggregate_posts", "{\"brandId\":7,\"groupBy\":\"author\"}"),
+						textAnswer("| 계정 | 게시물 |\\n| @top_influencer | 11 |")),
+				captured, toolbox);
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "인플루언서 랭킹 알려줘")));
+
+		assertThat(outcome.answer()).isEqualTo("| 계정 | 게시물 |\n| @top_influencer | 11 |");
+		assertThat(outcome.toolCalls()).hasSize(1);
+		// 재시도 없이 2번 요청(초기 + 툴 결과 되먹임 이후)만으로 끝난다 - mode ANY 재시도 요청이 없다.
 		assertThat(captured).hasSize(2);
 	}
 

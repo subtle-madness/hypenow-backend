@@ -100,6 +100,26 @@ class V1BrandAiConversationControllerTest {
 	}
 
 	@Test
+	void assistant_메시지는_messageId와_저장된_피드백을_싣는다() throws Exception {
+		given(conversationRepository.findOwnedActive(1L, 7L)).willReturn(Optional.of(
+				new AiConversationRepository.ConversationRow(1L, 100L, "피드백 있는 대화",
+						OffsetDateTime.parse("2026-08-30T00:00:00Z"))));
+		given(logRepository.findByConversation(1L)).willReturn(List.of(
+				new AiChatLogRepository.ConversationMessageRow(456L, "질문", "답변", null,
+						JsonNodeFactory.instance.arrayNode(), JsonNodeFactory.instance.arrayNode(),
+						OffsetDateTime.parse("2026-08-30T00:00:00Z"), "down", "설명이 부족해요",
+						OffsetDateTime.parse("2026-08-30T00:01:00Z"))));
+
+		mockMvc.perform(get("/v1/brand-monitoring/ai/conversations/1").with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.messages[1].role").value("assistant"))
+				.andExpect(jsonPath("$.data.messages[1].messageId").value("456"))
+				.andExpect(jsonPath("$.data.messages[1].feedback.value").value("down"))
+				.andExpect(jsonPath("$.data.messages[1].feedback.comment").value("설명이 부족해요"))
+				.andExpect(jsonPath("$.data.messages[0].messageId").doesNotExist());
+	}
+
+	@Test
 	void 답변없는_행은_user_메시지만_남긴다() throws Exception {
 		given(conversationRepository.findOwnedActive(1L, 7L)).willReturn(Optional.of(
 				new AiConversationRepository.ConversationRow(1L, 100L, "질문만 있는 대화",

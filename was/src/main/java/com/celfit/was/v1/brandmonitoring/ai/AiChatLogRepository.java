@@ -84,31 +84,48 @@ public class AiChatLogRepository {
 				.single();
 	}
 
-	/** 대화 상세 조립(FE 변경요청서 §8) 전용 - conversationId에 속한 로그 전부를 시간순으로 돌려준다. */
+	/**
+	 * 대화 상세 조립(FE 변경요청서 §8) 전용 - conversationId에 속한 로그 전부를 시간순으로 돌려준다.
+	 * feedback 3컬럼(2026-09-02 피드백 저장 API 추가)도 함께 읽는다 - 컨트롤러가 assistant 메시지에
+	 * 실어 노출한다.
+	 */
 	public List<ConversationMessageRow> findByConversation(long conversationId) {
 		return jdbcClient.sql("""
-				SELECT question, answer, preset_id, follow_ups, refs, created_at
+				SELECT id, question, answer, preset_id, follow_ups, refs, created_at,
+				       feedback, feedback_comment, feedback_at
 				FROM app.ai_chat_logs
 				WHERE conversation_id = :conversationId
 				ORDER BY created_at ASC
 				""")
 				.param("conversationId", conversationId)
 				.query((rs, rowNum) -> new ConversationMessageRow(
+						rs.getLong("id"),
 						rs.getString("question"),
 						rs.getString("answer"),
 						rs.getString("preset_id"),
 						objectMapper.readTree(rs.getString("follow_ups")),
 						objectMapper.readTree(rs.getString("refs")),
-						rs.getObject("created_at", OffsetDateTime.class)))
+						rs.getObject("created_at", OffsetDateTime.class),
+						rs.getString("feedback"),
+						rs.getString("feedback_comment"),
+						rs.getObject("feedback_at", OffsetDateTime.class)))
 				.list();
 	}
 
 	/**
 	 * 대화 상세 응답 조립용 행(설계 §8) - 로그 원장 전체(AiChatLogEntry)가 아니라 메시지 펼침에 필요한
 	 * 컬럼만 담는다. answer가 null이면 그 질문에는 아직(또는 끝내) 답변이 없었다는 뜻 -
-	 * 컨트롤러는 이 경우 assistant 메시지를 만들지 않는다.
+	 * 컨트롤러는 이 경우 assistant 메시지를 만들지 않는다. id는 messageId로(2026-09-02 피드백
+	 * 저장 API의 소유 검증 키와 동일), feedback 3필드는 그 API가 기록한 값을 그대로 실어 보낸다.
 	 */
-	public record ConversationMessageRow(String question, String answer, String presetId,
-			JsonNode followUps, JsonNode refs, OffsetDateTime createdAt) {
+	public record ConversationMessageRow(long id, String question, String answer, String presetId,
+			JsonNode followUps, JsonNode refs, OffsetDateTime createdAt,
+			String feedback, String feedbackComment, OffsetDateTime feedbackAt) {
+
+		/** 피드백 저장 API 이전 테스트 호환용 보조 생성자 - id=0, feedback 없음으로 채운다. */
+		public ConversationMessageRow(String question, String answer, String presetId,
+				JsonNode followUps, JsonNode refs, OffsetDateTime createdAt) {
+			this(0L, question, answer, presetId, followUps, refs, createdAt, null, null, null);
+		}
 	}
 }

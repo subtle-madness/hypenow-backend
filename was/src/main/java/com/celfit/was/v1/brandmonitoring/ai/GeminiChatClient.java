@@ -62,7 +62,19 @@ public class GeminiChatClient {
 	 */
 	public LlmTurn generate(String systemPrompt, List<JsonNode> contents, List<AiToolSpec> tools,
 			boolean toolCallsDisabled) {
-		ObjectNode body = buildBody(systemPrompt, contents, tools, toolCallsDisabled);
+		ObjectNode body = buildBody(systemPrompt, contents, tools, toolCallsDisabled, null);
+		return parse(transport.post(body.toString()));
+	}
+
+	/**
+	 * forcedToolNames가 비어있지 않으면 {@code toolConfig.functionCallingConfig.mode="ANY"} +
+	 * {@code allowedFunctionNames}로 이번 턴을 텍스트로 끝낼 수 없게 강제한다(날조 방지 재시도 턴,
+	 * 2026-09-02 재설계). toolCallsDisabled(mode NONE)와는 상호 배타적이라 둘 다 참인 호출은 없다 -
+	 * 호출자가 그 불변식을 지킨다.
+	 */
+	public LlmTurn generate(String systemPrompt, List<JsonNode> contents, List<AiToolSpec> tools,
+			boolean toolCallsDisabled, List<String> forcedToolNames) {
+		ObjectNode body = buildBody(systemPrompt, contents, tools, toolCallsDisabled, forcedToolNames);
 		return parse(transport.post(body.toString()));
 	}
 
@@ -78,7 +90,13 @@ public class GeminiChatClient {
 	 */
 	public LlmTurn generateStream(String systemPrompt, List<JsonNode> contents, List<AiToolSpec> tools,
 			boolean toolCallsDisabled, Consumer<Chunk> onChunk) {
-		ObjectNode body = buildBody(systemPrompt, contents, tools, toolCallsDisabled);
+		return generateStream(systemPrompt, contents, tools, toolCallsDisabled, null, onChunk);
+	}
+
+	/** generateStream()의 mode ANY 버전 - {@link #generate(String, List, List, boolean, List)}와 동형. */
+	public LlmTurn generateStream(String systemPrompt, List<JsonNode> contents, List<AiToolSpec> tools,
+			boolean toolCallsDisabled, List<String> forcedToolNames, Consumer<Chunk> onChunk) {
+		ObjectNode body = buildBody(systemPrompt, contents, tools, toolCallsDisabled, forcedToolNames);
 		StringBuilder text = new StringBuilder();
 		List<LlmTurn.ToolCall> allCalls = new ArrayList<>();
 		int[] promptTokens = {0};
@@ -140,9 +158,16 @@ public class GeminiChatClient {
 	}
 
 	/** generate()·generateStream() 공통 요청 본문 조립(T2 리팩터) - I7 thinkingBudget 기본값 0,
-	 * I8 강제 답변 턴에서도 tools 유지 등 기존 규칙을 그대로 지킨다. */
+	 * I8 강제 답변 턴에서도 tools 유지 등 기존 규칙을 그대로 지킨다.
+	 *
+	 * @param forcedToolNames null 또는 빈 목록이면 기존 NONE/AUTO 경로(toolCallsDisabled로만 결정)와
+	 *                        완전히 동일하다. 비어있지 않으면 mode="ANY" + allowedFunctionNames로
+	 *                        이번 턴에 반드시 이 중 하나를 호출하게 강제한다(날조 방지 재시도 턴,
+	 *                        2026-09-02) - toolCallsDisabled=true와 forcedToolNames가 동시에 오는
+	 *                        호출은 없다는 게 호출자 쪽 불변식이라 여기선 toolCallsDisabled를 우선한다.
+	 */
 	private ObjectNode buildBody(String systemPrompt, List<JsonNode> contents, List<AiToolSpec> tools,
-			boolean toolCallsDisabled) {
+			boolean toolCallsDisabled, List<String> forcedToolNames) {
 		ObjectNode body = objectMapper.createObjectNode();
 		body.putObject("systemInstruction").putArray("parts").addObject().put("text", systemPrompt);
 		ArrayNode contentsNode = body.putArray("contents");
@@ -159,6 +184,11 @@ public class GeminiChatClient {
 			}
 			if (toolCallsDisabled) {
 				body.putObject("toolConfig").putObject("functionCallingConfig").put("mode", "NONE");
+			} else if (forcedToolNames != null && !forcedToolNames.isEmpty()) {
+				ObjectNode functionCallingConfig = body.putObject("toolConfig").putObject("functionCallingConfig");
+				functionCallingConfig.put("mode", "ANY");
+				ArrayNode allowed = functionCallingConfig.putArray("allowedFunctionNames");
+				forcedToolNames.forEach(allowed::add);
 			}
 		}
 		ObjectNode generation = body.putObject("generationConfig");

@@ -1048,6 +1048,12 @@ public class BrandAiToolbox {
 			node.put("totalComments", acc.totalComments);
 			node.put("avgComments", acc.avgComments());
 			if ("author".equals(groupBy)) {
+				// key(=계정명)를 "author" 필드로도 명시한다(날조 방지 가드 갭 보완, 2026-09-02) -
+				// BrandAiGroundednessGuard가 "author" 필드명을 계정명으로 인식해 groundedHandles에
+				// 담으므로, 인플루언서 랭킹(aggregate_posts groupBy=author) 답변이 이 key를 그대로
+				// 표에 실어도 재시도가 불필요하게 돌지 않는다. 다른 groupBy(month·week·sponsorship·
+				// mediaType)는 key가 계정명이 아니라서 이 필드를 붙이지 않는다.
+				node.put("author", acc.key);
 				node.put("followers", acc.followers);
 				node.put("reachMultiple", acc.reachMultiple());
 				node.put("engagementRate", acc.engagementRate());

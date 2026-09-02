@@ -53,14 +53,19 @@ import tools.jackson.databind.node.ObjectNode;
  * <p>{@code referencedShortCodes}는 이번 실행에서 툴이 건드린 shortCode 전체가 아니라 답변 텍스트에
  * 실제로 인용된 것만 남긴다(N7, 2026-08-28 - {@link #referencedIn}).
  *
- * <p><b>날조(ungrounded) 답변 서버 가드</b>(2026-09-02, 스펙 §4 "고지는 서버 강제"의 연장) - 툴을 한
- * 번도 부르지 않고 가짜 계정명·수치 표를 지어내는 사례가 프롬프트 강화(BrandAiGlossary 2차 강화)로도
- * 재현됐다. 104턴 스윕 실측에서 "그 턴 툴 호출 0회 + 답변에 마크다운 표 또는 세션 브랜드가 아닌
- * @핸들"이라는 신호가 이 날조 1건에만 걸리고 정상 답변엔 0건이었다(오탐 0, {@link
- * BrandAiGroundednessGuard#ungrounded}). 이 신호가 잡히면 1회 재시도(모델 답변을 model 턴으로, {@link
- * BrandAiPrompt#UNGROUNDED_RETRY_NOTE}를 user 턴으로 되먹여 툴 사용을 열어둔 채 다시 답하게 한다)하고,
- * 재시도 후에도 신호가 남으면 답변에 서버 caveat({@value #UNGROUNDED_CAVEAT})를 강제로 붙인다 - 모델
- * 재량에 맡기지 않는다.
+ * <p><b>날조(ungrounded) 답변 서버 가드</b>(2026-09-02, 스펙 §4 "고지는 서버 강제"의 연장 - "가벼운
+ * 층" 재설계) - 툴을 한 번도 부르지 않고 가짜 계정명·수치 표를 지어내는 사례가 프롬프트 강화
+ * (BrandAiGlossary 2차 강화)로도 재현됐다. 최초 신호("답변에 마크다운 표 또는 세션 브랜드가 아닌
+ * @핸들")가 걸리면, 이번 run()에서 실행된 툴 결과 페이로드에 실제로 등장한 계정명 집합({@link
+ * BrandAiGroundednessGuard#collectGroundedHandles})과 답변 속 계정명 후보를 대조한다({@link
+ * BrandAiGroundednessGuard#ungrounded}) - 집합에도 세션 브랜드에도 없는 계정명이 있으면 날조로 본다.
+ * 걸리면 1회 재시도한다: 모델 답변을 model 턴으로, 미대조 계정명 목록을 담은 {@link
+ * BrandAiPrompt#ungroundedRetryNote}를 user 턴으로 되먹이고, 그 재시도 턴은
+ * {@code toolConfig.functionCallingConfig.mode="ANY"}로 보내 텍스트만으로 끝낼 수 없게 강제한다
+ * (재시도는 표·계정명을 그렸을 때만 걸리므로 조회 없는 정당한 경우가 없다 - 탈출용 빈 함수도 두지
+ * 않는다). <b>재시도 후에도 미대조 계정명이 남으면 사용자에게 보이는 답변은 손대지 않는다</b> - 서버가
+ * 답변 앞에 고지를 붙이거나 표를 스크럽하지 않고, {@code log.warn}(userId·sessionBrandId·미대조
+ * 계정명)만 남긴다. 재시도는 자체 카운터로 여전히 1회로 제한한다(무한 루프 방지).
  */
 public class BrandAiAgent {
 
@@ -90,14 +95,14 @@ public class BrandAiAgent {
 	/** 안전 필터·응답 길이 제한으로 막혀 답변 자체를 만들지 못했을 때 돌려줄 안내 문구(I7). */
 	private static final String BLOCKED_ANSWER =
 			"이 질문에는 안전 정책이나 응답 길이 제한 때문에 답변을 만들지 못했어요. 질문을 조금 다르게 바꿔서 다시 시도해 주세요.";
-	/** 날조 방지 재시도 후에도 신호가 남으면 서버가 강제로 붙이는 고지(2026-09-02, 스펙 §4). 완결
-	 * 경로는 답변 맨 앞에 붙이고, 스트리밍 경로는 이미 흘려보낸 텍스트 뒤에 추가 청크로 붙인다(클래스
-	 * 상단 주석 참고). */
-	private static final String UNGROUNDED_CAVEAT =
-			"(자동 검증) 아래 내용은 데이터 조회 없이 작성돼 표의 계정명과 수치가 실측값이 아닐 수 있어요. "
-					+ "실제 순위가 필요하면 다시 물어봐 주세요.\n\n";
 	/** references 상한(FE 변경요청서 §7) - 답변이 아무리 많은 shortCode를 인용해도 참조 목록은 10개까지만. */
 	private static final int MAX_REFERENCES = 10;
+	/** 날조 방지 재시도 턴에 mode ANY로 강제할 툴 이름(2026-09-02 재설계) - 데이터를 실제로 조회하는
+	 * 8종 전부를 허용한다(list_brands 포함 - 실제 DB를 조회하는 정당한 툴이라 "탈출용 빈 함수"가
+	 * 아니고, 이 턴에서 list_brands만 부르고 끝나도 최종 답변은 다시 groundedHandles 대조를 거치므로
+	 * 검증 우회로 이어지지 않는다). */
+	private static final List<String> GROUNDING_RETRY_TOOL_NAMES =
+			BrandAiToolSpecs.ALL.stream().map(AiToolSpec::name).toList();
 
 	/** {@link AgentOutcome#limitReached()} 값 - 구조 고지(스펙 §5)용. 툴 상한·토큰 예산 소진이 원인이면
 	 * budget, 벽시계 예산 소진이 원인이면 time. */
@@ -152,12 +157,16 @@ public class BrandAiAgent {
 	 * 선행 호출은 그대로 유지한 채</b> 기존 자유 경로로 폴백한다 - 이미 성공한 선행 호출까지 무효화할
 	 * 이유가 없다. 선실행분도 tool_calls 로그·shortCode 회수에 그대로 포함해 관측 일관성을 지킨다.
 	 *
-	 * @param listener 스트리밍 경로면 각 선실행 호출 직전에 {@link StreamListener#onToolCall}을
-	 *                 통지해 FE 진행 표시를 일반 툴 호출과 동일하게 유지한다. 완결 경로는 null을 넘긴다.
+	 * @param listener        스트리밍 경로면 각 선실행 호출 직전에 {@link StreamListener#onToolCall}을
+	 *                        통지해 FE 진행 표시를 일반 툴 호출과 동일하게 유지한다. 완결 경로는 null을
+	 *                        넘긴다.
+	 * @param groundedHandles 날조 방지 가드용 계정명 누적 집합(2026-09-02 재설계) - 선실행 성공 결과의
+	 *                        페이로드에서 뽑은 계정명도 자유 경로 툴 호출과 동일하게 여기 쌓인다.
 	 */
 	private void injectPlannedCalls(List<BrandAiPresets.PlannedCall> plannedCalls,
 			BrandAiToolbox.ToolSession toolSession, long userId, Long sessionBrandId, List<JsonNode> contents,
-			List<AiChatLogEntry.ToolCallLog> toolCalls, LinkedHashSet<String> shortCodes, StreamListener listener) {
+			List<AiChatLogEntry.ToolCallLog> toolCalls, LinkedHashSet<String> shortCodes, StreamListener listener,
+			Set<String> groundedHandles) {
 		for (BrandAiPresets.PlannedCall call : plannedCalls) {
 			ObjectNode args = (ObjectNode) objectMapper.readTree(call.argsJson());
 			if (sessionBrandId != null) {
@@ -173,6 +182,8 @@ public class BrandAiAgent {
 			}
 			toolCalls.add(new AiChatLogEntry.ToolCallLog(call.toolName(), args, result.rowCount()));
 			shortCodes.addAll(result.shortCodes());
+			BrandAiGroundednessGuard.collectGroundedHandles(objectMapper.readTree(result.payloadJson()),
+					groundedHandles);
 			// thoughtSignature=null - 모델이 생성한 게 아니라 우리가 직접 합성한 호출이라 서명이 없다
 			// (GeminiChatClient#modelToolCallContent가 되돌려 보낼 때 공식 더미 서명으로 채운다).
 			contents.add(client.modelToolCallContent(List.of(new LlmTurn.ToolCall(call.toolName(), args, null))));
@@ -223,8 +234,14 @@ public class BrandAiAgent {
 		long deadline = clock.millis() + TIME_BUDGET_MILLIS;
 		// 날조 방지 재시도(2026-09-02) - 정지 조건 네 겹과 별개의 자체 카운터로 딱 1회만 허용한다.
 		boolean ungroundedRetried = false;
+		// 이번 run()에서 실행된 툴 결과 페이로드에 실제로 등장한 계정명 집합(날조 방지 가드, 2026-09-02
+		// 재설계) - 대소문자 비교는 BrandAiGroundednessGuard가 맡는다.
+		Set<String> groundedHandles = new LinkedHashSet<>();
+		// 다음 LLM 호출을 mode ANY(데이터 툴 강제)로 보낼지 - 날조 방지 재시도 턴에서만 켠다.
+		boolean forceGroundingRetryTool = false;
 
-		injectPlannedCalls(plannedCalls, toolSession, userId, sessionBrandId, contents, toolCalls, shortCodes, null);
+		injectPlannedCalls(plannedCalls, toolSession, userId, sessionBrandId, contents, toolCalls, shortCodes, null,
+				groundedHandles);
 
 		for (int llmCall = 1; llmCall <= MAX_LLM_CALLS; llmCall++) {
 			// 매 호출 전에 남은 예산을 확인한다(C2) - 부족하면 이번 호출을 마지막으로 삼아 답변을 강제한다.
@@ -239,7 +256,11 @@ public class BrandAiAgent {
 			// 죽은 코드였다.
 			String systemPrompt = !capped ? basePrompt
 					: basePrompt + (toolCapped ? BrandAiPrompt.TOOL_CAP_NOTE : BrandAiPrompt.TIME_BUDGET_NOTE);
-			LlmTurn turn = client.generate(systemPrompt, contents, BrandAiToolSpecs.ALL, capped);
+			// mode ANY는 capped(mode NONE)와 상호 배타적이다 - capped 턴이면 강제 플래그가 서 있어도
+			// GeminiChatClient가 toolCallsDisabled를 우선하므로 무시된다(버그 아님, 문서화된 불변식).
+			List<String> forcedToolNames = forceGroundingRetryTool ? GROUNDING_RETRY_TOOL_NAMES : null;
+			forceGroundingRetryTool = false;
+			LlmTurn turn = client.generate(systemPrompt, contents, BrandAiToolSpecs.ALL, capped, forcedToolNames);
 			promptTokens += turn.promptTokens();
 			outputTokens += turn.outputTokens();
 
@@ -254,20 +275,25 @@ public class BrandAiAgent {
 				boolean hasRealAnswer = !turn.text().isBlank();
 				String answer = hasRealAnswer ? turn.text() : FALLBACK_ANSWER;
 
-				// 날조 방지 서버 가드(2026-09-02, 클래스 상단 주석) - 이 턴까지 툴 호출이 0회인데 표나
-				// 세션 브랜드가 아닌 @핸들이 있으면 날조 의심이다. 아직 아무 것도 반환하지 않았으니
-				// 1회는 재시도로 되먹이고, 재시도 후에도 신호가 남으면 caveat를 강제로 붙인다.
-				if (hasRealAnswer
-						&& BrandAiGroundednessGuard.ungrounded(answer, toolCalls.size(), sessionBrandUsername)) {
-					if (!ungroundedRetried) {
-						ungroundedRetried = true;
-						contents.add(client.modelContent(answer));
-						contents.add(client.userContent(BrandAiPrompt.UNGROUNDED_RETRY_NOTE));
-						continue;
+				// 날조 방지 서버 가드(2026-09-02, 클래스 상단 주석) - 답변 속 계정명 후보를 이번 run()의
+				// groundedHandles와 대조한다. 아직 아무 것도 반환하지 않았으니 1회는 재시도로 되먹이고,
+				// 재시도 후에도 미대조가 남으면 답변은 그대로 두고 warn만 남긴다(고지·스크럽 없음).
+				if (hasRealAnswer) {
+					BrandAiGroundednessGuard.Result groundedness = BrandAiGroundednessGuard.ungrounded(answer,
+							toolCalls.size(), sessionBrandUsername, groundedHandles);
+					if (groundedness.ungrounded()) {
+						if (!ungroundedRetried) {
+							ungroundedRetried = true;
+							contents.add(client.modelContent(answer));
+							contents.add(client.userContent(
+									BrandAiPrompt.ungroundedRetryNote(groundedness.unmatchedHandles())));
+							forceGroundingRetryTool = true;
+							continue;
+						}
+						log.warn(
+								"AI 에이전트 날조 의심 답변 - 재시도 후에도 미대조 계정명 - userId={}, sessionBrandId={}, 미대조={}",
+								userId, sessionBrandId, groundedness.unmatchedHandles());
 					}
-					log.warn("AI 에이전트 날조 의심 답변 - 재시도 후에도 툴 조회 없이 표·계정명 포함 - userId={}, sessionBrandId={}",
-							userId, sessionBrandId);
-					answer = UNGROUNDED_CAVEAT + answer;
 				}
 
 				List<String> referenced = referencedIn(answer, shortCodes);
@@ -305,6 +331,10 @@ public class BrandAiAgent {
 				// 소유 검증 실패 등 failed 결과의 brandId는 신뢰할 수 없다(M1) - 성공한 호출에서만 딴다.
 				if (brandId == null && !result.failed() && call.args().hasNonNull("brandId")) {
 					brandId = call.args().path("brandId").asLong();
+				}
+				if (!result.failed()) {
+					BrandAiGroundednessGuard.collectGroundedHandles(objectMapper.readTree(result.payloadJson()),
+							groundedHandles);
 				}
 				responses.add(new GeminiChatClient.ToolResponse(call.name(),
 						result.failed() ? withRetryHint(call.name(), result, failuresByTool)
@@ -395,9 +425,14 @@ public class BrandAiAgent {
 		long deadline = clock.millis() + TIME_BUDGET_MILLIS;
 		// 날조 방지 재시도(2026-09-02) - 정지 조건 네 겹과 별개의 자체 카운터로 딱 1회만 허용한다.
 		boolean ungroundedRetried = false;
+		// 이번 run()에서 실행된 툴 결과 페이로드에 실제로 등장한 계정명 집합(날조 방지 가드, 2026-09-02
+		// 재설계) - 완결 경로와 동일한 대조 로직을 쓴다.
+		Set<String> groundedHandles = new LinkedHashSet<>();
+		// 다음 LLM 호출을 mode ANY(데이터 툴 강제)로 보낼지 - 날조 방지 재시도 턴에서만 켠다.
+		boolean forceGroundingRetryTool = false;
 
 		injectPlannedCalls(plannedCalls, toolSession, userId, sessionBrandId, contents, toolCalls, shortCodes,
-				listener);
+				listener, groundedHandles);
 
 		for (int llmCall = 1; llmCall <= MAX_LLM_CALLS; llmCall++) {
 			if (abortSignal.getAsBoolean()) {
@@ -411,6 +446,9 @@ public class BrandAiAgent {
 			boolean capped = limitCause != null;
 			String systemPrompt = !capped ? basePrompt
 					: basePrompt + (toolCapped ? BrandAiPrompt.TOOL_CAP_NOTE : BrandAiPrompt.TIME_BUDGET_NOTE);
+			// mode ANY는 capped(mode NONE)와 상호 배타적이다(완결 경로와 동일한 불변식).
+			List<String> forcedToolNames = forceGroundingRetryTool ? GROUNDING_RETRY_TOOL_NAMES : null;
+			forceGroundingRetryTool = false;
 
 			// 강제 답변 턴(capped)만 라이브 방출한다 - 일반 턴은 순수 텍스트로 끝난 게 확정될 때까지
 			// 누적만 한다(홀드백 불변식, StreamListener 상단 주석).
@@ -419,16 +457,17 @@ public class BrandAiAgent {
 			// 홀드백 중인 턴에서 텍스트 청크가 처음 도착한 순간에만 writing을 1회 통지한다(StreamListener
 			// 상단 주석) - 강제 답변 턴은 델타를 즉시 방출하니 writing 없이 delta로 바로 넘어간다.
 			boolean[] writingNotified = {false};
-			LlmTurn turn = client.generateStream(systemPrompt, contents, BrandAiToolSpecs.ALL, capped, chunk -> {
-				if (liveEmit) {
-					if (!chunk.textDelta().isEmpty()) {
-						listener.onAnswerDelta(chunk.textDelta());
-					}
-				} else if (!writingNotified[0] && !chunk.textDelta().isEmpty()) {
-					writingNotified[0] = true;
-					listener.onWriting();
-				}
-			});
+			LlmTurn turn = client.generateStream(systemPrompt, contents, BrandAiToolSpecs.ALL, capped,
+					forcedToolNames, chunk -> {
+						if (liveEmit) {
+							if (!chunk.textDelta().isEmpty()) {
+								listener.onAnswerDelta(chunk.textDelta());
+							}
+						} else if (!writingNotified[0] && !chunk.textDelta().isEmpty()) {
+							writingNotified[0] = true;
+							listener.onWriting();
+						}
+					});
 			promptTokens += turn.promptTokens();
 			outputTokens += turn.outputTokens();
 
@@ -447,26 +486,24 @@ public class BrandAiAgent {
 
 				// 날조 방지 서버 가드(2026-09-02, 클래스 상단 주석) - liveEmit=false(일반 턴)면 홀드백
 				// 덕분에 아직 아무 것도 방출되지 않았으니 완결 경로와 동일하게 1회 재시도할 수 있다.
-				// liveEmit=true(강제 답변 턴)면 텍스트가 이미 청크로 다 나간 뒤라 재시도가 불가능하니
-				// caveat를 추가 청크로 덧붙인다 - 재시도를 이미 썼는데도 여전히 날조 신호가 남은 경우도
-				// 마찬가지로(더 되먹일 여지가 없으니) 여기서 답변 앞에 caveat를 붙인다.
-				if (hasRealAnswer
-						&& BrandAiGroundednessGuard.ungrounded(answer, toolCalls.size(), sessionBrandUsername)) {
-					if (!liveEmit && !ungroundedRetried) {
-						ungroundedRetried = true;
-						contents.add(client.modelContent(answer));
-						contents.add(client.userContent(BrandAiPrompt.UNGROUNDED_RETRY_NOTE));
-						continue;
-					}
-					log.warn(
-							"AI 에이전트 날조 의심 답변(스트리밍) - 재시도 불가 또는 재시도 후에도 툴 조회 없이 표·계정명 포함 - userId={}, sessionBrandId={}",
-							userId, sessionBrandId);
-					if (liveEmit) {
-						// 원문은 이미 청크로 다 나갔다 - caveat를 뒤에 이어붙인다(스트림에도, 저장 답변에도).
-						listener.onAnswerDelta(UNGROUNDED_CAVEAT);
-						answer = answer + UNGROUNDED_CAVEAT;
-					} else {
-						answer = UNGROUNDED_CAVEAT + answer;
+				// liveEmit=true(강제 답변 턴)면 텍스트가 이미 청크로 다 나간 뒤라 재시도가 불가능하다 -
+				// 두 경우 모두 최종적으로는 답변을 손대지 않고 warn만 남긴다(고지·스크럽 없음, 클래스
+				// 상단 주석).
+				if (hasRealAnswer) {
+					BrandAiGroundednessGuard.Result groundedness = BrandAiGroundednessGuard.ungrounded(answer,
+							toolCalls.size(), sessionBrandUsername, groundedHandles);
+					if (groundedness.ungrounded()) {
+						if (!liveEmit && !ungroundedRetried) {
+							ungroundedRetried = true;
+							contents.add(client.modelContent(answer));
+							contents.add(client.userContent(
+									BrandAiPrompt.ungroundedRetryNote(groundedness.unmatchedHandles())));
+							forceGroundingRetryTool = true;
+							continue;
+						}
+						log.warn(
+								"AI 에이전트 날조 의심 답변(스트리밍) - 재시도 불가 또는 재시도 후에도 미대조 계정명 - userId={}, sessionBrandId={}, 미대조={}",
+								userId, sessionBrandId, groundedness.unmatchedHandles());
 					}
 				}
 
@@ -513,6 +550,10 @@ public class BrandAiAgent {
 				shortCodes.addAll(result.shortCodes());
 				if (brandId == null && !result.failed() && call.args().hasNonNull("brandId")) {
 					brandId = call.args().path("brandId").asLong();
+				}
+				if (!result.failed()) {
+					BrandAiGroundednessGuard.collectGroundedHandles(objectMapper.readTree(result.payloadJson()),
+							groundedHandles);
 				}
 				responses.add(new GeminiChatClient.ToolResponse(call.name(),
 						result.failed() ? withRetryHint(call.name(), result, failuresByTool)

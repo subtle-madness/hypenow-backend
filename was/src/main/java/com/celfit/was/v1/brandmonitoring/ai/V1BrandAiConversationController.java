@@ -76,9 +76,11 @@ public class V1BrandAiConversationController {
 	}
 
 	/**
-	 * 로그 행을 메시지로 펼친다(§8) - 답변이 없는 행은 user 메시지 1건뿐이다. followUps·refs는
-	 * 대화 전체에서 <b>마지막</b> assistant 메시지에만 붙인다(N개 행을 다 훑은 뒤 마지막 한 자리만
-	 * 되돌아가 갈아끼운다 - 매 행마다 판단할 수 없다, 아직 더 답변이 남았는지 이 시점엔 모른다).
+	 * 로그 행을 메시지로 펼친다(§8) - 답변이 없는 행은 user 메시지 1건뿐이다. assistant 메시지에는
+	 * messageId·저장된 피드백(2026-09-02 피드백 저장 API 추가)을 바로 싣는다 - 둘 다 그 행 하나로
+	 * 결정되니 마지막 여부와 무관하다. followUps·refs는 그와 달리 대화 전체에서 <b>마지막</b>
+	 * assistant 메시지에만 붙인다(N개 행을 다 훑은 뒤 마지막 한 자리만 되돌아가 갈아끼운다 - 매
+	 * 행마다 판단할 수 없다, 아직 더 답변이 남았는지 이 시점엔 모른다).
 	 */
 	private static List<AiConversationMessage> buildMessages(
 			List<AiChatLogRepository.ConversationMessageRow> rows) {
@@ -89,8 +91,10 @@ public class V1BrandAiConversationController {
 			messages.add(AiConversationMessage.of(AiConversationMessage.ROLE_USER, row.question(),
 					row.presetId(), row.createdAt()));
 			if (row.answer() != null) {
-				messages.add(AiConversationMessage.of(AiConversationMessage.ROLE_ASSISTANT, row.answer(),
-						null, row.createdAt()));
+				AiConversationMessage assistantMessage = AiConversationMessage
+						.of(AiConversationMessage.ROLE_ASSISTANT, row.answer(), null, row.createdAt())
+						.withMessageIdAndFeedback(String.valueOf(row.id()), toFeedback(row));
+				messages.add(assistantMessage);
 				lastAssistantIndex = messages.size() - 1;
 				lastAnsweredRow = row;
 			}
@@ -100,6 +104,14 @@ public class V1BrandAiConversationController {
 					.withFollowUpsAndReferences(lastAnsweredRow.followUps(), lastAnsweredRow.refs()));
 		}
 		return messages;
+	}
+
+	/** row.feedback()이 null이면(피드백 없음) null - 있으면 {@link AiConversationMessage.Feedback}로 감싼다. */
+	private static AiConversationMessage.Feedback toFeedback(AiChatLogRepository.ConversationMessageRow row) {
+		if (row.feedback() == null) {
+			return null;
+		}
+		return new AiConversationMessage.Feedback(row.feedback(), row.feedbackComment(), row.feedbackAt());
 	}
 
 	private static void requireLogin(AppUserDetails principal) {

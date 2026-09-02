@@ -1,5 +1,7 @@
 package com.celfit.was.v1.brandmonitoring.ai;
 
+import java.util.List;
+
 /**
  * 어시스턴트 시스템 프롬프트(설계 §7) - 도메인 밖 질문 거절과 "툴로 조회한 사실만" 규칙이 핵심이다.
  * 프롬프트는 was 소관이라 common-llm에 반입하지 않는다(설계 §3).
@@ -52,13 +54,27 @@ public final class BrandAiPrompt {
 			확인하지 못한 부분은 확인하지 못했다고 솔직히 적으세요.
 			""";
 
-	/** 날조 방지 재시도 지시(서버 groundedness 가드, 2026-09-02 - 스펙 §4 "고지는 서버 강제"의 연장).
-	 * 104턴 스윕 실측에서 "그 턴 툴 호출 0회 + 표 또는 세션 브랜드가 아닌 @핸들"이 날조 1건에만 걸리고
-	 * 정상 답변엔 걸리지 않았다(오탐 0) - 이 신호로 걸린 답변을 model 턴으로, 이 문구를 이어지는 user
-	 * 턴으로 되먹여 툴 사용이 열린 채로 한 번 더 답하게 한다({@link BrandAiAgent}). */
-	public static final String UNGROUNDED_RETRY_NOTE =
-			"[검증] 방금 답변은 툴 조회 없이 작성됐는데 표나 계정명이 들어 있습니다. 지어낸 계정명과 수치를 쓰면 안 됩니다. "
-					+ "필요한 툴을 지금 호출해 실측값으로 다시 답하거나, 조회 없이 답할 수 있는 내용만 표와 계정명 없이 답하세요.";
+	/**
+	 * 날조 방지 재시도 지시(서버 groundedness 가드, 2026-09-02 - "가벼운 층" 재설계, 스펙 §4 "고지는
+	 * 서버 강제"의 연장). 이 신호로 걸린 답변을 model 턴으로, 이 문구를 이어지는 user 턴으로 되먹인다
+	 * ({@link BrandAiAgent}). 재시도 턴은 {@code toolConfig.functionCallingConfig.mode="ANY"}로
+	 * 보내 텍스트만으로 끝낼 수 없게 강제되므로(재시도는 표·계정명을 그렸을 때만 걸려 조회 없는 정당한
+	 * 경우가 없다), 이 문구도 "조회 없이 답해도 된다"는 탈출구를 주지 않는다.
+	 *
+	 * @param unmatchedHandles 답변 속 계정명 후보 중 이번 대화의 툴 결과 어디에도 없던 것들
+	 *                          (대조 실패 목록, {@link BrandAiGroundednessGuard.Result#unmatchedHandles}).
+	 *                          비어있으면(툴 호출 0회로 표·핸들만 있고 대조할 후보가 곧 전부인 경우)
+	 *                          "조회 없이 표나 계정명을 썼다"는 일반 문구로 대신한다.
+	 */
+	public static String ungroundedRetryNote(List<String> unmatchedHandles) {
+		if (unmatchedHandles == null || unmatchedHandles.isEmpty()) {
+			return "[검증] 방금 답변은 조회 없이 표나 계정명을 썼습니다. 지어낸 계정명이나 수치를 쓰면 안 됩니다. "
+					+ "필요한 툴을 지금 호출해 조회된 실제 계정과 값으로만 다시 답하세요.";
+		}
+		return "[검증] 방금 답변의 계정명 중 이번 대화에서 조회된 결과에 없는 것이 있습니다: "
+				+ String.join(", ", unmatchedHandles) + ". 지어낸 계정명이나 수치를 쓰면 안 됩니다. "
+				+ "필요한 툴을 지금 호출해 조회된 실제 계정과 값으로만 다시 답하세요.";
+	}
 
 	private BrandAiPrompt() {
 	}
