@@ -40,9 +40,12 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
      */
     @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and ("
             + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
-            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false)) "
+            + "or (:includeHomeLiving = true and i.homeLiving = true "
+            + "and (i.homeLivingCompany is null or i.homeLivingCompany = false))) "
             + "and i.firstCollectedAt is null")
-    long countBackfillPending(@Param("includeFnb") boolean includeFnb);
+    long countBackfillPending(@Param("includeFnb") boolean includeFnb,
+                       @Param("includeHomeLiving") boolean includeHomeLiving);
 
     /**
      * 추적 대기: 첫 수집은 끝났지만 재방문 주기(revisitBefore)가 지나 다시 수집 대상이 될 인플루언서 수.
@@ -50,10 +53,13 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
      */
     @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and ("
             + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
-            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false)) "
+            + "or (:includeHomeLiving = true and i.homeLiving = true "
+            + "and (i.homeLivingCompany is null or i.homeLivingCompany = false))) "
             + "and i.firstCollectedAt is not null and i.lastCollectedAt < :revisitBefore")
     long countTrackDue(@Param("revisitBefore") Instant revisitBefore,
-                       @Param("includeFnb") boolean includeFnb);
+                       @Param("includeFnb") boolean includeFnb,
+                       @Param("includeHomeLiving") boolean includeHomeLiving);
 
     /**
      * 수집 대상: 판정 통과 + 카테고리 확정 + (백필 안 된 것 우선) + 재방문 주기(revisitBefore)가
@@ -63,11 +69,14 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
      */
     @Query("select i from Influencer i where i.status = 'QUALIFIED' and ("
             + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
-            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false)) "
+            + "or (:includeHomeLiving = true and i.homeLiving = true "
+            + "and (i.homeLivingCompany is null or i.homeLivingCompany = false))) "
             + "and (i.firstCollectedAt is null or i.lastCollectedAt < :revisitBefore) "
             + "order by case when i.firstCollectedAt is null then 0 else 1 end, i.lastCollectedAt asc nulls first")
     List<Influencer> findCollectTargets(@Param("revisitBefore") Instant revisitBefore,
-                                        @Param("includeFnb") boolean includeFnb, Pageable pageable);
+                                        @Param("includeFnb") boolean includeFnb,
+                       @Param("includeHomeLiving") boolean includeHomeLiving, Pageable pageable);
 
     /** BEAUTY 잡 대상: 판정 통과했지만 뷰티 미판정 — id 순 Pageable로 결정적으로 소진한다. */
     List<Influencer> findByStatusAndBeautyIsNull(InfluencerStatus status, Pageable pageable);
@@ -80,6 +89,24 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     @Query("select i from Influencer i where i.status = :status and i.beauty is not null "
             + "and i.fnb is null order by i.id")
     List<Influencer> findFnbBackfillTargets(@Param("status") InfluencerStatus status, Pageable pageable);
+
+    /**
+     * 홈/리빙 백필 대상: 뷰티 축은 판정 완료지만 홈/리빙 축이 미판정인 계정 — 카테고리 확장
+     * (스펙 2026-08-27 §3)의 기존 판정분 전체 재판정 경로. F&B 백필과 달리 fnb 축 상태는 묻지
+     * 않는다 — fnb도 미판정이면 F&B 백필 경로가 먼저 집고, 그때 홈/리빙 축도 첫 판정으로 같이
+     * 적용된다(선정 순서: 신규 → F&B 백필 → 홈/리빙 백필). id 순 Pageable로 결정적으로 소진한다.
+     */
+    @Query("select i from Influencer i where i.status = :status and i.beauty is not null "
+            + "and i.homeLiving is null order by i.id")
+    List<Influencer> findHomeLivingBackfillTargets(@Param("status") InfluencerStatus status, Pageable pageable);
+
+    /**
+     * 대시보드 홈/리빙 판정 그룹용: 백필 잔여 수 — 백필 선정(findHomeLivingBackfillTargets)과
+     * 같은 모수(뷰티 축 판정 완료 ∧ 홈/리빙 축 미판정)를 센다.
+     */
+    @Query("select count(i) from Influencer i where i.status = :status "
+            + "and i.beauty is not null and i.homeLiving is null")
+    long countHomeLivingBackfillRemaining(@Param("status") InfluencerStatus status);
 
     /**
      * BEAUTY 재판정(rejudge) 대상: CLAUDE가 비뷰티로 판정했지만 판정 후 프로필 재료가 갱신된
@@ -130,13 +157,16 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
      */
     @Query("select i from Influencer i where i.status = 'QUALIFIED' and ("
             + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
-            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false)) "
+            + "or (:includeHomeLiving = true and i.homeLiving = true "
+            + "and (i.homeLivingCompany is null or i.homeLivingCompany = false))) "
             + "and (i.lastReelsAt is null or i.lastReelsAt < :revisitBefore) "
             + "order by case when i.lastReelsAt is null then 0 else 1 end, "
             + "case when i.lastCollectedAt is null then 1 else 0 end, "
             + "i.lastReelsAt asc nulls first, i.id")
     List<Influencer> findReelsTargets(@Param("revisitBefore") Instant revisitBefore,
-                                      @Param("includeFnb") boolean includeFnb, Pageable pageable);
+                                      @Param("includeFnb") boolean includeFnb,
+                       @Param("includeHomeLiving") boolean includeHomeLiving, Pageable pageable);
 
     /** 대시보드 게시물 수집 카드의 계정 기준: 프로필 스냅샷(수집 방문)을 1회 이상 수행한 계정 수. */
     long countByLastCollectedAtIsNotNull();
@@ -161,10 +191,13 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     /** 대시보드·비용 추정용: 릴스 수집 대기(백필 + 주기 도래) 수. includeFnb=true면 F&B도 모수. */
     @Query("select count(i) from Influencer i where i.status = 'QUALIFIED' and ("
             + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
-            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false)) "
+            + "or (:includeHomeLiving = true and i.homeLiving = true "
+            + "and (i.homeLivingCompany is null or i.homeLivingCompany = false))) "
             + "and (i.lastReelsAt is null or i.lastReelsAt < :revisitBefore)")
     long countReelsDue(@Param("revisitBefore") Instant revisitBefore,
-                       @Param("includeFnb") boolean includeFnb);
+                       @Param("includeFnb") boolean includeFnb,
+                       @Param("includeHomeLiving") boolean includeHomeLiving);
 
     /**
      * SIMILAR 시드: 카테고리 인플루언서(회사 제외) + 미수확 — id 순 Pageable로 결정적으로 소진한다.
@@ -172,11 +205,14 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
      */
     @Query("select i from Influencer i where i.status = :status and ("
             + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
-            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false)) "
+            + "or (:includeHomeLiving = true and i.homeLiving = true "
+            + "and (i.homeLivingCompany is null or i.homeLivingCompany = false))) "
             + "and i.similarProcessedAt is null order by i.id")
     List<Influencer> findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
             @Param("status") InfluencerStatus status,
-            @Param("includeFnb") boolean includeFnb, Pageable pageable);
+            @Param("includeFnb") boolean includeFnb,
+                       @Param("includeHomeLiving") boolean includeHomeLiving, Pageable pageable);
 
     /** 비용 추정용. */
     long countByStatusAndBeautyIsNull(InfluencerStatus status);
@@ -233,6 +269,22 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
             @Param("statuses") java.util.Collection<InfluencerStatus> statuses,
             @Param("classes") java.util.Collection<CategoryClass> classes, Pageable pageable);
 
+    /** 명단 홈/리빙 필터: 선택한 분류(home_living_class)만. */
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndHomeLivingClassIn(
+            java.util.Collection<InfluencerStatus> statuses,
+            java.util.Collection<CategoryClass> classes, Pageable pageable);
+
+    /** 명단 홈/리빙 필터: 홈/리빙 미판정(백필 잔여)만. */
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndHomeLivingClassIsNull(
+            java.util.Collection<InfluencerStatus> statuses, Pageable pageable);
+
+    /** 명단 홈/리빙 필터: 선택 분류 + 미판정을 함께 체크한 경우. */
+    @Query("select i from Influencer i where i.status in :statuses "
+            + "and (i.homeLivingClass in :classes or i.homeLivingClass is null)")
+    org.springframework.data.domain.Page<Influencer> findByStatusInAndHomeLivingClassInOrNull(
+            @Param("statuses") java.util.Collection<InfluencerStatus> statuses,
+            @Param("classes") java.util.Collection<CategoryClass> classes, Pageable pageable);
+
     /** F&B 판정 5분류 집계 — 대시보드 타일용(COMPANY·SERVICE 등, 뷰티 축 countByStatusAndBeautyClass와 대칭). */
     long countByStatusAndFnbClass(InfluencerStatus status, CategoryClass fnbClass);
 
@@ -241,27 +293,48 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
             + "and (i.fnbCompany is null or i.fnbCompany = false)")
     long countFnbInfluencers(@Param("status") InfluencerStatus status);
 
+    /** 홈/리빙 판정 5분류 집계 — 대시보드 타일용(F&B 축 countByStatusAndFnbClass와 대칭). */
+    long countByStatusAndHomeLivingClass(InfluencerStatus status, CategoryClass homeLivingClass);
+
+    /** 대시보드 홈/리빙 판정 그룹용: 홈/리빙 인플루언서(회사 제외) 수. */
+    @Query("select count(i) from Influencer i where i.status = :status and i.homeLiving = true "
+            + "and (i.homeLivingCompany is null or i.homeLivingCompany = false)")
+    long countHomeLivingInfluencers(@Param("status") InfluencerStatus status);
+
     /**
-     * 대시보드 중복 제거 그룹용: 뷰티 수집 대상이면서 F&B 수집 대상은 아닌 수.
-     * 부정절은 명시 분해형 — NOT(fnb = true AND …)로 쓰면 F&B 미판정(fnb IS NULL)이
-     * NULL 평가로 빠져 뷰티만 카운트가 축소된다(설계 2026-08-25 §구현 주의점).
+     * 대시보드 중복 제거 그룹용: 뷰티 수집 대상이면서 F&B·홈/리빙 수집 대상은 아닌 수.
+     * 부정절은 명시 분해형 — NOT(x = true AND …)로 쓰면 미판정(NULL)이 NULL 평가로 빠져
+     * 단독 카운트가 축소된다(설계 2026-08-25 §구현 주의점).
      */
     @Query("select count(i) from Influencer i where i.status = :status "
             + "and i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false) "
-            + "and (i.fnb is null or i.fnb = false or i.fnbCompany = true)")
+            + "and (i.fnb is null or i.fnb = false or i.fnbCompany = true) "
+            + "and (i.homeLiving is null or i.homeLiving = false or i.homeLivingCompany = true)")
     long countBeautyOnlyCollectable(@Param("status") InfluencerStatus status);
 
-    /** 대시보드 중복 제거 그룹용: F&B 수집 대상이면서 뷰티 수집 대상은 아닌 수 — 위와 대칭. */
+    /** 대시보드 중복 제거 그룹용: F&B 수집 대상이면서 뷰티·홈/리빙 수집 대상은 아닌 수 — 위와 대칭. */
     @Query("select count(i) from Influencer i where i.status = :status "
             + "and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false) "
-            + "and (i.beauty is null or i.beauty = false or i.beautyCompany = true)")
+            + "and (i.beauty is null or i.beauty = false or i.beautyCompany = true) "
+            + "and (i.homeLiving is null or i.homeLiving = false or i.homeLivingCompany = true)")
     long countFnbOnlyCollectable(@Param("status") InfluencerStatus status);
 
-    /** 대시보드 중복 제거 그룹용: 두 축 모두 수집 대상(겹침)인 수. */
+    /** 대시보드 중복 제거 그룹용: 홈/리빙 수집 대상이면서 뷰티·F&B 수집 대상은 아닌 수 — 위와 대칭. */
     @Query("select count(i) from Influencer i where i.status = :status "
-            + "and i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false) "
-            + "and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false)")
-    long countBothCollectable(@Param("status") InfluencerStatus status);
+            + "and i.homeLiving = true and (i.homeLivingCompany is null or i.homeLivingCompany = false) "
+            + "and (i.beauty is null or i.beauty = false or i.beautyCompany = true) "
+            + "and (i.fnb is null or i.fnb = false or i.fnbCompany = true)")
+    long countHomeLivingOnlyCollectable(@Param("status") InfluencerStatus status);
+
+    /**
+     * 대시보드 중복 제거 그룹용: 세 축 중 하나라도 수집 대상인 수(유니온) — 겹침 타일은
+     * 별도 "2축 이상" 쿼리 대신 (유니온 − 단독 3합)으로 계산한다(2^3 조합 열거 회피).
+     */
+    @Query("select count(i) from Influencer i where i.status = :status and ("
+            + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
+            + "or (i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false)) "
+            + "or (i.homeLiving = true and (i.homeLivingCompany is null or i.homeLivingCompany = false)))")
+    long countAnyCollectable(@Param("status") InfluencerStatus status);
 
     /**
      * 대시보드 F&B 판정 그룹용: 백필 잔여 수 — 백필 선정(findFnbBackfillTargets)과 같은 모수
@@ -275,16 +348,22 @@ public interface InfluencerRepository extends JpaRepository<Influencer, Long> {
     /** SIMILAR 시드 대기 수 — 선정 쿼리와 같은 모수(includeFnb=true면 F&B 포함). */
     @Query("select count(i) from Influencer i where i.status = :status and ("
             + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
-            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false)) "
+            + "or (:includeHomeLiving = true and i.homeLiving = true "
+            + "and (i.homeLivingCompany is null or i.homeLivingCompany = false))) "
             + "and i.similarProcessedAt is null")
     long countByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-            @Param("status") InfluencerStatus status, @Param("includeFnb") boolean includeFnb);
+            @Param("status") InfluencerStatus status, @Param("includeFnb") boolean includeFnb,
+                       @Param("includeHomeLiving") boolean includeHomeLiving);
 
     /** 비용 추정용: pk 미보유라 SIMILAR가 username 해석 1회를 추가로 사는 시드 수(회사 제외). */
     @Query("select count(i) from Influencer i where i.status = :status and ("
             + "(i.beauty = true and (i.beautyCompany is null or i.beautyCompany = false)) "
-            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false))) "
+            + "or (:includeFnb = true and i.fnb = true and (i.fnbCompany is null or i.fnbCompany = false)) "
+            + "or (:includeHomeLiving = true and i.homeLiving = true "
+            + "and (i.homeLivingCompany is null or i.homeLivingCompany = false))) "
             + "and i.similarProcessedAt is null and i.igUserId is null")
     long countByStatusAndBeautyTrueAndSimilarProcessedAtIsNullAndIgUserIdIsNull(
-            @Param("status") InfluencerStatus status, @Param("includeFnb") boolean includeFnb);
+            @Param("status") InfluencerStatus status, @Param("includeFnb") boolean includeFnb,
+                       @Param("includeHomeLiving") boolean includeHomeLiving);
 }

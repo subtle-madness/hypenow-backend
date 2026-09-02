@@ -24,9 +24,9 @@ public class V1ContentPageService {
 		return new ContentPage(repository.findCards(q), repository.countCards(q));
 	}
 
-	/** meta.distributors — 소형 조회라 캐시 없이 통과. */
-	public List<Map<String, Object>> distributorOptions() {
-		return repository.findDistributorOptions();
+	/** meta.distributors — 소형 조회라 캐시 없이 통과. 축은 요청이 결정(2026-09-01). */
+	public List<Map<String, Object>> distributorOptions(String axis) {
+		return repository.findDistributorOptions(axis);
 	}
 
 	/** 캐시에 실리는 페이지 묶음 — rows는 개인화 없는 공통 행. */

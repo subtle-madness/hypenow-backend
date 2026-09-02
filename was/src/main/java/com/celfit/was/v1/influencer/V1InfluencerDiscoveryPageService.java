@@ -28,7 +28,7 @@ public class V1InfluencerDiscoveryPageService {
 		List<V1InfluencerDiscoveryRepository.CardRow> rows = repository.findCards(q);
 		List<String> handles = rows.stream()
 				.map(V1InfluencerDiscoveryRepository.CardRow::handle).toList();
-		List<InfluencerCard> cards = assembler.toCards(rows, repository.findShares(handles),
+		List<InfluencerCard> cards = assembler.toCards(rows, repository.findShares(handles, q.fnbAxis()),
 				repository.findBrands(handles), repository.findThumbs(handles),
 				repository.findEngagements(handles));
 		// total은 본 쿼리 윈도우(count(*) OVER ()) — countCards 재실행은 0행(offset 초과·공집합)

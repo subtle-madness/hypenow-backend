@@ -13,6 +13,7 @@ public class V2InfluencerReportRepository {
 
 	// 뷰티 게시물 비율 게이트 (07-30) — 발굴 목록(V1InfluencerDiscoveryRepository)과 동일 기준.
 	// 추천 표면(유사 인플루언서)이므로 게이트에 걸리는 계정이 후보로 튀어나오면 안 된다.
+	// F&B 축은 이 게이트 대신 accounts.fnb 게이트(스펙 2026-09-01) — F&B 계정은 뷰티 비율이 0이다.
 	private static final int MIN_ANALYZED = 8;
 	private static final double MIN_BEAUTY_RATIO_PERCENT = 20.0;
 
@@ -109,7 +110,22 @@ public class V2InfluencerReportRepository {
 				""").param("h", handle).query(BrandCollabRow.class).list();
 	}
 
+	/**
+	 * 대상 계정의 유사 추천 축 — F&B 단독 계정만 fnb(true). 혼합(뷰티∧F&B)·레거시(null)는
+	 * beauty: 기존 뷰티 화면 불변 우선(스펙 2026-09-01 §4). COALESCE 방향은 발굴 무필터
+	 * (beauty→true, fnb→false)와 동일 논리 — 미러 갱신 전 구 행은 전부 뷰티 모수 출신.
+	 */
+	public boolean findFnbAxis(String handle) {
+		return jdbcClient.sql("""
+				SELECT COALESCE(fnb, false) AND NOT COALESCE(beauty, true)
+				FROM accounts WHERE handle = :h
+				""").param("h", handle).query(Boolean.class).optional().orElse(false);
+	}
+
 	/** 유사 인플루언서 핸들 — 혼합 점수 = 0.6×traits Jaccard + 0.4×카테고리 믹스 히스토그램 교집합.
+	 *  축(fnbAxis)은 후보 풀 자체를 가른다(스펙 2026-09-01): peers·cats CTE가 축 인지 뷰를
+	 *  axis='fnb'/'beauty'로 필터하므로, 대분류가 축을 결정하는 성질상 다른 축 계정은 피어
+	 *  카테고리가 '미분류'로 떨어져 후보에 섞이지 않는다. 후보 게이트도 축별로 갈린다 — 아래 참조.
 	 *  같은 피어 카테고리 내에서 컷 0.30 미달 제외, 점수 내림차순·팔로워 근접·handle 순 상위 10
 	 *  (07-28 유사도 v2 — 스펙 6.23의 9는 10으로 변경 확정). 점수는 정렬·컷 전용이라 반환하지 않는다.
 	 *  휴면 계정(최근 업로드 3개월 밖 또는 미확인) 후보 제외 — 휴면 정의 정본은 아래 su 조인 조건
@@ -125,15 +141,28 @@ public class V2InfluencerReportRepository {
 	 *  한 번만 평가하도록 묶었다. test DB 핸들 13개 전수 결과 완전 일치(순서 포함) 확인, 중앙값
 	 *  1560.7ms → 753.4ms(약 2.1배), content_analyses(94,433행)·account_content_series(77,943행)
 	 *  Seq Scan 6회 → 4회로 감소(EXPLAIN ANALYZE 실측). */
-	public List<String> findSimilarHandles(String handle) {
-		return jdbcClient.sql("""
+	public List<String> findSimilarHandles(String handle, boolean fnbAxis) {
+		// 후보 게이트 분기(발굴 build()와 동일 패턴, 스펙 2026-09-01 §4): 뷰티 축은 기존 뷰티 비율
+		// 게이트(결과 불변), F&B 축은 accounts.fnb 게이트 — F&B 계정은 뷰티 비율 0이라 걸면 전멸.
+		String candidateGate = fnbAxis
+				? "  AND COALESCE(ac.fnb, false)\n"
+				: """
+						  -- NULLIF(analyzed_count, 0) 필수 — OR 단축 평가 미보장 + 창 전체가 is_beauty NULL인
+						  -- 계정 가능성(V1InfluencerDiscoveryRepository와 동일 이유, division by zero 방지).
+						  AND (COALESCE(br.analyzed_count, 0) < :minAnalyzed
+						       OR 100.0 * br.beauty_count / NULLIF(br.analyzed_count, 0) >= :minBeautyRatio)
+						""";
+		var spec = jdbcClient.sql("""
 				WITH peers AS MATERIALIZED (
-				  SELECT handle, peer_category FROM account_peer_stats
+				  SELECT handle, peer_category FROM account_peer_axis_stats WHERE axis = :axis
 				),
 				cats AS MATERIALIZED (
 				  SELECT account_handle, main_group, content_count FROM account_category_stats
+				  WHERE axis = :axis
 				),
-				me AS (
+				-- MATERIALIZED 필수(09-01 운영 실측): 1행짜리 me가 오추정(피어 est 1행)에 밀려 후보별
+				-- 재평가(peers 12,055행 스캔 × 후보 12,054회 ≈ 12초)로 풀렸다 — 강제 1회 평가로 고정.
+				me AS MATERIALIZED (
 				  SELECT p.peer_category, ac.followers, la.traits
 				  FROM peers p
 				  JOIN accounts ac ON ac.handle = p.handle
@@ -174,21 +203,21 @@ public class V2InfluencerReportRepository {
 				                WHERE handle = c.handle ORDER BY analyzed_at DESC LIMIT 1) la ON true
 				  LEFT JOIN cand_mix cm ON cm.account_handle = c.handle
 				  LEFT JOIN account_beauty_ratio br ON br.account_handle = c.handle
-				  -- NULLIF(analyzed_count, 0) 필수 — OR 단축 평가 미보장 + 창 전체가 is_beauty NULL인
-				  -- 계정 가능성(V1InfluencerDiscoveryRepository와 동일 이유, division by zero 방지).
 				  WHERE c.handle <> :h
-				    AND (COALESCE(br.analyzed_count, 0) < :minAnalyzed
-				         OR 100.0 * br.beauty_count / NULLIF(br.analyzed_count, 0) >= :minBeautyRatio)
+				""" + candidateGate + """
 				)
 				SELECT handle
 				FROM scored
 				WHERE score >= 0.30
 				ORDER BY score DESC, abs(followers - my_followers) ASC, handle ASC
 				LIMIT 10
-				""").param("h", handle)
-				.param("minAnalyzed", MIN_ANALYZED)
-				.param("minBeautyRatio", MIN_BEAUTY_RATIO_PERCENT)
-				.query(String.class).list();
+				""")
+				.param("h", handle)
+				.param("axis", fnbAxis ? "fnb" : "beauty");
+		if (!fnbAxis) {
+			spec = spec.param("minAnalyzed", MIN_ANALYZED).param("minBeautyRatio", MIN_BEAUTY_RATIO_PERCENT);
+		}
+		return spec.query(String.class).list();
 	}
 
 	public record SummaryRow(Long followers, Long analyzedCount, Long postsCount, Long avgViews,

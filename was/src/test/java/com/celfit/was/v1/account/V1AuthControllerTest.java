@@ -86,7 +86,7 @@ class V1AuthControllerTest {
 	private UserProfile profile() {
 		return new UserProfile(7L, "user@example.com", "김우민", null, "brand",
 				"portal_search", "+82", "010-1234-5678", "하이프나우", "2-10", "beauty", "staff",
-				false, null, null, OffsetDateTime.parse("2026-06-01T00:00:00Z"), "USER");
+				false, null, null, OffsetDateTime.parse("2026-06-01T00:00:00Z"), "USER", "{}");
 	}
 
 	/** 이메일 중복 확인(6.24)이 findByEmail로 존재만 확인하므로 필요한 필드만 채운 최소 픽스처. */

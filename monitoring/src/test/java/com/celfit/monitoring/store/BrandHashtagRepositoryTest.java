@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.monitoring.testsupport.TestDb;
 import java.time.OffsetDateTime;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,13 +29,6 @@ class BrandHashtagRepositoryTest {
 		brandId = db.queryForObject(
 				"INSERT INTO brand_account (username, ig_user_id) VALUES ('cclime_official', '99') RETURNING id",
 				Long.class);
-	}
-
-	@Test
-	void 태그_삽입은_멱등이다() {
-		repo.insertTags(brandId, new LinkedHashSet<>(List.of("끌리메", "cclime")));
-		repo.insertTags(brandId, new LinkedHashSet<>(List.of("cclime", "cclime_official")));
-		assertThat(repo.findTags(brandId)).containsExactly("끌리메", "cclime", "cclime_official");
 	}
 
 	@Test
@@ -66,35 +58,14 @@ class BrandHashtagRepositoryTest {
 
 	@Test
 	void 태그_전체_교체는_findTags에_반영된다() {
-		repo.insertTags(brandId, new LinkedHashSet<>(List.of("cclime", "끌리메")));
+		repo.addTags(brandId, List.of("cclime", "끌리메"));
 		repo.replaceTags(brandId, List.of("cclime", "새태그"));
 		assertThat(repo.findTags(brandId)).containsExactly("cclime", "새태그");
 	}
 
-	/**
-	 * tombstone 의미론의 핵심 — 유저가 지운 태그는 deleted_at이 채워진 행으로 남고, 등록 replay가
-	 * 부르는 insertTags(ON CONFLICT DO NOTHING)로는 절대 되살아나지 않는다(유저 삭제 의사 보존).
-	 */
-	@Test
-	void 삭제된_태그는_insertTags_시드로_부활하지_않는다() {
-		repo.insertTags(brandId, new LinkedHashSet<>(List.of("cclime", "끌리메")));
-		repo.replaceTags(brandId, List.of("cclime"));   // "끌리메" 삭제(tombstone)
-		assertThat(repo.findTags(brandId)).containsExactly("cclime");
-
-		// 등록 replay가 유니온 시드를 재삽입해도 tombstone 행은 ON CONFLICT DO NOTHING에 막힌다.
-		repo.insertTags(brandId, new LinkedHashSet<>(List.of("cclime", "끌리메", "cclime_official")));
-		assertThat(repo.findTags(brandId)).containsExactly("cclime", "cclime_official");
-
-		// 행 자체는 deleted_at을 채운 채 남아 있다(하드 삭제가 아님).
-		Long deletedCount = db.queryForObject(
-				"SELECT count(*) FROM brand_hashtag WHERE brand_id = ? AND tag = ? AND deleted_at IS NOT NULL",
-				Long.class, brandId, "끌리메");
-		assertThat(deletedCount).isEqualTo(1L);
-	}
-
 	@Test
 	void 삭제한_태그를_다시_replaceTags로_추가하면_재활성된다() {
-		repo.insertTags(brandId, new LinkedHashSet<>(List.of("cclime", "끌리메")));
+		repo.addTags(brandId, List.of("cclime", "끌리메"));
 		repo.replaceTags(brandId, List.of("cclime"));   // "끌리메" 삭제
 		repo.replaceTags(brandId, List.of("cclime", "끌리메"));   // 재추가 — tombstone 해제
 
@@ -110,7 +81,7 @@ class BrandHashtagRepositoryTest {
 	/** addTags(POST)의 tombstone 재활성이 replaceTags와 동일 UPSERT 구문을 쓰는지 확인. */
 	@Test
 	void 태그_추가는_tombstone을_되살린다() {
-		repo.insertTags(brandId, new LinkedHashSet<>(List.of("cclime", "끌리메")));
+		repo.addTags(brandId, List.of("cclime", "끌리메"));
 		repo.deleteTag(brandId, "끌리메");
 		assertThat(repo.findTags(brandId)).containsExactly("cclime");
 
@@ -120,7 +91,7 @@ class BrandHashtagRepositoryTest {
 
 	@Test
 	void 태그_단건_삭제는_멱등이다() {
-		repo.insertTags(brandId, new LinkedHashSet<>(List.of("cclime")));
+		repo.addTags(brandId, List.of("cclime"));
 		repo.deleteTag(brandId, "cclime");
 		repo.deleteTag(brandId, "cclime");   // 없는 대상 재삭제 — 무해
 		repo.deleteTag(brandId, "없는태그");   // 애초에 없던 대상 — 무해
@@ -130,7 +101,7 @@ class BrandHashtagRepositoryTest {
 
 	@Test
 	void 태그_전체_삭제_후_findTags는_빈_목록이다() {
-		repo.insertTags(brandId, new LinkedHashSet<>(List.of("cclime", "끌리메", "cclime_official")));
+		repo.addTags(brandId, List.of("cclime", "끌리메", "cclime_official"));
 		repo.deleteAllTags(brandId);
 
 		assertThat(repo.findTags(brandId)).isEmpty();
@@ -185,6 +156,72 @@ class BrandHashtagRepositoryTest {
 				"SELECT short_code FROM brand_hashtag_post_matched_tags WHERE brand_id = ? AND tag = ? ORDER BY short_code",
 				String.class, brandId, "끌리메");
 		assertThat(codes).containsExactly("AAA", "BBB");
+	}
+
+	// ---------- 태그별 스윕 실행 상태(FE 요청, 2026-08-31) ----------
+
+	@Test
+	void 신규_태그의_실행_상태는_전부_비어있다() {
+		repo.addTags(brandId, List.of("cclime"));
+
+		List<BrandHashtagRepository.RunStateRow> states = repo.findRunStates(brandId);
+
+		assertThat(states).hasSize(1);
+		BrandHashtagRepository.RunStateRow row = states.get(0);
+		assertThat(row.tag()).isEqualTo("cclime");
+		assertThat(row.lastRunStartedAt()).isNull();
+		assertThat(row.lastRunFinishedAt()).isNull();
+		assertThat(row.lastRunFoundCount()).isNull();
+		assertThat(row.lastRunFailed()).isFalse();
+	}
+
+	@Test
+	void markRunStarted는_시작_시각만_채운다() {
+		repo.addTags(brandId, List.of("cclime"));
+
+		repo.markRunStarted(brandId, "cclime");
+
+		BrandHashtagRepository.RunStateRow row = repo.findRunStates(brandId).get(0);
+		assertThat(row.lastRunStartedAt()).isNotNull();
+		assertThat(row.lastRunFinishedAt()).isNull();
+	}
+
+	@Test
+	void markRunFinished는_종료_시각_건수_실패_여부를_채운다() {
+		repo.addTags(brandId, List.of("cclime"));
+		repo.markRunStarted(brandId, "cclime");
+
+		repo.markRunFinished(brandId, "cclime", 4, false);
+
+		BrandHashtagRepository.RunStateRow row = repo.findRunStates(brandId).get(0);
+		assertThat(row.lastRunFinishedAt()).isNotNull();
+		assertThat(row.lastRunFoundCount()).isEqualTo(4);
+		assertThat(row.lastRunFailed()).isFalse();
+	}
+
+	@Test
+	void markRunFinished_실패_기록은_failed를_true로_남긴다() {
+		repo.addTags(brandId, List.of("cclime"));
+		repo.markRunStarted(brandId, "cclime");
+
+		repo.markRunFinished(brandId, "cclime", 0, true);
+
+		BrandHashtagRepository.RunStateRow row = repo.findRunStates(brandId).get(0);
+		assertThat(row.lastRunFailed()).isTrue();
+		assertThat(row.lastRunFoundCount()).isEqualTo(0);
+	}
+
+	/** deleted_at 있는(tombstone) 태그는 findRunStates에서 빠진다 — findTags와 같은 필터. */
+	@Test
+	void 삭제된_태그는_실행_상태_조회에서_빠진다() {
+		repo.addTags(brandId, List.of("cclime", "끌리메"));
+		repo.markRunStarted(brandId, "cclime");
+		repo.markRunStarted(brandId, "끌리메");
+		repo.deleteTag(brandId, "끌리메");
+
+		List<BrandHashtagRepository.RunStateRow> states = repo.findRunStates(brandId);
+
+		assertThat(states).extracting(BrandHashtagRepository.RunStateRow::tag).containsExactly("cclime");
 	}
 
 }

@@ -87,7 +87,7 @@ class V1BrandAccountsControllerTest {
 	private static UserProfile profileOf(String userType, String companyName) {
 		return new UserProfile(7L, "user@example.com", "테스트유저", null, userType, "EMAIL", null, null,
 				companyName, null, null, null, false, null, null,
-				OffsetDateTime.parse("2026-06-01T00:00:00Z"), "USER");
+				OffsetDateTime.parse("2026-06-01T00:00:00Z"), "USER", "{}");
 	}
 
 	private static BrandLinkRow link(long userId, long brandId) {
@@ -1227,18 +1227,31 @@ class V1BrandAccountsControllerTest {
 	// 표면 계약(소유권 403·200/204 셰이프)만 여기서 검증한다 — 합집합 계산·최초 시딩 같은 판정
 	// 로직은 V1BrandAccountServiceHashtagTagsTest가 담당한다(V1BrandDirectPostServiceTest와 같은 분리).
 
+	/**
+	 * 태그 목록은 원장에서 읽는다(정본은 여전히 원장, 08-19 사용자 스코프 개정) — 단 각 태그의 실행
+	 * 상태(status·lastRunAt·lastFoundCount)는 monitoring run-state를 병합한 값이다(2026-08-31 확장).
+	 * 태그 목록 조회 자체({@code getHashtagTags(String)})는 여전히 호출하지 않는다.
+	 */
 	@Test
-	void 태그_조회는_원장에서_읽고_monitoring을_호출하지_않는다() throws Exception {
+	void 태그_조회는_원장_태그에_monitoring_실행_상태를_병합한다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 		given(hashtagTagRepository.findByUserAndBrand(7L, 100L))
 				.willReturn(new java.util.LinkedHashSet<>(List.of("리즈다", "lizda")));
+		given(commandClient.getHashtagRunStates("lizda_official")).willReturn(List.of(
+				new MonitoringCommandClient.TagRunState("리즈다", "done",
+						java.time.OffsetDateTime.parse("2026-08-31T10:00:00Z"), 3),
+				new MonitoringCommandClient.TagRunState("lizda", "collecting", null, null)));
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-tags").with(user(principal())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.tags.length()").value(2))
-				.andExpect(jsonPath("$.data.tags[0]").value("리즈다"))
-				.andExpect(jsonPath("$.data.tags[1]").value("lizda"));
+				.andExpect(jsonPath("$.data.tags[0].tag").value("리즈다"))
+				.andExpect(jsonPath("$.data.tags[0].status").value("done"))
+				.andExpect(jsonPath("$.data.tags[0].lastFoundCount").value(3))
+				.andExpect(jsonPath("$.data.tags[1].tag").value("lizda"))
+				.andExpect(jsonPath("$.data.tags[1].status").value("collecting"))
+				.andExpect(jsonPath("$.data.tags[1].lastRunAt").value(Matchers.nullValue()));
 
 		then(commandClient).should(never()).getHashtagTags(anyString());
 	}
@@ -1258,7 +1271,6 @@ class V1BrandAccountsControllerTest {
 	void 태그_교체는_204다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 
 		mockMvc.perform(put("/v1/brand-monitoring/accounts/100/hashtag-tags")
 						.with(user(principal())).with(csrf())
@@ -1289,7 +1301,6 @@ class V1BrandAccountsControllerTest {
 	void 태그_추가는_204다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 
 		mockMvc.perform(post("/v1/brand-monitoring/accounts/100/hashtag-tags")
 						.with(user(principal())).with(csrf())
@@ -1325,7 +1336,6 @@ class V1BrandAccountsControllerTest {
 	void monitoring_422_태그_추가_거부는_400_VALIDATION_FAILED로_매핑된다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 		willThrow(new MonitoringApiException("VALIDATION", "사용할 수 없는 문자가 포함된 태그입니다.", 422))
 				.given(commandClient).addHashtagTags(anyString(), any());
 
@@ -1353,14 +1363,13 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 
-		then(hashtagTagRepository).should(never()).existsForBrand(anyLong());
+		then(commandClient).should(never()).getHashtagTags(anyString());
 	}
 
 	@Test
 	void 태그_단건_삭제는_204다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 
 		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/hashtag-tags/{tag}", "리즈다")
 						.with(user(principal())).with(csrf()))
@@ -1385,7 +1394,6 @@ class V1BrandAccountsControllerTest {
 	void 태그_전체_삭제는_204다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
-		given(hashtagTagRepository.existsForBrand(100L)).willReturn(true);
 
 		mockMvc.perform(delete("/v1/brand-monitoring/accounts/100/hashtag-tags")
 						.with(user(principal())).with(csrf()))
@@ -1410,8 +1418,8 @@ class V1BrandAccountsControllerTest {
 
 	@Test
 	void monitoring_브랜드_비정합_404는_태그_교체에서_404로_매핑된다() throws Exception {
-		// 태그 조회(GET)는 이제 monitoring을 안 부르니 이 404 시나리오는 시딩(ensureSeeded)이 도는
-		// 쓰기 경로(PUT)로만 재현된다 — existsForBrand=false라 ensureSeeded가 getHashtagTags를 부른다.
+		// 태그 조회(GET)는 이제 monitoring을 안 부르니 이 404 시나리오는 승계(ensureSeeded)가 도는
+		// 쓰기 경로(PUT)로만 재현된다 — ensureSeeded는 매번 getHashtagTags를 부른다(08-27 diff 개정).
 		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(link(7L, 100L)));
 		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
 		given(commandClient.getHashtagTags("lizda_official"))

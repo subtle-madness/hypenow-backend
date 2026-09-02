@@ -49,6 +49,52 @@ public class MonitoringReadRepository {
 	}
 
 	/**
+	 * target + 표시 부속(post_meta·profile_meta·최신 팔로워·last sweep) 통합 조회(2026-08-27 풀 대기
+	 * 수리) — 6.26 목록 조립의 monitoring 왕복을 7회→3회로 줄이는 핵심. findTargets·lastSuccessfulSweepAt·
+	 * findPostMeta·findProfileMeta·findLatestProfileSnapshots 5개 왕복을 한 SQL로 접는다(스냅샷·댓글은
+	 * 행 수가 많아 별도 왕복 유지). 개별 메서드들은 단건 재조립(6.29·6.30)·어드민 경로가 계속 쓴다.
+	 *
+	 * <p>last_completed_at은 비상관 스칼라(CROSS JOIN)라 전 행 동일 — 호출부는 아무 행에서나 읽으면
+	 * 되고, 결과가 0행이면 {@link #lastSuccessfulSweepAt()}로 폴백해야 한다(meta.lastCollectedAt은
+	 * 추적 행이 없어도 응답 계약에 있다).
+	 */
+	public List<TargetDetailRow> findTargetDetails(Collection<Long> targetIds) {
+		if (targetIds.isEmpty()) {
+			return List.of();
+		}
+		return jdbc.sql("""
+				SELECT t.id, t.type, t.username, t.short_code, t.keyword_rule::text AS keyword_rule, t.status,
+				       t.tracked_short_code, t.tracked_since, t.registration_key, t.expires_at,
+				       t.registered_at, t.closed_at, t.last_fetched_at, t.fail_reason,
+				       t.user_id, t.tracked_hidden_at, t.fetch_failing, t.matched_keywords::text AS matched_keywords,
+				       pm.short_code AS pm_short_code, pm.username AS pm_username,
+				       pm.content_type AS pm_content_type, pm.uploaded_at AS pm_uploaded_at,
+				       pm.caption AS pm_caption, pm.thumbnail_url AS pm_thumbnail_url,
+				       pm.image_object_path AS pm_image_object_path,
+				       pf.username AS pf_username, pf.display_name AS pf_display_name,
+				       pf.profile_image_url AS pf_profile_image_url, pf.last_uploaded_at AS pf_last_uploaded_at,
+				       pf.image_object_path AS pf_image_object_path,
+				       ps.followers,
+				       sw.last_completed_at
+				FROM target t
+				LEFT JOIN post_meta pm ON pm.short_code = t.tracked_short_code
+				LEFT JOIN profile_meta pf ON pf.username = t.username
+				LEFT JOIN LATERAL (
+				    SELECT followers FROM profile_snapshot
+				    WHERE username = t.username
+				    ORDER BY captured_on DESC
+				    LIMIT 1
+				) ps ON true
+				CROSS JOIN (SELECT max(completed_at) AS last_completed_at FROM sweep_run WHERE ok = true) sw
+				WHERE t.id IN (:ids)
+				ORDER BY t.registered_at DESC
+				""")
+				.param("ids", targetIds)
+				.query(TargetDetailRow.class)
+				.list();
+	}
+
+	/**
 	 * 추적 게시물 표시 메타(계약 §3 post_meta, v2.2) — caption·uploadedAt·thumbnailUrl의 유일한 산지.
 	 * image_object_path(트랙 KK 확장)는 monitoring 자체 썸네일 아카이브 결과 — null이면 아직 아카이브 전.
 	 */
@@ -212,11 +258,12 @@ public class MonitoringReadRepository {
 	}
 
 	/**
-	 * KST 날짜 구간([fromKstDate, toKstDateInclusive])의 알람 이벤트(갭 문서 A-1-2, 다이제스트
-	 * 크론의 유일한 입력) — 회고 창 재계산(DigestJob 클래스 Javadoc "자정 넘김 유실 해소" 절
-	 * 참조). 워터마크 없이 구간 전체를 매번 다시 읽으므로 몇 번을 재실행해도 안전하다.
-	 * 하한은 fromKstDate의 KST 자정(포함), 상한은 toKstDateInclusive **다음 날**의 KST 자정
-	 * (배타) — 고정 Clock 테스트에서 미래 날짜 이벤트가 섞이지 않도록 KST 날짜 경계 배제
+	 * KST 날짜 구간([fromKstDate, toKstDateInclusive])의 알람 이벤트(갭 문서 A-1-2) — 주간
+	 * 다이제스트 크론({@link com.celfit.was.monitoring.WeeklyDigestJob})의 유일한 alarm_event
+	 * 입력이다. 워터마크 없이 구간 전체를 매번 다시 읽으므로 몇 번을 재실행해도 안전하다(호출부가
+	 * 같은 주간 창을 넘기는 한 같은 결과를 재현 — WeeklyDigestJob 클래스 Javadoc "명시적 창" 절
+	 * 참조). 하한은 fromKstDate의 KST 자정(포함), 상한은 toKstDateInclusive **다음 날**의 KST
+	 * 자정(배타) — 고정 Clock 테스트에서 미래 날짜 이벤트가 섞이지 않도록 KST 날짜 경계 배제
 	 * 시맨틱을 그대로 보존한다.
 	 */
 	public List<AlarmEventRow> findAlarmEventsBetween(LocalDate fromKstDate, LocalDate toKstDateInclusive) {

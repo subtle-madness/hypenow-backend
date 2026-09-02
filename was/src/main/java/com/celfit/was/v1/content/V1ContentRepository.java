@@ -36,9 +36,16 @@ public class V1ContentRepository {
 				.params(sql.params).query(Long.class).single();
 	}
 
-	/** meta.distributors 옵션 — 어휘 테이블 전체, id(슬러그) 오름차순 (스펙 6.1). */
-	public List<Map<String, Object>> findDistributorOptions() {
-		return jdbcClient.sql("SELECT slug, name FROM beauty_distributors ORDER BY slug")
+	/**
+	 * meta.distributors 옵션 — 요청 축의 어휘, id(슬러그) 오름차순 (스펙 6.1).
+	 * 축 인자는 2026-09-01 FE 버티컬 피드백 #5로 도입 — 구(08-31)엔 뷰티 고정이었다.
+	 * 어휘 테이블이 두 축의 유통사를 함께 담으므로(뷰티 2·F&amp;B 11) 축 필터가 없으면
+	 * 상대 축 유통사가 드롭다운에 섞인다.
+	 */
+	public List<Map<String, Object>> findDistributorOptions(String axis) {
+		return jdbcClient.sql(
+						"SELECT slug, name FROM beauty_distributors WHERE axis = :axis ORDER BY slug")
+				.param("axis", axis)
 				.query((rs, i) -> Map.<String, Object>of("id", rs.getString("slug"), "name", rs.getString("name")))
 				.list();
 	}
@@ -56,7 +63,6 @@ public class V1ContentRepository {
 				LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
 				WHERE c.posted_at >= :start AND c.posted_at < :end
 				  AND c.content_type = :contentType
-				  AND an.is_beauty = true
 				  -- 랭킹은 시점 편향 없는 분만 노출 (2026-07-21 PO 결정): late_backfill(늦크롤 지표 상향
 				  -- 편향)·immature(미성숙 하향 편향)는 제외, timely만 노출. 단 시점 미분류 레거시(NULL,
 				  -- V33 이전 기분석분 — 백필 편향과 무관)는 비회귀로 유지. 백필분은 인플루언서 상세
@@ -68,8 +74,19 @@ public class V1ContentRepository {
 		params.put("end", q.endExclusive());
 		params.put("contentType", q.contentType());
 		if (q.mainCategory() != null) {
+			// 대분류 필터가 있으면 축 게이트(is_beauty)를 걸지 않는다 (2026-08-31 F&B 서빙 개방 §2).
+			// 생산자 불변식 "main_category 있음 ⇒ 축 확정"이 근거: 뷰티 slug면 is_beauty=true가
+			// 파생돼 있어 동치이고, F&B slug면 is_beauty=false라 기존 게이트와 모순이라 빼야 나온다.
 			sb.append(" AND an.main_category = :mainCategory");
 			params.put("mainCategory", q.mainCategory());
+		} else if ("fnb".equals(q.vertical())) {
+			// 버티컬 전체(2026-09-01 FE 요청) — F&B는 "main이 F&B slug"가 곧 축 판정이라 IN이 정확.
+			sb.append(" AND an.main_category IN (:verticalMains)");
+			params.put("verticalMains", com.celfit.was.v1.common.MainCategories.FNB);
+		} else {
+			// 무필터·vertical=beauty = 뷰티(기본 화면과 동치) — is_beauty가 뷰티 축 판정 그 자체라
+			// IN(뷰티 slug)보다 넓다(대분류 미도출 뷰티 게시물 포함, 기존 노출 유지).
+			sb.append(" AND an.is_beauty = true");
 		}
 		if (q.midCategory() != null) {
 			// 중분류 → 소속 소분류 확장 매칭 (스펙 5.5) — 어휘는 beauty_taxonomy가 원천

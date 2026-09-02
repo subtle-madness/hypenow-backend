@@ -120,6 +120,10 @@ services:
       # 메일: admin 계정만 실발송(08-12) — test DB에 실사용자 이메일이 있어 전원 실발송 금지.
       # 일반 계정 인증코드는 종전대로 docker logs deploy-test-was-1 에서 확인.
       RESEND_API_KEY: ${RESEND_API_KEY:-}
+      WEB_BASE_URL: ${DEV_WEB_BASE_URL:-https://dev.hypenow.io}   # 주간 리포트 메일 딥링크 기준 주소(스테이징)
+      # 주간 다이제스트 생성·발송 크론(README §13-5-3) — 운영과 동일 관용구, DEV_* 오버라이드
+      MONITORING_DIGEST_WEEKLY_CRON: "${DEV_MONITORING_DIGEST_WEEKLY_CRON:-0 0 9 * * MON}"
+      MONITORING_DIGEST_WEEKLY_CATCHUP_CRON: "${DEV_MONITORING_DIGEST_WEEKLY_CATCHUP_CRON:-0 10,20,30,40,50 9-23 * * *}"
       WAS_MAIL_ADMIN_ONLY: "true"
       CODES_API_KEY: ${DEV_CODES_API_KEY:-}
       REDIS_HOST: test-redis
@@ -189,16 +193,7 @@ services:
       # MONITORING_SCHEDULE_SWEEP_CRON: "0 <mm> <HH> * * *"
       # 브랜드 태그 스윕도 동일 원칙 — test는 크론 off, 검증은 임시 근접 시각 1회 후 제거.
       # MONITORING_BRAND_SCHEDULE_SWEEP_CRON: "0 <mm> <HH> * * *"
-      # test는 기본 비활성("-")이고 .env(DEV_ALARM_DISPATCH_CRON)로만 일시 개통한다(README §13-5).
-      # ⚠️ 허용목록은 fail-OPEN이다 — 비어 있으면 무제한 발송이고, test analysis DB엔 실사용자
-      # 이메일이 들어 있다. 크론을 켜기 전에 DEV_ALARM_ALLOWED_RECIPIENTS를 반드시 먼저 채울 것.
-      MONITORING_ALARM_DISPATCH_CRON: "${DEV_ALARM_DISPATCH_CRON:--}"
-      MONITORING_ALARM_READER_URL: jdbc:postgresql://test-postgres:5432/analysis
-      MONITORING_ALARM_READER_USERNAME: alarm_reader
-      MONITORING_ALARM_READER_PASSWORD: ${DEV_ALARM_READER_PASSWORD:-}
-      # analysis DB에 실사용자 이메일이 있다 — 개통 시 반드시 검증 주소만 넣는다(README §13-5).
-      MONITORING_ALARM_ALLOWED_RECIPIENTS: ${DEV_ALARM_ALLOWED_RECIPIENTS:-}
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      # 알람 메일 발송은 2026-08-27 주간 개편으로 was(주간 리포트)로 이관됐다 - monitoring은 alarm_event 적재만 한다.
       # ExitOnOOM은 운영과 동일 관용구(08-12) — test는 데이터가 작아 힙 상향은 미적용.
       # OOM 자동 힙 덤프 — 운영 analytics 주석 참조. ExitOnOOM과 공존(덤프를 먼저 쓰고 종료).
       JAVA_OPTS: "-Xms128m -Xmx256m -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/test-monitoring.hprof"

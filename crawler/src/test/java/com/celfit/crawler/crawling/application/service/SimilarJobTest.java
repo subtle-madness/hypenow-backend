@@ -80,7 +80,7 @@ class SimilarJobTest {
     @Test
     void 중지_요청이_있으면_시드를_처리하지_않는다() {
         when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                eq(InfluencerStatus.QUALIFIED), anyBoolean(), any())).thenReturn(List.of(seed(1L, "seed1", "100")));
+                eq(InfluencerStatus.QUALIFIED), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(seed(1L, "seed1", "100")));
         stopFlag.request(JobName.SIMILAR);
 
         var summary = job.run(TriggerType.MANUAL);
@@ -94,19 +94,19 @@ class SimilarJobTest {
         // fnb.pipeline-enabled(스펙 2026-08-23 §4) — 잡은 토글 값을 판단하지 않고 선정 쿼리에 넘긴다.
         when(settings.fnbPipelineEnabled()).thenReturn(true);
         when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                eq(InfluencerStatus.QUALIFIED), anyBoolean(), any())).thenReturn(List.of());
+                eq(InfluencerStatus.QUALIFIED), anyBoolean(), anyBoolean(), any())).thenReturn(List.of());
 
         job.run(TriggerType.MANUAL);
 
         verify(influencers).findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                eq(InfluencerStatus.QUALIFIED), eq(true), any());
+                eq(InfluencerStatus.QUALIFIED), eq(true), anyBoolean(), any());
     }
 
     @Test
     void 유사_계정을_DISCOVERED로_upsert하고_출처를_기록하고_시드를_마킹한다() {
         Influencer s = seed(1L, "seed1", "100");
         when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                eq(InfluencerStatus.QUALIFIED), anyBoolean(), any())).thenReturn(List.of(s));
+                eq(InfluencerStatus.QUALIFIED), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(s));
         when(suggested.fetch("100")).thenReturn(new HikerSuggestedSupplement.Suggested(
                 List.of(Map.of("username", "new1", "pk", "1"),
                         Map.of("username", "known1", "pk", "2")), Map.of()));
@@ -133,7 +133,7 @@ class SimilarJobTest {
     void 시드_자신과_run_내_중복은_건너뛴다() {
         Influencer s = seed(1L, "seed1", "100");
         when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                eq(InfluencerStatus.QUALIFIED), anyBoolean(), any())).thenReturn(List.of(s));
+                eq(InfluencerStatus.QUALIFIED), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(s));
         when(suggested.fetch("100")).thenReturn(new HikerSuggestedSupplement.Suggested(
                 List.of(Map.of("username", "SEED1"),      // 자기 자신 (대소문자 무시)
                         Map.of("username", "dup"),
@@ -149,7 +149,7 @@ class SimilarJobTest {
     void igUserId가_없으면_pk를_해석해_백필한다() {
         Influencer s = seed(1L, "seed1", null);
         when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                eq(InfluencerStatus.QUALIFIED), anyBoolean(), any())).thenReturn(List.of(s));
+                eq(InfluencerStatus.QUALIFIED), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(s));
         when(resolver.resolvePk("seed1")).thenReturn("777");
         when(suggested.fetch("777")).thenReturn(
                 new HikerSuggestedSupplement.Suggested(List.of(), Map.of()));
@@ -165,7 +165,7 @@ class SimilarJobTest {
     void pk_해석_실패_시드는_마킹하지_않고_failedSeeds로_남긴다() {
         Influencer s = seed(1L, "seed1", null);
         when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                eq(InfluencerStatus.QUALIFIED), anyBoolean(), any())).thenReturn(List.of(s));
+                eq(InfluencerStatus.QUALIFIED), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(s));
         when(resolver.resolvePk("seed1")).thenReturn(null);
 
         var summary = job.run(TriggerType.MANUAL);
@@ -179,7 +179,7 @@ class SimilarJobTest {
     void chaining_불가_403은_수확_불가로_마킹해_재시도하지_않는다() {
         Influencer s = seed(1L, "seed1", "100");
         when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                eq(InfluencerStatus.QUALIFIED), anyBoolean(), any())).thenReturn(List.of(s));
+                eq(InfluencerStatus.QUALIFIED), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(s));
         when(suggested.fetch("100")).thenThrow(new ApifyException(
                 "Hiker HTTP 403: {\"detail\":\"Not eligible for chaining.\",\"exc_type\":\"InvalidTargetUser\"}"));
 
@@ -208,7 +208,7 @@ class SimilarJobTest {
                 });
         Influencer s = seed(1L, "seed1", "100");
         when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                eq(InfluencerStatus.QUALIFIED), anyBoolean(), any())).thenReturn(List.of(s));
+                eq(InfluencerStatus.QUALIFIED), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(s));
         when(suggested.fetch("100")).thenThrow(new ApifyException(
                 "Hiker HTTP 403: {\"detail\":\"Not eligible for chaining.\",\"exc_type\":\"InvalidTargetUser\"}"));
 
@@ -224,7 +224,7 @@ class SimilarJobTest {
         Influencer bad = seed(1L, "bad", "1");
         Influencer good = seed(2L, "good", "2");
         when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                eq(InfluencerStatus.QUALIFIED), anyBoolean(), any())).thenReturn(List.of(bad, good));
+                eq(InfluencerStatus.QUALIFIED), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(bad, good));
         when(suggested.fetch("1")).thenThrow(new ApifyException("Hiker HTTP 500: 서버 오류"));
         when(suggested.fetch("2")).thenReturn(
                 new HikerSuggestedSupplement.Suggested(List.of(), Map.of()));
@@ -241,7 +241,7 @@ class SimilarJobTest {
     void 일반_실패_시드도_해석된_pk_백필은_저장된다() {
         Influencer s = seed(1L, "seed1", null);
         when(influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                eq(InfluencerStatus.QUALIFIED), anyBoolean(), any())).thenReturn(List.of(s));
+                eq(InfluencerStatus.QUALIFIED), anyBoolean(), anyBoolean(), any())).thenReturn(List.of(s));
         when(resolver.resolvePk("seed1")).thenReturn("777");
         when(suggested.fetch("777")).thenThrow(new ApifyException("Hiker HTTP 500: 서버 오류"));
 

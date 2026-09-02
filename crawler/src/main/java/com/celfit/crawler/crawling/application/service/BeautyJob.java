@@ -29,15 +29,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 판정 잡 — 두 카테고리 축(뷰티·F&B)을 1콜로 판정한다. QUALIFIED 중 미판정분의 최신 raw_profile
- * 텍스트 재료(이름·카테고리·bio)를 로컬 Claude에 배치로 넘겨 beauty_class·fnb_class와 각 파생
- * boolean을 저장한다. 인스타그램 API 호출 없음(비용 $0).
- * 선정은 세 경로다 — (1) 뷰티 미판정 신규, (2) F&B 백필(뷰티는 판정 완료·F&B만 미판정 — 스펙
- * 2026-08-23 §3), (3) rejudge=true일 때의 재판정. (2)는 F&B 축만 적용하고 뷰티 판정은
- * MANUAL 포함해 절대 덮지 않는다(fnbOnly 마스크).
+ * 판정 잡 — 세 카테고리 축(뷰티·F&B·홈/리빙)을 1콜로 판정한다. QUALIFIED 중 미판정분의 최신
+ * raw_profile 텍스트 재료(이름·카테고리·bio)를 로컬 Claude에 배치로 넘겨 beauty_class·fnb_class·
+ * home_living_class와 각 파생 boolean을 저장한다. 인스타그램 API 호출 없음(비용 $0).
+ * 선정은 네 경로다 — (1) 뷰티 미판정 신규, (2) F&B 백필(뷰티는 판정 완료·F&B만 미판정 — 스펙
+ * 2026-08-23 §3), (3) 홈/리빙 백필(뷰티 판정 완료·홈/리빙 미판정 — 스펙 2026-08-27 §3),
+ * (4) rejudge=true일 때의 재판정. (2)(3)은 백필 축만 적용하고 뷰티 판정은
+ * MANUAL 포함해 절대 덮지 않는다(backfillOnly 마스크).
  * rejudge는 판정 후 재료(raw_profile)가 갱신된 CLAUDE 비뷰티 판정분을 재판정한다 —
- * 뷰티 MANUAL(수동)은 선정에서 빠져 덮이지 않고, F&amp;B MANUAL은 선정 경로와 무관하게
- * 적용 시점 가드(fnb_source=MANUAL이면 F&amp;B 축 미적용)로 보존된다.
+ * 뷰티 MANUAL(수동)은 선정에서 빠져 덮이지 않고, F&amp;B·홈/리빙 MANUAL은 선정 경로와 무관하게
+ * 적용 시점 가드(source=MANUAL이면 해당 축 미적용)로 보존된다.
  * beauty=true는 SIMILAR 잡의 시드 자격이 된다.
  */
 @Service
@@ -61,7 +62,8 @@ public class BeautyJob {
     static final int REJUDGE_MIN_ITEMS = 3;
 
     public record Summary(int judgedBeauty, int judgedService, int judgedForeign, int judgedNotBeauty,
-                          int fnbApplied, int fnbPositive, int skippedNoProfile, int failedBatches) {}
+                          int fnbApplied, int fnbPositive, int homeLivingApplied, int homeLivingPositive,
+                          int skippedNoProfile, int failedBatches) {}
 
     private final InfluencerRepository influencers;
     private final RawProfileRepository rawProfiles;
@@ -99,12 +101,21 @@ public class BeautyJob {
                 InfluencerStatus.QUALIFIED, PageRequest.of(0, limit, Sort.by("id"))));
         // F&B 백필 — 뷰티 축은 판정 완료, F&B 축만 채운다(스펙 §3). 뷰티 판정(MANUAL 포함)은 덮지 않는다.
         // rejudge보다 앞선다 — 초기 백로그 소화가 이번 확장의 목적이고, rejudge는 백필 완료 후 자연 재개된다.
-        Set<String> fnbOnly = new HashSet<>();
+        Set<String> backfillOnly = new HashSet<>();
         if (targets.size() < limit) {
             List<Influencer> backfill = influencers.findFnbBackfillTargets(
                     InfluencerStatus.QUALIFIED, PageRequest.of(0, limit - targets.size()));
-            backfill.forEach(i -> fnbOnly.add(i.getUsername()));
+            backfill.forEach(i -> backfillOnly.add(i.getUsername()));
             targets.addAll(backfill);
+        }
+        // 홈/리빙 백필 — 뷰티·F&B 판정 완료분의 홈/리빙 축을 채운다(스펙 2026-08-27 §3).
+        // F&B 백필 뒤 순서 — F&B 백필 선정분은 홈/리빙 축도 첫 판정으로 같이 적용되므로 중복 선정은
+        // byUsername 중복 방어가 거른다.
+        if (targets.size() < limit) {
+            List<Influencer> hlBackfill = influencers.findHomeLivingBackfillTargets(
+                    InfluencerStatus.QUALIFIED, PageRequest.of(0, limit - targets.size()));
+            hlBackfill.forEach(i -> backfillOnly.add(i.getUsername()));
+            targets.addAll(hlBackfill);
         }
         if (rejudge && targets.size() < limit) {
             // 재료(raw_profile)가 판정 후 갱신된 비뷰티만 — 재료가 그대로면 같은 판정만 반복한다.
@@ -146,12 +157,12 @@ public class BeautyJob {
         }
 
         int beauty = 0, service = 0, foreign = 0, notBeauty = 0, failedBatches = 0;
-        int fnbApplied = 0, fnbPositive = 0, done = 0;
+        int fnbApplied = 0, fnbPositive = 0, homeLivingApplied = 0, homeLivingPositive = 0, done = 0;
         List<List<BeautyJudge.ProfileCard>> chunks = ActorInputs.chunk(cards, JUDGE_CHUNK);
-        // 백필 선정분 중 실제로 카드가 만들어진 수 — fnbOnly 원본 크기를 쓰면 재료 없어 스킵된 건까지
+        // 백필 선정분 중 실제로 카드가 만들어진 수 — backfillOnly 원본 크기를 쓰면 재료 없어 스킵된 건까지
         // 세어 "대상 N명 그중 백필 M"의 M이 N을 넘을 수 있다(백필 백로그 소진 속도를 오독하게 된다).
-        long backfillCards = fnbOnly.stream().filter(byUsername::containsKey).count();
-        log.info("뷰티 판정 시작 — 대상 {}명(재료 없음 스킵 {}, 그중 F&B 백필 선정 {}), 배치 {}개",
+        long backfillCards = backfillOnly.stream().filter(byUsername::containsKey).count();
+        log.info("뷰티 판정 시작 — 대상 {}명(재료 없음 스킵 {}, 그중 백필 선정 {}), 배치 {}개",
                 cards.size(), skipped, backfillCards, chunks.size());
         int total = chunks.size(), i = 0;
         for (List<BeautyJudge.ProfileCard> chunk : chunks) {
@@ -168,23 +179,26 @@ public class BeautyJob {
                 log.warn("뷰티 판정 배치 실패 ({}/{}, {}명): {}", i, total, chunk.size(), e.getMessage());
                 continue;
             }
-            logResponseGaps(chunk, verdicts, fnbOnly);
+            logResponseGaps(chunk, verdicts, backfillOnly);
             int doneBefore = done;
             ChunkResult r = txTemplate.execute(status ->
-                    applyVerdicts(verdicts, byUsername, captionCounts, fnbOnly, doneBefore, cards.size()));
+                    applyVerdicts(verdicts, byUsername, captionCounts, backfillOnly, doneBefore, cards.size()));
             beauty += r.beauty();
             service += r.service();
             foreign += r.foreign();
             notBeauty += r.notBeauty();
             fnbApplied += r.fnbApplied();
             fnbPositive += r.fnbPositive();
+            homeLivingApplied += r.homeLivingApplied();
+            homeLivingPositive += r.homeLivingPositive();
             done += r.applied();
             log.info("뷰티 판정 배치 ({}/{}) 완료 — 누계 뷰티 {} / 시술·서비스 {} / 외국인 {} / 비뷰티 {}"
-                            + " / F&B 적용 {} (인플루언서·회사 {})",
-                    i, total, beauty, service, foreign, notBeauty, fnbApplied, fnbPositive);
+                            + " / F&B 적용 {} (인플루언서·회사 {}) / 홈리빙 적용 {} (인플루언서·회사 {})",
+                    i, total, beauty, service, foreign, notBeauty, fnbApplied, fnbPositive,
+                    homeLivingApplied, homeLivingPositive);
         }
         return new Summary(beauty, service, foreign, notBeauty, fnbApplied, fnbPositive,
-                skipped, failedBatches);
+                homeLivingApplied, homeLivingPositive, skipped, failedBatches);
     }
 
     /**
@@ -218,28 +232,30 @@ public class BeautyJob {
         return c.substring(0, end);
     }
 
-    /** applied는 이 배치에서 실제로 저장한 계정 수 — 계정별 로그의 진행 카운터 기준(F&B만 적용한 건 포함). */
+    /** applied는 이 배치에서 실제로 저장한 계정 수 — 계정별 로그의 진행 카운터 기준(백필 축만 적용한 건 포함). */
     private record ChunkResult(int beauty, int service, int foreign, int notBeauty,
-                               int fnbApplied, int fnbPositive, int applied) {}
+                               int fnbApplied, int fnbPositive,
+                               int homeLivingApplied, int homeLivingPositive, int applied) {}
 
     /**
      * 응답 누락·중복·축 부분 무응답 관측 — 모델이 요청한 계정 일부를 빼먹거나 한 축만 무효값으로 내도
      * 예외가 아니라서(나머지 판정을 버릴 이유가 없다) 조용히 지나가던 것을 로그로 드러낸다. 누락분·
      * 무응답 축은 미판정으로 남아 다음 실행에 재시도되므로 데이터 유실은 아니지만, 빈도가 높아지면
-     * 프롬프트·청크 크기를 의심해야 한다. 백필(fnbOnly)은 뷰티 축을 애초에 안 쓰므로 결손이 아니다.
+     * 프롬프트·청크 크기를 의심해야 한다. 백필(backfillOnly)은 뷰티 축을 애초에 안 쓰므로 결손이 아니다.
      */
     private static void logResponseGaps(List<BeautyJudge.ProfileCard> chunk,
-                                        List<BeautyJudge.Verdict> verdicts, Set<String> fnbOnly) {
+                                        List<BeautyJudge.Verdict> verdicts, Set<String> backfillOnly) {
         Set<String> returned = new LinkedHashSet<>();
         List<String> dups = new ArrayList<>();
-        int beautyGaps = 0, fnbGaps = 0;
+        int beautyGaps = 0, fnbGaps = 0, hlGaps = 0;
         for (BeautyJudge.Verdict v : verdicts) {
             if (!returned.add(v.username())) {
                 dups.add(v.username());
                 continue;  // 중복분은 어차피 버려지므로 축 결손으로도 세지 않는다
             }
-            if (v.beautyClass() == null && !fnbOnly.contains(v.username())) beautyGaps++;
+            if (v.beautyClass() == null && !backfillOnly.contains(v.username())) beautyGaps++;
             if (v.fnbClass() == null) fnbGaps++;
+            if (v.homeLivingClass() == null) hlGaps++;
         }
         List<String> missing = chunk.stream()
                 .map(BeautyJudge.ProfileCard::username)
@@ -251,9 +267,10 @@ public class BeautyJob {
         if (!dups.isEmpty()) {
             log.warn("뷰티 판정 응답 중복 {}건 — 첫 값이 적용됨: {}", dups.size(), dups);
         }
-        if (beautyGaps > 0 || fnbGaps > 0) {
-            log.warn("판정 응답 축 부분 무응답 — 뷰티축 {}건 / F&B축 {}건 (해당 축만 미판정 유지, 다음 실행 재시도)",
-                    beautyGaps, fnbGaps);
+        if (beautyGaps > 0 || fnbGaps > 0 || hlGaps > 0) {
+            log.warn("판정 응답 축 부분 무응답 — 뷰티축 {}건 / F&B축 {}건 / 홈리빙축 {}건"
+                            + " (해당 축만 미판정 유지, 다음 실행 재시도)",
+                    beautyGaps, fnbGaps, hlGaps);
         }
     }
 
@@ -263,9 +280,10 @@ public class BeautyJob {
      * (CollectJob이 방문 단위 트랜잭션 전환 때 겪은 회귀와 동일 — CollectJobIntegrationTest 참고).
      */
     private ChunkResult applyVerdicts(List<BeautyJudge.Verdict> verdicts, Map<String, Influencer> byUsername,
-                                      Map<String, Integer> captionCounts, Set<String> fnbOnly,
+                                      Map<String, Integer> captionCounts, Set<String> backfillOnly,
                                       int done, int totalCards) {
         int beauty = 0, service = 0, foreign = 0, notBeauty = 0, fnbApplied = 0, fnbPositive = 0;
+        int homeLivingApplied = 0, homeLivingPositive = 0;
         int startDone = done;
         Set<String> applied = new HashSet<>();  // 중복 응답 방어 — 첫 값만 채택(logResponseGaps가 경고)
         for (BeautyJudge.Verdict v : verdicts) {
@@ -274,10 +292,10 @@ public class BeautyJob {
             if (inf == null) continue;  // 응답이 지어낸 username — 무시
             // 판정에 실제로 쓴 캡션 건수 — 0이면 나중에 캡션이 쌓였을 때 재판정 대상이 된다
             short capCount = captionCounts.getOrDefault(v.username(), 0).shortValue();
-            // F&B 백필로 선정된 계정은 뷰티 축을 절대 덮지 않는다 — 모델이 뷰티 판정을 같이 내도 버린다
+            // 백필로 선정된 계정은 뷰티 축을 절대 덮지 않는다 — 모델이 뷰티 판정을 같이 내도 버린다
             // (MANUAL 수동 교정분도 백필 대상이라, 여기서 막지 않으면 수동 판정이 조용히 날아간다).
-            boolean applyBeauty = !fnbOnly.contains(v.username()) && v.beautyClass() != null;
-            // F&B 축의 MANUAL(수동 교정)은 적용 시점에 막는다 — fnbOnly 마스크는 뷰티 축만 보호하므로,
+            boolean applyBeauty = !backfillOnly.contains(v.username()) && v.beautyClass() != null;
+            // F&B 축의 MANUAL(수동 교정)은 적용 시점에 막는다 — backfillOnly 마스크는 뷰티 축만 보호하므로,
             // rejudge·신규 경로로 같은 계정이 다시 잡히면 수동 F&B 판정이 CLAUDE로 조용히 덮인다.
             // 정착 규칙(스펙 2026-08-27 §1): 캡션 기반 판정은 자동 재적용 금지(이후는 수동만),
             // 캡션 0건 판정은 캡션이 생겼을 때만 1회 업그레이드 — count 미기록(NULL)은 정착으로 취급.
@@ -287,11 +305,20 @@ public class BeautyJob {
             boolean applyFnb = v.fnbClass() != null
                     && !Influencer.BEAUTY_SOURCE_MANUAL.equals(inf.getFnbSource())
                     && (fnbFirstJudgment || fnbCaptionUpgrade);
-            // 적용할 축이 하나도 없으면(마스크·MANUAL 가드로 둘 다 버렸거나 양축 무응답) 저장·카운터·
+            // 홈/리빙 축 정착 규칙(스펙 2026-08-27 홈/리빙 §3) — F&B 가드와 대칭: MANUAL 보호,
+            // 첫 판정 또는 캡션 0건 → N건 업그레이드만 적용. 토글 on 이후의 매 주기 재판정
+            // 뒤집힘(F&B 08-26 실측)을 예방적으로 차단한다.
+            Short prevHlCap = inf.getHomeLivingCaptionCount();
+            boolean hlFirstJudgment = inf.getHomeLivingClass() == null;
+            boolean hlCaptionUpgrade = prevHlCap != null && prevHlCap == 0 && capCount > 0;
+            boolean applyHomeLiving = v.homeLivingClass() != null
+                    && !Influencer.BEAUTY_SOURCE_MANUAL.equals(inf.getHomeLivingSource())
+                    && (hlFirstJudgment || hlCaptionUpgrade);
+            // 적용할 축이 하나도 없으면(마스크·MANUAL 가드로 전부 버렸거나 전 축 무응답) 저장·카운터·
             // 계정별 로그를 모두 건너뛴다 — 바뀐 게 없는데 진행 카운터가 오르면 배치 진척을 오독한다.
-            if (!applyBeauty && !applyFnb) continue;
+            if (!applyBeauty && !applyFnb && !applyHomeLiving) continue;
             // 축별 class는 모델 응답이 무효·누락이면 null — 그 축만 미판정으로 남기고 다른 축은 적용한다
-            String beautyLabel = fnbOnly.contains(v.username()) ? "뷰티 판정 보존" : "뷰티축 무응답";
+            String beautyLabel = backfillOnly.contains(v.username()) ? "뷰티 판정 보존" : "뷰티축 무응답";
             if (applyBeauty) {
                 inf.classify(v.beautyClass(), Influencer.BEAUTY_SOURCE_CLAUDE, v.reason(), v.basis());
                 inf.setBeautyJudgedAt(clock.instant());  // rejudge의 '오래된 판정 우선' 기준
@@ -324,14 +351,29 @@ public class BeautyJob {
                 case FOREIGN_INFLUENCER -> "F&B(외국인)";
                 case NONE -> "비F&B";
             };
+            if (applyHomeLiving) {
+                inf.classifyHomeLiving(v.homeLivingClass(), Influencer.BEAUTY_SOURCE_CLAUDE,
+                        v.homeLivingReason(), v.homeLivingBasis());
+                inf.setHomeLivingJudgedAt(clock.instant());
+                inf.setHomeLivingCaptionCount(capCount);
+                homeLivingApplied++;
+                if (v.homeLivingClass().inCategory()) homeLivingPositive++;
+            }
+            String hlLabel = !applyHomeLiving ? "" : " / " + switch (v.homeLivingClass()) {
+                case INFLUENCER -> "홈리빙(인플루언서)";
+                case COMPANY -> "홈리빙(회사)";
+                case SERVICE -> "홈리빙(서비스)";
+                case FOREIGN_INFLUENCER -> "홈리빙(외국인)";
+                case NONE -> "비홈리빙";
+            };
             influencers.save(inf);
             done++;
             // 사유는 실제로 적용한 축의 것 — 뷰티를 안 쓴 건에 뷰티 사유가 찍히면 덮인 것으로 오독된다
-            String reason = applyBeauty ? v.reason() : v.fnbReason();
-            log.info("뷰티 판정 ({}/{}) {} — {}{} ({})",
-                    done, totalCards, v.username(), beautyLabel, fnbLabel, reason);
+            String reason = applyBeauty ? v.reason() : (applyFnb ? v.fnbReason() : v.homeLivingReason());
+            log.info("뷰티 판정 ({}/{}) {} — {}{}{} ({})",
+                    done, totalCards, v.username(), beautyLabel, fnbLabel, hlLabel, reason);
         }
         return new ChunkResult(beauty, service, foreign, notBeauty, fnbApplied, fnbPositive,
-                done - startDone);
+                homeLivingApplied, homeLivingPositive, done - startDone);
     }
 }

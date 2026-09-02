@@ -192,7 +192,7 @@ class CollectJobIntegrationTest extends IntegrationTest {
     void findCollectTargets는_재방문_주기_안_지난_QUALIFIED를_제외하고_백필을_먼저_반환한다() {
         Instant now = clock.instant();
         Instant revisitBefore = now.minus(java.time.Duration.ofDays(settings.revisitIntervalDays()));
-        long backfillBefore = influencers.countBackfillPending(false);
+        long backfillBefore = influencers.countBackfillPending(false, false);
 
         Influencer backfillInf = new Influencer(USERNAME_BACKFILL);
         backfillInf.setStatus(InfluencerStatus.QUALIFIED);
@@ -233,7 +233,7 @@ class CollectJobIntegrationTest extends IntegrationTest {
         companyInf.setBeautyCompany(true);
         Long companyId = influencers.save(companyInf).getId();
 
-        List<Influencer> targets = influencers.findCollectTargets(revisitBefore, false,
+        List<Influencer> targets = influencers.findCollectTargets(revisitBefore, false, false,
                 org.springframework.data.domain.PageRequest.of(0, 100));
         List<Long> targetIds = targets.stream().map(Influencer::getId).toList();
 
@@ -241,9 +241,9 @@ class CollectJobIntegrationTest extends IntegrationTest {
         assertThat(targetIds).doesNotContain(recentId, notBeautyId, unjudgedId, companyId);
         assertThat(targetIds.indexOf(backfillId)).isLessThan(targetIds.indexOf(dueId));
 
-        assertThat(influencers.countTrackDue(revisitBefore, false)).isGreaterThanOrEqualTo(1L);
+        assertThat(influencers.countTrackDue(revisitBefore, false, false)).isGreaterThanOrEqualTo(1L);
         // 대시보드 READY 카운트도 뷰티만 — 백필 대기 증가분은 뷰티 백필 1명뿐이어야 한다
-        assertThat(influencers.countBackfillPending(false)).isEqualTo(backfillBefore + 1);
+        assertThat(influencers.countBackfillPending(false, false)).isEqualTo(backfillBefore + 1);
     }
 
     // ---------------------------------------------------------------------
@@ -290,7 +290,7 @@ class CollectJobIntegrationTest extends IntegrationTest {
         company.setBeautyCompany(true);   // 뷰티 회사 — 릴스 수집도 제외
         Long companyId = influencers.save(company).getId();
 
-        List<Influencer> targets = influencers.findReelsTargets(revisitBefore, false,
+        List<Influencer> targets = influencers.findReelsTargets(revisitBefore, false, false,
                 org.springframework.data.domain.PageRequest.of(0, 100));
         List<Long> targetIds = targets.stream().map(Influencer::getId).toList();
 
@@ -299,7 +299,7 @@ class CollectJobIntegrationTest extends IntegrationTest {
 
         // SIMILAR 시드에서도 회사는 빠진다 (인플루언서만 시드)
         List<Long> seedIds = influencers.findByStatusAndBeautyTrueAndSimilarProcessedAtIsNull(
-                        InfluencerStatus.QUALIFIED, false,
+                        InfluencerStatus.QUALIFIED, false, false,
                         org.springframework.data.domain.PageRequest.of(0, 1000))
                 .stream().map(Influencer::getId).toList();
         assertThat(seedIds).contains(backfillId);
@@ -308,7 +308,7 @@ class CollectJobIntegrationTest extends IntegrationTest {
         // 백필끼리는 프로필 수집 완료 계정 우선 — 피드만 되고 릴스가 안 된 "짝 안 맞는" 계정부터 채운다
         assertThat(targetIds.indexOf(backfillId)).isLessThan(targetIds.indexOf(plainBackfillId));
 
-        assertThat(influencers.countReelsDue(revisitBefore, false)).isGreaterThanOrEqualTo(2L);
+        assertThat(influencers.countReelsDue(revisitBefore, false, false)).isGreaterThanOrEqualTo(2L);
     }
 
     // rejudge 선정(오래된 판정 우선·재료 갱신 조건)은 BeautySelectionIntegrationTest가 고정한다.

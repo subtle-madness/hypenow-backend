@@ -163,12 +163,12 @@ class OpenApiDocsIntegrationTest extends IntegrationTest {
 						"$.paths['/v1/monitoring/items/{itemId}'].patch.requestBody.content['application/json'].schema['$ref']")
 						.value("#/components/schemas/MonitoringItemPatchRequest"))
 				.andExpect(jsonPath("$.components.schemas.MonitoringItemPatchRequest.properties.campaignName").exists())
-				// 알림 설정 PATCH — content(이벤트별 부분 맵)
+				// 알림 설정 PATCH — weeklyEmail 토글 1개(2026-08-27 개편 §5)
 				.andExpect(jsonPath(
 						"$.paths['/v1/notification-settings'].patch.requestBody.content['application/json'].schema['$ref']")
 						.value("#/components/schemas/NotificationSettingsPatchRequest"))
-				.andExpect(
-						jsonPath("$.components.schemas.NotificationSettingsPatchRequest.properties.content").exists());
+				.andExpect(jsonPath("$.components.schemas.NotificationSettingsPatchRequest.properties.weeklyEmail")
+						.exists());
 	}
 
 	/** status·mode·contentType·reasonCode가 프론트 분기용 허용값 목록(enum)으로 노출되는지 확인한다. */

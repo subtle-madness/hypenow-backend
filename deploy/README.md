@@ -327,13 +327,14 @@ compose가 analytics·monitoring 양쪽에 `/run/secrets/gcs-image-archiver.json
    ```
 8. 롤백(5~6 사이 문제 시): front rewrite를 OCI로 원복 + `IMAGE_STORE=par`로 재배포 —
    해당 시점 두 버킷이 동일하므로 무손실.
-9. **컷오버 확정 후 정리**: `deploy/scripts/post-container-metrics.py`의 **OCI 병행 게시 블록
-   (`OCI_BUCKETS`/`OS_NAMESPACE` if 문)을 제거**한다 — 롤백 창(8단계)이 닫히기 전까지는 두 스트림을
-   같이 봐야 관측 공백이 없으므로, 제거는 반드시 마지막에.
+9. **컷오버 확정 후 정리**(✅ 09-02 완료): `deploy/scripts/post-container-metrics.py`의 **OCI 병행
+   게시 블록(`OCI_BUCKETS`/`OS_NAMESPACE` if 문)을 제거**한다 — 롤백 창(8단계)이 닫히기 전까지는
+   두 스트림을 같이 봐야 관측 공백이 없으므로, 제거는 반드시 마지막에. 알람 본문도 함께
+   갱신했다(종전 "15GB 초과·무료 티어 20GiB" 문구는 OCI 버킷 시절 것 — 09-02 GCS 50GB 초과
+   알람이 이 낡은 본문으로 나가 원인 오독을 유발했다).
 
-OCI 버킷은 삭제하지 않는다(동결 스냅샷 안전망, 월 수백 원). 컷오버 전까지는 OCI(5분 결,
-`provider=oci` 차원)와 GCS(정시 1회) 두 스트림이 병행 게시되고, 9단계 이후 `bucket_used_gb`는
-GCS 값 하나가 된다 — 알람은 스트림별 평가라 어느 쪽이든 그대로 동작한다(§9).
+OCI 버킷은 삭제하지 않는다(동결 스냅샷 안전망, 월 수백 원). 9단계 이후 `bucket_used_gb`는
+GCS 값 하나다(정시 1회) — 알람은 스트림별 평가라 정의 무수정으로 그대로 동작한다(§9).
 
 ## 6. 백업·복원
 - 자동: 서버 크론이 매일 15:00 UTC(KST 00:00) 덤프 (맥·서버 어느 쪽이 꺼져 있든 오프사이트 사본 유지 —
@@ -404,22 +405,23 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
   `https://api.hypenow.io/health`, 과반 실패 2분 지속 시), 인스턴스 CPU·메모리 85%, 인스턴스 다운,
   **컨테이너 다운**(compose 서비스 10종 — 08-05 redis·grafana·ons-relay 추가로 운영 전 서비스 커버.
   `container_up[1m].max() < 1`이 차원 필터 없는 스트림별 평가라 SERVICES에 서비스를 추가하면
-  알람 정의 무수정으로 자동 커버된다), **디스크 85%**, **버킷 15GB**(무료 티어 20GiB 한도.
-  컷오버 시 50GB 상향 — §5-2 7단계)
+  알람 정의 무수정으로 자동 커버된다), **디스크 85%**, **버킷 50GB**(GCS `hypenow-images` —
+  08-14 컷오버 때 15GB에서 상향, §5-2 7단계. GCS는 과금형이라 한도 초과 삭제는 없고 비용·증가
+  추이 감시용. 임계 조정: `oci monitoring alarm update --query-text 'bucket_used_gb[1h].max() > N'`)
 - 컨테이너·디스크·버킷 용량은 커스텀 메트릭(`hypenow_custom`) — 서버 크론 1분 주기
-  (버킷은 스크립트가 **OCI 5분 결 + GCS 정시 1회**로 조회 — OCI/GCS 둘 다 크기를 자동 게시하지
-  않아 직접 게시한다. GCS는 전체 목록 페이징이라 정시 1회. 컷오버 후 OCI 병행 게시는 제거 예정 —
-  §5-2 9단계):
+  (버킷은 스크립트가 **GCS 정시 1회**로 조회 — GCS가 크기를 자동 게시하지 않아 직접 게시하고,
+  전체 목록 페이징이라 정시 1회다. OCI 병행 게시는 09-02 제거 — §5-2 9단계):
   `* * * * * /home/ubuntu/.venv-oci-metrics/bin/python /home/ubuntu/deploy/scripts/post-container-metrics.py >> /home/ubuntu/metrics-post.log 2>&1`
 - 인증은 인스턴스 프린시펄 — 서버에 API 키를 두지 않는다. IAM 구성:
   dynamic group `hypenow-instances`(인스턴스 매칭) + policy `hypenow-custom-metrics`:
   `Allow dynamic-group hypenow-instances to use metrics in tenancy where target.metrics.namespace='hypenow_custom'`
   `Allow dynamic-group hypenow-instances to read buckets in tenancy where target.bucket.name='hypenow-images'`
+  (read buckets 정책은 OCI 병행 게시용이었다 — 09-02 블록 제거로 더는 안 쓰므로 정리해도 된다)
   venv: `python3 -m venv ~/.venv-oci-metrics && ~/.venv-oci-metrics/bin/pip install oci google-auth requests`
   (GCS 버킷 크기 조회만은 예외로 SA 키 파일 `~/deploy/secrets/gcs-image-archiver.json`을 읽는다 —
   compose가 쓰는 것과 같은 파일. 2026-08-12 이미지 스토리지 이전 이후)
 - 컨테이너 추가·이름 변경 시 스크립트의 `SERVICES` 목록도 갱신할 것(목록 고정 방식 —
-  사라진 컨테이너도 0으로 게시해 알람이 잡는다). 버킷 추가 시 `OCI_BUCKETS`/`GCS_BUCKETS` 목록 갱신.
+  사라진 컨테이너도 0으로 게시해 알람이 잡는다). 버킷 추가 시 `GCS_BUCKETS` 목록 갱신.
 - **컨테이너 조회는 이름이 아니라 compose 라벨로 한다**(project=`deploy` + service=`<svc>`).
   `deploy-<svc>-1` 이름을 쓰면 안 되는 이유: 롤링 재기동(`rollout.sh`)이 `--scale <svc>=2`로
   **다음 빈 인덱스**에 신 컨테이너를 띄우고 구 1번을 지워, 첫 롤링 이후 `-1`은 영영 없다
@@ -679,28 +681,38 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
         -c "GRANT SELECT ON app.monitoring_email_opt_outs TO alarm_reader"
       ```
       (`app.monitoring_email_opt_outs`는 was Flyway V15가 만든다 — **was 배포 후**에 실행할 것)
-   3. `~/deploy/.env`에 `ALARM_READER_PASSWORD`, `RESEND_API_KEY` 실값 등록
-      (`RESEND_API_KEY`는 was가 이미 쓰던 값과 같은 키를 공유한다)
-   4. 발송 크론 켜기 — `deploy/compose.yaml`의 `MONITORING_ALARM_DISPATCH_CRON`을 `"0 */5 * * * *"`로
-      바꿔 커밋·배포(서버에서 직접 고친 값은 다음 CD가 레포 compose로 덮는다 — 스윕 크론과 같은 규칙)
-   5. 검증: `docker logs deploy-monitoring-1 | grep -i resend` — "Resend 메일 발송 활성"이면 실발송 모드,
-      "RESEND_API_KEY 미설정"이면 로깅 폴백(개통 실패)
-   6. **수신자 허용목록 안전판** (`monitoring.alarm.allowed-recipients`, env
-      `MONITORING_ALARM_ALLOWED_RECIPIENTS` — 콤마 목록, 대소문자·공백 무시). 비어 있으면(운영
-      기본) 무제한 — 위 4번처럼 그냥 켜면 이 값을 건드릴 필요 없다. 허용목록이 있으면 목록 밖
-      수신자는 발송 없이 `SKIPPED_NO_RECIPIENT`로 종결(재시도 없음) — 새 상태값을 만들지 않고
-      기존 종결 상태를 재사용한다(`AlarmDispatchJob`).
-   7. **test 스택 임시 개통(검증용, 07-30~)** — test `analysis` DB는 실사용자 이메일을 그대로
-      담고 있어, 4번처럼 크론만 켜면 실사람에게 메일이 나간다. 반드시 아래 3키를 함께 넣을 것
-      (`deploy/compose.test.yaml`이 이미 배선돼 있다 — env만 채우면 된다):
-      - `DEV_ALARM_DISPATCH_CRON="0 */5 * * * *"` (기본 `"-"`=비활성 — 검증 끝나면 즉시 원복)
-      - `DEV_ALARM_ALLOWED_RECIPIENTS=<검증용 이메일>` (콤마 목록 — 승인된 주소만)
-      - `DEV_ALARM_READER_PASSWORD` (test-postgres의 `analysis` DB에도 `alarm_reader` 롤을
-        2번과 동일하게 GRANT해 둘 것 — 운영과 test는 별도 DB라 롤도 따로 만든다)
-      ⚠️ **순서 주의 — 허용목록은 fail-OPEN이다.** 비워 둔 채 크론만 켜면 아무것도 막히지 않고
-      test DB의 실사용자 전원에게 실메일이 나간다(6번의 "비어 있으면 무제한"이 test에도 그대로
-      적용된다). 반드시 `DEV_ALARM_ALLOWED_RECIPIENTS`를 먼저 채운 뒤 크론을 켤 것.
-      검증이 끝나면 `DEV_ALARM_DISPATCH_CRON`을 비우거나 삭제해 재배포 — 계속 켜 두지 않는다.
+
+      > 2026-08-27 주간 개편으로 `alarm_reader` 롤은 더 이상 쓰이지 않는다. 롤 회수(REVOKE·DROP ROLE)는
+      > 운영 배포가 끝난 뒤 별도 작업으로 처리한다 - 롤링 창에서 구버전 monitoring이 아직 붙어 있다.
+   3. 주간 리포트 메일은 **was**가 보낸다(2026-08-27 주간 개편). monitoring의 5분 틱 디스패처와
+      `MONITORING_ALARM_*`·`alarm_reader` 롤은 폐지됐다 - monitoring은 `alarm_event` 적재만 한다.
+      - 발송 스케줄: 매주 월요일 09:00 KST 다이제스트 생성 직후(따라잡기 09:10~23:50, 10분 간격).
+        크론은 was env `MONITORING_DIGEST_WEEKLY_CRON`·`MONITORING_DIGEST_WEEKLY_CATCHUP_CRON`로 덮을 수 있다.
+      - 발송 계정: was의 `RESEND_API_KEY`(이미 배선돼 있다). test 환경의 실사용자 오발송 방지는
+        기존 `WAS_MAIL_ADMIN_ONLY=true`(ADMIN 수신자만 실발송)가 그대로 담당한다.
+      - 딥링크 기준 주소: `WEB_BASE_URL`(운영 https://www.hypenow.io, 스테이징 `DEV_WEB_BASE_URL`).
+      - 임시 중단: **`MONITORING_DIGEST_WEEKLY_CRON`·`MONITORING_DIGEST_WEEKLY_CATCHUP_CRON`
+        둘 다** `"-"`로 두고 재기동한다 — 주간 크론만 끄면 `weekly-catchup-cron`(매일
+        09~23시대 10분 간격, 요일 제한 없음)이 10분 안에 생성·발송을 다시 살린다. 인앱
+        다이제스트까지 함께 멈추므로(생성과 발송이 같은 잡이다) 재개하면 그 주 창을 다시
+        집계해 만들어 낸다. 더 큰 스위치로 `MONITORING_ENABLED=false`(monitoring 서브시스템
+        전체 차단 — v3 조회·광고표기 노출도 함께 꺼지므로 과격한 수단)가 있다.
+      - **구 4종 옵트아웃 → 주간 이메일 이관 (배포 후 1회 수동 SQL)**: 마이그레이션
+        `V20260827135725__weekly_notification_digest_expand.sql`은 CHECK 확대만 하고 이관
+        INSERT는 넣지 않는다 — 롤링 창에서 구버전 was의 `EmailOptOutRepository.findOptOuts`가
+        (toFront가 미지 값에 예외를 던지는 구현이라) `WEEKLY_DIGEST` 행을 읽으면 알림 설정
+        조회 API가 500이 나기 때문이다. **롤링 배포가 완전히 끝난 뒤** 아래 SQL을 1회
+        실행해 기존 4종 중 하나라도 꺼 둔 유저를 주간 이메일도 off로 이관한다:
+        ```sql
+        INSERT INTO app.monitoring_email_opt_outs (user_id, event_type)
+        SELECT DISTINCT user_id, 'WEEKLY_DIGEST' FROM app.monitoring_email_opt_outs
+        ON CONFLICT DO NOTHING;
+        ```
+        ⚠️ **반드시 그 주 첫 월요일 09:00 KST 발송 전에 실행할 것** — 늦으면 이관 대상 유저에게
+        원치 않는 첫 주간 메일이 먼저 나간 뒤에야 옵트아웃이 반영된다.
+      - 수신 해지: 사용자가 `PATCH /v1/notification-settings {"weeklyEmail": false}`로 끈다
+        (구 4종 매트릭스는 폐지, 위 수동 이관 SQL 실행 후에는 기존 옵트아웃도 하나라도 꺼져
+        있으면 off로 반영된다).
 6. **was v3 조회 개통 (was V16 배포 후, was 서비스 environment의 `MONITORING_*` 4키 배선과 짝)**
    — was가 monitoring DB를 직접 SELECT해 목록·상태·후보 등을 조립한다(계약 §1). 기본
    비활성이라 서두르지 않아도 된다.
@@ -731,9 +743,24 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 - 일일 스윕은 컨테이너 env `MONITORING_SCHEDULE_SWEEP_CRON`(UTC 17:00 = KST 02:00).
   임시 중단은 값을 `"-"`로 두고 `docker compose up -d monitoring` — 서버에서 직접 고친 값은
   다음 CD 배포가 레포 compose로 덮는다(crawler 스케줄과 같은 규칙, §4-2).
-- 알람 발송은 컨테이너 env `MONITORING_ALARM_DISPATCH_CRON`(기본 `"-"`=비활성, 운영 5분 틱).
-  임시 중단은 `"-"`로 두고 재기동 — 대장(`alarm_event`)에 PENDING으로 쌓였다가 다시 켜면 그대로 나간다
-  (워터마크가 없어 중단 구간 유실이 없다).
+- 주간 리포트 메일은 **was**가 보낸다(2026-08-27 주간 개편). monitoring의 5분 틱 디스패처와
+  `MONITORING_ALARM_*`·`alarm_reader` 롤은 폐지됐다 - monitoring은 `alarm_event` 적재만 한다.
+  - 발송 스케줄: 매주 월요일 09:00 KST 다이제스트 생성 직후(따라잡기 09:10~23:50, 10분 간격).
+    크론은 was env `MONITORING_DIGEST_WEEKLY_CRON`·`MONITORING_DIGEST_WEEKLY_CATCHUP_CRON`로 덮을 수 있다.
+  - 발송 계정: was의 `RESEND_API_KEY`(이미 배선돼 있다). test 환경의 실사용자 오발송 방지는
+    기존 `WAS_MAIL_ADMIN_ONLY=true`(ADMIN 수신자만 실발송)가 그대로 담당한다.
+  - 딥링크 기준 주소: `WEB_BASE_URL`(운영 https://www.hypenow.io, 스테이징 `DEV_WEB_BASE_URL`).
+  - 임시 중단: **`MONITORING_DIGEST_WEEKLY_CRON`·`MONITORING_DIGEST_WEEKLY_CATCHUP_CRON` 둘 다**
+    `"-"`로 두고 재기동한다 — 주간 크론만 끄면 `weekly-catchup-cron`(매일 09~23시대 10분 간격,
+    요일 제한 없음)이 10분 안에 생성·발송을 다시 살린다. 인앱 다이제스트까지 함께 멈추므로
+    (생성과 발송이 같은 잡이다) 재개하면 그 주 창을 다시 집계해 만들어 낸다. 더 큰 스위치로
+    `MONITORING_ENABLED=false`(monitoring 서브시스템 전체 차단 — v3 조회·광고표기 노출도 함께
+    꺼지므로 과격한 수단)가 있다.
+  - 구 4종 옵트아웃 → 주간 이메일 이관은 마이그레이션이 아니라 **배포 후 1회 수동 SQL**이다
+    (§13-5-3 참조 — 첫 월요일 09:00 발송 전 실행 필수).
+  - 수신 해지: 사용자가 `PATCH /v1/notification-settings {"weeklyEmail": false}`로 끈다
+    (구 4종 매트릭스는 폐지, 위 수동 이관 SQL 실행 후에는 기존 옵트아웃도 하나라도 꺼져
+    있으면 off로 반영된다).
 - 백업: `backup.sh`가 analysis와 같은 관용구로 매일 덤프 —
   서버 `~/backups/monitoring-*.sql.zst` 3일 + B2 `hypenow-backups/monitoring/` 7일 롤링(§6).
 

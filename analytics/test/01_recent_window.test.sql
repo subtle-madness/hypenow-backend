@@ -1,8 +1,9 @@
 -- 최근 N개 윈도우 + 서빙 모수(뷰티 인플루언서 ∩ ENUMERATION) 기대값.
 DO $$
 BEGIN
-  ASSERT (SELECT count(*) FROM analytics.v_recent_content WHERE owner_username LIKE 'dummy_%') = 6,
-    'v_recent_content dummy rows != 6 (a:r1·r2·f1·rn + b:r3 + ra1(액터))';
+  -- 08-31 서빙 개방: F&B 단독 계정(fb1)도 모수에 든다 — 6 → 7
+  ASSERT (SELECT count(*) FROM analytics.v_recent_content WHERE owner_username LIKE 'dummy_%') = 7,
+    'v_recent_content dummy rows != 7 (a:r1·r2·f1·rn + b:r3 + ra1(액터) + fb:fb1)';
   ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_recent_content
                      WHERE short_code IN ('dummy_d1','dummy_r4','dummy_r5')),
     'v_recent_content에 제외 대상 존재 (DISCOVERY·회사·비뷰티)';

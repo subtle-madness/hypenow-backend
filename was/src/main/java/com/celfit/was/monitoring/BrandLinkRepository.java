@@ -39,6 +39,21 @@ public class BrandLinkRepository {
 	}
 
 	/**
+	 * 전 유저의 활성 연결(2026-08-27 주간 다이제스트) — 주간 잡이 유저별 브랜드 목록을 유저 수만큼
+	 * 왕복하지 않고 한 번에 읽어 메모리에서 그룹핑하기 위한 것이다. 행 수는 활성 연결 수(유저당
+	 * 소수)라 전량이 부담이 아니다.
+	 */
+	public List<BrandLinkRow> findAllActive() {
+		return jdbcClient.sql("""
+				SELECT %s FROM app.brand_monitorings
+				WHERE deleted_at IS NULL
+				ORDER BY user_id, created_at, id
+				""".formatted(SELECT_COLUMNS))
+				.query(BrandLinkRow.class)
+				.list();
+	}
+
+	/**
 	 * 유저의 연결 전체(해제분 포함) — 어드민 크롤링 사용량의 기간 귀속 입력(2026-08-12 설계).
 	 * 해제된 연결도 "연결돼 있던 기간의 콜"은 그 유저 몫이라 deleted_at 필터를 걸지 않는다.
 	 */

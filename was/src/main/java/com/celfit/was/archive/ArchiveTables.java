@@ -141,6 +141,14 @@ public final class ArchiveTables {
 			List.of(), "t.user_id = :userId");
 
 	/**
+	 * 광고 미표기 알림 이력(2026-08-27 주간 개편 §8) — users CASCADE(직접 FK). BRAND_HASHTAG_TAGS와
+	 * 같은 위상이다(자식 없음, 단순 유저 소유 매핑). 탈퇴 시 이관만 하고 삭제는 users CASCADE가 한다.
+	 */
+	public static final ArchiveTable AD_DISCLOSURE_NOTICES = new ArchiveTable(
+			"app.ad_disclosure_notices", List.of("user_id", "short_code"), "t.user_id",
+			List.of(), "t.user_id = :userId");
+
+	/**
 	 * 아카이브 카탈로그 전체 — 어떤 삭제 경로(탈퇴 이관, 저장 해제, 캠페인 삭제, 등록 롤백 등)로든
 	 * 아카이브되는 테이블 전부. ArchiveInventoryTest의 "분류됨" 판정 기준이 이 목록이다 — 여기 없는
 	 * app 테이블은 EXCLUDED에 사유와 함께 있어야 한다. ACCOUNT_DELETION_ORDER와 달리 순서·CASCADE
@@ -164,7 +172,8 @@ public final class ArchiveTables {
 			BRAND_POST_REGISTRATIONS,
 			BRAND_POST_REGISTRATION_ENTRIES,
 			BRAND_POST_CAMPAIGNS,
-			BRAND_HASHTAG_TAGS);
+			BRAND_HASHTAG_TAGS,
+			AD_DISCLOSURE_NOTICES);
 
 	/**
 	 * 탈퇴 시 이관 대상과 순서 — 자식 14개 + users. CATALOG의 부분집합이어야 한다(테스트로 강제).
@@ -188,6 +197,7 @@ public final class ArchiveTables {
 			BRAND_POST_REGISTRATIONS,
 			BRAND_POST_CAMPAIGNS,
 			BRAND_HASHTAG_TAGS,
+			AD_DISCLOSURE_NOTICES,
 			USERS);
 
 	private ArchiveTables() {
