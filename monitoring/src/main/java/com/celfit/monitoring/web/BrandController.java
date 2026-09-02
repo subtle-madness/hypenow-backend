@@ -1,9 +1,9 @@
 package com.celfit.monitoring.web;
 
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.PostShapeUnsupportedException;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.PostInfo;
-import com.celfit.monitoring.hiker.PostShapeUnsupportedException;
-import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.service.BrandDirectCollectService;
 import com.celfit.monitoring.service.BrandHashtagRunStateResolver;
 import com.celfit.monitoring.service.BrandHashtagTags;

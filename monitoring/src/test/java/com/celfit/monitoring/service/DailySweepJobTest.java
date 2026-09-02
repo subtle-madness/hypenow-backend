@@ -3,6 +3,11 @@ package com.celfit.monitoring.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.instagram.source.HikerBackend;
+import com.celfit.instagram.source.HikerFetchException;
+import com.celfit.instagram.source.HikerHttp;
+import com.celfit.instagram.source.ShortCodes;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.alarm.AlarmEventRepository;
 import com.celfit.monitoring.alarm.AlarmEventType;
 import com.celfit.monitoring.alarm.AlarmRecorder;
@@ -11,24 +16,19 @@ import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.CountingHikerHttp;
-import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.HikerFetchException;
-import com.celfit.monitoring.hiker.HikerHttp;
 import com.celfit.monitoring.hiker.RecordingHikerHttp;
-import com.celfit.monitoring.hiker.ShortCodes;
-import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.image.ImageDownloader;
 import com.celfit.monitoring.image.ParImageStore;
 import com.celfit.monitoring.image.PostThumbnailArchiveJob;
 import com.celfit.monitoring.image.ProfileImageArchiveJob;
+import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.CommentRepository;
 import com.celfit.monitoring.store.ExpiredTarget;
 import com.celfit.monitoring.store.PostMetaRepository;
 import com.celfit.monitoring.store.ProfileMetaRepository;
 import com.celfit.monitoring.store.RawPayloadRepository;
 import com.celfit.monitoring.store.SnapshotRepository;
-import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.SweepRunRepository;
 import com.celfit.monitoring.store.TargetCallCountRepository;
 import com.celfit.monitoring.store.TargetRepository;
@@ -220,7 +220,7 @@ class DailySweepJobTest {
 					flakyRemaining.put(username, remaining - 1);
 					throw new HikerFetchException("502 일시 " + username);
 				}
-				// 비공개는 200 응답의 is_private 플래그다 — 판정은 HikerClient가 한다(fake가 대신 던지지 않는다).
+				// 비공개는 200 응답의 is_private 플래그다 — 판정은 HikerBackend가 한다(fake가 대신 던지지 않는다).
 				if (privateUsernames.contains(username)) {
 					return "{\"user\":{\"pk\":9,\"username\":\"" + username + "\",\"is_private\":true},\"status\":\"ok\"}";
 				}
@@ -352,14 +352,14 @@ class DailySweepJobTest {
 		sweepRuns = new SweepRunRepository(db);
 		hiker = new FakeHiker();
 		// 운영 조립(HikerConfig)과 동형으로 콜 집계 데코레이터를 끼운다 — 스윕의 유저 귀속 스코프까지 검증.
-		var client = new HikerClient(new CountingHikerHttp(
+		var client = new HikerBackend(new CountingHikerHttp(
 				new RecordingHikerHttp(hiker, new RawPayloadRepository(db)),
 				new BrandCallContext(), new BrandCallCountRepository(db),
 				callContext, new TargetCallCountRepository(db)));
 		snapshots = new SnapshotRepository(db);
 		alarms = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshots);
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
-		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
+		var collect = new CollectService(client, client, client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
 		imageArchive = new ProfileImageArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "");
 		thumbnailArchive = new PostThumbnailArchiveJob(db, new ParImageStore(""), ImageDownloader.http(), "");
 		job = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, callContext, 3, Duration.ZERO,
@@ -682,9 +682,9 @@ class DailySweepJobTest {
 
 	/** 저장·리포스트 재시도(상한 6회)를 켠 job — 기본 setUp 조립(비활성 0)과 같은 리포지토리를 공유한다. */
 	private DailySweepJob retryEnabledJob() {
-		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
+		var client = new HikerBackend(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
-		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots,
+		var collect = new CollectService(client, client, client, writer, new CommentRepository(db), snapshots,
 				1, 1, 1, 6, Duration.ZERO);
 		return new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, callContext, 3, Duration.ZERO,
 				imageArchive, thumbnailArchive);
@@ -948,9 +948,9 @@ class DailySweepJobTest {
 		// 재공개 — 다음 스윕부터는 정상 응답한다.
 		hiker = new FakeHiker();
 		hiker.account("flip_user", "555", new FakePost("REV1", "Rare Beginnings 복귀", AFTER));
-		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
+		var client = new HikerBackend(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
-		var collect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
+		var collect = new CollectService(client, client, client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
 		var revivedJob = new DailySweepJob(targets, collect, alarms, sweepRuns, snapshots, callContext, 3,
 				Duration.ZERO, imageArchive, thumbnailArchive);
 
@@ -1283,10 +1283,10 @@ class DailySweepJobTest {
 	@Test
 	void sweep_run은_도중_크래시시_ok가_true로_남지_않는다() {
 		var crashingTargets = new CrashingExpireTargetRepository(db);
-		var client = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
+		var client = new HikerBackend(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var crashAlarms = new AlarmRecorder(new AlarmEventRepository(db), crashingTargets, snapshots);
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), crashAlarms);
-		var crashCollect = new CollectService(client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
+		var crashCollect = new CollectService(client, client, client, writer, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
 		var crashingJob = new DailySweepJob(crashingTargets, crashCollect, crashAlarms, sweepRuns, snapshots,
 				callContext, 3, Duration.ZERO, imageArchive, thumbnailArchive);
 
@@ -1354,9 +1354,9 @@ class DailySweepJobTest {
 	void 알람_적재가_실패해도_자동_전환은_완료되고_재시도_라운드에_들어가지_않는다() {
 		hiker.account("someuser", "111", new FakePost("AAA", "Rare Beginnings 신상", AFTER));
 		var throwingAlarms = new AlarmRecorder(new ThrowingAlarmEventRepository(), targets, snapshots);
-		var throwingClient = new HikerClient(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
+		var throwingClient = new HikerBackend(new RecordingHikerHttp(hiker, new RawPayloadRepository(db)));
 		var throwingWriter = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), throwingAlarms);
-		var throwingCollect = new CollectService(throwingClient, throwingWriter, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
+		var throwingCollect = new CollectService(throwingClient, throwingClient, throwingClient, throwingWriter, new CommentRepository(db), snapshots, 1, 1, 1, 0, java.time.Duration.ZERO);
 		var throwingJob = new DailySweepJob(targets, throwingCollect, throwingAlarms, sweepRuns, snapshots,
 				callContext, 3, Duration.ZERO, imageArchive, thumbnailArchive);
 		long a = watching("someuser", any("Rare Beginnings"), "rk-a", FUTURE);

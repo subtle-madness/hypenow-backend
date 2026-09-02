@@ -1,6 +1,6 @@
 package com.celfit.monitoring.alarm;
 
-import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.store.PostMetrics;
 import com.celfit.monitoring.store.SnapshotRepository;
 import com.celfit.monitoring.store.TargetOwner;

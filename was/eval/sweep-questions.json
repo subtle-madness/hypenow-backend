@@ -1,0 +1,133 @@
+[
+  {"id": "vague-01", "category": "vague", "turns": ["요즘 어때?"]},
+  {"id": "vague-02", "category": "vague", "turns": ["이번 달 뭐가 잘됐어?"]},
+  {"id": "vague-03", "category": "vague", "turns": ["우리 브랜드 상황 좀 알려줘"]},
+  {"id": "vague-04", "category": "vague", "turns": ["전체적으로 괜찮은 편이야?"]},
+  {"id": "vague-05", "category": "vague", "turns": ["지금 분위기 어때?"]},
+  {"id": "vague-06", "category": "vague", "turns": ["잘 되고 있는 거 맞아?"]},
+  {"id": "vague-07", "category": "vague", "turns": ["브랜드 상태 체크 좀 해줄래"]},
+  {"id": "vague-08", "category": "vague", "turns": ["오늘 볼만한 소식 있어?"]},
+  {"id": "vague-09", "category": "vague", "turns": ["전반적으로 요약해줘"]},
+  {"id": "vague-10", "category": "vague", "turns": ["우리 계정 지금 어떤 느낌이야?"]},
+
+  {"id": "colloquial-01", "category": "colloquial", "turns": ["울 브랜드 릴스 조회수 젤 높은게 뭐야"]},
+  {"id": "colloquial-02", "category": "colloquial", "turns": ["팔로워 마니 늘엇어?"]},
+  {"id": "colloquial-03", "category": "colloquial", "turns": ["요새 반응 괜찮음?"]},
+  {"id": "colloquial-04", "category": "colloquial", "turns": ["인기글 좀 뽑아조"]},
+  {"id": "colloquial-05", "category": "colloquial", "turns": ["협찬한거 몇개나됨"]},
+  {"id": "colloquial-06", "category": "colloquial", "turns": ["댓글 여론 어떰"]},
+  {"id": "colloquial-07", "category": "colloquial", "turns": ["오늘자 인기 게시물 머임"]},
+  {"id": "colloquial-08", "category": "colloquial", "turns": ["저번주보다 나아졌나요??"]},
+  {"id": "colloquial-09", "category": "colloquial", "turns": ["이번주 잘나간 릴스 top3 알려줘요"]},
+  {"id": "colloquial-10", "category": "colloquial", "turns": ["우리껀 광고 표시 잘 돼있는지 궁금함"]},
+  {"id": "colloquial-11", "category": "colloquial", "turns": ["인플루언서중에 젤 잘한사람 누구야"]},
+  {"id": "colloquial-12", "category": "colloquial", "turns": ["요즘 애들 반응 어때보임?"]},
+  {"id": "colloquial-13", "category": "colloquial", "turns": ["이거 조회수 실화냐"]},
+  {"id": "colloquial-14", "category": "colloquial", "turns": ["협찬글이랑 그냥올린거랑 차이잇음?"]},
+  {"id": "colloquial-15", "category": "colloquial", "turns": ["젤 핫한 게시물 3개만 뽑아줘요"]},
+
+  {"id": "work-seeding-01", "category": "work-seeding", "turns": ["다음 시딩 누구한테 보낼까"]},
+  {"id": "work-seeding-02", "category": "work-seeding", "turns": ["이번에 협업 제안할 인플루언서 후보 추려줘"]},
+  {"id": "work-seeding-03", "category": "work-seeding", "turns": ["신제품 시딩 대상 리스트 뽑아야 되는데 도와줄 수 있어?"]},
+  {"id": "work-seeding-04", "category": "work-seeding", "turns": ["지난 시딩 중에 반응 좋았던 사람 다시 컨택해도 될까"]},
+  {"id": "work-seeding-05", "category": "work-seeding", "turns": ["시딩 우선순위 정하려는데 기준 좀 잡아줘"]},
+
+  {"id": "work-report-01", "category": "work-report", "turns": ["팀장님한테 보고할 이번주 성과 요약 좀 만들어줘"]},
+  {"id": "work-report-02", "category": "work-report", "turns": ["주간 회의 자료에 넣을 핵심 지표 정리해줄래"]},
+  {"id": "work-report-03", "category": "work-report", "turns": ["임원 보고용으로 이번 달 하이라이트 뽑아줘"]},
+  {"id": "work-report-04", "category": "work-report", "turns": ["내일 아침 보고 전에 숫자 몇 개만 확인하고 싶어"]},
+  {"id": "work-report-05", "category": "work-report", "turns": ["분기 리뷰에 넣을 만한 성과 있으면 알려줘"]},
+
+  {"id": "work-competitor-01", "category": "work-competitor", "turns": ["경쟁사 대비 우리 어느 정도야"]},
+  {"id": "work-competitor-02", "category": "work-competitor", "turns": ["동종업계랑 비교하면 우리 잘하고 있는 거야?"]},
+  {"id": "work-competitor-03", "category": "work-competitor", "turns": ["경쟁 브랜드보다 참여율 앞서고 있나"]},
+  {"id": "work-competitor-04", "category": "work-competitor", "turns": ["타 브랜드는 요즘 어떤 콘텐츠로 재미 보는지 궁금해"]},
+  {"id": "work-competitor-05", "category": "work-competitor", "turns": ["업계 평균이랑 우리 수치 비교 가능해?"]},
+
+  {"id": "work-content-01", "category": "work-content", "turns": ["어떤 컨셉 콘텐츠가 반응 좋아?"]},
+  {"id": "work-content-02", "category": "work-content", "turns": ["다음 콘텐츠 기획할 때 참고할 만한 패턴 있어?"]},
+  {"id": "work-content-03", "category": "work-content", "turns": ["릴스랑 피드 중에 뭐가 더 먹히는지 알려줘"]},
+  {"id": "work-content-04", "category": "work-content", "turns": ["캡션 톤을 어떻게 가야 반응이 좋을지 힌트 좀"]},
+  {"id": "work-content-05", "category": "work-content", "turns": ["이번 시즌 콘텐츠 방향 잡는데 참고할 자료 있을까"]},
+
+  {"id": "work-crisis-01", "category": "work-crisis", "turns": ["부정적인 댓글 달린 거 있어?"]},
+  {"id": "work-crisis-02", "category": "work-crisis", "turns": ["요즘 여론 이상한 거 없나 체크해줘"]},
+  {"id": "work-crisis-03", "category": "work-crisis", "turns": ["혹시 우리 브랜드 관련해서 논란될 만한 반응 있어?"]},
+  {"id": "work-crisis-04", "category": "work-crisis", "turns": ["댓글에 항의성 글 올라온 거 있는지 봐줘"]},
+  {"id": "work-crisis-05", "category": "work-crisis", "turns": ["이슈 생기기 전에 미리 체크하고 싶은데 뭐 없어?"]},
+
+  {"id": "work-budget-01", "category": "work-budget", "turns": ["협찬비 쓴 만큼 효과 있었어?"]},
+  {"id": "work-budget-02", "category": "work-budget", "turns": ["이번 시딩 예산 대비 성과 괜찮은 편이야?"]},
+  {"id": "work-budget-03", "category": "work-budget", "turns": ["협찬 진행한 것 중에 가성비 좋았던 케이스 있어?"]},
+  {"id": "work-budget-04", "category": "work-budget", "turns": ["다음 분기 예산 짤 때 참고할 성과 데이터 있을까"]},
+  {"id": "work-budget-05", "category": "work-budget", "turns": ["무료 시딩이랑 유료 협찬이랑 효율 차이 나?"]},
+
+  {"id": "impossible-01", "category": "impossible", "turns": ["이 인플루언서한테 DM 좀 보내줘"]},
+  {"id": "impossible-02", "category": "impossible", "turns": ["이 사람 협찬 단가가 얼마인지 알려줄 수 있어?"]},
+  {"id": "impossible-03", "category": "impossible", "turns": ["이 계정 팔로워 중에 가짜 많은지 판별해줄 수 있어?"]},
+  {"id": "impossible-04", "category": "impossible", "turns": ["이 인플루언서 연락처 좀 알려줘"]},
+  {"id": "impossible-05", "category": "impossible", "turns": ["이 게시물 좀 내려달라고 요청해줄 수 있어?"]},
+  {"id": "impossible-06", "category": "impossible", "turns": ["경쟁사 계정 데이터도 다 보여줘"]},
+  {"id": "impossible-07", "category": "impossible", "turns": ["다음 달에 이 게시물이 얼마나 터질지 예측해줄 수 있어?"]},
+  {"id": "impossible-08", "category": "impossible", "turns": ["인스타 알고리즘이 어떻게 작동하는지 정확히 알려줘"]},
+  {"id": "impossible-09", "category": "impossible", "turns": ["이 인플루언서 이메일 주소 찾아줄 수 있어?"]},
+  {"id": "impossible-10", "category": "impossible", "turns": ["우리 계정 비밀번호 바꿔줄 수 있어?"]},
+  {"id": "impossible-11", "category": "impossible", "turns": ["이 댓글 삭제 요청 넣어줄 수 있어?"]},
+  {"id": "impossible-12", "category": "impossible", "turns": ["타 브랜드 협찬 단가 조사해줄 수 있어?"]},
+  {"id": "impossible-13", "category": "impossible", "turns": ["이 인플루언서한테 대신 답장 좀 써줘"]},
+  {"id": "impossible-14", "category": "impossible", "turns": ["이 사람 실제 나이나 개인정보 좀 알려줄 수 있어?"]},
+  {"id": "impossible-15", "category": "impossible", "turns": ["다음 주 팔로워 수 예측치 좀 뽑아줘"]},
+
+  {"id": "ambiguous-ref-01", "category": "ambiguous-ref", "turns": ["그 사람 성과 어때?"]},
+  {"id": "ambiguous-ref-02", "category": "ambiguous-ref", "turns": ["어제 그거 반응 어때?"]},
+  {"id": "ambiguous-ref-03", "category": "ambiguous-ref", "turns": ["아까 말한 그 게시물 자세히 보여줘"]},
+  {"id": "ambiguous-ref-04", "category": "ambiguous-ref", "turns": ["그 계정 팔로워 몇 명이었지?"]},
+  {"id": "ambiguous-ref-05", "category": "ambiguous-ref", "turns": ["저번에 본 그 릴스 조회수 다시 알려줘"]},
+
+  {"id": "chain-01", "category": "chain", "turns": [
+    "요즘 반응 좋은 게시물 좀 보여줘",
+    "그 중에 협찬인 건 뭐야?",
+    "첫 번째 게시물 올린 사람 팔로워 몇 명이야?"
+  ]},
+  {"id": "chain-02", "category": "chain", "turns": [
+    "이번 달 릴스 top5 뽑아줘",
+    "거기서 조회수 젤 높은 사람 프로필 좀 보여줘"
+  ]},
+  {"id": "chain-03", "category": "chain", "turns": [
+    "인플루언서 랭킹 좀 보여줘",
+    "1등이랑 2등 참여율 차이가 얼마나 나?",
+    "1등이 최근 올린 게시물 캡션 다 보여줘"
+  ]},
+  {"id": "chain-04", "category": "chain", "turns": [
+    "협찬건이랑 그냥 올린 거 성과 차이 있어?",
+    "오가닉 중에서 젤 잘나간 거 하나만 자세히 보여줄래?"
+  ]},
+  {"id": "chain-05", "category": "chain", "turns": [
+    "요즘 댓글 반응 어때?",
+    "그 중에 부정적인 댓글도 있었어?"
+  ]},
+  {"id": "chain-06", "category": "chain", "turns": [
+    "지난달 대비 이번달 어때",
+    "어느 지표가 제일 많이 올랐어?",
+    "그거 올린 원인이 될 만한 게시물 있을까?"
+  ]},
+  {"id": "chain-07", "category": "chain", "turns": [
+    "해시태그로 발견된 게시물도 있어?",
+    "그 중에 댓글 반응 좋은 거 있어?"
+  ]},
+  {"id": "chain-08", "category": "chain", "turns": [
+    "요새 올라온 게시물 중에 눈에 띄는 거 있어?",
+    "그거 광고로 표기된 거 맞아?"
+  ]},
+
+  {"id": "boundary-01", "category": "boundary", "turns": ["스폰서드 콘텐츠만 따로 모아줄 수 있어?"]},
+  {"id": "boundary-02", "category": "boundary", "turns": ["유료 광고 집행분이 얼마나 되는지 알고 싶어"]},
+  {"id": "boundary-03", "category": "boundary", "turns": ["이거 뒷광고 같은 거 아니야?"]},
+  {"id": "boundary-04", "category": "boundary", "turns": ["팔로워 대비 조회수 비율이 어느 정도야?"]},
+  {"id": "boundary-05", "category": "boundary", "turns": ["최근에 성과 어땠는지 알려줘"]},
+  {"id": "boundary-06", "category": "boundary", "turns": ["요새 협찬 비중이 얼마나 되는지 궁금해"]},
+  {"id": "boundary-07", "category": "boundary", "turns": ["지난번보다 나아진 거 맞아?"]},
+  {"id": "boundary-08", "category": "boundary", "turns": ["PPL 느낌 나는 게시물 있어?"]},
+  {"id": "boundary-09", "category": "boundary", "turns": ["브랜디드 콘텐츠 성과만 따로 보고 싶어"]},
+  {"id": "boundary-10", "category": "boundary", "turns": ["좋아요 대비 댓글 비율 좀 계산해줄 수 있어?"]}
+]

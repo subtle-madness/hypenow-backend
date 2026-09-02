@@ -9,10 +9,10 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.PostShapeUnsupportedException;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.PostInfo;
-import com.celfit.monitoring.hiker.PostShapeUnsupportedException;
-import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.service.BrandDirectCollectService;
 import com.celfit.monitoring.service.BrandRegistrationService;
 import com.celfit.monitoring.service.ValidationException;
@@ -151,7 +151,7 @@ class BrandControllerTest {
 		Instant receivedRegisteredAt;
 
 		StubDirectCollect() {
-			super(null, null, null, null, null, 300, 2000);
+			super(null, null, null, null, null, null, 300, 2000);
 		}
 
 		@Override

@@ -342,7 +342,7 @@ GCS 값 하나다(정시 1회) — 알람은 스트림별 평가라 정의 무�
   - **analysis**: 서버 `~/backups/` 3일 롤링 + B2 `hypenow-backups/analysis/` 7일(기간) 롤링
     — 분석 결과는 raw에서 재파생 가능(LLM 재호출 비용만 부담)이라 짧게 유지(08-04 7일/30일에서 축소)
   - **crawler**(raw — 07-19부터 서버가 수집 주체라 서버 raw가 유일 원본): B2가 살아 있으면
-    **B2로 직스트리밍**(`pg_dump|zstd|tee|rclone rcat`, 08-25~) — **성공 시 서버 로컬 0개**
+    **B2로 직스트리밍**(`pg_dump|zstd|tee|age|rclone rcat`, 08-25~, 암호화는 09-02~) — **성공 시 서버 로컬 0개**
     (B2 사본 확인됨 — 덤프 19분+업로드 19분 직렬이 ~20분 동시 진행으로, 로컬 11GiB 상주와
     재읽기 iowait도 함께 소멸), **실패 시 로컬 전용 덤프로 폴백**해 `LOCAL_CRAWLER_KEEP`개
     (기본 2) 롤링(`offsite_ok` 분기 — B2가 막혀도 로컬 사본 + 수동 pull로 버팀). B2는
@@ -359,9 +359,11 @@ GCS 값 하나다(정시 1회) — 알람은 스트림별 평가라 정의 무�
   - **monitoring**(시딩 캠페인 — postgres 인스턴스 내 별도 DB, §13): 서버 3일 롤링 +
     B2 `hypenow-backups/monitoring/` 7일(기간) 롤링. 덤프가 작아 analysis와 같은 기간 롤링.
 - 수동 pull(보조): `deploy/scripts/pull-backup.sh ubuntu@<IP>` → `~/backups/hypenow/`
+  (서버 로컬 사본은 평문 — 그대로 복원 가능)
 - 복원 리허설(로컬): `zstdcat analysis-*.sql.zst | psql -h localhost -p 5433 -U crawler -d <빈 DB>`
   (08-04 이전 덤프는 `.sql.gz` — `gunzip -c`로. 압축은 08-04 gzip→zstd 전환: 2 vCPU에서
-  gzip이 백업 CPU를 알람 문턱 직하까지 밀어 올려서다)
+  gzip이 백업 CPU를 알람 문턱 직하까지 밀어 올려서다.
+  **B2에서 내려받은 `.sql.zst.age`는 복호화가 먼저** — §6-2)
 
 ### 6-1. rclone(Backblaze B2) 1회 설정
 ```bash
@@ -376,6 +378,36 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
 ※ rclone.conf에는 B2 Application Key가 들어 있다 — repo에 커밋 금지, 서버 홈에만.
 ※ (07-26: Google Drive 무료 15GB 초과로 B2 전환. 07-27~30: B2도 종량제가 아니라 캡이 있어
   다시 걸림 — 위 crawler 개수 축소로 대응. `backup.sh` 상단 주석에 상세 경위 기록.)
+
+### 6-2. 오프사이트 암호화(age) — 키 관리·복원 (09-02~)
+- **왜**: 덤프에 사용자 이메일 등 개인정보가 담긴다 — B2 계정·버킷이 뚫리면 그대로 유출되던
+  구멍을 막는다. **B2로 나가는 스트림만 암호화**(`.sql.zst.age`)하고 서버 로컬 사본은 평문 유지
+  (서버 침해 시엔 라이브 DB가 어차피 읽혀 이득이 없고, 로컬 즉시 복원 경로가 더 가치 있다).
+- **키 구조**: age 공개키(암호화용)는 `backup.sh` 상단 `AGE_RECIPIENT` 상수로 커밋(공개키라 무해).
+  **복호화 비밀키는 서버 어디에도 없다**(그게 목적) — 사본 2곳:
+  - **OCI Vault** 시크릿 `hypenow-backup-age-key`(vault `hypenow-vault`, ap-tokyo-1) — 원격 정본.
+    서버 인스턴스(dynamic group `hypenow-instances`)에는 시크릿 읽기 권한이 없다 — **주지 말 것**
+    (주는 순간 서버 침해 = 키 유출로 암호화가 무의미해진다). Always Free 범위(시크릿 150개 한도).
+  - **로컬 맥** `~/.config/age/hypenow-backup.key`(600) — 일상 복원용 작업 사본.
+- **키 유실 = 전체 오프사이트 백업 무용지물** — 두 사본을 동시에 잃지 않게 유지한다. 로컬
+  사본이 사라졌으면 Vault에서 복구:
+  ```bash
+  oci --profile HYPENOW secrets secret-bundle get \
+    --secret-id "$(oci --profile HYPENOW vault secret list --compartment-id <tenancy-ocid> \
+        --name hypenow-backup-age-key --query 'data[0].id' --raw-output)" \
+    --query 'data."secret-bundle-content".content' --raw-output | base64 -d \
+    > ~/.config/age/hypenow-backup.key && chmod 600 ~/.config/age/hypenow-backup.key
+  ```
+- **복원(B2 덤프)**: 내려받기 → 복호화 → 평소 경로.
+  ```bash
+  rclone copy b2:hypenow-backups/analysis/analysis-<STAMP>.sql.zst.age ~/backups/hypenow/
+  age -d -i ~/.config/age/hypenow-backup.key ~/backups/hypenow/analysis-<STAMP>.sql.zst.age \
+    | zstdcat | psql -h localhost -p 5433 -U crawler -d <빈 DB>
+  ```
+  09-02 이전 덤프는 평문 `.sql.zst` — 복호화 단계 없이 종전대로. 전환기 B2엔 두 세대가
+  롤링창(7일/3개) 동안 공존하다 자연 소거된다.
+- **age 미설치면 업로드 생략**(fail-closed) — 크론 로그에 경고가 남고 로컬 폴백이 백업 공백을
+  막는다. 서버 설치: `sudo apt-get install -y age` (setup-server.sh 대상 서버 재구축 시 포함할 것).
 
 ## 7. 프론트 연동 (www.hypenow.io)
 - 권장: **Vercel rewrite로 같은 오리진화** — celfit-front `vercel.json`에
@@ -1015,6 +1047,33 @@ ssh ubuntu@<IP> 'rm -f ~/deploy/grafana/provisioning/dashboards/json/{hypenow-di
 - 구 uid(`hypenow-infra`·`hypenow-discovery`·`hypenow-competitor`·`hypenow-hiker`·
   `hypenow-brand`·`hypenow-brand-ad`)를 참조하던 대시보드 내부 링크는 이 PR에서 전부 새 착지로
   재지정했다(홈 14곳·운영/모니터링 12곳). 외부에 적어 둔 북마크만 깨진다.
+
+#### 14-2-5. 브랜드 수집 신설 컬럼 GRANT (09-02, ⚠️ **운영 현재 권한 오류 — 즉시 서버 실행 필요**)
+
+09-02 배포분 두 건이 monitoring DB의 신설 컬럼을 대시보드에서 새로 조회하는데 GRANT가 누락됐다
+— 실행 전까지 운영에서 그 컬럼을 읽는 패널이 `permission denied for table ...`로 빈다
+(스탯은 "데이터 없음"/"No data" + 빨간 오류 삼각형으로 표시):
+
+- `brand_account.sweep_completed_at` (완주 시각 분리, `ef010a39` + 마이그레이션
+  `V20260902034452`) — [흐름] 브랜드의 일일 수집 신선도·오늘 수집 소요·미처리 브랜드별·오늘
+  브랜드별 처리 현황, ops 신선도·오늘 수집 소요, 홈 브랜드 신선도. **총 7패널 / 3장.**
+- `brand_tagged_post.tag_detected_at`·`hashtag_detected_at`·`direct_registered_at`
+  (미처리 브랜드별 출처 2열 분리, `9870fbd7`) — [흐름] 브랜드의 미처리 브랜드별.
+
+컬럼 목록은 대시보드 rawSql 기계 추출로 grant 실측과 대조해 검산했다(2026-09-02, 다른 누락
+없음). GRANT는 멱등이라 재실행 무해. 마이그레이션은 운영 반영 확인됨(§14-2-2 전제 충족).
+
+```bash
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
+  -c "GRANT SELECT (sweep_completed_at) ON brand_account TO grafana_reader" \
+  -c "GRANT SELECT (tag_detected_at, hashtag_detected_at, direct_registered_at) ON brand_tagged_post TO grafana_reader"
+```
+
+실행 후 대시보드 새로고침이면 충분하다(재기동 불요 — §14-2-2 반영 절차와 동일).
+
+**재발 관찰**: 대시보드가 새 컬럼을 조회하기 시작하는 PR은 컬럼 마이그레이션과 별개로 **이 절의
+GRANT 런북 추가 + 서버 실행**이 항상 따라붙어야 한다 — grafana_reader는 컬럼 단위
+최소권한(§14-2)이라 테이블 GRANT와 달리 새 컬럼이 자동 포함되지 않는다.
 
 ### 14-3. `.env` 신규 항목 (`.env.example`에도 반영됨)
 

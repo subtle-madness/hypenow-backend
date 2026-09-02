@@ -141,6 +141,34 @@ public final class ArchiveTables {
 			List.of(), "t.user_id = :userId");
 
 	/**
+<<<<<<< HEAD
+	 * AI 어시스턴트 질문 로그(2026-08-27 브랜드 모니터링 AI 어시스턴트 PoC) — users CASCADE(직접
+	 * FK). BRAND_HASHTAG_TAGS와 같은 위상(자식 없음, 순정 CASCADE 자식이라 명시 DELETE 불필요 —
+	 * USERS 삭제 시 함께 사라진다).
+	 *
+	 * <p>question·answer는 자유 텍스트라 다른 아카이브 테이블과 달리 마스킹 없이 그대로 이관한다 —
+	 * 실수가 아니라 의식적 결정이다(M7). 질문 로그 자체가 이 PoC의 산출물(사용자가 어떤 질문을
+	 * 하는지가 다음 이터레이션의 입력이다)이고, 탈퇴 이관 아카이브는 접근 통제된 저장소라 원문
+	 * 보존이 USER_PII 마스킹 컬럼들과 같은 노출 위험을 지지 않는다고 판단했다.
+	 */
+	public static final ArchiveTable AI_CHAT_LOGS = new ArchiveTable(
+			"app.ai_chat_logs", List.of("id"), "t.user_id",
+			List.of(), "t.user_id = :userId");
+
+	/**
+	 * AI 어시스턴트 대화 컨테이너(2026-08-28 FE 변경요청서 §8) — users CASCADE(직접 FK). AI_CHAT_LOGS와
+	 * 같은 위상(자식 없음, 순정 CASCADE 자식이라 명시 DELETE 불필요 — USERS 삭제 시 함께 사라진다).
+	 *
+	 * <p>ai_chat_logs.conversation_id가 이 테이블을 가리키지만 그 FK는 CASCADE가 아니다(NO ACTION) —
+	 * users 삭제 한 문장 안에서 ai_conversations·ai_chat_logs 둘 다 users에 대한 독립적인 직접
+	 * CASCADE라 함께 지워지고, NO ACTION 제약은 기본값(문장 끝 지연 검사)이라 그 시점엔 이미 양쪽
+	 * 다 사라져 있어 위반이 나지 않는다(RESTRICT였다면 달랐을 것 — 의도적으로 NO ACTION을 골랐다).
+	 */
+	public static final ArchiveTable AI_CONVERSATIONS = new ArchiveTable(
+			"app.ai_conversations", List.of("id"), "t.user_id",
+			List.of(), "t.user_id = :userId");
+
+	/**
 	 * 광고 미표기 알림 이력(2026-08-27 주간 개편 §8) — users CASCADE(직접 FK). BRAND_HASHTAG_TAGS와
 	 * 같은 위상이다(자식 없음, 단순 유저 소유 매핑). 탈퇴 시 이관만 하고 삭제는 users CASCADE가 한다.
 	 */
@@ -173,10 +201,12 @@ public final class ArchiveTables {
 			BRAND_POST_REGISTRATION_ENTRIES,
 			BRAND_POST_CAMPAIGNS,
 			BRAND_HASHTAG_TAGS,
+			AI_CHAT_LOGS,
+			AI_CONVERSATIONS,
 			AD_DISCLOSURE_NOTICES);
 
 	/**
-	 * 탈퇴 시 이관 대상과 순서 — 자식 14개 + users. CATALOG의 부분집합이어야 한다(테스트로 강제).
+	 * 탈퇴 시 이관 대상과 순서 — 자식 18개 + users. CATALOG의 부분집합이어야 한다(테스트로 강제).
 	 * 이관(INSERT)은 전부 삭제(DELETE)보다 먼저 일어나므로 순서 자체가 정확성에 영향을 주진
 	 * 않지만, 자식 → 부모 순으로 읽히게 둔다. NOTICES·NOTICE_ITEMS는 users FK가 없어 여기 없다
 	 * (클래스 주석 참고).
@@ -197,6 +227,8 @@ public final class ArchiveTables {
 			BRAND_POST_REGISTRATIONS,
 			BRAND_POST_CAMPAIGNS,
 			BRAND_HASHTAG_TAGS,
+			AI_CHAT_LOGS,
+			AI_CONVERSATIONS,
 			AD_DISCLOSURE_NOTICES,
 			USERS);
 

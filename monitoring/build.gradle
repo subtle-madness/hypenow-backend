@@ -5,6 +5,7 @@ plugins {
 
 dependencies {
 	implementation project(':common-llm')
+	implementation project(':instagram-source')
 	implementation 'org.springframework.boot:spring-boot-starter-jdbc'
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 	// JVM 지표 노출(스펙 2026-08-22) — /actuator/prometheus. was와 같은 패턴

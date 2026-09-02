@@ -345,6 +345,8 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(enriched.tagDetectedAt()).isNotNull();
 		assertThat(enriched.directRegisteredAt()).isNull();
 		assertThat(enriched.takenAt()).isNotNull();
+		// 2026-08-30 AI scope 필터 컬럼 — content_type은 메타 산지 그대로(정규화는 호출부 몫).
+		assertThat(enriched.contentType()).isEqualTo("REELS");
 		assertThat(enriched.unavailableAt()).isNull();       // 정상 — hidden 아님(대시보드 상태 판정 입력)
 		assertThat(enriched.rawAuthorUsername()).isEqualTo("influencer_a");
 		assertThat(enriched.authorIgUserId()).isEqualTo("IG_A");

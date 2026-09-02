@@ -1,11 +1,11 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.PrivateAccountException;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
-import com.celfit.monitoring.hiker.PostInfo;
-import com.celfit.monitoring.hiker.PrivateAccountException;
-import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.image.PostThumbnailArchiveJob;
 import com.celfit.monitoring.image.ProfileImageArchiveJob;
@@ -17,8 +17,8 @@ import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Comparator;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -375,8 +375,8 @@ public class DailySweepJob {
 	 * {@link #sweepRound}의 catch가 그 계정의 캠페인을 통째로 hidden 전이시킨다({@link #closeAll}) —
 	 * 추적 게시물은 멀쩡한데 프로필 조회 실패만으로 캠페인이 죽는 새 고장 경로가 생긴다. POST
 	 * 등록분의 생존 판정은 지금까지처럼 단건 게시물 수집 성공 여부 하나로만 유지해야 하므로,
-	 * {@link com.celfit.monitoring.hiker.PrivateAccountException}·
-	 * {@link com.celfit.monitoring.hiker.SubjectNotFoundException}을 포함한 모든 예외를 여기서 삼킨다
+	 * {@link com.celfit.instagram.source.PrivateAccountException}·
+	 * {@link com.celfit.instagram.source.SubjectNotFoundException}을 포함한 모든 예외를 여기서 삼킨다
 	 * (기존 판정 경로를 바꾸지 않는다는 뜻 — 이 계정이 실제로 없어졌는지 비공개인지는 단건 게시물
 	 * 콜이 이미 스윕 나머지 갈래에서 판정한다).
 	 */
@@ -461,7 +461,7 @@ public class DailySweepJob {
 	/**
 	 * 첫 감지 1건 — 캠페인:추적 게시물은 1:1이라 같은 스윕에 여러 개가 걸려도 하나만 고른다.
 	 * 기준은 게시 시각 최신: 열거 순서에 기대면 핀 고정 게시물(taken_at 2023년 사례 — findings §3)이
-	 * 먼저 잡힐 수 있고, HikerClient의 재정렬에 암묵 의존하는 코드가 된다.
+	 * 먼저 잡힐 수 있고, HikerBackend의 재정렬에 암묵 의존하는 코드가 된다.
 	 *
 	 * <p><b>같은 유저 이중 추적 배제</b>(계약 §6.25) — 키워드 매칭 후보 중 같은 user_id의 다른 활성
 	 * target이 이미 추적 중인 shortcode는 후보에서 뺀다. 유저 스코프를 빼고 전역으로 구현하면 다른

@@ -1,17 +1,21 @@
 package com.celfit.monitoring.service;
 
-import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.MediaRef;
-import com.celfit.monitoring.hiker.ShareLinkUnresolvedException;
+import com.celfit.instagram.source.InstagramSource;
+import com.celfit.instagram.source.MediaRef;
+import com.celfit.instagram.source.ShareLinkUnresolvedException;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import java.net.URI;
 import java.util.Set;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 /**
  * share 단축 링크 해소 — 등록과 분리된 전처리 API(계약 §2-6). RegistrationService와 무관하게
  * 독립 조립한다 — was는 등록 전에 이걸로 shortcode를 얻고, 등록은 기존 흐름 그대로 진행한다.
+ * 사용자 대면 동기 호출(ShareController)이라 syncInstagramSource(Hiker 1순위 + 장애 시 self 구조)를
+ * 쓴다 — resolveMediaByUrl은 self 하드게이트(항상 UnsupportedOperationException)라 사실상 Hiker
+ * 단독과 동일하게 동작하지만, 하드게이트가 풀리는 미래 변경에도 동기 예산을 구조적으로 지킨다.
  */
 @Service
 public class ShareResolveService {
@@ -19,10 +23,11 @@ public class ShareResolveService {
 	/** www. 유무만 허용 — m.instagram.com 등 서브도메인은 대상이 아니다(실측 잔여, 계약 §2-6 각주). */
 	private static final Pattern INSTAGRAM_HOST = Pattern.compile("(?i)^(www\\.)?instagram\\.com$");
 
-	private final HikerClient hiker;
+	private final InstagramSource hiker;
 	private final TargetCallContext callContext;
 
-	public ShareResolveService(HikerClient hiker, TargetCallContext callContext) {
+	public ShareResolveService(@Qualifier("syncInstagramSource") InstagramSource hiker,
+			TargetCallContext callContext) {
 		this.hiker = hiker;
 		this.callContext = callContext;
 	}

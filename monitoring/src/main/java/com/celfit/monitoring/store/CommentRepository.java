@@ -1,6 +1,6 @@
 package com.celfit.monitoring.store;
 
-import com.celfit.monitoring.hiker.CommentInfo;
+import com.celfit.instagram.source.CommentInfo;
 import java.sql.Timestamp;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;

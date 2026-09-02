@@ -166,6 +166,13 @@ services:
       SPRING_DATASOURCE_USERNAME: monitoring
       SPRING_DATASOURCE_PASSWORD: ${DEV_MONITORING_DB_PASSWORD:-}
       HIKER_API_KEY: ${HIKER_API_KEY:-}
+      # 자체크롤(instagram-source) 프록시·댓글 doc_id — 운영 monitoring과 동일 배선(crawler와 .env 키 공유).
+      # 프록시 미주입이면 IgSourceSettings 가드가 self를 강제 비활성(fail-safe)해 staging 스모크가 불가능하다.
+      # 개통 여부는 app_setting 런타임 토글(ig-source.self-enabled 등)이 관장 — 기본 off라 배선만으론 미개통.
+      DATAIMPULSE_RESIDENTIAL_PROXY_URL: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:-}
+      DATAIMPULSE_MOBILE_PROXY_URL: ${DATAIMPULSE_MOBILE_PROXY_URL:-}
+      IG_COMMENT_DOC_ID: ${IG_COMMENT_DOC_ID:-}
+      IG_COMMENT_FRIENDLY_NAME: ${IG_COMMENT_FRIENDLY_NAME:-}
       # 해시태그 감지 LLM 판정(BrandMentionJudge) — 미주입이면 fail-closed(전 판정 UNCERTAIN=비노출)라
       # 스테이징에서 LLM 경로가 한 번도 실행되지 않는다. 요청 셰이프·응답 파싱 첫 실증을 운영으로
       # 미루지 않기 위해 배선(2026-08-11 최종 리뷰 I-4). 크론은 K 원칙대로 off라 콜 폭주 없음.

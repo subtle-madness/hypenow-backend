@@ -1,0 +1,535 @@
+[
+  {
+    "id": "ad-posts-top10",
+    "note": "실측 사고 1 (설계 §1) - 모델이 keyword='광고' 캡션 검색으로 조용히 근사하던 사고. sponsorship 축을 강제로 고르게 한다.",
+    "question": "광고 게시물로 10명 정리해줘",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "sponsorship": "sponsored"
+        }
+      }
+    ],
+    "forbidTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "keyword": "광고"
+        }
+      },
+      {
+        "name": "search_posts",
+        "argsInclude": {
+          "query": "광고"
+        }
+      }
+    ],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "fit-influencer",
+    "note": "실측 사고 2 (설계 §1) - 정성 질문을 도달 배수 1위로 환원해 팔로워 3명·릴스 1개 계정을 추천하던 사고. trajectory만 확인(정성 답변은 결정론 채점 불가).",
+    "question": "우리 브랜드에 어울리는 인플루언서 추천해줘",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author"
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "low-sample-ranking",
+    "note": "실측 사고 3 (설계 §1) - 릴스 표본 1개짜리 극단값이 랭킹 상위를 도배하고 표본 수가 표에서 탈락하던 사고. 사용자가 '1개짜리도 보여줘'라고 명시했으니 minSample로 걸러선 안 되고, 서버 강제 caveat(설계 §4)이 답변에 반영돼야 한다.",
+    "question": "릴스 조회수 평균 기준으로 인플루언서 랭킹 보여줘. 표본 1개짜리 계정도 다 보여줘",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "orderBy": "avgViews"
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [
+      "1개"
+    ],
+    "groundTruthSql": null
+  },
+  {
+    "id": "top10-reach",
+    "note": "기존 검증 시나리오 - N명 지정(10)이 limit 인자로 그대로 전달되는지.",
+    "question": "도달 배수 기준으로 상위 10명 인플루언서 알려줘",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "orderBy": "reachMultiple",
+          "limit": 10
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "top30-reach",
+    "note": "기존 검증 시나리오 - N명 지정(30, 기본 limit 10을 넘는 값)이 그대로 전달되는지. 30명 전체 나열 여부는 데이터 의존이라 trajectory만.",
+    "question": "도달 배수 기준으로 상위 30명 정리해줘",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "orderBy": "reachMultiple",
+          "limit": 30
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "over-limit-request",
+    "note": "기존 검증 시나리오 - N>limit(사용자가 최대 50을 넘는 값을 요청). 서버가 limit을 얼마로 클램프하는지는 구현 세부사항이라 강제하지 않고, groupBy=author 경로를 탔는지만 trajectory로 확인한다. totalGroups 고지 문구는 데이터 의존이라 검증하지 않는다.",
+    "question": "인플루언서 100명 전부 랭킹으로 정리해줘",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author"
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "month-compare",
+    "note": "기존 검증 시나리오 - 기간 비교 질문이 groupBy=month로 가는지.",
+    "question": "최근 두 달 성과를 월별로 비교해줘",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "month"
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "caption-count",
+    "note": "기존 검증 시나리오 - 캡션 키워드 총 매칭 건수. list_posts(30건 상한)로 눈대중 세면 안 되고 search_posts의 totalMatches를 그대로 인용해야 한다. groundTruthSql은 러너가 BRAND_ID를 채워 실행 - 값이 실제로 몇이든(0 포함) 그 값이 답변에 등장하는지만 본다. 로컬 데이터에 '이벤트'라는 캡션 언급이 거의 없으면 케이스의 keyword를 실측 데이터에 맞게 교체할 것(README '케이스 추가 규칙' 참고).",
+    "question": "캡션에 '이벤트'라는 단어가 들어간 게시물이 총 몇 개야?",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "search_posts",
+        "argsInclude": {
+          "query": "이벤트"
+        }
+      }
+    ],
+    "forbidTools": [
+      {
+        "name": "list_posts"
+      }
+    ],
+    "expectAnswerContains": [],
+    "groundTruthSql": "SELECT count(DISTINCT t.short_code) FROM brand_tagged_post t JOIN brand_post_meta m ON m.short_code = t.short_code WHERE t.brand_id = :BRAND_ID AND t.enriched_at IS NOT NULL AND m.caption IS NOT NULL AND replace(m.caption, ' ', '') ILIKE '%이벤트%'"
+  },
+  {
+    "id": "sponsored-vs-organic",
+    "note": "기존 검증 시나리오 - 협찬 vs 오가닉 비교가 groupBy=sponsorship으로 가는지(keyword='협찬' 캡션 검색으로 새는 걸 방지).",
+    "question": "협찬 게시물이랑 오가닉 게시물 성과 비교해줘",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "sponsorship"
+        }
+      }
+    ],
+    "forbidTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "keyword": "협찬"
+        }
+      }
+    ],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "comments-summary",
+    "note": "기존 검증 시나리오 - 여러 게시물 댓글 여론 종합이 get_comments를 게시물마다 반복 호출하지 않고 shortCodes 배열 1회 호출로 가는지.",
+    "question": "최근 인기 게시물 3개의 댓글 반응을 종합해서 알려줘",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "get_comments",
+        "argsHasKeys": [
+          "shortCodes"
+        ]
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "preset-efficient",
+    "note": "verified 플랜(설계 §6) - efficient_influencers 프리셋의 선실행 호출(aggregate_posts groupBy=author orderBy=reachMultiple limit=10 minSample=2)이 로그에 남는지.",
+    "question": "효율 좋은 인플루언서 알려줘",
+    "presetId": "efficient_influencers",
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "orderBy": "reachMultiple",
+          "limit": 10,
+          "minSample": 2
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "preset-sponsored-vs-organic",
+    "note": "verified 플랜(설계 §6) - sponsored_vs_organic 프리셋의 선실행 호출(aggregate_posts groupBy=sponsorship)이 로그에 남는지.",
+    "question": "협찬 vs 오가닉 비교해줘",
+    "presetId": "sponsored_vs_organic",
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "sponsorship"
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "author-posts-detail",
+    "note": "실측 사고 4 (2026-09-01, ai_chat_logs id=75) - '@showmethe._.a의 릴스 게시물 6개 상세 지표' 질문에 모델이 list_posts는 30건뿐이고 작성자 필터가 없다며 사용자에게 shortCode 입력을 요구한 사고. author는 로컬 DB(brand_id=128)에 실존하는 작성자(kbeauty.real.gems, 31건)로 채웠다. argsInclude.author는 정규화 전 원문 값과 정확히 일치해야 매치되는데, 모델이 '@' 접두를 붙인 채로 인자를 넘기면(서버는 정규화해 정상 동작해도) 이 rule은 실패할 수 있다 - README '케이스 추가 규칙' 참고, 실패 시 argsInclude를 빼고 forbidTools(shortCode 요구 패턴)만으로 조정할 것.",
+    "question": "@kbeauty.real.gems의 릴스 게시물 상세 지표를 알려줘",
+    "presetId": null,
+    "expectTools": [
+      {
+        "argsInclude": {
+          "author": "kbeauty.real.gems"
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "expectAnswerNotContains": [
+      "shortCode를 알려",
+      "알 수 없습니다"
+    ],
+    "groundTruthSql": null
+  },
+  {
+    "id": "preset-top-posts",
+    "note": "verified 플랜(설계 §6) - top_posts 프리셋의 선실행 호출(list_posts sort=performance_desc)이 로그에 남는지.",
+    "question": "인기 게시물 보여줘",
+    "presetId": "top_posts",
+    "expectTools": [
+      {
+        "name": "list_posts",
+        "argsInclude": {
+          "sort": "performance_desc"
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null
+  },
+  {
+    "id": "vague-status",
+    "question": "요즘 우리 브랜드 반응 어때?",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {}
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "마케터 막연 질문(09-02 실측 체인 A) - 집계 툴로 현황을 잡는지"
+  },
+  {
+    "id": "competitor-compare",
+    "question": "경쟁사랑 비교하면 우리 어때?",
+    "presetId": null,
+    "expectTools": [],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "expectAnswerNotContains": [
+      "등록되어 있지 않"
+    ],
+    "groundTruthSql": null,
+    "_note": "마케터 막연 질문(09-02 실측 체인 F) - 세션 브랜드 고정 한계를 거짓 사유(경쟁사 미등록)로 설명하지 않는지"
+  },
+  {
+    "id": "boost-post-selection",
+    "question": "Meta 2차 광고에 쓸 만한 게시물 10개를 근거와 함께 선별해줘",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "list_posts",
+        "argsInclude": {
+          "sort": "performance_desc"
+        }
+      }
+    ],
+    "forbidTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author"
+        }
+      }
+    ],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 실측 결함 - 게시물 선별 요청을 작성자 집계로 오매핑(그레인 오류)"
+  },
+  {
+    "id": "seeding-priority-fabrication",
+    "question": "시딩 우선순위 정하려는데 기준 좀 잡아줘",
+    "presetId": null,
+    "expectTools": [],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "expectAnswerNotContains": [
+      "influencer_a"
+    ],
+    "groundTruthSql": null,
+    "_note": "09-02 스윕 실측 F1 - 툴 0회로 가상 계정명 표를 날조하던 질문. 사용자 확정(09-02): 기준 설명만 하든 실측 후보를 붙이든 둘 다 정답이고 날조만 금지. 09-02 재설계로 서버 강제 caveat '(자동 검증)'은 삭제됐다(재시도 후에도 미대조면 로그만 남기고 답변은 그대로 나간다) - 그래서 이제 채점은 가상 계정명 부재만 본다."
+  },
+  {
+    "id": "crisis-checklist-no-leak",
+    "question": "이슈 생기기 전에 미리 체크하고 싶은데 뭐 없어?",
+    "presetId": null,
+    "expectTools": [],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 스윕 실측 F2 - '뭘 체크할 수 있어?'류 메타 질문에 내부 툴 이름(list_posts, get_comments, aggregate_posts(groupBy=author) 등)이 노출되던 사고. 전역 denylist가 답변의 툴명 유출을 잡는다."
+  },
+  {
+    "id": "undisclosed-ad-in-domain",
+    "question": "이거 뒷광고 같은 거 아니야?",
+    "presetId": null,
+    "expectTools": [],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "expectAnswerNotContains": [
+      "그 밖의 질문에는 답할 수 없어요",
+      "shortCode를 알려",
+      "shortCode`를 알려"
+    ],
+    "groundTruthSql": null,
+    "_note": "09-02 스윕 실측 F3 - 뒷광고 질문을 도메인 밖 템플릿으로 오거절하던 사고. 뒷광고는 sponsorship 축 도메인 안이라 거절하면 안 된다. 09-02 재실행에서 오거절은 사라졌지만 shortCode 입력을 요구하는 2차 결함이 드러나 금지 문구 추가."
+  },
+  {
+    "id": "follower-trend-honest",
+    "question": "팔로워 마니 늘엇어?",
+    "presetId": null,
+    "expectTools": [],
+    "forbidTools": [],
+    "expectAnswerContains": [
+      "팔로워"
+    ],
+    "expectAnswerNotContains": [
+      "그 밖의 질문에는 답할 수 없어요"
+    ],
+    "groundTruthSql": null,
+    "_note": "09-02 스윕 실측 F4 - 팔로워 증감 질문에 현재 팔로워 수도 안 주고 불가만 안내하던 사고. 팔로워 수는 시계열 미수집이라도 현재값은 답해야 한다."
+  },
+  {
+    "id": "chain-referent-resolution",
+    "presetId": null,
+    "turns": [
+      {
+        "text": "이번 달 릴스 top5 뽑아줘"
+      },
+      {
+        "text": "거기서 조회수 젤 높은 사람 프로필 좀 보여줘",
+        "expectTools": [
+          {
+            "name": "get_author"
+          }
+        ],
+        "expectAnswerNotContains": [
+          "알 수 없습니다",
+          "shortCode를 알려"
+        ]
+      }
+    ],
+    "groundTruthSql": null,
+    "_note": "09-02 스윕 실측 chain-02 - 직전 턴 결과를 가리키는 지칭('거기서')을 해소하지 못하고 shortCode를 요구하거나 알 수 없다고 답하던 사고. 지칭 해소 회귀 앵커."
+  },
+  {
+    "id": "preset-weekly-briefing",
+    "question": "지난주에 우리 태그된 게시물 뭐 있었고 뭐가 터졌어?",
+    "presetId": "weekly_briefing",
+    "expectTools": [
+      {
+        "name": "list_posts",
+        "argsInclude": {
+          "days": 7,
+          "sort": "performance_desc",
+          "limit": 10
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 마케터 프리셋 개편 - verified 플랜 선실행 확인"
+  },
+  {
+    "id": "preset-organic-fans",
+    "question": "협찬 없이 우리 제품 올려준 크리에이터 중에 반응 좋은 사람 누구야?",
+    "presetId": "organic_fans",
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "sponsorship": "organic",
+          "orderBy": "avgViews",
+          "limit": 10
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 마케터 프리셋 개편 - verified 플랜 선실행 확인"
+  },
+  {
+    "id": "preset-sponsored-scorecard",
+    "question": "이번에 협찬한 크리에이터들 성적표 보여줘",
+    "presetId": "sponsored_scorecard",
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "sponsorship": "sponsored",
+          "orderBy": "avgViews",
+          "limit": 20
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 마케터 프리셋 개편 - verified 플랜 선실행 확인"
+  },
+  {
+    "id": "preset-ad-candidates",
+    "question": "광고로 돌릴 만한 크리에이터 게시물 골라줘",
+    "presetId": "ad_candidates",
+    "expectTools": [
+      {
+        "name": "list_posts",
+        "argsInclude": {
+          "sort": "performance_desc",
+          "limit": 20
+        }
+      }
+    ],
+    "forbidTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author"
+        }
+      }
+    ],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 마케터 프리셋 개편 - verified 플랜 선실행 확인. forbidTools는 게시물 단위 그레인(작성자 집계 아님) 강제."
+  },
+  {
+    "id": "preset-negative-comments",
+    "question": "댓글에 불만이나 안 좋은 반응 있어?",
+    "presetId": "negative_comments",
+    "expectTools": [
+      {
+        "name": "list_posts",
+        "argsInclude": {
+          "days": 30,
+          "sort": "performance_desc",
+          "limit": 5
+        }
+      },
+      {
+        "name": "get_comments",
+        "argsHasKeys": [
+          "shortCodes"
+        ]
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 마케터 프리셋 개편 - verified 플랜 선실행 확인"
+  },
+  {
+    "id": "preset-micro-creators",
+    "question": "팔로워는 적은데 반응 터지는 사람 있어?",
+    "presetId": "micro_creators",
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "orderBy": "reachMultiple",
+          "limit": 30,
+          "minSample": 2
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 마케터 프리셋 개편 - verified 플랜 선실행 확인"
+  }
+]

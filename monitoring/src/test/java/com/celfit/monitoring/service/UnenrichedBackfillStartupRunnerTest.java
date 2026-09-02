@@ -43,7 +43,7 @@ class UnenrichedBackfillStartupRunnerTest {
 		volatile String callingThreadName;
 
 		StubDirectCollect(int expectedCalls) {
-			super(null, null, null, null, null, 300, 2000);
+			super(null, null, null, null, null, null, 300, 2000);
 			this.latch = new CountDownLatch(expectedCalls);
 		}
 
