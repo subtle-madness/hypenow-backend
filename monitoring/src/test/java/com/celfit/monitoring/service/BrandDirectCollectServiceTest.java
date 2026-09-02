@@ -169,7 +169,7 @@ class BrandDirectCollectServiceTest {
 		}
 
 		@Override
-		public void touchFrozenHashtag(long brandId, Instant floorTakenAt, Instant at) {
+		public void touchFrozenHashtag(long brandId, Instant minTakenAt, Instant floorTakenAt, Instant at) {
 			frozenTouches.add(floorTakenAt);
 		}
 

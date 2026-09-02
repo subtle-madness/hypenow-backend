@@ -142,8 +142,9 @@ public class TaggedPostRepository {
 
 	/**
 	 * 이 브랜드에서 hashtag 성분이 이미 있는 코드 전체 — 해시태그 스윕의 dedup·조기 종료 판정과
-	 * 편입 상한 잔량 계산(크기)의 공용 입력이다(구 {@code BrandHashtagRepository.existingCodes}의
-	 * 통합 풀판). 스윕 1회당 1번만 읽고 페이지마다 메모리로 교차한다 — 페이지당 IN 쿼리보다 싸다.
+	 * 감시 세트 예산 계산(크기, 2026-09-02 감시 세트 2,000 설계 §2 — 구 편입 상한 잔량 계산의
+	 * 후신)의 공용 입력이다(구 {@code BrandHashtagRepository.existingCodes}의 통합 풀판). 스윕 1회당
+	 * 1번만 읽고 페이지마다 메모리로 교차한다 — 페이지당 IN 쿼리보다 싸다.
 	 *
 	 * <p>기준이 "브랜드 풀에 있는 코드"가 아니라 "hashtag 성분이 있는 코드"인 것이 핵심이다:
 	 * 전자로 하면 tagged 열거가 이미 확보한 게시물이 전부 조기 종료 신호가 돼, 해시태그 스트림
@@ -326,14 +327,21 @@ public class TaggedPostRepository {
 	 * tagged 겹침 행은 포함한다 — tagged의 깊이 touch·trackedPosts는 hashtag 성분 행을 아예
 	 * 안 보므로(각 필터의 {@code hashtag_detected_at IS NULL}) 이 행들의 동결은 여기 소관이다.
 	 * 되감기 방지 가드로 같은 날 중복 호출·개별 touch와의 경합에도 안전하다.
+	 *
+	 * <p><b>{@code minTakenAt} 하한 필수</b>(F3, 2026-09-02 최종 리뷰 — {@link #touchCrawledDepth}의
+	 * 동형 짝과 같은 유계): 하한이 없으면 이미 추적 창(180일, {@code BrandCrawlPolicy.TRACKED_MAX_AGE})을
+	 * 넘어 영구 제외된 행까지 매 스윕마다 이 UPDATE의 스캔·갱신 대상이 돼, 브랜드 나이가 쌓일수록
+	 * 대상 범위가 무계로 자란다. 호출부(BrandDirectCollectService.doSweepUnenumerated)가 이미
+	 * {@code unenumeratedDuePosts}에 넘기는 것과 같은 값을 그대로 전달한다.
 	 */
-	public void touchFrozenHashtag(long brandId, Instant floorTakenAt, Instant at) {
+	public void touchFrozenHashtag(long brandId, Instant minTakenAt, Instant floorTakenAt, Instant at) {
 		db.update("""
 				UPDATE brand_tagged_post SET last_crawled_at = ?
 				WHERE brand_id = ? AND hashtag_detected_at IS NOT NULL AND direct_registered_at IS NULL
-				  AND taken_at < ?
+				  AND taken_at >= ? AND taken_at < ?
 				  AND (last_crawled_at IS NULL OR last_crawled_at < ?)""",
-				Timestamp.from(at), brandId, Timestamp.from(floorTakenAt), Timestamp.from(at));
+				Timestamp.from(at), brandId, Timestamp.from(minTakenAt), Timestamp.from(floorTakenAt),
+				Timestamp.from(at));
 	}
 
 	/**

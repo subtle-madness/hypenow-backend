@@ -135,6 +135,7 @@ public class BrandDirectCollectService {
 
 	private void doSweepUnenumerated(BrandRow brand) {
 		Instant now = Instant.now();
+		Instant minTakenAt = now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE);
 		// 감시 세트 바닥(2026-09-02 설계 §3) — hashtag 행이 세트 크기 이상이면 바닥이 생기고,
 		// 바닥 밖 행은 ①동결 touch(커버 간주 — 대시보드·정렬 정합) ②모수 제외(매일 티어는 touch로
 		// 안 꺼진다 — repo 주석 참조) 두 겹으로 처리한다. 이 시점의 바닥은 "어제까지의 편입" 기준이다
@@ -143,15 +144,19 @@ public class BrandDirectCollectService {
 		Instant floor = monitoringSetSize <= 0 ? null
 				: taggedPosts.nthNewestHashtagTakenAt(brand.id(), monitoringSetSize).orElse(null);
 		if (floor != null) {
-			taggedPosts.touchFrozenHashtag(brand.id(), floor, now);
+			// 동결 touch도 브랜드 추적 창(minTakenAt) 하한을 넘지 않는다(F3, 2026-09-02 최종 리뷰 —
+			// touchCrawledDepth의 동형 짝과 같은 유계). 하한이 없으면 이미 추적 종료(180일 초과)돼
+			// 영구 제외된 행까지 매 스윕마다 갱신 대상으로 훑어 불필요한 UPDATE 범위가 무계로 자란다.
+			taggedPosts.touchFrozenHashtag(brand.id(), minTakenAt, floor, now);
 		}
 		List<TaggedPostRepository.TrackedPost> dueAll = taggedPosts
-				.unenumeratedDuePosts(brand.id(), now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE), floor).stream()
+				.unenumeratedDuePosts(brand.id(), minTakenAt, floor).stream()
 				.filter(t -> BrandCrawlPolicy.due(t.takenAt(), t.lastCrawledAt(), now))
 				.toList();
-		// 스윕당 상한(2026-08-27 설계 §5) — 구 감지 데이터 이관분은 last_crawled_at이 NULL이라 180일
-		// 안이면 전부 즉시 due다. 상한이 없으면 이관 직후 첫 스윕이 브랜드당 최대 1,000건의 단건 콜 +
-		// 보강 콜을 한 번에 쏟아내 "전역 동시 콜 14" 예산을 넘긴다. 모수 정렬이 미보강 우선이라
+		// 스윕당 상한(2026-08-27 설계 §5, F6 주석 정정 2026-09-02) — 구 감지 데이터 이관분은
+		// last_crawled_at이 NULL이라 180일 안이면 전부 즉시 due다. 상한(sweepLimit, 기본 2,000건 —
+		// monitoring.brand.unenumerated-sweep-limit)이 없으면 이관 직후 첫 스윕이 브랜드당 due 전량의
+		// 단건 콜 + 보강 콜을 한 번에 쏟아내 "전역 동시 콜 14" 예산을 넘긴다. 모수 정렬이 미보강 우선이라
 		// (unenumeratedDuePosts) 미보강 잔량이 상한 이하인 평시엔 잘리는 쪽이 이미 보강된 행이지만,
 		// 이관 직후처럼 미보강 due가 상한을 넘는 동안은 잘리는 쪽도 미보강 행이다 — 그 경우 백로그가
 		// 여러 스윕에 걸쳐 점진적으로 소진된다.

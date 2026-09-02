@@ -440,6 +440,24 @@ class BrandHashtagCollectServiceTest {
 		assertThat(tagCalls()).isEqualTo(1);   // 2페이지째 콜이 없어야 한다
 	}
 
+	/**
+	 * 낭비 가드(F4, 2026-09-02 최종 리뷰) — 예산이 남아 있어도(budget > 0) 이 페이지 소득이 완전
+	 * 0(신규·겹침·매칭 태그 갱신 전부 없음)이면 다음 페이지로 안 내려간다. 수집 창 밖 게시물만
+	 * 실린 꼬리 페이지가 대표 사례(eligible()의 cutoff에 전원 걸려 fresh가 애초에 비므로).
+	 */
+	@Test
+	void 이_페이지_소득이_0이면_예산이_남아도_열거를_끊는다() {
+		tags.tags = List.of("cclime");
+		pagesByTag.put("cclime", List.of(
+				sectionsBody("p2", media("OLD1", OUT_OF_WINDOW, "poster1")),
+				sectionsBody(null, media("OLD2", OUT_OF_WINDOW, "poster2"))));
+
+		service(4, 1000).sweep(brand);   // 예산 1000 — 소진과 무관하게 끊겨야 한다
+
+		assertThat(tagged.upsertedHashtag).isEmpty();
+		assertThat(tagCalls()).isEqualTo(1);   // 2페이지째 콜이 없어야 한다
+	}
+
 	/** 백필 예산은 태그 간 공유 유지 — 태그1이 예산을 다 쓰면 태그2의 옛 게시물은 편입 안 된다. */
 	@Test
 	void 백필_예산은_태그_간_공유다() {
@@ -607,6 +625,25 @@ class BrandHashtagCollectServiceTest {
 		assertThat(tags.runStarted).containsExactly("실패", "cclime");
 		assertThat(tags.runFailed).containsEntry("실패", true).containsEntry("cclime", false);
 		assertThat(tags.runFoundCounts).containsEntry("실패", 0).containsEntry("cclime", 1);
+	}
+
+	/**
+	 * 하트비트(F1, 2026-09-02 최종 리뷰) — max-pages 100 전환으로 대형 태그 스윕이
+	 * {@link BrandHashtagRunStateResolver}의 STALE_THRESHOLD(10분)를 넘을 수 있게 됐다. 페이지마다
+	 * markRunStarted를 다시 찍어야 진행 중인 장기 스윕이 stale로 오판돼 FAILED로 폴백하지 않는다.
+	 * 2페이지짜리 스윕이면 하트비트가 2회 이상 찍혀야 한다.
+	 */
+	@Test
+	void 페이지마다_실행_시작_하트비트가_찍힌다() {
+		tags.tags = List.of("cclime");
+		pagesByTag.put("cclime", List.of(
+				sectionsBody("p2", media("P1", RECENT, "poster1")),
+				sectionsBody(null, media("P2", RECENT, "poster2"))));
+
+		service(4, 1000).sweep(brand);
+
+		assertThat(tags.runStarted.size()).isGreaterThanOrEqualTo(2);
+		assertThat(tags.runStarted).allMatch("cclime"::equals);
 	}
 
 	// ── 딥 재백필(2026-09-02 설계 §2) ──────────────────────────────────────

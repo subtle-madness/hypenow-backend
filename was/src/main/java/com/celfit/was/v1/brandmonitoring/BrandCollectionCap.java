@@ -20,8 +20,9 @@ final class BrandCollectionCap {
 
 	/**
 	 * 서빙 상한 — 수집 개수 상한({@code collection-post-limit:2000})과 같은 값이었다. 2026-09-02
-	 * 노출 상한 폐지로 더 이상 서빙에 적용되지 않지만, 모니터링 메타데이터({@code meta.limit})와
-	 * V1BrandPostsController 정렬 로직이 여전히 참조한다.
+	 * 노출 상한 폐지로 더 이상 서빙 컷에는 쓰이지 않는다(F6 주석 정정 — 정렬은 이 상수가 아니라
+	 * {@link #UPLOADED_DESC}가 참조한다). 지금은 <b>{@code meta.limit} 표기 전용</b>이다 —
+	 * V1BrandPostsController가 FE 계약 호환을 위해 응답 메타에 이 값을 그대로 내려보낸다.
 	 */
 	static final int POST_LIMIT = 2000;
 
@@ -39,8 +40,9 @@ final class BrandCollectionCap {
 	 * 컷 결과.
 	 *
 	 * @param refs 상한 통과분 — 이후의 모든 계산(counts·facets·필터·정렬·집계·페이지)이 보는 모수다.
-	 * @param capped 상한에 실제로 걸렸는지 — 전부 {@code POST_LIMIT}으로 통일하면 "상한에 걸림"과
-	 *     "마침 정확히 2,000건"을 구분할 수 없어 별도 신호로 둔다({@code meta.collectionCapped}).
+	 * @param capped 컷 폐지(2026-09-02) 후에는 <b>항상 false</b>다(F6 주석 정정) — 서빙에서는 더 이상
+	 *     상한에 걸리지 않는다. 필드 자체는 FE 계약({@code meta.collectionCapped}) 호환을 위해 남아
+	 *     있을 뿐, 실질 판정으로 쓰이지 않는다.
 	 */
 	record Capped(List<BrandPostAssembler.PostRef> refs, boolean capped) {
 	}
@@ -49,7 +51,8 @@ final class BrandCollectionCap {
 	 * 링크 표시 창을 통과한 refs를 전량 반환한다.
 	 *
 	 * <p>신선도 통제가 수집 쪽 롤링 세트로 이동했다(2026-09-02 감시 세트 설계 §4) — 서빙은 창 안
-	 * 전량이다. {@code capped} 필드는 FE 계약({@code meta.collectionCapped}) 호환으로 남긴다.
+	 * 전량이다. {@code capped}는 컷 폐지로 항상 false를 반환한다 — 필드 자체는 FE 계약
+	 * ({@code meta.collectionCapped}) 호환으로만 남긴다.
 	 */
 	static Capped apply(List<BrandPostAssembler.PostRef> windowed) {
 		// 노출 컷 폐지(2026-09-02 감시 세트 설계 §4) — 신선도 통제가 수집 쪽 롤링 세트로 옮겨가

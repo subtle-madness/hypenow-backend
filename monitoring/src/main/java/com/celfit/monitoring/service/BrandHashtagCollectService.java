@@ -150,10 +150,13 @@ public class BrandHashtagCollectService {
 			// 롤링 편입(설계 §2 — 구 하드스톱 폐기): 예산이 없어도 각 태그의 최신 유입은 편입해야
 			// 하므로 여기서 잔여 태그 열거를 끊지 않는다. 대신 sweepTag 내부의 낭비 가드가 태그별로
 			// 더 내려가도 소득이 없는 지점에서 그 태그의 열거만 끊는다.
-			// 태그별 실행 상태 기록(FE 요청, 2026-08-31) — collecting/done/failed 폴링 계약의 원재료.
-			// 시작은 sweepTag 진입 직전, 종료는 성공·실패 양쪽 다 기록한다(status는 저장 안 하고
-			// BrandHashtagRunStateResolver가 조회 시점에 계산 — 클래스 javadoc 참조).
-			tags.markRunStarted(brand.id(), tag);
+			// 태그별 실행 상태 기록(FE 요청, 2026-08-31; 하트비트화 2026-09-02 — I-1) —
+			// collecting/done/failed 폴링 계약의 원재료. 시작 기록은 sweepTag 내부에서 페이지마다
+			// markRunStarted를 다시 찍는다(종료는 여기서 성공·실패 양쪽 다 기록, status는 저장 안 하고
+			// BrandHashtagRunStateResolver가 조회 시점에 계산 — 클래스 javadoc 참조). max-pages
+			// 4→100 전환으로 대형 태그 스윕·딥 재백필이 STALE_THRESHOLD(10분)를 넘을 수 있어, 최초
+			// 1회 기록으로는 아직 진행 중인 스윕도 stale로 오판해 FAILED로 폴백해 버린다 — 페이지마다
+			// 갱신하면 stale 판정이 "마지막 하트비트로부터 10분"이 돼 진행 중인 스윕이 안전하다.
 			// 태그 단위 격리(교환비): tags.findTags는 등록순(created_at, tag) 고정 순서다 — 여기서
 			// 한 태그의 실패(Hiker 5xx·타임아웃·파싱 이상)를 안 막으면 그 태그가 매 야간 스윕마다
 			// 뒤 태그 전부를 영구 굶긴다. BrandDirectCollectService.collectOne과 같은 이유의 격리이고,
@@ -178,7 +181,14 @@ public class BrandHashtagCollectService {
 	/**
 	 * 태그 1개분 recent 열거 — maxPages까지 순회하되, 페이지에 "이전부터 있던" hashtag 성분 게시물이
 	 * 하나라도 있으면 그 페이지의 신규만 처리하고 중단한다(단 {@code deep}이면 이 조기 종료를
-	 * 건너뛴다 — Task 4의 심층 재열거 배선). 빈 페이지·커서 null도 자연 종료.
+	 * 건너뛴다 — Task 4의 심층 재열거 배선). 빈 페이지·커서 null도 자연 종료. 낭비 가드(예산 소진 +
+	 * 바닥 이하만 남음, 또는 이 페이지 소득 완전 0 — F4)도 열거를 끊는다.
+	 *
+	 * <p>페이지마다 {@link BrandHashtagRepository#markRunStarted}를 하트비트로 다시 찍는다(2026-09-02
+	 * I-1 수정) — max-pages 100 전환으로 한 태그의 스윕이 {@link BrandHashtagRunStateResolver}의
+	 * STALE_THRESHOLD(10분)를 넘을 수 있어, doSweep 진입 시 1회만 찍으면 진행 중인 대형 스윕도 stale로
+	 * 오판돼 FAILED로 폴백한다. 실패 태그(첫 페이지 콜에서 즉시 예외)도 이 하트비트 1회는 남아
+	 * doSweep의 markRunFinished(failed=true)와 쌍이 맞는다.
 	 *
 	 * @return 이번 태그가 만든 <b>신규 행</b> 수(겹침 병기는 세지 않는다 — 상한 밖)
 	 */
@@ -186,6 +196,7 @@ public class BrandHashtagCollectService {
 		int created = 0;
 		String cursor = null;
 		for (int page = 0; page < maxPages; page++) {
+			tags.markRunStarted(brand.id(), tag);
 			HikerClient.HashtagPage result = hiker.fetchHashtagRecentPage(tag, cursor);
 			if (result.posts().isEmpty()) {
 				break;
@@ -229,6 +240,13 @@ public class BrandHashtagCollectService {
 			}
 			if (!alreadyHashtag.isEmpty()) {
 				taggedPosts.recordMatchedTags(brand.id(), alreadyHashtag, tag);
+			}
+			// 낭비 가드 — 이 페이지 소득 완전 0(F4, 2026-09-02 최종 리뷰): 신규·겹침·매칭 태그 갱신
+			// 어느 쪽도 없으면(전원 eligible() cutoff에 걸림 등) 더 내려가도 얻을 게 없다. 예산 잔여와
+			// 무관하게 끊는다 — 예산이 남아 있어도(budget > 0) 수집 창 밖 꼬리 페이지에서는 브레이크해야
+			// max-pages(100)까지 낭비 콜을 반복하지 않는다.
+			if (brandNew.isEmpty() && overlap.isEmpty() && alreadyHashtag.isEmpty()) {
+				break;
 			}
 			// 낭비 가드(설계 §2) — 예산 0에서 이 페이지가 아무것도 편입 못 했고 fresh 전원이 바닥
 			// 이하면, 더 내려가도 편입 가능성이 없다(비단조 스트림이라 "전부"일 때만 끊는다).
