@@ -176,7 +176,16 @@ meta
 
 ### 5.1 신 6종 (2026-09-02 마케터 결정 중심 개편)
 
-아래는 `BrandAiPresets.INSTRUCTIONS`에 등록된 presetId와 그 지시문 내용의 요지다. **버튼 문구(사용자에게 보이는 질문 텍스트)는 이 파일에 없다** - `INSTRUCTIONS`는 모델에게 주는 지시문일 뿐 FE가 렌더링하는 버튼 라벨이 아니고, 이 디렉토리 전체를 grep해도 이번 작업지시서에 주어진 6개 버튼 문구 원문("지난주에 우리 태그된 게시물..." 등)은 등장하지 않는다. **버튼 문구는 FE 소관으로 이 세션 확인 범위 밖 - "확인 필요".**
+아래는 `BrandAiPresets.INSTRUCTIONS`에 등록된 presetId와 그 지시문 요지·verified 플랜이다. 서버 계약은 presetId뿐이고 버튼 문구는 FE가 `text`로 보내는 값이라 FE 확정이 정본이다. 다만 각 프리셋은 "마케터가 내리는 결정 1개"에 대응하도록 설계됐으므로(09-02 사용자 확정), 아래 **권장 문구**를 그대로 쓰면 지시문 의도와 어긋나지 않는다.
+
+| presetId | 권장 버튼 문구 | 대응하는 결정 |
+|---|---|---|
+| `weekly_briefing` | 지난주에 우리 태그된 게시물 뭐 있었고 뭐가 터졌어? | 팀 공유·주간 보고 |
+| `organic_fans` | 협찬 없이 우리 제품 올려준 크리에이터 중에 반응 좋은 사람 누구야? | 시딩 명단 추가 |
+| `sponsored_scorecard` | 이번에 협찬한 크리에이터들 성적표 보여줘 | 재협업·증액·제외 |
+| `ad_candidates` | 광고로 돌릴 만한 크리에이터 게시물 골라줘 | 파트너십 광고·사용권 요청 |
+| `negative_comments` | 댓글에 불만이나 안 좋은 반응 있어? | CS 대응·크리에이터 연락 |
+| `micro_creators` | 팔로워는 적은데 반응 터지는 사람 있어? | 저예산 시딩 |
 
 | presetId | 지시문 요지(코드 요약) | verified 플랜 |
 |---|---|---|
@@ -187,7 +196,7 @@ meta
 | `negative_comments` | 최근 30일 반응 많은 게시물 상위 5개의 shortCode 전부를 `get_comments`에 배열로 한 번에, 업종 공통 부정 신호만 | `list_posts{days:30,sort:performance_desc,limit:5}` |
 | `micro_creators` | 도달 배수 상위 작성자(표본 2건 이상) 중 팔로워 적은 순 상위 10명, 팔로워 정보 없는 작성자 제외 | `aggregate_posts{groupBy:author,orderBy:reachMultiple,limit:30,minSample:2}` |
 
-**팔로워 상한 FE 필터 병행 권장 여부**: `BrandAiPresets.java`·`BrandAiPrompt.java` 어디에도 "FE가 팔로워 상한 필터를 함께 걸어야 한다"는 주석·문서화가 없다. 지시문은 서버 측 정렬(팔로워 적은 순 상위 10명)만 규정한다 - **확인 필요**.
+**`micro_creators`와 화면 팔로워 필터**: 툴 인자에는 팔로워 구간 필터가 없어 서버는 도달 배수 상위 30명을 받아 팔로워 적은 순으로 고른다. 정확한 "N명 이하"가 필요하면 화면의 팔로워 상한 필터(`scope.followerMax`)를 같이 실어 보내면 된다. 팔로워 상한 툴 인자 추가는 09-02 사용자 결정으로 하지 않는다.
 
 ### 5.2 구 5종 (호환 유지, FE 전환 후 제거 예정)
 
