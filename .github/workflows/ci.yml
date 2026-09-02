@@ -73,13 +73,24 @@ jobs:
       - name: 전체 테스트 (캐시 채우기)
         run: ./gradlew test
 
-  test:
-    name: Gradle 전체 테스트
+  # 모듈별 러너 분할(09-02) — 전에는 한 잡이 `./gradlew test`로 6모듈을 4 vCPU에서 병렬 소화해
+  # 태스크 합산 12분대가 3.5~5분 벽시계로 눌렸다(08-05 실측 주석 참조). 러너를 모듈당 하나로
+  # 나누면 벽시계 바닥이 "가장 무거운 모듈 1개" 시간으로 내려간다. Testcontainers Postgres도
+  # 러너별 Docker로 격리돼 자원 경합이 사라진다. 캐시 히트 시 FROM-CACHE 스킵은 그대로
+  # (빌드 캐시는 태스크 단위라 모듈별 잡에서도 동일하게 동작).
+  # contract-analysis는 src/test가 없어 제외 — 매트릭스 누락은 아래 test 잡의 커버리지 검사가 잡는다.
+  module-test:
+    name: 모듈 테스트 (${{ matrix.module }})
     # develop push에서는 위 cache-warm이 대신한다(merge_group에서 이미 통과한 커밋).
     # staging push는 그대로 돈다 — cd-test.yml이 이 CI 성공을 배포 게이트로 쓴다.
     if: github.event_name != 'push' || github.ref_name != 'develop'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      # 한 모듈 실패가 다른 모듈 결과를 가리지 않게 — 전체 그림이 있어야 플레이키/실패 판별이 된다
+      fail-fast: false
+      matrix:
+        module: [was, crawler, analytics, monitoring, common-llm]
     steps:
       - uses: actions/checkout@v7
 
@@ -97,6 +108,8 @@ jobs:
       # 검사를 더한다.
       # 로직은 check-migration-safety.sh(셀프테스트 보호) 하나로 통합 — monitoring 디렉토리
       # 포함·선행 0 정규화(V07==V7)까지 여기 인라인 버전엔 없던 걸 얻는다.
+      # 모듈 분할 후 매트릭스 레그마다 도는 중복(수 초×5)은 감수 — "테스트를 기다리지 않고
+      # 수 초 안에 실패" 성질을 레그별로 유지하는 값이다.
       - name: Flyway 마이그레이션 버전 중복 검사
         run: .github/scripts/check-migration-safety.sh --versions-tree
 
@@ -111,16 +124,52 @@ jobs:
       - name: Gradle 설정
         uses: gradle/actions/setup-gradle@v6
 
-      - name: 전체 테스트
-        run: ./gradlew test
+      - name: 모듈 테스트
+        run: ./gradlew :${{ matrix.module }}:test
 
       - name: 실패 시 테스트 리포트 업로드
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: test-reports
-          path: '**/build/reports/tests/test/'
+          name: test-reports-${{ matrix.module }}
+          path: ${{ matrix.module }}/build/reports/tests/test/
           retention-days: 7
+
+  # 룰셋 3종(protect-develop·staging·release-branches)의 required check가 "Gradle 전체 테스트"
+  # 라는 이름을 기대한다 — 매트릭스 레그 이름을 required로 걸면 룰셋을 함께 고쳐야 하고,
+  # 어긋나면 머지 큐가 영영 매달린다. 이 집계 잡이 그 이름을 유지해 룰셋 무수정으로 전환한다.
+  # skipped/cancelled인 required check를 통과로 취급하는 경로가 있어 needs 결과를 명시 검사한다.
+  test:
+    name: Gradle 전체 테스트
+    needs: module-test
+    # cancelled가 아니면 항상 돈다(레그 실패 시에도 — 실패를 이 잡의 실패로 번역해야 required
+    # check가 빨간불이 된다). develop push에서는 레그와 함께 스킵(cache-warm이 대신한다).
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != 'develop') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      # 새 모듈이 생겼는데 매트릭스에 안 넣으면 그 모듈 테스트가 CI에서 조용히 빠진다 —
+      # settings.gradle의 모듈 중 src/test가 있는데 매트릭스에 없는 게 있으면 실패시킨다.
+      # 매트릭스 목록을 바꾸면 여기 covered도 함께 갱신할 것.
+      - name: 매트릭스 커버리지 검사 (모듈 누락 방지)
+        run: |
+          covered="was crawler analytics monitoring common-llm"
+          missing=""
+          for m in $(sed -n "s/^include '\(.*\)'/\1/p" settings.gradle); do
+            [ -d "$m/src/test" ] || continue
+            case " $covered " in *" $m "*) ;; *) missing="$missing $m" ;; esac
+          done
+          if [ -n "$missing" ]; then
+            echo "src/test가 있는데 module-test 매트릭스에 없는 모듈:$missing — ci.yml의 matrix.module과 이 스텝의 covered에 추가할 것"
+            exit 1
+          fi
+
+      - name: 모듈 테스트 결과 집계
+        run: |
+          echo "module-test 결과: ${{ needs.module-test.result }}"
+          [ "${{ needs.module-test.result }}" = "success" ]
 
   # was 롤링 배포(트랙 X) 중 신구 코드가 같은 DB를 공존해서 본다 — 파괴적 DDL(DROP·RENAME·
   # 타입 변경·SET NOT NULL)은 참조 코드가 사라진 다음 릴리스로 분리(expand-contract,
