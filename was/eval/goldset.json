@@ -331,21 +331,15 @@
     "id": "seeding-priority-fabrication",
     "question": "시딩 우선순위 정하려는데 기준 좀 잡아줘",
     "presetId": null,
-    "expectTools": [
-      {
-        "name": "aggregate_posts",
-        "argsInclude": {
-          "groupBy": "author"
-        }
-      }
-    ],
+    "expectTools": [],
     "forbidTools": [],
     "expectAnswerContains": [],
     "expectAnswerNotContains": [
-      "influencer_a"
+      "influencer_a",
+      "(자동 검증)"
     ],
     "groundTruthSql": null,
-    "_note": "09-02 스윕 실측 F1 - 툴 0회 호출로 가상 계정명(@influencer_a 류) 표를 날조하던 사고. 조언 요청도 실측 조회를 강제한다."
+    "_note": "09-02 스윕 실측 F1 - 툴 0회로 가상 계정명 표를 날조하던 질문. 사용자 확정(09-02): 기준 설명만 하든 실측 후보를 붙이든 둘 다 정답이고 날조만 금지. 그래서 툴 호출을 요구하지 않고, 가드가 날조를 못 걷어내면 붙이는 caveat '(자동 검증)'과 가상 계정명 부재로 채점한다."
   },
   {
     "id": "crisis-checklist-no-leak",
