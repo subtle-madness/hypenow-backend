@@ -1,6 +1,6 @@
 # 브랜드 백필 페이지 스트리밍 적재 + 조기 서빙 설계
 
-> 상태: 🟢 활성 · ✅ 구현됨 · 구현 계획: [2026-08-12-brand-backfill-streaming-serving.md](../plans/archive/2026-08-12-brand-backfill-streaming-serving.md)
+> 상태: 🟢 활성 · ✅ 구현됨 · 구현 계획: [2026-08-12-brand-backfill-streaming-serving.md](../../plans/archive/2026-08-12-brand-backfill-streaming-serving.md)
 
 ## 배경 — 왜 바꾸나
 

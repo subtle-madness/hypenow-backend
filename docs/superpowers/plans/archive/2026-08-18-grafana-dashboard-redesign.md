@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: ✅ 실행 완료(틀 범위 — Task 10 GRANT 런북·세부 다듬기는 후속 PR로 분리, 사용자 결정 08-18) · 스펙: [2026-08-18-grafana-dashboard-redesign-design.md](../specs/2026-08-18-grafana-dashboard-redesign-design.md)
+> 상태: ✅ 실행 완료(틀 범위 — Task 10 GRANT 런북·세부 다듬기는 후속 PR로 분리, 사용자 결정 08-18) · 스펙: [2026-08-18-grafana-dashboard-redesign-design.md](../../specs/2026-08-18-grafana-dashboard-redesign-design.md)
 
 **Goal:** 그라파나를 홈 신호등 13타일 + 기능축 7장으로 재편한다 — 로컬 목데이터 하니스에서 UI를 보며 반복하고, 확정본만 정규 CD로 배포.
 

@@ -327,13 +327,14 @@ compose가 analytics·monitoring 양쪽에 `/run/secrets/gcs-image-archiver.json
    ```
 8. 롤백(5~6 사이 문제 시): front rewrite를 OCI로 원복 + `IMAGE_STORE=par`로 재배포 —
    해당 시점 두 버킷이 동일하므로 무손실.
-9. **컷오버 확정 후 정리**: `deploy/scripts/post-container-metrics.py`의 **OCI 병행 게시 블록
-   (`OCI_BUCKETS`/`OS_NAMESPACE` if 문)을 제거**한다 — 롤백 창(8단계)이 닫히기 전까지는 두 스트림을
-   같이 봐야 관측 공백이 없으므로, 제거는 반드시 마지막에.
+9. **컷오버 확정 후 정리**(✅ 09-02 완료): `deploy/scripts/post-container-metrics.py`의 **OCI 병행
+   게시 블록(`OCI_BUCKETS`/`OS_NAMESPACE` if 문)을 제거**한다 — 롤백 창(8단계)이 닫히기 전까지는
+   두 스트림을 같이 봐야 관측 공백이 없으므로, 제거는 반드시 마지막에. 알람 본문도 함께
+   갱신했다(종전 "15GB 초과·무료 티어 20GiB" 문구는 OCI 버킷 시절 것 — 09-02 GCS 50GB 초과
+   알람이 이 낡은 본문으로 나가 원인 오독을 유발했다).
 
-OCI 버킷은 삭제하지 않는다(동결 스냅샷 안전망, 월 수백 원). 컷오버 전까지는 OCI(5분 결,
-`provider=oci` 차원)와 GCS(정시 1회) 두 스트림이 병행 게시되고, 9단계 이후 `bucket_used_gb`는
-GCS 값 하나가 된다 — 알람은 스트림별 평가라 어느 쪽이든 그대로 동작한다(§9).
+OCI 버킷은 삭제하지 않는다(동결 스냅샷 안전망, 월 수백 원). 9단계 이후 `bucket_used_gb`는
+GCS 값 하나다(정시 1회) — 알람은 스트림별 평가라 정의 무수정으로 그대로 동작한다(§9).
 
 ## 6. 백업·복원
 - 자동: 서버 크론이 매일 15:00 UTC(KST 00:00) 덤프 (맥·서버 어느 쪽이 꺼져 있든 오프사이트 사본 유지 —
@@ -404,22 +405,23 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
   `https://api.hypenow.io/health`, 과반 실패 2분 지속 시), 인스턴스 CPU·메모리 85%, 인스턴스 다운,
   **컨테이너 다운**(compose 서비스 10종 — 08-05 redis·grafana·ons-relay 추가로 운영 전 서비스 커버.
   `container_up[1m].max() < 1`이 차원 필터 없는 스트림별 평가라 SERVICES에 서비스를 추가하면
-  알람 정의 무수정으로 자동 커버된다), **디스크 85%**, **버킷 15GB**(무료 티어 20GiB 한도.
-  컷오버 시 50GB 상향 — §5-2 7단계)
+  알람 정의 무수정으로 자동 커버된다), **디스크 85%**, **버킷 50GB**(GCS `hypenow-images` —
+  08-14 컷오버 때 15GB에서 상향, §5-2 7단계. GCS는 과금형이라 한도 초과 삭제는 없고 비용·증가
+  추이 감시용. 임계 조정: `oci monitoring alarm update --query-text 'bucket_used_gb[1h].max() > N'`)
 - 컨테이너·디스크·버킷 용량은 커스텀 메트릭(`hypenow_custom`) — 서버 크론 1분 주기
-  (버킷은 스크립트가 **OCI 5분 결 + GCS 정시 1회**로 조회 — OCI/GCS 둘 다 크기를 자동 게시하지
-  않아 직접 게시한다. GCS는 전체 목록 페이징이라 정시 1회. 컷오버 후 OCI 병행 게시는 제거 예정 —
-  §5-2 9단계):
+  (버킷은 스크립트가 **GCS 정시 1회**로 조회 — GCS가 크기를 자동 게시하지 않아 직접 게시하고,
+  전체 목록 페이징이라 정시 1회다. OCI 병행 게시는 09-02 제거 — §5-2 9단계):
   `* * * * * /home/ubuntu/.venv-oci-metrics/bin/python /home/ubuntu/deploy/scripts/post-container-metrics.py >> /home/ubuntu/metrics-post.log 2>&1`
 - 인증은 인스턴스 프린시펄 — 서버에 API 키를 두지 않는다. IAM 구성:
   dynamic group `hypenow-instances`(인스턴스 매칭) + policy `hypenow-custom-metrics`:
   `Allow dynamic-group hypenow-instances to use metrics in tenancy where target.metrics.namespace='hypenow_custom'`
   `Allow dynamic-group hypenow-instances to read buckets in tenancy where target.bucket.name='hypenow-images'`
+  (read buckets 정책은 OCI 병행 게시용이었다 — 09-02 블록 제거로 더는 안 쓰므로 정리해도 된다)
   venv: `python3 -m venv ~/.venv-oci-metrics && ~/.venv-oci-metrics/bin/pip install oci google-auth requests`
   (GCS 버킷 크기 조회만은 예외로 SA 키 파일 `~/deploy/secrets/gcs-image-archiver.json`을 읽는다 —
   compose가 쓰는 것과 같은 파일. 2026-08-12 이미지 스토리지 이전 이후)
 - 컨테이너 추가·이름 변경 시 스크립트의 `SERVICES` 목록도 갱신할 것(목록 고정 방식 —
-  사라진 컨테이너도 0으로 게시해 알람이 잡는다). 버킷 추가 시 `OCI_BUCKETS`/`GCS_BUCKETS` 목록 갱신.
+  사라진 컨테이너도 0으로 게시해 알람이 잡는다). 버킷 추가 시 `GCS_BUCKETS` 목록 갱신.
 - **컨테이너 조회는 이름이 아니라 compose 라벨로 한다**(project=`deploy` + service=`<svc>`).
   `deploy-<svc>-1` 이름을 쓰면 안 되는 이유: 롤링 재기동(`rollout.sh`)이 `--scale <svc>=2`로
   **다음 빈 인덱스**에 신 컨테이너를 띄우고 구 1번을 지워, 첫 롤링 이후 `-1`은 영영 없다
@@ -484,7 +486,7 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 (`workflow_run` 트리거 — CI가 실패하면 test 배포도 없다). develop 머지는 CI만 돌고 배포하지
 않는다 — **승격 흐름: develop→staging(test 배포)→main(운영 배포)**. 구조·결정 근거:
 [specs/2026-07-26-dev-staging-environment-design.md](../docs/superpowers/specs/archive/2026-07-26-dev-staging-environment-design.md) ·
-[specs/2026-07-29-staging-branch-test-stack-design.md](../docs/superpowers/specs/2026-07-29-staging-branch-test-stack-design.md)
+[specs/2026-07-29-staging-branch-test-stack-design.md](../docs/superpowers/specs/archive/2026-07-29-staging-branch-test-stack-design.md)
 
 - 접속: `https://dev-api.hypenow.io` (도메인은 구명 유지 — DNS 무변경. was 로그인 월 —
   test 전용 가입 코드 필요). 서버 `.env`의 `DEV_*` 변수·raw 계정 `analytics_dev`·데이터 볼륨

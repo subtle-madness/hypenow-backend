@@ -852,7 +852,7 @@ class BrandCollectServiceTest {
 
 	@Test
 	void 수집_상한_0은_무제한이다() {
-		// 0 이하 = 무제한(backfill-max-per-run 관용 일치) — 0이 "1페이지 후 전체 동결"로 오독되면
+		// 0 이하 = 무제한 — 0이 "1페이지 후 전체 동결"로 오독되면
 		// 브랜드 전체가 티어 주기 동안 조용히 얼어붙는 풋건이라 가드한다.
 		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
 		tagPages.add(page(null, reel("C", RECENT, 0, 103, "")));

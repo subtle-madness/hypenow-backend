@@ -187,7 +187,7 @@ raw 14점(상위 1% 전체)이 정수 97~100의 4개 값으로 압축된다 — 
 | 버전 | 변경 | 스펙 |
 |---|---|---|
 | v1 | 하드캡 `min(x,1)` 정규화 — **폐기** | — |
-| v2 (07-20) | 하드캡 제거, 연속 로그 축, 타입별 앵커 | [2026-07-20-hype-score-v2-redesign](superpowers/specs/2026-07-20-hype-score-v2-redesign-design.md) |
+| v2 (07-20) | 하드캡 제거, 연속 로그 축, 타입별 앵커 | [2026-07-20-hype-score-v2-redesign](superpowers/specs/archive/2026-07-20-hype-score-v2-redesign-design.md) |
 | v2.1 (07-20) | 릴스 참여 축 분모를 조회수→팔로워로 교체(저조회수 뭉침 해소). 릴스 앵커만 재적합 | [2026-07-20-reels-hype-engage-follower-normalization](superpowers/specs/archive/2026-07-20-reels-hype-engage-follower-normalization-design.md) |
 | v3 (07-30) | 감쇠를 앵커 매핑 뒤로, 클램프를 감쇠 앞으로. 앵커를 `Q` 기준·전체 서빙 코퍼스로 재적합. 계정 척도 재교정과 정렬 키 분리 동반 | [2026-07-30-hype-score-v3-decay-after-mapping](superpowers/specs/2026-07-30-hype-score-v3-decay-after-mapping-design.md) |
 | v3 + 소수점 노출 (07-30) | 콘텐츠 출력 매핑(`hype_score_output`) 신설·타입 무관 단일 앵커(랭킹 경로 실측). `hype_score_precise`·`avg_hype_score_precise`(둘 다 소수 4자리) 신설, was 표시·정렬을 이 컬럼들로 이전. 구 정수 컬럼 3종은 값·의미 불변·다음 릴리스 드롭 대상 | [2026-07-30-hype-score-v3-decay-after-mapping §10](superpowers/specs/2026-07-30-hype-score-v3-decay-after-mapping-design.md) |

@@ -1,7 +1,7 @@
 # 브랜드 초기 수집 — 완결 배치 서빙 설계
 
 > 상태: 🟢 활성 · ✅ 구현됨(2026-08-13) · 구현 계획:
-> [2026-08-13-brand-initial-batch-serving.md](../plans/archive/2026-08-13-brand-initial-batch-serving.md) ·
+> [2026-08-13-brand-initial-batch-serving.md](../../plans/archive/2026-08-13-brand-initial-batch-serving.md) ·
 > FE 회신본은 별도 전달(레포 미보관)
 
 > **실행으로 정정된 곳이 세 군데다.** 스펙은 설계 기록이라 원칙상 불변이지만, 아래 셋은 구현이

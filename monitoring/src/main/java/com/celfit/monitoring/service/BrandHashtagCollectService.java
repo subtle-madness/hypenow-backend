@@ -44,17 +44,20 @@ import org.slf4j.LoggerFactory;
  * 태그 B의 스트림에 실려도 B의 종료 신호로 보지 않는다 — 안 그러면 B의 열거 깊이가 태그 순서에
  * 좌우된다. {@code insertedThisRun}이 그 구분을 들고 있다.
  *
- * <p><b>편입 상한</b>: hashtag 성분 행이 브랜드당 {@code postLimit}(기본 1,000)에 닿으면 <b>그 브랜드의
- * 해시태그 열거 자체를 중단</b>한다(콜 예산 보호 — {@link #doSweep}이 예산 소진 후의 태그는 아예
- * 열거하지 않는다). 이미 풀에 있는 행에 hashtag 성분만 얹는 <b>겹침 병기는 상한 밖</b>이다(행이
- * 늘지 않는다 — 설계 §2-3) — 단 이 면제는 <b>태그가 실제로 열거되는 동안만</b> 유효하다: 상한
- * 도달로 어느 태그가 아예 열거되지 않으면 그 태그의 겹침도 병기되지 않는다. tagged의 2,000
+ * <p><b>롤링 감시 세트(2026-09-02 감시 세트 2,000 설계 §2 — 구 편입 하드스톱 폐기)</b>: hashtag 성분
+ * 행이 브랜드당 {@code postLimit}(기본 2,000)에 닿아도 <b>그 브랜드의 해시태그 열거를 중단하지
+ * 않는다</b> — 세트는 "게시일 최신 postLimit개"를 유지하는 롤링 창이라, 예산이 바닥나도 각 태그의
+ * 신규 유입 중 세트 바닥({@link TaggedPostRepository#nthNewestHashtagTakenAt})보다 최신인 것은
+ * 계속 편입해야 한다(바닥보다 오래된 행은 다음 2단계 재수집에서 자연히 밀려난다 — 설계 §3).
+ * 대신 <b>낭비 가드</b>가 태그별로 더 내려가도 소득이 없는 지점(예산 0 + 페이지 전체가 바닥
+ * 이하 + 편입 0)에서 그 태그의 열거만 끊는다 — {@link #sweepTag} 참조. 이미 풀에 있는 행에
+ * hashtag 성분만 얹는 <b>겹침 병기는 상한 밖</b>이다(행이 늘지 않는다 — 설계 §2-3). tagged의 2,000
  * 상한과는 별도 카운터다.
  *
- * <p><b>태그 간 우선순위</b>: 예산은 태그 목록({@link BrandHashtagRepository#findTags}, 등록순
+ * <p><b>태그 간 우선순위(백필 예산)</b>: 예산은 태그 목록({@link BrandHashtagRepository#findTags}, 등록순
  * created_at·tag)을 순서대로 태우므로, "최신 우선"은 태그 <b>하나</b>의 recent 스트림 안에서만
- * 성립한다 — 여러 태그 사이에서는 먼저 등록된 태그가 예산을 먼저 소진하고, 뒤 태그는 남은 예산이
- * 없으면 이번 스윕에서 아예 열거되지 않는다.
+ * 성립한다 — 여러 태그 사이에서는 먼저 등록된 태그가 예산을 먼저 소진하고, 뒤 태그는 롤링 편입
+ * (세트 바닥보다 최신)만으로 신규를 채운다.
  *
  * <p>plain class + {@code BrandHashtagConfig}에서 배선(구 구조에서 이어받은 배치).
  */
@@ -93,13 +96,24 @@ public class BrandHashtagCollectService {
 		final Set<String> hashtagKnown;
 		/** 이번 실행에서 편입한 코드 — 종료 신호에서 제외(크로스 태그 깊이 보존). */
 		final Set<String> insertedThisRun = new HashSet<>();
-		/** 남은 신규 편입 여유. */
+		/** 남은 신규 편입 여유(백필 예산 — 태그 간 공유). */
 		int budget;
+		/** 감시 세트 바닥(2026-09-02 설계 §2) — null이면 세트 미포화(예산으로만 판정). 스윕 시작
+		 * 시점 스냅샷이라 이번 실행의 편입이 바닥을 밀어올리는 효과는 다음 스윕부터다 — 그 사이의
+		 * 초과 편입은 한 스윕치 유입으로 유계라 수용한다. */
+		final Instant floor;
 
-		SweepState(Set<String> known, Set<String> hashtagKnown, int budget) {
+		SweepState(Set<String> known, Set<String> hashtagKnown, int budget, Instant floor) {
 			this.known = known;
 			this.hashtagKnown = hashtagKnown;
 			this.budget = budget;
+			this.floor = floor;
+		}
+
+		/** 롤링 편입 판정 — 바닥이 있고 그보다 최신이면 예산 없이도 편입(설계 §2). */
+		boolean admitsByFloor(PostInfo p) {
+			return floor != null && p.takenAt() != null
+					&& Instant.ofEpochSecond(p.takenAt()).isAfter(floor);
 		}
 	}
 
@@ -108,7 +122,7 @@ public class BrandHashtagCollectService {
 	 * Hiker 폴백)로 간다. */
 	public void sweep(BrandRow brand) {
 		// 콜 집계 스코프(어드민 크롤링 비용) — 열거·보강 콜 전부 이 브랜드 몫으로 계상된다.
-		callContext.runScoped(brand.id(), () -> doSweep(brand, collect::enrich));
+		callContext.runScoped(brand.id(), () -> doSweep(brand, collect::enrich, false));
 	}
 
 	/**
@@ -119,10 +133,22 @@ public class BrandHashtagCollectService {
 	 * Hiker다 — 이 분리가 의미를 갖는 지점은 오직 {@link #collectPage}의 보강 호출뿐이다.
 	 */
 	public void sweepUserTriggered(BrandRow brand) {
-		callContext.runScoped(brand.id(), () -> doSweep(brand, collect::enrichUserTriggered));
+		callContext.runScoped(brand.id(), () -> doSweep(brand, collect::enrichUserTriggered, false));
 	}
 
-	private void doSweep(BrandRow brand, BiConsumer<BrandRow, List<PostInfo>> enrich) {
+	/**
+	 * 딥 재백필 1회 경로(2026-09-02 설계 §2) — 구 하드스톱(post-limit 1000) 기간에 편입이 막혀
+	 * 버려진 게시물은 dedup 조기 종료(페이지에 기존 행이 보이면 중단) 탓에 증분 스윕으로는 영영
+	 * 회수되지 않는다. 이 경로는 조기 종료만 무시하고 나머지(예산·낭비 가드·maxPages·수집 창)는
+	 * 일반 스윕과 동일하다. recent 스트림이 옛 게시물을 어디까지 돌려주는지는 보장이 없어 회수는
+	 * best-effort다. {@link HashtagDeepResweepStartupRunner} 전용 — 상시 경로에 쓰지 말 것
+	 * (매 스윕 딥으로 돌면 태그당 페이지 콜이 상시 ~수십 배가 된다).
+	 */
+	public void deepResweep(BrandRow brand) {
+		callContext.runScoped(brand.id(), () -> doSweep(brand, collect::enrich, true));
+	}
+
+	private void doSweep(BrandRow brand, BiConsumer<BrandRow, List<PostInfo>> enrich, boolean deep) {
 		List<String> tagList = tags.findTags(brand.id());
 		if (tagList.isEmpty()) {
 			return;
@@ -130,24 +156,30 @@ public class BrandHashtagCollectService {
 		Instant now = Instant.now();
 		Instant cutoff = BrandCollectService.collectionCutoff(brand, now);
 		Set<String> hashtagKnown = taggedPosts.hashtagCodes(brand.id());
-		SweepState state = new SweepState(new HashSet<>(taggedPosts.knownCodes(brand.id())), hashtagKnown,
-				postLimit <= 0 ? Integer.MAX_VALUE : Math.max(0, postLimit - hashtagKnown.size()));
+		int budget = postLimit <= 0 ? Integer.MAX_VALUE : Math.max(0, postLimit - hashtagKnown.size());
+		Instant floor = postLimit <= 0 ? null
+				: taggedPosts.nthNewestHashtagTakenAt(brand.id(), postLimit).orElse(null);
+		SweepState state = new SweepState(new HashSet<>(taggedPosts.knownCodes(brand.id())),
+				hashtagKnown, budget, floor);
 		int savedTotal = 0;
 		for (String tag : tagList) {
-			if (state.budget <= 0) {
-				log.info("브랜드 해시태그 편입 상한({}) 도달 — {} 잔여 태그 열거 중단", postLimit, brand.username());
-				break;
-			}
-			// 태그별 실행 상태 기록(FE 요청, 2026-08-31) — collecting/done/failed 폴링 계약의 원재료.
-			// 시작은 sweepTag 진입 직전, 종료는 성공·실패 양쪽 다 기록한다(status는 저장 안 하고
-			// BrandHashtagRunStateResolver가 조회 시점에 계산 — 클래스 javadoc 참조).
-			tags.markRunStarted(brand.id(), tag);
+			// 롤링 편입(설계 §2 — 구 하드스톱 폐기): 예산이 없어도 각 태그의 최신 유입은 편입해야
+			// 하므로 여기서 잔여 태그 열거를 끊지 않는다. 대신 sweepTag 내부의 낭비 가드가 태그별로
+			// 더 내려가도 소득이 없는 지점에서 그 태그의 열거만 끊는다.
+			// 태그별 실행 상태 기록(FE 요청, 2026-08-31; 하트비트화 2026-09-02 — I-1) —
+			// collecting/done/failed 폴링 계약의 원재료. 시작 기록은 sweepTag 내부에서 페이지마다
+			// markRunStarted를 다시 찍는다(종료는 여기서 성공·실패 양쪽 다 기록, status는 저장 안 하고
+			// BrandHashtagRunStateResolver가 조회 시점에 계산 — 클래스 javadoc 참조). max-pages
+			// 4→100 전환으로 대형 태그 스윕·딥 재백필이 STALE_THRESHOLD(10분)를 넘을 수 있어, 최초
+			// 1회 기록으로는 아직 진행 중인 스윕도 stale로 오판해 FAILED로 폴백해 버린다 — 페이지마다
+			// 갱신하면 stale 판정이 "마지막 하트비트로부터 10분"이 돼 진행 중인 스윕이 안전하다.
 			// 태그 단위 격리(교환비): tags.findTags는 등록순(created_at, tag) 고정 순서다 — 여기서
 			// 한 태그의 실패(Hiker 5xx·타임아웃·파싱 이상)를 안 막으면 그 태그가 매 야간 스윕마다
 			// 뒤 태그 전부를 영구 굶긴다. BrandDirectCollectService.collectOne과 같은 이유의 격리이고,
 			// 미처리분은 다음 스윕이 같은 순서로 재시도한다(별도 백스톱 불필요 — 열거 자체가 멱등).
 			try {
-				int created = sweepTag(brand, tag, cutoff, now, state, enrich);
+				// deep 파라미터 전달 — deepResweep이 true로 호출하면 dedup 조기 종료를 무시한다.
+				int created = sweepTag(brand, tag, cutoff, now, state, enrich, deep);
 				savedTotal += created;
 				tags.markRunFinished(brand.id(), tag, created, false);
 			} catch (RuntimeException e) {
@@ -164,15 +196,24 @@ public class BrandHashtagCollectService {
 
 	/**
 	 * 태그 1개분 recent 열거 — maxPages까지 순회하되, 페이지에 "이전부터 있던" hashtag 성분 게시물이
-	 * 하나라도 있으면 그 페이지의 신규만 처리하고 중단한다. 빈 페이지·커서 null도 자연 종료.
+	 * 하나라도 있으면 그 페이지의 신규만 처리하고 중단한다(단 {@code deep}이면 이 조기 종료를
+	 * 건너뛴다 — Task 4의 심층 재열거 배선). 빈 페이지·커서 null도 자연 종료. 낭비 가드(예산 소진 +
+	 * 바닥 이하만 남음, 또는 이 페이지 소득 완전 0 — F4)도 열거를 끊는다.
+	 *
+	 * <p>페이지마다 {@link BrandHashtagRepository#markRunStarted}를 하트비트로 다시 찍는다(2026-09-02
+	 * I-1 수정) — max-pages 100 전환으로 한 태그의 스윕이 {@link BrandHashtagRunStateResolver}의
+	 * STALE_THRESHOLD(10분)를 넘을 수 있어, doSweep 진입 시 1회만 찍으면 진행 중인 대형 스윕도 stale로
+	 * 오판돼 FAILED로 폴백한다. 실패 태그(첫 페이지 콜에서 즉시 예외)도 이 하트비트 1회는 남아
+	 * doSweep의 markRunFinished(failed=true)와 쌍이 맞는다.
 	 *
 	 * @return 이번 태그가 만든 <b>신규 행</b> 수(겹침 병기는 세지 않는다 — 상한 밖)
 	 */
 	private int sweepTag(BrandRow brand, String tag, Instant cutoff, Instant now, SweepState state,
-			BiConsumer<BrandRow, List<PostInfo>> enrich) {
+			BiConsumer<BrandRow, List<PostInfo>> enrich, boolean deep) {
 		int created = 0;
 		String cursor = null;
 		for (int page = 0; page < maxPages; page++) {
+			tags.markRunStarted(brand.id(), tag);
 			HashtagPage result = hiker.fetchHashtagRecentPage(tag, cursor);
 			if (result.posts().isEmpty()) {
 				break;
@@ -191,18 +232,25 @@ public class BrandHashtagCollectService {
 					.filter(p -> !alreadyHashtag.contains(p.shortCode()))
 					.toList();
 			List<PostInfo> overlap = fresh.stream().filter(p -> state.known.contains(p.shortCode())).toList();
-			List<PostInfo> brandNew = fresh.stream().filter(p -> !state.known.contains(p.shortCode()))
-					.limit(Math.max(0, state.budget))
-					.toList();
+			// 롤링 편입(설계 §2 — 구 하드스톱 폐기) — 선별 즉시 예산을 차감한다(스트림 limit보다
+			// 반 발 이른 지점). 예산이 남아 있으면 백필로 편입하고, 소진됐으면 세트 바닥보다
+			// 최신인 것만 예산 없이 편입한다(롤링 편입). 둘 다 아니면 스킵(다음 스윕으로 미룸).
+			List<PostInfo> brandNew = new ArrayList<>();
+			for (PostInfo p : fresh) {
+				if (state.known.contains(p.shortCode())) {
+					continue;
+				}
+				if (state.budget > 0) {
+					state.budget--;          // 백필 용량 소모(선별 즉시 차감 — 구 페이지 말미 차감의 강화판)
+					brandNew.add(p);
+				} else if (state.admitsByFloor(p)) {
+					brandNew.add(p);         // 롤링 편입 — 세트 바닥 위는 예산 없이 편입(하드스톱 폐기)
+				}
+			}
 			List<PostInfo> toCollect = new ArrayList<>(overlap);
 			toCollect.addAll(brandNew);
 			collectPage(brand, tag, toCollect, now, enrich);
 			created += brandNew.size();
-			// 페이지 단위 즉시 차감(2026-08-27 재리뷰 반영) — 태그 루프 전체를 돈 뒤 한 번에 빼면,
-			// 도중 예외(격리된 태그 실패)로 이 태그가 여기서 끊길 때 이미 커밋된 페이지분이 예산에서
-			// 안 빠져 다음 태그가 그만큼 초과 편입한다. 페이지마다 바로 빼면 어느 페이지에서 끊기든
-			// state.budget이 그 순간까지의 실편입을 정확히 반영한다.
-			state.budget -= brandNew.size();
 			for (PostInfo p : toCollect) {
 				state.insertedThisRun.add(p.shortCode());
 				state.known.add(p.shortCode());
@@ -210,8 +258,21 @@ public class BrandHashtagCollectService {
 			if (!alreadyHashtag.isEmpty()) {
 				taggedPosts.recordMatchedTags(brand.id(), alreadyHashtag, tag);
 			}
+			// 낭비 가드 — 이 페이지 소득 완전 0(F4, 2026-09-02 최종 리뷰): 신규·겹침·매칭 태그 갱신
+			// 어느 쪽도 없으면(전원 eligible() cutoff에 걸림 등) 더 내려가도 얻을 게 없다. 예산 잔여와
+			// 무관하게 끊는다 — 예산이 남아 있어도(budget > 0) 수집 창 밖 꼬리 페이지에서는 브레이크해야
+			// max-pages(100)까지 낭비 콜을 반복하지 않는다.
+			if (brandNew.isEmpty() && overlap.isEmpty() && alreadyHashtag.isEmpty()) {
+				break;
+			}
+			// 낭비 가드(설계 §2) — 예산 0에서 이 페이지가 아무것도 편입 못 했고 fresh 전원이 바닥
+			// 이하면, 더 내려가도 편입 가능성이 없다(비단조 스트림이라 "전부"일 때만 끊는다).
+			if (state.budget <= 0 && brandNew.isEmpty() && !fresh.isEmpty()
+					&& fresh.stream().noneMatch(state::admitsByFloor)) {
+				break;
+			}
 			// 종료 트리거는 "이전부터 있던" 코드에만 반응한다(위 클래스 주석 — 크로스 태그 깊이 보존).
-			if (alreadyHashtag.stream().anyMatch(state.hashtagKnown::contains)) {
+			if (!deep && alreadyHashtag.stream().anyMatch(state.hashtagKnown::contains)) {
 				break;
 			}
 			cursor = result.nextPageId();

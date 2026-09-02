@@ -9,8 +9,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
@@ -18,11 +16,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * 순수 로직 테스트(PipelineStatsServiceTest)는 Docker 없이도 돌아야 해서 분리했다
  * (07-28 리뷰: Testcontainers 클래스에 순수 테스트까지 묶으면 Docker 없는 환경에서 전부 실행 불가).
  */
-@Testcontainers
 class PipelineStatsServiceDbTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	JdbcTemplate db;
 	DataSource ds;

@@ -214,7 +214,8 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 > (`docs/tracks/<트랙문자>-<슬러그>.md`). 새 트랙은 다음 미사용 문자로 파일을 새로 만든다
 > (파일 존재 여부가 곧 문자 선점 대장 — 여러 세션이 동시에 새 트랙을 만들어도 서로 다른
 > 파일이라 머지 충돌이 나지 않는다). 상태가 바뀌면 해당 트랙 파일만 갱신한다.
-> 상태 기호: ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류.
+> 상태 기호: ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류. 완결·제거 트랙은 `docs/tracks/archive/`에 있다
+> (재개 시 다시 `docs/tracks/`로 꺼낸다) — 아래 목록·트랙군 설명은 활성 트랙 기준이다.
 
 **운영 중**: crawler 파이프라인(discover→qualify→beauty→collect·reels — 07-22부터 qualify·beauty·collect·reels는
 새벽 윈도우 반복 크론 자동 실행, discover·similar만 어드민 수동 트리거. 어드민은 대시보드 단일

@@ -89,22 +89,10 @@ signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
 data = [metric("container_up", {"containerName": s}, container_up(s)) for s in SERVICES]
 data.append(metric("disk_used_percent", {"host": "hypenow-api"}, disk_used_percent()))
 
-# OCI 버킷 병행 게시(컷오버 전 관측 공백 방지) — GCS 전환 완료 후 이 블록만 제거한다.
-# bucket_used_gb는 dimension으로 스트림이 갈려 알람 정의 수정 불요. 다만 두 스트림의
-# bucketName이 같은 "hypenow-images"라 같은 분(minute==0이면서 %5==0)에 둘 다 게시되면
-# 같은 dimension으로 datapoint가 2개 들어간다 — OCI 쪽에 provider="oci"를 더해 스트림을 가른다.
-OCI_BUCKETS = ["hypenow-images"]
-OS_NAMESPACE = "nr4nxrxoojw8"
-if now.minute % 5 == 0:
-	try:
-		os_client = oci.object_storage.ObjectStorageClient({"region": signer.region}, signer=signer)
-		for bucket in OCI_BUCKETS:
-			size = os_client.get_bucket(OS_NAMESPACE, bucket, fields=["approximateSize"]).data.approximate_size or 0
-			data.append(metric("bucket_used_gb", {"bucketName": bucket, "provider": "oci"}, round(size / 2**30, 3)))
-	except Exception as e:
-		print(f"OCI 버킷 크기 수집 실패: {e}", file=sys.stderr)
-
 # 버킷 용량(GCS, 2026-08-12 이전) — 크기 합산은 전체 목록 페이징이라 정시(hour)에만.
+# OCI 병행 게시(provider=oci 스트림)는 컷오버 확정 후 09-02 제거(§5-2 9단계) — OCI 버킷은
+# 동결 스냅샷이라 측정할 정보가 없고, 스트림이 남으면 알람 본문의 bucketName만으로
+# 어느 쪽이 울렸는지 구분이 안 된다.
 GCS_BUCKETS = ["hypenow-images"]
 GCS_KEY = "/home/ubuntu/deploy/secrets/gcs-image-archiver.json"
 if now.minute == 0:

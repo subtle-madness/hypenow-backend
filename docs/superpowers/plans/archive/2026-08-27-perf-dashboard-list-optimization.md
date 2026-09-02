@@ -8,7 +8,7 @@
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · JdbcClient · Mockito/`@WebMvcTest`(기존 테스트 스타일).
 
-**스펙:** [2026-08-27-perf-dashboard-list-api-optimization-design.md](../specs/2026-08-27-perf-dashboard-list-api-optimization-design.md) §1~§3
+**스펙:** [2026-08-27-perf-dashboard-list-api-optimization-design.md](../../specs/2026-08-27-perf-dashboard-list-api-optimization-design.md) §1~§3
 
 ## Global Constraints
 

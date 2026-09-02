@@ -1,7 +1,7 @@
 # 브랜드 태그 열거 안전 상한 개정 — 백필 공백 영구화·상한 루프 결함 대응
 
 > 상태: ✅ 구현됨 (2026-08-12 — tooq.official 등록 백필 상한 중단 운영 실측 대응.
-> [크롤링 정책 v1 스펙](archive/2026-08-09-brand-crawl-policy-v1-design.md) §6의
+> [크롤링 정책 v1 스펙](2026-08-09-brand-crawl-policy-v1-design.md) §6의
 > `max-posts-per-sweep` 값·상한 도달 시맨틱만 개정 — 티어 정책·수집 경로·저장 골격은 불변)
 
 ## 0. 한 줄 요약

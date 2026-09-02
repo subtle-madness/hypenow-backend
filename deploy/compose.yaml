@@ -55,6 +55,10 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 1536m
+    # 병렬 쿼리 DSM(/dev/shm)은 도커 기본 64MB로는 부족하다 — 09-01 유사 추천 신규 쿼리가
+    # "could not resize shared memory segment ... No space left on device"로 전면 500(94% 포화 실측).
+    # mem_limit 안쪽이라 페이지 캐시처럼 cgroup에 과금될 뿐 추가 예산 아님.
+    shm_size: 256m
     oom_score_adj: -800
     networks: [prod]
     # 쿼리 성능 측정(스펙 2026-08-10) — pg_stat_statements는 preload 필수라 command로 주입.
@@ -88,6 +92,7 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 2g   # raw 대용량(덤프 11GiB급) — 미러 잡 페이지 캐시 몫을 analysis보다 여유 있게
+    shm_size: 256m   # 병렬 쿼리 DSM — postgres(analysis)와 동일 사유(위 주석), 예방 동반 적용
     oom_score_adj: -800
     networks: [prod, test]   # test-analytics가 analytics_dev 계정으로 raw를 읽는다 — 의도된 공유 접점
     environment:
@@ -336,6 +341,11 @@ services:
       # 기본 off. 실행할 때만 .env에 true를 넣고 up -d monitoring으로 개통(MONITORING_ENABLED 관용구),
       # 백필 완주 후 되돌린다. Hiker 재조회 콜 증폭 지점이라 상시 개방하지 않는다(limit 필수가 2차 방어).
       MONITORING_IMAGE_BACKFILL_TRIGGER_ENABLED: ${MONITORING_IMAGE_BACKFILL_TRIGGER_ENABLED:-false}
+      # 해시태그 딥 재백필 1회 킬 스위치(2026-09-02 감시 세트 설계 §2) — 구 편입 하드스톱(1,000)
+      # 기간에 버려진 게시물 회수용. 기본 off. 위 이미지 백필과 같은 관용구: 실행할 때만 .env에
+      # true 넣고 up -d monitoring으로 개통(야간 스윕 창 KST 02~07시 회피), 완료 로그("해시태그
+      # 딥 재백필 완료") 확인 후 되돌린다 — 켜둔 채면 재기동마다 태그당 수십~수백 콜이 낭비된다.
+      MONITORING_BRAND_HASHTAG_DEEP_RESWEEP_ON_STARTUP: ${MONITORING_BRAND_HASHTAG_DEEP_RESWEEP_ON_STARTUP:-false}
       # 스케줄(KST=UTC+9): 일일 스윕 KST 02:00 — crawler collect 윈도우(KST 01:00~03:30)와 무관한 별개 파이프라인
       MONITORING_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
       # 브랜드 태그 스윕 — KST 02:00(UTC 17:00). 설계 원안은 03:00(캠페인 스윕과 시차)이었으나

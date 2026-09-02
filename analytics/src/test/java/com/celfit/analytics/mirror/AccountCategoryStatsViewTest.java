@@ -2,35 +2,32 @@ package com.celfit.analytics.mirror;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.celfit.analytics.testsupport.TestDb;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
  * 계정 카테고리 믹스 파생 뷰(V35) — 미러가 아니라 analysis DB 안에서 계산되므로
  * raw SQL 하니스(analytics/test/*.test.sql)가 아닌 Flyway 컨테이너로 검증한다.
  */
-@Testcontainers
 class AccountCategoryStatsViewTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	static JdbcTemplate db;
 
 	@BeforeAll
 	static void seed() {
 		DataSource ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
-		Flyway.configure().dataSource(ds).locations("classpath:db/migration/analysis").load().migrate();
 		db = new JdbcTemplate(ds);
+		// 공유 컨테이너라 이전 클래스의 잔재 위에서 migrate하면 안 된다 — 리셋 후 전체 재생
+		TestDb.resetAndMigrate(db, ds);
 		// 최근창(account_content_series) 5건: a는 makeup 2 + skincare 1, b는 makeup 1.
 		// a4는 비뷰티(F&B 대분류 snack, is_beauty=false)라 fnb 축으로 빠지고, a5는 대분류 NULL이라
 		// 축과 무관하게 믹스에서 빠진다 — 2026-09-01 축 인지화 이후 "뷰티 믹스"는 axis='beauty' 투영.

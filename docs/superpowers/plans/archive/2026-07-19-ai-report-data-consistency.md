@@ -16,11 +16,11 @@
 
 ## 배경 — 추적으로 확정한 사실 (구현 전 필독)
 
-- `GET /v1/contents/{id}/ai-report`의 `comparison.views`는 [V1ContentReportAssembler.java:48](../../../was/src/main/java/com/celfit/was/v1/content/V1ContentReportAssembler.java)에서 조립: `value`=`contents.views`(라이브 핀), `baseline`·`rankInRecent`·`recentCount`=`content_analyses`(분석 시점 고정), `recentReels[]`=`account_content_series`(라이브·핀 미적용).
-- 릴스 조회수 NULL의 원인: `account_content_series`→`v_account_recent`→`v_recent_content`→`v_base_detail`([00_base.sql:174](../../../analytics/views/00_base.sql))가 **`usable` 우선순위 없는 최신 스냅샷 승**. 재열거 때 SELF_GQL 타임라인(`video_view_count:0`→NULL)이 최신이라 clips의 실값을 덮는다. PR #58은 이 버그를 `v_contents`(02_serving)에서만 고쳤다.
+- `GET /v1/contents/{id}/ai-report`의 `comparison.views`는 [V1ContentReportAssembler.java:48](../../../../was/src/main/java/com/celfit/was/v1/content/V1ContentReportAssembler.java)에서 조립: `value`=`contents.views`(라이브 핀), `baseline`·`rankInRecent`·`recentCount`=`content_analyses`(분석 시점 고정), `recentReels[]`=`account_content_series`(라이브·핀 미적용).
+- 릴스 조회수 NULL의 원인: `account_content_series`→`v_account_recent`→`v_recent_content`→`v_base_detail`([00_base.sql:174](../../../../analytics/views/00_base.sql))가 **`usable` 우선순위 없는 최신 스냅샷 승**. 재열거 때 SELF_GQL 타임라인(`video_view_count:0`→NULL)이 최신이라 clips의 실값을 덮는다. PR #58은 이 버그를 `v_contents`(02_serving)에서만 고쳤다.
 - `value`(30,405)와 같은 릴스의 `recentReels` 슬롯(null)이 어긋난 것은 두 값이 **다른 핀 경로**를 타기 때문. A1이 두 경로를 하나로 합쳐 해소한다.
-- `ads.sponsoredCount`·`strip`는 `account_summaries.sponsored_count`·`account_content_series.sponsored`(둘 다 `ad_marked`=`is_paid_partnership`, [01_recent_window.sql:17](../../../analytics/views/01_recent_window.sql))에서 오고, 카드 `adType`과 `ads.brands`는 `content_analyses.ad_type`(LLM)에서 온다. **소스 불일치**가 "8/9 sponsored인데 count 0, 브랜드 칩만 정상"의 정체.
-- 제약: `analytics/views/*`는 raw DB에서 돌고 `content_analyses`(LLM `ad_type`)는 analysis DB에 있어, 최근-윈도우 뷰는 `ad_type`을 볼 수 없다. 그래서 ②의 통일은 **was 계층**에서 한다(was는 두 미러를 함께 읽을 수 있음 — `V1InfluencerReportRepository`가 이미 `account_content_series`⨝`content_analyses`를 함 [findBrands](../../../was/src/main/java/com/celfit/was/v1/influencer/V1InfluencerReportRepository.java)).
+- `ads.sponsoredCount`·`strip`는 `account_summaries.sponsored_count`·`account_content_series.sponsored`(둘 다 `ad_marked`=`is_paid_partnership`, [01_recent_window.sql:17](../../../../analytics/views/01_recent_window.sql))에서 오고, 카드 `adType`과 `ads.brands`는 `content_analyses.ad_type`(LLM)에서 온다. **소스 불일치**가 "8/9 sponsored인데 count 0, 브랜드 칩만 정상"의 정체.
+- 제약: `analytics/views/*`는 raw DB에서 돌고 `content_analyses`(LLM `ad_type`)는 analysis DB에 있어, 최근-윈도우 뷰는 `ad_type`을 볼 수 없다. 그래서 ②의 통일은 **was 계층**에서 한다(was는 두 미러를 함께 읽을 수 있음 — `V1InfluencerReportRepository`가 이미 `account_content_series`⨝`content_analyses`를 함 [findBrands](../../../../was/src/main/java/com/celfit/was/v1/influencer/V1InfluencerReportRepository.java)).
 
 ## File Structure
 

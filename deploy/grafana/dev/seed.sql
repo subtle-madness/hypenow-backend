@@ -372,6 +372,10 @@ SET last_swept_at = ((now() AT TIME ZONE 'Asia/Seoul')::date::timestamp AT TIME 
                     + interval '2 hours' + (id * interval '17 seconds') + (random() * interval '12 seconds')
 WHERE closed_at IS NULL;
 
+-- 완주 시각(sweep_completed_at, 09-02 워터마크 분리)도 같은 분포로 — 완주 기준 패널
+-- (수집 소요·신선도·브랜드별 처리 현황)이 이 컬럼을 본다. CLOSED 브랜드는 종결 이전 시각 그대로.
+UPDATE brand_account SET sweep_completed_at = last_swept_at WHERE last_swept_on IS NOT NULL;
+
 -- ============================================================================
 -- END monitoring
 -- ============================================================================
