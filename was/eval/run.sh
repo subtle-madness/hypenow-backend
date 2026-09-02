@@ -29,14 +29,17 @@ PG_USER="${PG_USER:-crawler}"
 APP_DB="${APP_DB:-analysis}"
 MONITORING_DB="${MONITORING_DB:-monitoring}"
 
-GOLDSET="goldset.json"
+# GOLDSET 오버라이드는 실패 케이스만 골라 재실행할 때 쓴다(예: jq로 뽑은 서브셋 파일, 2026-09-02).
+GOLDSET="${GOLDSET:-goldset.json}"
 # 답변에 새면 안 되는 내부 구현 용어(툴 이름·인자·필드명) - 케이스별 expectAnswerNotContains와
 # 별개로 모든 케이스의 답변에 항상 적용한다(2026-09-01 실측 id75·id70 후속 - "list_posts 툴은
 # 최대 30건", "도달 배수(reachMultiple)" 같은 내부 용어 유출). 정당하게 필요한 예외가 생기면
 # 그때 케이스 스키마에 per-case 예외 필드를 추가한다(README 참고) - 지금은 예외 없이 전역 적용.
+# "###"은 09-02 스윕 실측(F5) 후속 - 프롬프트 규칙 11이 제목 마크다운을 금지하므로 정당한 사용처가 없다.
 GLOBAL_ANSWER_DENYLIST=(
 	"list_posts" "aggregate_posts" "search_posts" "get_comments" "get_author" "list_brands"
-	"groupBy" "reachMultiple" "viewsSampleCount" "minSample" "sponsorship 인자"
+	"groupBy" "reachMultiple" "viewsSampleCount" "minSample" "sponsorship 인자" "###"
+	"shortCode를 알려" 'shortCode`를 알려'
 )
 DAILY_LIMIT_KEY="ai.chat.daily-limit"
 PER_MIN_KEY="ai.chat.per-minute-limit"
@@ -168,6 +171,85 @@ check_ground_truth() {
 	esac
 }
 
+# 턴 1건 채점(순수 함수 - tool_calls_json·answer가 주어졌을 때 그 턴의 rule을 전부 적용, HTTP·psql
+# 접근 없음) - 멀티턴 케이스(계획 2026-09-02 Task, turns 필드)의 턴별 채점과 기존 단일 질문 케이스의
+# 채점이 이 함수 하나를 공유한다. 전역 denylist도 여기서 함께 본다(모든 턴 답변에 항상 적용).
+# 성공 시 TURN_EVAL_OK=1, 실패 시 TURN_EVAL_OK=0 + TURN_EVAL_DETAIL에 사유를 채운다.
+evaluate_turn() {
+	local tool_calls_json="$1" answer="$2" expect_tools="$3" forbid_tools="$4" expect_answer="$5" expect_answer_not="$6"
+	local ok=1
+	local -a details=()
+	if ! check_expect_tools "$tool_calls_json" "$expect_tools"; then
+		ok=0
+		details+=("expectTools 불일치(기대 $expect_tools / 실제 $tool_calls_json)")
+	fi
+	if ! check_forbid_tools "$tool_calls_json" "$forbid_tools"; then
+		ok=0
+		details+=("forbidTools 위반(금지 $forbid_tools / 실제 $tool_calls_json)")
+	fi
+	if ! check_answer_contains "$answer" "$expect_answer"; then
+		ok=0
+		details+=("expectAnswerContains 불일치($expect_answer)")
+	fi
+	if ! check_answer_not_contains "$answer" "$expect_answer_not"; then
+		ok=0
+		details+=("expectAnswerNotContains 위반(금지 $expect_answer_not)")
+	fi
+	local global_hit=""
+	global_hit=$(check_global_denylist "$answer" "${GLOBAL_ANSWER_DENYLIST[@]}") || true
+	if [[ -n "$global_hit" ]]; then
+		ok=0
+		details+=("전역 denylist 위반(내부 용어 노출: ${global_hit})")
+	fi
+
+	TURN_EVAL_OK=$ok
+	if [[ $ok -eq 0 ]]; then
+		local joined
+		joined=$(
+			IFS='; '
+			echo "${details[*]}"
+		)
+		TURN_EVAL_DETAIL="$joined"
+	else
+		TURN_EVAL_DETAIL=""
+	fi
+}
+
+# 멀티턴 결과 집계(순수 함수) - '[{"ok":1,"detail":""}, ...]' 형태 JSON 배열(턴 순서대로, 각 원소는
+# evaluate_turn의 TURN_EVAL_OK/TURN_EVAL_DETAIL 결과)을 받아 전부 통과했는지 판정한다. 하나라도
+# 실패하면 실패이고, detail은 실패한 턴만 "turn N: ..." 형태로 합쳐 어느 턴에서 뭐가 틀렸는지 보여준다.
+# 성공 시 AGGREGATE_OK=1, 실패 시 AGGREGATE_OK=0 + AGGREGATE_DETAIL.
+aggregate_turn_results() {
+	local results_json="$1"
+	local ok=1
+	local -a notes=()
+	local n i
+	n=$(jq 'length' <<<"$results_json")
+	for ((i = 0; i < n; i++)); do
+		local turn_ok turn_detail
+		turn_ok=$(jq -r ".[$i].ok" <<<"$results_json")
+		turn_detail=$(jq -r ".[$i].detail" <<<"$results_json")
+		if [[ "$turn_ok" != "1" ]]; then
+			ok=0
+			notes+=("turn $((i + 1)): ${turn_detail}")
+		fi
+	done
+	AGGREGATE_OK=$ok
+	if [[ $ok -eq 0 ]]; then
+		local joined="" note
+		for note in "${notes[@]}"; do
+			if [[ -z "$joined" ]]; then
+				joined="$note"
+			else
+				joined="$joined; $note"
+			fi
+		done
+		AGGREGATE_DETAIL="$joined"
+	else
+		AGGREGATE_DETAIL=""
+	fi
+}
+
 # ---------- --self-test ----------
 SELFTEST_FAILURES=0
 
@@ -272,6 +354,27 @@ run_self_test() {
 	assert_true "3자리 미만은 콤마 없이도 매치" check_ground_truth "총 273건이에요" "273"
 	assert_false "값이 다르면 실패" check_ground_truth "총 999건이에요" "1234"
 
+	echo "== evaluate_turn(멀티턴 케이스의 턴별 채점 - 순수 함수, HTTP·psql 없음) =="
+	evaluate_turn '[]' "author_x님의 릴스 게시물 6개를 정리했어요" '[]' '[]' '[]' '["알 수 없습니다"]'
+	assert_eq "rule 없고 금지 문구도 없으면 통과" "1" "$TURN_EVAL_OK"
+	evaluate_turn '[{"name":"get_author","args":{"author":"author_x"}}]' "author_x님 프로필이에요" \
+		'[{"name":"get_author"}]' '[]' '[]' '["알 수 없습니다","shortCode를 알려"]'
+	assert_eq "expectTools 매치 + 금지 문구 없음 -> 통과" "1" "$TURN_EVAL_OK"
+	evaluate_turn '[]' "shortCode를 알려주시면 조회할게요" '[{"name":"get_author"}]' '[]' '[]' \
+		'["알 수 없습니다","shortCode를 알려"]'
+	assert_eq "expectTools 불일치 + 금지 문구 등장 -> 실패" "0" "$TURN_EVAL_OK"
+	assert_true "실패 사유에 expectTools·expectAnswerNotContains가 모두 언급됨" \
+		bash -c '[[ "$1" == *"expectTools 불일치"* && "$1" == *"expectAnswerNotContains 위반"* ]]' _ "$TURN_EVAL_DETAIL"
+
+	echo "== aggregate_turn_results(멀티턴 전체 PASS/FAIL 판정 - 순수 함수) =="
+	aggregate_turn_results '[{"ok":1,"detail":""},{"ok":1,"detail":""}]'
+	assert_eq "모든 턴 통과 -> 케이스 통과" "1" "$AGGREGATE_OK"
+	aggregate_turn_results '[{"ok":1,"detail":""},{"ok":0,"detail":"expectTools 불일치"}]'
+	assert_eq "한 턴이라도 실패하면 케이스 실패" "0" "$AGGREGATE_OK"
+	assert_eq "실패 턴 번호가 detail에 표시됨(2번째 턴)" "turn 2: expectTools 불일치" "$AGGREGATE_DETAIL"
+	aggregate_turn_results '[{"ok":0,"detail":"a"},{"ok":0,"detail":"b"}]'
+	assert_eq "여러 턴이 실패하면 전부 나열됨" "turn 1: a; turn 2: b" "$AGGREGATE_DETAIL"
+
 	echo
 	if [[ $SELFTEST_FAILURES -eq 0 ]]; then
 		echo "SELF-TEST ALL GREEN"
@@ -309,27 +412,27 @@ cleanup() {
 	[[ -n "${COOKIE_JAR:-}" && -f "${COOKIE_JAR:-}" ]] && rm -f "$COOKIE_JAR"
 }
 
-# 케이스 1건 실행 - 실패해도 스크립트가 죽지 않도록 이 함수 안에서 전부 처리한다(에러는 SKIP/FAIL로 흡수).
-process_case() {
-	local case_json="$1"
-	local id question preset_id expect_tools forbid_tools expect_answer expect_answer_not ground_truth_sql
-	id=$(jq -r '.id' <<<"$case_json")
-	question=$(jq -r '.question' <<<"$case_json")
-	preset_id=$(jq -r '.presetId // empty' <<<"$case_json")
-	expect_tools=$(jq -c '.expectTools // []' <<<"$case_json")
-	forbid_tools=$(jq -c '.forbidTools // []' <<<"$case_json")
-	expect_answer=$(jq -c '.expectAnswerContains // []' <<<"$case_json")
-	expect_answer_not=$(jq -c '.expectAnswerNotContains // []' <<<"$case_json")
-	ground_truth_sql=$(jq -r '.groundTruthSql // empty' <<<"$case_json")
+# 턴 1건 실행(HTTP POST + ai_chat_logs 조회 + evaluate_turn 채점) - conversation_id가 비어있으면
+# 새 대화, 있으면 그 대화로 이어 보낸다(AiMessagesRequest.conversationId 계약). 실패해도 스크립트가
+# 죽지 않도록 이 함수 안에서 전부 처리한다(에러는 TURN_SKIP=1로 흡수). 결과는 전역 변수로 돌려준다
+# (bash 함수는 복합값을 리턴할 수 없다) - TURN_SKIP, TURN_OK, TURN_DETAIL, TURN_ANSWER,
+# TURN_CONVERSATION_ID(다음 턴에 이어 쓸 대화 id - 신규 대화면 이번 응답의 conversationId로 채워진다).
+run_turn() {
+	local conversation_id="$1" preset_id="$2" question="$3"
+	local expect_tools="$4" forbid_tools="$5" expect_answer="$6" expect_answer_not="$7"
+
+	TURN_SKIP=0
+	TURN_OK=0
+	TURN_DETAIL=""
+	TURN_ANSWER=""
+	TURN_CONVERSATION_ID="$conversation_id"
 
 	local body
-	if [[ -n "$preset_id" ]]; then
-		body=$(jq -n --arg text "$question" --arg brand "$BRAND_ID" --arg preset "$preset_id" \
-			'{accountIds: [$brand], text: $text, presetId: $preset}')
-	else
-		body=$(jq -n --arg text "$question" --arg brand "$BRAND_ID" \
-			'{accountIds: [$brand], text: $text}')
-	fi
+	body=$(jq -n --arg text "$question" --arg brand "$BRAND_ID" --arg preset "$preset_id" --arg conv "$conversation_id" '
+		{accountIds: [$brand], text: $text}
+		+ (if $preset != "" then {presetId: $preset} else {} end)
+		+ (if $conv != "" then {conversationId: $conv} else {} end)
+	')
 
 	local tmp_body http_code
 	tmp_body=$(mktemp)
@@ -347,22 +450,25 @@ process_case() {
 	if [[ "$http_code" != "200" ]]; then
 		local err_detail
 		err_detail=$(jq -r '(.error.code // "?") + ": " + (.error.message // "")' <<<"$json_body" 2>/dev/null)
-		print_row "$id" "SKIP" "API 실패(HTTP $http_code) ${err_detail:-}"
-		skip_count=$((skip_count + 1))
+		TURN_SKIP=1
+		TURN_DETAIL="API 실패(HTTP $http_code) ${err_detail:-}"
 		return
 	fi
 
 	local success
 	success=$(jq -r '.success // "false"' <<<"$json_body" 2>/dev/null || echo "false")
 	if [[ "$success" != "true" ]]; then
-		print_row "$id" "SKIP" "success=false: $(jq -c '.error // {}' <<<"$json_body" 2>/dev/null)"
-		skip_count=$((skip_count + 1))
+		TURN_SKIP=1
+		TURN_DETAIL="success=false: $(jq -c '.error // {}' <<<"$json_body" 2>/dev/null)"
 		return
 	fi
 
-	local answer message_id
+	local answer message_id conv_id
 	answer=$(jq -r '.data.content // ""' <<<"$json_body")
 	message_id=$(jq -r '.data.messageId // empty' <<<"$json_body")
+	conv_id=$(jq -r '.data.conversationId // empty' <<<"$json_body")
+	TURN_ANSWER="$answer"
+	[[ -n "$conv_id" ]] && TURN_CONVERSATION_ID="$conv_id"
 
 	local tool_calls_json
 	if [[ -n "$message_id" ]]; then
@@ -373,35 +479,54 @@ process_case() {
 			"SELECT COALESCE(tool_calls::text, '[]') FROM app.ai_chat_logs WHERE user_id = ${EVAL_USER_ID} ORDER BY id DESC LIMIT 1;" 2>/dev/null | tr -d '\n')
 	fi
 	if [[ -z "$tool_calls_json" ]] || ! jq -e . >/dev/null 2>&1 <<<"$tool_calls_json"; then
-		print_row "$id" "SKIP" "ai_chat_logs 조회 실패(psql) - messageId=${message_id:-없음}"
+		TURN_SKIP=1
+		TURN_DETAIL="ai_chat_logs 조회 실패(psql) - messageId=${message_id:-없음}"
+		return
+	fi
+
+	evaluate_turn "$tool_calls_json" "$answer" "$expect_tools" "$forbid_tools" "$expect_answer" "$expect_answer_not"
+	TURN_OK=$TURN_EVAL_OK
+	TURN_DETAIL="$TURN_EVAL_DETAIL"
+}
+
+# 케이스 1건 디스패치 - turns 필드(멀티턴 체인, 계획 2026-09-02 Task)가 있으면 그쪽으로, 없으면
+# 기존 단일 question 경로로 보낸다(하위 호환 - 기존 17케이스는 이 분기에 안 걸린다).
+process_case() {
+	local case_json="$1"
+	local id has_turns
+	id=$(jq -r '.id' <<<"$case_json")
+	has_turns=$(jq -r 'if (.turns // null) != null then "1" else "0" end' <<<"$case_json")
+
+	if [[ "$has_turns" == "1" ]]; then
+		process_multi_turn_case "$id" "$case_json"
+	else
+		process_single_turn_case "$id" "$case_json"
+	fi
+}
+
+# 기존 단일 question 케이스 - run_turn 1회 + groundTruthSql(멀티턴에는 없는 필드라 여기서만 본다).
+process_single_turn_case() {
+	local id="$1" case_json="$2"
+	local question preset_id expect_tools forbid_tools expect_answer expect_answer_not ground_truth_sql
+	question=$(jq -r '.question' <<<"$case_json")
+	preset_id=$(jq -r '.presetId // empty' <<<"$case_json")
+	expect_tools=$(jq -c '.expectTools // []' <<<"$case_json")
+	forbid_tools=$(jq -c '.forbidTools // []' <<<"$case_json")
+	expect_answer=$(jq -c '.expectAnswerContains // []' <<<"$case_json")
+	expect_answer_not=$(jq -c '.expectAnswerNotContains // []' <<<"$case_json")
+	ground_truth_sql=$(jq -r '.groundTruthSql // empty' <<<"$case_json")
+
+	run_turn "" "$preset_id" "$question" "$expect_tools" "$forbid_tools" "$expect_answer" "$expect_answer_not"
+
+	if [[ $TURN_SKIP -eq 1 ]]; then
+		print_row "$id" "SKIP" "$TURN_DETAIL"
 		skip_count=$((skip_count + 1))
 		return
 	fi
 
-	local ok=1
-	local -a details=()
-	if ! check_expect_tools "$tool_calls_json" "$expect_tools"; then
-		ok=0
-		details+=("expectTools 불일치(기대 $expect_tools / 실제 $tool_calls_json)")
-	fi
-	if ! check_forbid_tools "$tool_calls_json" "$forbid_tools"; then
-		ok=0
-		details+=("forbidTools 위반(금지 $forbid_tools / 실제 $tool_calls_json)")
-	fi
-	if ! check_answer_contains "$answer" "$expect_answer"; then
-		ok=0
-		details+=("expectAnswerContains 불일치($expect_answer)")
-	fi
-	if ! check_answer_not_contains "$answer" "$expect_answer_not"; then
-		ok=0
-		details+=("expectAnswerNotContains 위반(금지 $expect_answer_not)")
-	fi
-	local global_hit=""
-	global_hit=$(check_global_denylist "$answer" "${GLOBAL_ANSWER_DENYLIST[@]}") || true
-	if [[ -n "$global_hit" ]]; then
-		ok=0
-		details+=("전역 denylist 위반(내부 용어 노출: ${global_hit})")
-	fi
+	local ok=$TURN_OK
+	local detail="$TURN_DETAIL"
+	local answer="$TURN_ANSWER"
 
 	local gt_note=""
 	if [[ -n "$ground_truth_sql" ]]; then
@@ -411,7 +536,7 @@ process_case() {
 			if [[ "$gt_value" =~ ^-?[0-9]+$ ]]; then
 				if ! check_ground_truth "$answer" "$gt_value"; then
 					ok=0
-					details+=("groundTruth 불일치(기대값=${gt_value}가 답변에 없음)")
+					detail="${detail:+$detail; }groundTruth 불일치(기대값=${gt_value}가 답변에 없음)"
 				fi
 			else
 				gt_note=" [수치검증 SKIP: 결과값 비정수 '${gt_value}']"
@@ -425,12 +550,53 @@ process_case() {
 		print_row "$id" "PASS" "${gt_note}"
 		pass_count=$((pass_count + 1))
 	else
-		local joined
-		joined=$(
-			IFS='; '
-			echo "${details[*]}"
-		)
-		print_row "$id" "FAIL" "${joined}${gt_note}"
+		print_row "$id" "FAIL" "${detail}${gt_note}"
+		fail_count=$((fail_count + 1))
+	fi
+}
+
+# 멀티턴 체인 케이스(turns 필드) - 첫 턴은 새 대화로 시작하고, 이후 턴은 첫 응답의 conversationId를
+# 이어 실어 대화를 유지한다. 턴마다 그 턴의 rule을 evaluate_turn으로 채점해 모으고
+# aggregate_turn_results로 전체 PASS/FAIL을 판정한다(모든 턴이 통과해야 케이스 PASS) - 어느 턴에서
+# 뭐가 틀렸는지는 aggregate_turn_results가 "turn N: ..." 형태로 DETAIL에 표기한다. 턴 중 하나라도
+# API 실패·success=false 등으로 SKIP되면 그 시점에서 케이스 전체를 SKIP 처리한다(이후 턴은 이어갈
+# 대화 자체가 불완전해 채점 의미가 없다).
+process_multi_turn_case() {
+	local id="$1" case_json="$2"
+	local preset_id turns_json n
+	preset_id=$(jq -r '.presetId // empty' <<<"$case_json")
+	turns_json=$(jq -c '.turns' <<<"$case_json")
+	n=$(jq 'length' <<<"$turns_json")
+
+	local conversation_id="" results_json="[]"
+	local i
+	for ((i = 0; i < n; i++)); do
+		local turn question expect_tools forbid_tools expect_answer expect_answer_not
+		turn=$(jq -c ".[$i]" <<<"$turns_json")
+		question=$(jq -r '.text' <<<"$turn")
+		expect_tools=$(jq -c '.expectTools // []' <<<"$turn")
+		forbid_tools=$(jq -c '.forbidTools // []' <<<"$turn")
+		expect_answer=$(jq -c '.expectAnswerContains // []' <<<"$turn")
+		expect_answer_not=$(jq -c '.expectAnswerNotContains // []' <<<"$turn")
+
+		run_turn "$conversation_id" "$preset_id" "$question" "$expect_tools" "$forbid_tools" "$expect_answer" "$expect_answer_not"
+		conversation_id="$TURN_CONVERSATION_ID"
+
+		if [[ $TURN_SKIP -eq 1 ]]; then
+			print_row "$id" "SKIP" "turn $((i + 1)): ${TURN_DETAIL}"
+			skip_count=$((skip_count + 1))
+			return
+		fi
+
+		results_json=$(jq -c --argjson ok "$TURN_OK" --arg detail "$TURN_DETAIL" '. + [{ok: $ok, detail: $detail}]' <<<"$results_json")
+	done
+
+	aggregate_turn_results "$results_json"
+	if [[ $AGGREGATE_OK -eq 1 ]]; then
+		print_row "$id" "PASS" ""
+		pass_count=$((pass_count + 1))
+	else
+		print_row "$id" "FAIL" "$AGGREGATE_DETAIL"
 		fail_count=$((fail_count + 1))
 	fi
 }

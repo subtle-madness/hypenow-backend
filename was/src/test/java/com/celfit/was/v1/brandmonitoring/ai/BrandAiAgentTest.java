@@ -171,6 +171,53 @@ class BrandAiAgentTest {
 		assertThat(captured.get(2)).contains("\"retry\":false");
 	}
 
+	/** 날조 방지 서버 가드(2026-09-02) - 툴 호출 0회 + 표가 있는 첫 답변은 1회 재시도로 되먹이고,
+	 * 재시도 턴에서 모델이 실제로 툴을 호출한 뒤 그 결과로 답하면 caveat 없이 그대로 통과시킨다. */
+	@Test
+	void 날조_의심_답변은_1회_재시도해_툴_호출_후_그라운딩되면_caveat_없이_답한다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.ok("{\"posts\":[]}", 3, List.of("ABC")));
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(
+				List.of(
+						textAnswer("| 계정 | 게시물 |\\n| @yoon_yoon_ | 11 |"),
+						functionCall("list_posts", "{\"brandId\":7}"),
+						textAnswer("확인해보니 3건 있어요")),
+				captured, toolbox);
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "시딩 우선순위 기준 잡아줘")));
+
+		assertThat(outcome.answer()).isEqualTo("확인해보니 3건 있어요");
+		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_OK);
+		assertThat(outcome.toolCalls()).hasSize(1);
+		assertThat(outcome.toolCalls().get(0).name()).isEqualTo("list_posts");
+		// 재시도 지시(UNGROUNDED_RETRY_NOTE)가 다음 요청 본문에 user 턴으로 실렸는지 확인한다.
+		assertThat(captured.get(1)).contains("검증").contains("조회 없이 답할 수 있는 내용만");
+	}
+
+	/** 재시도 턴에서도 모델이 여전히 툴 없이 표·계정명을 쓰면, 정지 조건(재시도 1회 한도)에 걸려 답변
+	 * 맨 앞에 서버 강제 caveat를 붙여 반환한다. */
+	@Test
+	void 재시도_후에도_날조_신호가_남으면_답변_앞에_서버_caveat를_붙인다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		List<String> captured = new ArrayList<>();
+		BrandAiAgent agent = agentWith(
+				List.of(
+						textAnswer("| 계정 | 게시물 |\\n| @yoon_yoon_ | 11 |"),
+						textAnswer("| 계정 | 게시물 |\\n| @yoon_yoon_ | 11 |")),
+				captured, toolbox);
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "시딩 우선순위 기준 잡아줘")));
+
+		assertThat(outcome.answer()).startsWith("(자동 검증)");
+		assertThat(outcome.answer()).contains("@yoon_yoon_");
+		assertThat(outcome.outcome()).isEqualTo(AiChatLogEntry.OUTCOME_OK);
+		assertThat(outcome.toolCalls()).isEmpty();
+		// 재시도 1회만 쓰고 끝났다(첫 호출 + 재시도 1회 = 2).
+		assertThat(captured).hasSize(2);
+	}
+
 	@Test
 	void 툴_상한_도달_강제_답변이면_limitReached가_budget이다() {
 		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);

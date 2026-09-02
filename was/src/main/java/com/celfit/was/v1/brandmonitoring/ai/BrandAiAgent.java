@@ -52,6 +52,15 @@ import tools.jackson.databind.node.ObjectNode;
  *
  * <p>{@code referencedShortCodes}는 이번 실행에서 툴이 건드린 shortCode 전체가 아니라 답변 텍스트에
  * 실제로 인용된 것만 남긴다(N7, 2026-08-28 - {@link #referencedIn}).
+ *
+ * <p><b>날조(ungrounded) 답변 서버 가드</b>(2026-09-02, 스펙 §4 "고지는 서버 강제"의 연장) - 툴을 한
+ * 번도 부르지 않고 가짜 계정명·수치 표를 지어내는 사례가 프롬프트 강화(BrandAiGlossary 2차 강화)로도
+ * 재현됐다. 104턴 스윕 실측에서 "그 턴 툴 호출 0회 + 답변에 마크다운 표 또는 세션 브랜드가 아닌
+ * @핸들"이라는 신호가 이 날조 1건에만 걸리고 정상 답변엔 0건이었다(오탐 0, {@link
+ * BrandAiGroundednessGuard#ungrounded}). 이 신호가 잡히면 1회 재시도(모델 답변을 model 턴으로, {@link
+ * BrandAiPrompt#UNGROUNDED_RETRY_NOTE}를 user 턴으로 되먹여 툴 사용을 열어둔 채 다시 답하게 한다)하고,
+ * 재시도 후에도 신호가 남으면 답변에 서버 caveat({@value #UNGROUNDED_CAVEAT})를 강제로 붙인다 - 모델
+ * 재량에 맡기지 않는다.
  */
 public class BrandAiAgent {
 
@@ -81,6 +90,12 @@ public class BrandAiAgent {
 	/** 안전 필터·응답 길이 제한으로 막혀 답변 자체를 만들지 못했을 때 돌려줄 안내 문구(I7). */
 	private static final String BLOCKED_ANSWER =
 			"이 질문에는 안전 정책이나 응답 길이 제한 때문에 답변을 만들지 못했어요. 질문을 조금 다르게 바꿔서 다시 시도해 주세요.";
+	/** 날조 방지 재시도 후에도 신호가 남으면 서버가 강제로 붙이는 고지(2026-09-02, 스펙 §4). 완결
+	 * 경로는 답변 맨 앞에 붙이고, 스트리밍 경로는 이미 흘려보낸 텍스트 뒤에 추가 청크로 붙인다(클래스
+	 * 상단 주석 참고). */
+	private static final String UNGROUNDED_CAVEAT =
+			"(자동 검증) 아래 내용은 데이터 조회 없이 작성돼 표의 계정명과 수치가 실측값이 아닐 수 있어요. "
+					+ "실제 순위가 필요하면 다시 물어봐 주세요.\n\n";
 	/** references 상한(FE 변경요청서 §7) - 답변이 아무리 많은 shortCode를 인용해도 참조 목록은 10개까지만. */
 	private static final int MAX_REFERENCES = 10;
 
@@ -197,12 +212,17 @@ public class BrandAiAgent {
 		// (BrandAiToolbox는 싱글턴 빈이라 캐시를 그쪽 인스턴스 필드에 두면 유저 간에 섞인다).
 		BrandAiToolbox.ToolSession toolSession = new BrandAiToolbox.ToolSession(scope, sessionBrandId);
 		String basePrompt = buildBasePrompt(userId, sessionBrandId, extraSystemPrompt);
+		// 세션 브랜드 자기 언급은 날조 가드에서 예외로 둔다(BrandAiGroundednessGuard) - brandId가 없으면
+		// null(예외 없음).
+		String sessionBrandUsername = toolbox.sessionBrandUsername(userId, sessionBrandId);
 		// 모델이 실제로 조회한 brandId(로그용, AgentOutcome#brandId) - 위 sessionBrandId(대화 스코프
 		// 강제용)와는 목적이 달라 별도 변수로 관리한다.
 		Long brandId = null;
 		int promptTokens = 0;
 		int outputTokens = 0;
 		long deadline = clock.millis() + TIME_BUDGET_MILLIS;
+		// 날조 방지 재시도(2026-09-02) - 정지 조건 네 겹과 별개의 자체 카운터로 딱 1회만 허용한다.
+		boolean ungroundedRetried = false;
 
 		injectPlannedCalls(plannedCalls, toolSession, userId, sessionBrandId, contents, toolCalls, shortCodes, null);
 
@@ -233,6 +253,23 @@ public class BrandAiAgent {
 				}
 				boolean hasRealAnswer = !turn.text().isBlank();
 				String answer = hasRealAnswer ? turn.text() : FALLBACK_ANSWER;
+
+				// 날조 방지 서버 가드(2026-09-02, 클래스 상단 주석) - 이 턴까지 툴 호출이 0회인데 표나
+				// 세션 브랜드가 아닌 @핸들이 있으면 날조 의심이다. 아직 아무 것도 반환하지 않았으니
+				// 1회는 재시도로 되먹이고, 재시도 후에도 신호가 남으면 caveat를 강제로 붙인다.
+				if (hasRealAnswer
+						&& BrandAiGroundednessGuard.ungrounded(answer, toolCalls.size(), sessionBrandUsername)) {
+					if (!ungroundedRetried) {
+						ungroundedRetried = true;
+						contents.add(client.modelContent(answer));
+						contents.add(client.userContent(BrandAiPrompt.UNGROUNDED_RETRY_NOTE));
+						continue;
+					}
+					log.warn("AI 에이전트 날조 의심 답변 - 재시도 후에도 툴 조회 없이 표·계정명 포함 - userId={}, sessionBrandId={}",
+							userId, sessionBrandId);
+					answer = UNGROUNDED_CAVEAT + answer;
+				}
+
 				List<String> referenced = referencedIn(answer, shortCodes);
 				return new AgentOutcome(answer, referenced, buildReferences(toolSession, referenced),
 						List.copyOf(toolCalls), promptTokens, outputTokens, brandId,
@@ -337,10 +374,15 @@ public class BrandAiAgent {
 		Map<String, Integer> failuresByTool = new HashMap<>();
 		BrandAiToolbox.ToolSession toolSession = new BrandAiToolbox.ToolSession(scope, sessionBrandId);
 		String basePrompt = buildBasePrompt(userId, sessionBrandId, extraSystemPrompt);
+		// 세션 브랜드 자기 언급은 날조 가드에서 예외로 둔다(BrandAiGroundednessGuard) - brandId가 없으면
+		// null(예외 없음).
+		String sessionBrandUsername = toolbox.sessionBrandUsername(userId, sessionBrandId);
 		Long brandId = null;
 		int promptTokens = 0;
 		int outputTokens = 0;
 		long deadline = clock.millis() + TIME_BUDGET_MILLIS;
+		// 날조 방지 재시도(2026-09-02) - 정지 조건 네 겹과 별개의 자체 카운터로 딱 1회만 허용한다.
+		boolean ungroundedRetried = false;
 
 		injectPlannedCalls(plannedCalls, toolSession, userId, sessionBrandId, contents, toolCalls, shortCodes,
 				listener);
@@ -381,6 +423,32 @@ public class BrandAiAgent {
 				}
 				boolean hasRealAnswer = !turn.text().isBlank();
 				String answer = hasRealAnswer ? turn.text() : FALLBACK_ANSWER;
+
+				// 날조 방지 서버 가드(2026-09-02, 클래스 상단 주석) - liveEmit=false(일반 턴)면 홀드백
+				// 덕분에 아직 아무 것도 방출되지 않았으니 완결 경로와 동일하게 1회 재시도할 수 있다.
+				// liveEmit=true(강제 답변 턴)면 텍스트가 이미 청크로 다 나간 뒤라 재시도가 불가능하니
+				// caveat를 추가 청크로 덧붙인다 - 재시도를 이미 썼는데도 여전히 날조 신호가 남은 경우도
+				// 마찬가지로(더 되먹일 여지가 없으니) 여기서 답변 앞에 caveat를 붙인다.
+				if (hasRealAnswer
+						&& BrandAiGroundednessGuard.ungrounded(answer, toolCalls.size(), sessionBrandUsername)) {
+					if (!liveEmit && !ungroundedRetried) {
+						ungroundedRetried = true;
+						contents.add(client.modelContent(answer));
+						contents.add(client.userContent(BrandAiPrompt.UNGROUNDED_RETRY_NOTE));
+						continue;
+					}
+					log.warn(
+							"AI 에이전트 날조 의심 답변(스트리밍) - 재시도 불가 또는 재시도 후에도 툴 조회 없이 표·계정명 포함 - userId={}, sessionBrandId={}",
+							userId, sessionBrandId);
+					if (liveEmit) {
+						// 원문은 이미 청크로 다 나갔다 - caveat를 뒤에 이어붙인다(스트림에도, 저장 답변에도).
+						listener.onAnswerDelta(UNGROUNDED_CAVEAT);
+						answer = answer + UNGROUNDED_CAVEAT;
+					} else {
+						answer = UNGROUNDED_CAVEAT + answer;
+					}
+				}
+
 				// 홀드백 확정 시점 - 일반 턴이 순수 텍스트로 끝났다 = 최종 답변 확정. 강제 답변 턴은
 				// 이미 라이브로 다 내보냈으니(liveEmit=true) 여기서 다시 보내면 중복이라 건너뛴다.
 				if (!liveEmit) {

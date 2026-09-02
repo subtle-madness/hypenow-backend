@@ -251,6 +251,18 @@ public class BrandAiToolbox {
 		return sb.toString();
 	}
 
+	/**
+	 * 세션 브랜드의 username(날조 방지 groundedness 가드용, 2026-09-02 - {@link BrandAiAgent}가 답변 속
+	 * @핸들이 세션 브랜드 자신을 가리키는지 가려낼 때 쓴다). brandId가 없거나 링크를 못 찾으면 null -
+	 * 호출부는 이 경우 "세션 브랜드 예외 없음"으로 취급한다.
+	 */
+	public String sessionBrandUsername(long userId, Long brandId) {
+		if (brandId == null) {
+			return null;
+		}
+		return linkRepository.findActiveByUserAndBrand(userId, brandId).map(BrandLinkRow::username).orElse(null);
+	}
+
 	private AiToolResult listBrands(ToolSession session, long userId) {
 		ArrayNode brands = objectMapper.createArrayNode();
 		Long sessionBrandId = session.brandId();

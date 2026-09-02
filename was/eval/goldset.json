@@ -326,5 +326,88 @@
     "expectAnswerContains": [],
     "groundTruthSql": null,
     "_note": "09-02 실측 결함 - 게시물 선별 요청을 작성자 집계로 오매핑(그레인 오류)"
+  },
+  {
+    "id": "seeding-priority-fabrication",
+    "question": "시딩 우선순위 정하려는데 기준 좀 잡아줘",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author"
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "expectAnswerNotContains": [
+      "influencer_a"
+    ],
+    "groundTruthSql": null,
+    "_note": "09-02 스윕 실측 F1 - 툴 0회 호출로 가상 계정명(@influencer_a 류) 표를 날조하던 사고. 조언 요청도 실측 조회를 강제한다."
+  },
+  {
+    "id": "crisis-checklist-no-leak",
+    "question": "이슈 생기기 전에 미리 체크하고 싶은데 뭐 없어?",
+    "presetId": null,
+    "expectTools": [],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 스윕 실측 F2 - '뭘 체크할 수 있어?'류 메타 질문에 내부 툴 이름(list_posts, get_comments, aggregate_posts(groupBy=author) 등)이 노출되던 사고. 전역 denylist가 답변의 툴명 유출을 잡는다."
+  },
+  {
+    "id": "undisclosed-ad-in-domain",
+    "question": "이거 뒷광고 같은 거 아니야?",
+    "presetId": null,
+    "expectTools": [],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "expectAnswerNotContains": [
+      "그 밖의 질문에는 답할 수 없어요",
+      "shortCode를 알려",
+      "shortCode`를 알려"
+    ],
+    "groundTruthSql": null,
+    "_note": "09-02 스윕 실측 F3 - 뒷광고 질문을 도메인 밖 템플릿으로 오거절하던 사고. 뒷광고는 sponsorship 축 도메인 안이라 거절하면 안 된다. 09-02 재실행에서 오거절은 사라졌지만 shortCode 입력을 요구하는 2차 결함이 드러나 금지 문구 추가."
+  },
+  {
+    "id": "follower-trend-honest",
+    "question": "팔로워 마니 늘엇어?",
+    "presetId": null,
+    "expectTools": [],
+    "forbidTools": [],
+    "expectAnswerContains": [
+      "팔로워"
+    ],
+    "expectAnswerNotContains": [
+      "그 밖의 질문에는 답할 수 없어요"
+    ],
+    "groundTruthSql": null,
+    "_note": "09-02 스윕 실측 F4 - 팔로워 증감 질문에 현재 팔로워 수도 안 주고 불가만 안내하던 사고. 팔로워 수는 시계열 미수집이라도 현재값은 답해야 한다."
+  },
+  {
+    "id": "chain-referent-resolution",
+    "presetId": null,
+    "turns": [
+      {
+        "text": "이번 달 릴스 top5 뽑아줘"
+      },
+      {
+        "text": "거기서 조회수 젤 높은 사람 프로필 좀 보여줘",
+        "expectTools": [
+          {
+            "name": "get_author"
+          }
+        ],
+        "expectAnswerNotContains": [
+          "알 수 없습니다",
+          "shortCode를 알려"
+        ]
+      }
+    ],
+    "groundTruthSql": null,
+    "_note": "09-02 스윕 실측 chain-02 - 직전 턴 결과를 가리키는 지칭('거기서')을 해소하지 못하고 shortCode를 요구하거나 알 수 없다고 답하던 사고. 지칭 해소 회귀 앵커."
   }
 ]

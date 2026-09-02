@@ -75,6 +75,15 @@ env 오버라이드(전부 선택):
   실행값이 콤마 포맷(`1,234`)·무콤마 포맷(`1234`) 둘 중 하나로 답변에 등장하면 통과. **SQL 실행
   자체가 실패하면(스키마 변경·데이터 없음 등) 그 케이스의 수치 검증만 SKIP 표시하고 러너는
   죽지 않는다** - 나머지 tools/forbid/answerContains 채점은 그대로 진행된다.
+- `turns`(2026-09-02 스윕 후속, 멀티턴 체인 케이스): `question` 대신 턴 배열을 두면 러너가 순서대로
+  보내되 첫 응답의 `conversationId`를 이후 턴에 실어 체인을 유지한다. 각 원소는
+  `{"text", "expectTools", "forbidTools", "expectAnswerContains", "expectAnswerNotContains"}`(검증
+  필드 전부 선택)이고, 턴마다 그 턴의 tool_calls·답변에 그 턴의 룰을 적용한다. 전역 denylist는
+  모든 턴에 적용되며, 모든 턴이 통과해야 케이스 PASS(FAIL 상세에 `turn N: ...`로 어느 턴인지
+  표기). `groundTruthSql`은 단일 턴 케이스 전용이다. 예: `chain-referent-resolution`("이번 달 릴스
+  top5" → "거기서 조회수 젤 높은 사람 프로필")은 2턴째가 `get_author`를 올바른 대상으로 부르는지,
+  즉 지칭 해소 회귀를 잡는 앵커다. 골드셋 17건이 전부 단일 턴이라 멀티턴 열화(조기 확정 과의존,
+  지칭 오해소)를 못 보던 사각지대를 메운다(09-02 리서치 - arXiv 2505.06120).
 
 ## 전역 답변 denylist(내부 구현 용어 유출 차단, 2026-09-01 실측 id75·id70 후속)
 
@@ -85,8 +94,14 @@ env 오버라이드(전부 선택):
 
 ```
 list_posts, aggregate_posts, search_posts, get_comments, get_author, list_brands,
-groupBy, reachMultiple, viewsSampleCount, minSample, "sponsorship 인자"
+groupBy, reachMultiple, viewsSampleCount, minSample, "sponsorship 인자", "###",
+"shortCode를 알려", "shortCode`를 알려"
 ```
+
+`shortCode를 알려`(백틱 병기 변형 포함)는 사용자에게 내부 식별자 입력을 요구하는 회피 패턴 감시다 - 규칙 7의
+shortCode 표기는 허용되지만 되묻기는 사전이 금지한다(09-02 스윕 재실행에서 "뒷광고" 질문이 오거절 대신
+shortCode 요구로 옮겨간 2차 결함 실측). `###`은 내부 용어가 아니라 포맷 위반 감시다(2026-09-02 스윕 104턴 중 4턴이 마크다운 헤더를 씀 -
+프롬프트 규칙 11이 모든 헤더를 금지하므로 정당한 사용처가 없다).
 
 FAIL 상세에는 걸린 용어가 그대로 찍힌다(`전역 denylist 위반(내부 용어 노출: <용어>)`).
 
@@ -147,6 +162,26 @@ BRAND_AI_MODEL=gemini-2.5-pro BRAND_AI_THINKING_BUDGET=-1 ./gradlew :was:bootRun
 thinking_budget to 0" 400을 전 호출에서 돌려준다(2026-09-01 실측, `BrandAiConfig` 참고). 결과
 표의 PASS/FAIL 개수를 모델 간에 비교하는 것이 "③ 모델 실험"의 실체다(스펙 §7-2) - 정성적
 우열은 실패한 케이스의 실제 답변을 사람이 대조해서 판단한다.
+
+## 대량 스윕(기대값 없는 스크리닝, 2026-09-02~)
+
+골드셋이 "알려진 실패의 회귀"라면 스윕은 "모르는 실패의 발굴"이다. 마케터 말투 질문(막연·구어체·
+오타·업무 맥락·불가능 요청·모호 지칭·꼬리질문 체인) 93항목 104턴을 `sweep-questions.json`에 두고,
+
+```
+./sweep.sh                       # 순차 호출, 체인은 conversationId 유지 -> sweep-results.jsonl
+./sweep-screen.sh                # 결정론 규칙으로 실패 후보만 표면화 + 길이·툴 호출 통계
+QUESTIONS=subset.json OUT=rerun.jsonl ./sweep.sh   # 수정 후 실패분만 재실행
+```
+
+스크리닝 규칙(A 도메인 안 거절, B 툴 0회+수치/계정명, C 내부 용어, D 식별자 되물음, E 빈/오류
+답변)은 **깔때기이지 채점기가 아니다** - 후보를 사람이 읽고 진짜 실패만 골드셋 케이스로 승격한다.
+알려진 오탐: B는 시스템 프롬프트에 선주입되는 브랜드 컨텍스트(팔로워 수·수집 개월)를 인용한 답을
+잡고, A는 사전이 지시한 경쟁사 안내 문구("조회할 수 없어요")를 잡는다. `sweep-results.jsonl`은
+실측 산출물이라 커밋하지 않는다(질문 파일·스크립트만 커밋).
+
+09-02 1차 스윕 결과: 104턴 중 진짜 실패 5부류 9턴(날조 표 1, 내부 용어 유출 2, 뒷광고 오거절 1,
+팔로워 추이 1, `###` 헤더 4) - 각 부류 대표가 골드셋 18~22번 케이스다. 상세는 커밋 메시지 참고.
 
 ## 범위 밖(설계 §7-3)
 
