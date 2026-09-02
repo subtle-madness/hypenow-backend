@@ -51,6 +51,7 @@ class ContentAnalysisJobTest {
 
 	/** fake GeminiBatchApi — 배치 제출 경로 검증용. uploads/createdBatches에 호출 인자를 기록. */
 	List<byte[]> batchUploads;
+	List<String> batchUploadNames;
 	List<String> batchCreated;
 
 	GeminiBatchApi fakeBatchApi() {
@@ -58,7 +59,9 @@ class ContentAnalysisJobTest {
 			@Override
 			public String uploadFile(byte[] jsonl, String displayName) {
 				batchUploads.add(jsonl);
-				return "files/f1";
+				batchUploadNames.add(displayName);
+				// 실구현(VertexHttpApi)처럼 displayName이 곧 GCS 객체 경로다 — 이름이 같으면 덮어쓴다.
+				return "files/" + displayName;
 			}
 
 			@Override
@@ -91,7 +94,7 @@ class ContentAnalysisJobTest {
 							List.of("협찬 표기 있음"), "표기 있음", List.of("클렌징폼"),
 							List.of(new ContentAttributes.Product("딥클렌징폼", "브랜드A")),
 							List.of(new ContentAttributes.Attribute("무드", "화사함")), "cleansing",
-							List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), "sponsored", true),
+							List.of("클렌징폼/젤", "클렌징폼"), List.of("올리브영"), "sponsored", true, true),
 					new Synthesis("요약: " + content.shortCode(), "패턴 해석", "댓글 인사이트", "high", "판정 근거"));
 		};
 	}
@@ -136,6 +139,7 @@ class ContentAnalysisJobTest {
 		insightCalls = java.util.Collections.synchronizedList(new ArrayList<>());
 		thumbnailArgs = java.util.Collections.synchronizedList(new ArrayList<>());
 		batchUploads = new ArrayList<>();
+		batchUploadNames = new ArrayList<>();
 		batchCreated = new ArrayList<>();
 		// 테스트 간 완전 초기화: 스키마 통째 재생성 후 마이그레이션 재적용
 		TestDb.resetAndMigrate(db, ds);
@@ -190,23 +194,38 @@ class ContentAnalysisJobTest {
 
 		// raw 대역: 후보 뷰(v_analysis_candidates)와 같은 소비 컬럼의 fixture 기반 뷰 —
 		// 캘린더일 timely 판정·성숙·윈도우 게이트는 뷰 소관(SQL 하니스 04가 검증)이라
-		// 잡 테스트는 뷰가 주는 (short_code, timely) 결과만 신뢰하고 소비한다 (07-28 정합).
+		// 잡 테스트는 뷰가 주는 결과만 신뢰하고 소비한다 (07-28 정합).
+		// 2026-08-31: 분석 재료(캡션·지표·핸들)도 이 뷰에서 읽는다 — 구 버전은 analysis DB의
+		// 미러 테이블 contents에서 다시 읽었는데, 미러는 뷰티 서빙 모수라 F&B 후보가 전부
+		// "미러 부재"로 스킵됐다. 그래서 fixture가 재료 컬럼까지 갖는다.
 		db.update("""
 				CREATE TABLE analytics.candidates_fixture (
 				    short_code         text PRIMARY KEY,
 				    timely             boolean NOT NULL,
-				    metric_captured_at timestamptz
+				    metric_captured_at timestamptz,
+				    account_handle     text,
+				    caption            text,
+				    content_type       text,
+				    thumbnail_url      text,
+				    views              bigint,
+				    likes              bigint,
+				    comments           bigint,
+				    ad_marked          boolean
 				)""");
 		db.update("""
 				CREATE VIEW analytics.v_analysis_candidates AS SELECT * FROM analytics.candidates_fixture""");
 		db.update("""
 				INSERT INTO analytics.candidates_fixture VALUES
-				  ('post_a', true, now() - interval '6 days 18 hours'),
-				  ('post_b', true, now() - interval '6 days 6 hours'),
-				  ('post_c', true, now() - interval '6 days 12 hours')""");
+				  ('post_a', true, now() - interval '6 days 18 hours', 'acct1', '캡션A', 'reels',
+				   'https://img/a.jpg', 11000, 520, 52, true),
+				  ('post_b', true, now() - interval '6 days 6 hours', 'acct1', '캡션B', 'feed',
+				   'https://img/b.jpg', NULL, 2000, 100, false),
+				  ('post_c', true, now() - interval '6 days 12 hours', 'acct1', '캡션C', 'reels',
+				   'https://img/c.jpg', 7000, 300, 30, false)""");
 
 		// 분석 DB 시드: contents(미러) 3행 + content_comments·comment_classifications로 대상 조건 구성.
-		// 후보 자격은 위 candidates_fixture(timely 컬럼)가 결정 — contents는 analyzeOne이 읽는 미러 대역.
+		// 후보 자격·재료는 위 candidates_fixture가 결정한다 — contents는 08-31부터 이 잡의 입력이
+		// 아니고(미러 의존 제거), 다른 소비자(미러 계약)를 위해 남겨둔 대역이다.
 		// post_a: 댓글 있고 분류 완료 (대상 O), post_b: 댓글 없음 (대상 O), post_c: 댓글 있고 미분류 (대상 X)
 		// metric_captured_at은 fixture와 동일하게 유지 — 수집 최신순 정렬(ORDER BY metric_captured_at
 		// DESC)이 post_b를 먼저 뽑는지 검증하기 위함 (b가 가장 최신).
@@ -354,7 +373,9 @@ class ContentAnalysisJobTest {
 		// 속성 산출은 폐기해 컬럼 NULL 유지 (행 자체는 생성돼 배치 슬롯 잠식 방지)
 		// thumbnailArgs 위치 동등성을 검증하므로 concurrency=1로 완료 순서를 고정한다.
 		pinSequentialConcurrency();
-		db.update("UPDATE contents SET caption = NULL, thumbnail_url = NULL WHERE short_code = 'post_a'");
+		// 08-31: 재료 원천이 미러(contents)에서 후보 뷰로 바뀌었다 — 픽스처 쪽을 비워야 한다.
+		db.update("UPDATE analytics.candidates_fixture SET caption = NULL, thumbnail_url = NULL"
+				+ " WHERE short_code = 'post_a'");
 		rewireJob(fakeInsightPort(), true);
 
 		int processed = job.run().processed();
@@ -399,7 +420,8 @@ class ContentAnalysisJobTest {
 				VALUES ('post_0', 'acct1', 'https://img/0.jpg', '캡션0', 'reels', now() - interval '10 days', now() - interval '6 days 20 hours', 5000, 100, 10)""");
 		db.update("""
 				INSERT INTO analytics.candidates_fixture VALUES
-				  ('post_0', true, now() - interval '6 days 20 hours')""");
+				  ('post_0', true, now() - interval '6 days 20 hours', 'acct1', '캡션0', 'reels',
+				   'https://img/0.jpg', 5000, 100, 10, false)""");
 		db.update("""
 				INSERT INTO content_comments (id, short_code, author_masked, body, like_count)
 				VALUES (10, 'post_0', 'ddd***', '굿', 0)""");
@@ -476,7 +498,8 @@ class ContentAnalysisJobTest {
 				VALUES ('post_0', 'acct1', 'https://img/0.jpg', '캡션0', 'reels', now() - interval '10 days', now() - interval '6 days 22 hours', 5000, 100, 10)""");
 		db.update("""
 				INSERT INTO analytics.candidates_fixture VALUES
-				  ('post_0', true, now() - interval '6 days 22 hours')""");
+				  ('post_0', true, now() - interval '6 days 22 hours', 'acct1', '캡션0', 'reels',
+				   'https://img/0.jpg', 5000, 100, 10, false)""");
 		db.update("""
 				INSERT INTO content_comments (id, short_code, author_masked, body, like_count)
 				VALUES (10, 'post_0', 'ddd***', '굿', 0)""");
@@ -554,6 +577,35 @@ class ContentAnalysisJobTest {
 		assertTrue(sidecarJsonl.contains("\"post_b\""));
 		// 수거 전이므로 content_analyses는 아직 비어 있다
 		assertEquals(0L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void 대상이_청크_상한을_넘으면_배치를_나눠_제출한다() {
+		// 백로그 일괄 개방(F&B 6만여 건) 대비. 구 버전은 대상 전량을 배치 1건으로 제출해
+		// sidecar_jsonl 한 컬럼에 수십 MB가 들어가고 Vertex 배치 파일 한도에도 걸렸다.
+		// 상한을 낮춰(2건) 경계 동작만 검증한다 — 실운영 기본값 검증이 아니다.
+		enableBatchTransport();
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.batch-chunk-size', '2')");
+		rewireJobWithBatch(fakeInsightPort(), fakeBatchApi());
+		// 기본 시드의 제출 대상은 post_a·post_b 2건 — 1건 더 얹어 3건(청크 2 + 1)으로 만든다.
+		db.update("""
+				INSERT INTO analytics.candidates_fixture VALUES
+				  ('post_d', true, now() - interval '5 hours', 'acct1', '캡션D', 'reels',
+				   'https://img/d.jpg', 9000, 400, 40, false)""");
+
+		JobResult result = job.run();
+
+		assertEquals(3, result.processed()); // 합계는 청크와 무관하게 전체 제출 건수
+		assertEquals(2, batchCreated.size()); // 청크 2개 = 배치 2건
+		// 업로드 객체 이름은 청크마다 달라야 한다 — 실구현의 GCS 경로가 displayName 고정이라
+		// 같은 이름이면 두 번째 업로드가 첫 번째를 덮어써, 두 배치가 같은(마지막) 입력 파일을
+		// 실행한다(2026-08-31 운영 실발생: 3,000건 배치가 795건 결과를 내고 전부 사이드카 매칭 실패).
+		assertEquals(2, batchUploadNames.stream().distinct().count(),
+				"청크 업로드 이름 충돌 — 뒤 청크가 앞 청크 입력 파일을 덮어쓴다");
+		assertEquals(2L, db.queryForObject("SELECT count(*) FROM content_batch_jobs", Long.class));
+		// 청크당 1행, submitted_count 합이 전체와 일치
+		assertEquals(3, db.queryForObject(
+				"SELECT sum(submitted_count)::int FROM content_batch_jobs", Integer.class));
 	}
 
 	@Test
@@ -701,18 +753,26 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
-	void 후보가_미러에_없으면_스킵하고_실패로_세지_않는다() {
-		// 라이브 뷰(후보)와 미러(19:30 스냅샷) 사이 간극 가드 — analyzeOne이 미러에서 행을
-		// 못 찾아 실패 카운트를 오염시키는 대신 대상에서 조용히 빠지고, 다음 미러 후 자연 재대상.
+	void 미러에_없는_후보도_재료를_후보뷰에서_읽어_분석한다() {
+		// 2026-08-31 미러 의존 제거. 구 버전은 "미러(contents)에 없으면 스킵"이 가드였는데,
+		// 미러는 뷰티 서빙 모수라 F&B 후보가 100% 여기서 걸러졌다 — 04 모수를 넓혀도
+		// 로그 한 줄("미러 부재 후보 N건 스킵") 남기고 전부 사라지는 구조였다.
+		// 이제 재료를 후보 뷰에서 직접 읽으므로 미러에 없어도 정상 분석된다.
 		db.update("""
 				INSERT INTO analytics.candidates_fixture VALUES
-				  ('post_ghost', true, now() - interval '1 hour')""");
+				  ('fnb_only_1', true, now() - interval '1 hour', 'acct_fnb', '오늘의 밀키트 후기',
+				   'reels', 'https://img/fnb.jpg', 8000, 300, 30, false)""");
 
 		var result = job.run();
 
-		assertEquals(2, result.processed()); // post_a·post_b — post_ghost는 스킵
+		assertEquals(3, result.processed()); // post_a·post_b + fnb_only_1(미러 부재)
 		assertEquals(0, result.failed());
-		assertFalse(insightCalls.stream().anyMatch(c -> c.shortCode().equals("post_ghost")));
+		assertTrue(insightCalls.stream().anyMatch(c -> c.shortCode().equals("fnb_only_1")));
+		// 재료가 후보 뷰에서 왔는지 — 캡션이 미러가 아니라 fixture 값이어야 한다
+		assertEquals("오늘의 밀키트 후기", insightCalls.stream()
+				.filter(c -> c.shortCode().equals("fnb_only_1")).findFirst().orElseThrow().caption());
+		assertEquals(1L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code = 'fnb_only_1'", Long.class));
 	}
 
 	@Test
@@ -736,8 +796,9 @@ class ContentAnalysisJobTest {
 		// isBeauty=false + mainCategory=null(비뷰티라 자연 null) — 행은 기록되되 서빙에서 제외될 값
 		rewireJob((content, thumbnailUrl) -> {
 			insightCalls.add(content);
+			// 포트 구현(sanitize)이 채웠을 파생값을 직접 넣는다 — isRelevant=false면 is_beauty=false
 			ContentAttributes nonBeauty = new ContentAttributes(List.of(), null, List.of(), "표기 없음",
-					List.of(), List.of(), List.of(), null, List.of(), List.of(), "organic", false);
+					List.of(), List.of(), List.of(), null, List.of(), List.of(), "organic", false, false);
 			return new ContentInsightPort.ContentInsight(nonBeauty,
 					new Synthesis("요약: " + content.shortCode(), "패턴", "인사이트", "normal", "근거"));
 		}, false);
@@ -761,11 +822,11 @@ class ContentAnalysisJobTest {
 		rewireJob((content, thumbnailUrl) -> {
 			insightCalls.add(content);
 			ContentAttributes beautyNoCat = new ContentAttributes(List.of(), null, List.of(), "표기 없음",
-					List.of(), List.of(), List.of(), null, List.of(), List.of(), "organic", true);
+					List.of(), List.of(), List.of(), null, List.of(), List.of(), "organic", true, null);
 			Synthesis s = new Synthesis("요약: " + content.shortCode(), "패턴", "인사이트", "normal", "근거");
 			ContentAttributes attrs = content.shortCode().equals("post_a") ? beautyNoCat
 					: new ContentAttributes(List.of(), null, List.of(), "표기 없음", List.of(), List.of(),
-							List.of(), "makeup", List.of(), List.of(), "organic", true); // post_b는 정상
+							List.of(), "makeup", List.of(), List.of(), "organic", true, null); // post_b는 정상
 			return new ContentInsightPort.ContentInsight(attrs, s);
 		}, false);
 

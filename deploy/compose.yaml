@@ -146,6 +146,9 @@ services:
       # OOM 자동 힙 덤프(08-27 스펙) — HotSpot은 기존 파일을 덮어쓰지 않아 첫 OOM분 1개만
       # 남는다(크래시루프에도 디스크 안전). 분석 후 수동 삭제. cgroup OOM kill은 덤프 불가.
       JAVA_OPTS: "-Xms256m -Xmx768m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/analytics.hprof"
+      # 액추에이터 관리 포트 분리(2026-08-31, 08-22 스펙 이연분) — prod 네트워크 내부(prometheus 스크레이프) 전용.
+      # monitoring 9083과 같은 관용구(env 주입), 번호는 앱 포트 +1000.
+      MANAGEMENT_SERVER_PORT: "9082"
     volumes:
       - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
       - ./secrets/gcs-image-archiver.json:/run/secrets/gcs-image-archiver.json:ro
@@ -203,6 +206,9 @@ services:
       CRAWLER_SCHEDULE_DISCOVER_CRON: "-"
       # OOM 자동 힙 덤프 — analytics 주석 참조(첫 OOM분 1개만 보존)
       JAVA_OPTS: "-Xmx1g -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/crawler.hprof"
+      # 액추에이터 관리 포트 분리(2026-08-31, 08-22 스펙 이연분) — prod 네트워크 내부(prometheus 스크레이프) 전용.
+      # monitoring 9083과 같은 관용구(env 주입), 번호는 앱 포트 +1000.
+      MANAGEMENT_SERVER_PORT: "9080"
     volumes:
       - ./dumps:/dumps
     ports:
@@ -318,7 +324,7 @@ services:
       # 전용 SA 키(IMAGE_GCS_KEY)를 코드가 직접 읽으므로 이 값과 충돌하지 않는다(analytics
       # compose 주석과 동일 사유 — ADC는 JVM당 하나뿐이라 GcsImageStore가 여길 덮으면 Vertex가 403).
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
-      MONITORING_LLM_VERTEX_PROJECT: ${MONITORING_LLM_VERTEX_PROJECT:-hypenow-llm-prod}
+      MONITORING_LLM_VERTEX_PROJECT: ${MONITORING_LLM_VERTEX_PROJECT:-project-00d0f3bd-bdef-4b0a-9eb}
       MONITORING_LLM_VERTEX_LOCATION: ${MONITORING_LLM_VERTEX_LOCATION:-global}
       # 프로필 이미지 아카이브(설계 스펙 §3-1) — analytics와 같은 버킷·같은 쓰기 PAR을 재사용
       MONITORING_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}

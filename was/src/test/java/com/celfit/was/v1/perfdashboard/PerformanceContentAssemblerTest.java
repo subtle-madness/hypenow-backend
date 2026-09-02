@@ -1,6 +1,7 @@
 package com.celfit.was.v1.perfdashboard;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.entry;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -30,6 +31,7 @@ import com.celfit.was.v1.monitoring.TrackingItemResponse.SnapshotResponse;
 import com.celfit.was.v1.perfdashboard.PerformanceContentAssembler.DashboardRef;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -731,7 +733,7 @@ class PerformanceContentAssemblerTest {
 				List.of(snapshot("2026-08-06", 100L, 40L, 5L))));
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(OWN_LINK));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(OWN_ACCOUNT));
-		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any())).willReturn(List.of(
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any(), eq(false))).willReturn(List.of(
 				taggedRow("ABC", "2026-08-06T09:00:00+09:00"),
 				taggedRow("POOL1", "2026-08-06T09:00:00+09:00")));
 		given(brandReadRepository.findLatestSnapshotsForBrand(eq(BRAND_ID), any(), eq(false)))
@@ -805,7 +807,7 @@ class PerformanceContentAssemblerTest {
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(OWN_LINK));
 		given(brandReadRepository.findAccount(BRAND_ID))
 				.willReturn(Optional.of(accountCoveredUntil(OffsetDateTime.parse("2026-08-05T00:00:00+09:00"))));
-		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any())).willReturn(List.of(
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any(), eq(false))).willReturn(List.of(
 				taggedRow("OLD", "2026-08-03T09:00:00+09:00"),
 				taggedRow("NEW", "2026-08-06T09:00:00+09:00"),
 				directRow("DIR", "2026-08-01T09:00:00+09:00")));
@@ -818,13 +820,54 @@ class PerformanceContentAssemblerTest {
 		assertThat(refs).extracting(DashboardRef::contentKey).containsExactlyInAnyOrder("bt_NEW", "bt_DIR");
 	}
 
+	/**
+	 * 합류자 공유 전제(2026-08-31) — 인덱스 인스턴스 하나를 {@code DashboardIndexCoalescer}가 여러
+	 * 요청 스레드에 그대로 나눠 주므로, 컬렉션 필드는 전부 생성 시점에 불변으로 굳어 있어야 한다.
+	 *
+	 * <p>스텁 세팅은 {@code index는_남이_등록한_direct_전용_게시물을_노출하지_않는다}의 준비 코드에
+	 * 커버리지 클램프 테스트의 <b>비어 있지 않은</b> 등록 원장 스텁을 얹은 것이다 — 브랜드 1개 +
+	 * 원장 1건이 실려야 {@code ownedShortCodes} 단정이 실제로 돈다(브랜드가 없거나 원장이 비면
+	 * 공회전한다). 캠페인도 한 건 실어 {@code campaignsById} 단정을 빈 맵 위에서 돌리지 않는다.
+	 * 원장 스텁은 운영 리포지토리({@code BrandDirectPostRepository.shortCodesByUser})와 같이
+	 * <b>가변</b> {@link LinkedHashSet}을 돌려준다 — 불변 스텁을 쓰면 방어 복사 없이도 통과하는
+	 * 가짜 테스트가 된다.
+	 */
+	@Test
+	void 인덱스의_컬렉션은_전부_불변이다_합류자_공유_전제() {
+		givenLegacy();
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(OWN_LINK));
+		given(campaignRepository.findByUser(USER_ID)).willReturn(
+				List.of(new CampaignRow(7L, USER_ID, "여름 캠페인", null, null, null, null, null, null, null)));
+		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(OWN_ACCOUNT));
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any(), eq(false))).willReturn(List.of(
+				taggedRow("NEW", "2026-08-06T09:00:00+09:00"),
+				directRow("DIR", "2026-08-01T09:00:00+09:00")));
+		given(brandPostAssembler.directRegisteredShortCodes(USER_ID))
+				.willReturn(new LinkedHashSet<>(List.of("DIR")));
+		given(brandReadRepository.findLatestSnapshotsForBrand(eq(BRAND_ID), any(), eq(false)))
+				.willReturn(List.of());
+
+		var index = assembler().index(USER_ID);
+
+		// 단정이 공회전하지 않는다는 전제 자체를 먼저 고정한다.
+		assertThat(index.campaignsById()).isNotEmpty();
+		assertThat(index.brandsById()).isNotEmpty();
+		assertThatThrownBy(() -> index.campaignsById().put(999L, null))
+				.isInstanceOf(UnsupportedOperationException.class);
+		index.brandsById().values().forEach(brand -> {
+			assertThat(brand.ownedShortCodes()).isNotEmpty();
+			assertThatThrownBy(() -> brand.ownedShortCodes().add("XXX"))
+					.isInstanceOf(UnsupportedOperationException.class);
+		});
+	}
+
 	/** 노출 필터(등록자 전용 노출, 08-19) — direct-only 행은 등록한 유저에게만 보인다. */
 	@Test
 	void index는_남이_등록한_direct_전용_게시물을_노출하지_않는다() {
 		givenLegacy();
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(OWN_LINK));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(OWN_ACCOUNT));
-		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any())).willReturn(List.of(
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any(), eq(false))).willReturn(List.of(
 				taggedRow("T1", "2026-08-06T09:00:00+09:00"),
 				directRow("D1", "2026-08-06T09:00:00+09:00")));
 		given(brandPostAssembler.directRegisteredShortCodes(USER_ID)).willReturn(Set.of());   // 내 등록이 아니다
@@ -846,9 +889,9 @@ class PerformanceContentAssemblerTest {
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(OWN_ACCOUNT));
-		given(brandReadRepository.findBrandPostIndex(eq(99L), any(), eq(false), any()))
+		given(brandReadRepository.findBrandPostIndex(eq(99L), any(), eq(false), any(), eq(false)))
 				.willReturn(List.of(taggedRow("ABC", "2026-08-06T09:00:00+09:00")));
-		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any()))
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any(), eq(false)))
 				.willReturn(List.of(taggedRow("ABC", "2026-08-06T09:00:00+09:00")));
 		given(brandReadRepository.findLatestSnapshotsForBrand(eq(99L), any(), eq(false))).willReturn(List.of());
 		given(brandReadRepository.findLatestSnapshotsForBrand(eq(BRAND_ID), any(), eq(false)))
@@ -885,7 +928,7 @@ class PerformanceContentAssemblerTest {
 
 		assertThat(index.refs()).hasSize(1);
 		assertThat(index.lastCollectedAt()).isEqualTo(LAST_COLLECTED);
-		then(brandReadRepository).should(never()).findBrandPostIndex(anyLong(), any(), anyBoolean(), any());
+		then(brandReadRepository).should(never()).findBrandPostIndex(anyLong(), any(), anyBoolean(), any(), anyBoolean());
 	}
 
 	// ---------- 하이드레이트 패스(2026-08-27 목록 최적화 §1-2) ----------
@@ -952,7 +995,7 @@ class PerformanceContentAssemblerTest {
 						List.of(snapshot("2026-08-06", 10L, 1L, 1L))));
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(OWN_LINK));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(OWN_ACCOUNT));
-		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any())).willReturn(List.of(
+		given(brandReadRepository.findBrandPostIndex(eq(BRAND_ID), any(), eq(false), any(), eq(false))).willReturn(List.of(
 				taggedRow("ABC", "2026-08-06T09:00:00+09:00"), taggedRow("POOL1", "2026-08-06T09:00:00+09:00"),
 				hiddenSponsoredRow("POOL2", "2026-08-04T09:00:00+09:00")));
 		given(brandReadRepository.findLatestSnapshotsForBrand(eq(BRAND_ID), any(), eq(false))).willReturn(List.of(
@@ -1016,14 +1059,14 @@ class PerformanceContentAssemblerTest {
 				"sponsored", true, "hidden", "2026-08-04T09:30:00+09:00", null, latest, List.of(latest),
 				latest.comments(), false, 0L, List.of(), List.of("7", "8"),
 				"2026-08-04T09:30:00+09:00", "2026-08-07T03:00:00+09:00",
-				null, List.of(), List.of(), false);
+				null, List.of(), List.of(), List.of(), false);
 	}
 
 	/** 태그 감지 행(전원 노출) — 캡션·유료협찬 관측은 브랜드 풀 픽스처와 같은 값(협찬 unknown). */
 	private static BrandPostIndexRow taggedRow(String shortCode, String takenAt) {
 		return new BrandPostIndexRow(shortCode, OffsetDateTime.parse(takenAt),
 				OffsetDateTime.parse("2026-08-06T09:30:00+09:00"), null, null, null, "creator", "ig-1",
-				null, false, null, null, null, null, null, null, null);
+				null, false, null, null, null, null, null, null, null, null);
 	}
 
 	/** 삭제·비공개 감지 + 유료협찬 관측 행 — status(hidden)·sponsorship(sponsored) 파생 판별용. */
@@ -1031,14 +1074,14 @@ class PerformanceContentAssemblerTest {
 		return new BrandPostIndexRow(shortCode, OffsetDateTime.parse(takenAt),
 				OffsetDateTime.parse("2026-08-04T09:30:00+09:00"), null, null,
 				OffsetDateTime.parse("2026-08-07T01:00:00+09:00"), "creator", "ig-1",
-				true, false, null, null, null, null, null, null, null);
+				true, false, null, null, null, null, null, null, null, null);
 	}
 
 	/** 직접 등록 전용 행(tag_detected_at 없음) — 등록자에게만 보이고 커버리지 클램프 면제 대상이다. */
 	private static BrandPostIndexRow directRow(String shortCode, String takenAt) {
 		return new BrandPostIndexRow(shortCode, OffsetDateTime.parse(takenAt), null,
 				OffsetDateTime.parse("2026-08-06T09:30:00+09:00"), null, null, "creator", "ig-1",
-				null, false, null, null, null, null, null, null, null);
+				null, false, null, null, null, null, null, null, null, null);
 	}
 
 	private static LatestSnapshotRow latestSnapshot(String shortCode, Long views, Long likes, Long comments) {
@@ -1175,6 +1218,6 @@ class PerformanceContentAssemblerTest {
 				"unknown", null, trackingStatus, "2026-08-06T09:30:00+09:00", null, latest, snapshots,
 				latest == null ? null : latest.comments(), commentsHidden, 0L, List.of(), campaignIds,
 				"2026-08-06T09:30:00+09:00", "2026-08-07T03:00:00+09:00",
-				null, List.of(), List.of(), false);
+				null, List.of(), List.of(), List.of(), false);
 	}
 }

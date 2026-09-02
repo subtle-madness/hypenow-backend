@@ -21,7 +21,7 @@ public class UserRepository {
 	private static final String PROFILE_COLUMNS = """
 			id, email, name, nickname, user_type, signup_route, phone_country_code, phone_number,
 			company_name, company_size, industry, job_title, agreed_marketing, marketing_updated_at,
-			profile_image_url, created_at, role""";
+			profile_image_url, created_at, role, feature_overrides::text AS feature_overrides""";
 
 	/**
 	 * PATCH /v1/me가 갱신할 수 있는 컬럼 화이트리스트(스펙 6.13) — 동적 SET 절은 이 목록만 순회하므로

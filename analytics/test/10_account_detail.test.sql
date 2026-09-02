@@ -6,8 +6,8 @@
 -- ra1은 좋아요 비공개(-1→NULL)라 ad_avg(likes)에는 r3만 반영된다.
 DO $$
 BEGIN
-  ASSERT (SELECT count(*) FROM analytics.v_account_recent WHERE owner_username LIKE 'dummy_%') = 6,
-    'v_account_recent dummy rows != 6 (+ra1(액터))';
+  ASSERT (SELECT count(*) FROM analytics.v_account_recent WHERE owner_username LIKE 'dummy_%') = 7,
+    'v_account_recent dummy rows != 7 (+ra1(액터) +fb1 — 08-31 서빙 개방)';
 
   ASSERT (SELECT analyzed_count FROM analytics.v_account_summaries WHERE handle = 'dummy_a') = 4,
     'summaries a analyzed_count != 4';
@@ -39,8 +39,8 @@ BEGIN
                      WHERE schemaname = 'analytics' AND viewname = 'v_account_category_stats'),
     'analytics.v_account_category_stats still exists (V35 파생 뷰로 이관됨)';
 
-  ASSERT (SELECT count(*) FROM analytics.v_account_content_series WHERE account_handle LIKE 'dummy_%') = 6,
-    'v_account_content_series dummy rows != 6 (+ra1(액터))';
+  ASSERT (SELECT count(*) FROM analytics.v_account_content_series WHERE account_handle LIKE 'dummy_%') = 7,
+    'v_account_content_series dummy rows != 7 (+ra1(액터) +fb1 — 08-31 서빙 개방)';
   ASSERT (SELECT sponsored FROM analytics.v_account_content_series WHERE short_code = 'dummy_r3') = true,
     'v_account_content_series r3 sponsored != true';
 END $$;

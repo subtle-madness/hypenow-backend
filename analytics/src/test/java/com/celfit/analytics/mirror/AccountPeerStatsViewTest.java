@@ -91,6 +91,22 @@ class AccountPeerStatsViewTest {
 				  ('g3', now(), 'm', true, 'makeup',   'organic')""");
 		// h·i는 account_content_series가 아예 없다 — account_category_stats에 행이 안 생겨
 		// peer_category가 '미분류'로 폴백한다(h는 팔로워 있음, i는 팔로워 NULL → '미상' 버킷).
+
+		// F&B 단독 계정 k — 축 뷰 검증용. avg_er_pct NULL: 기존 중앙값 테스트의 전체 모수(9곳)를
+		// 흔들지 않기 위해(percentile_cont는 NULL 제외). snack 2건 > convenience 1건 → fnb 축 최빈 간식류.
+		db.update("INSERT INTO account_summaries (handle, followers) VALUES ('k', 20000)");
+		db.update("""
+				INSERT INTO account_content_series (short_code, account_handle, posted_at, content_type,
+				  views, likes, comments, sponsored) VALUES
+				  ('k1', 'k', now() - interval '3 days', 'reels', 8000, 400, 30, false),
+				  ('k2', 'k', now() - interval '2 days', 'reels', 7000, 350, 25, false),
+				  ('k3', 'k', now() - interval '1 days', 'reels', 6000, 300, 20, false)""");
+		db.update("""
+				INSERT INTO content_analyses (short_code, analyzed_at, model, is_beauty, main_category, ad_type)
+				VALUES
+				  ('k1', now(), 'm', false, 'snack', 'organic'),
+				  ('k2', now(), 'm', false, 'snack', 'organic'),
+				  ('k3', now(), 'm', false, 'convenience', 'organic')""");
 	}
 
 	@Test
@@ -151,5 +167,49 @@ class AccountPeerStatsViewTest {
 		// i는 팔로워가 NULL — '1만 미만' 버킷으로 오염되지 않고 별도 '미상'으로 빠져야 한다.
 		Map<String, Object> i = db.queryForMap("SELECT * FROM account_peer_stats WHERE handle = 'i'");
 		assertEquals("미상", i.get("follower_bucket"));
+	}
+
+	@Test
+	void FnB_계정은_축_뷰에서_FnB_피어를_갖고_구_뷰에서는_미분류다() {
+		// 축 뷰: k의 fnb 축 최빈은 간식류(snack 2건 > convenience 1건), beauty 축은 분류 0건 → 미분류.
+		Map<String, Object> fnb = db.queryForMap(
+				"SELECT * FROM account_peer_axis_stats WHERE handle = 'k' AND axis = 'fnb'");
+		assertEquals("간식류", fnb.get("peer_category"));
+		Map<String, Object> beauty = db.queryForMap(
+				"SELECT * FROM account_peer_axis_stats WHERE handle = 'k' AND axis = 'beauty'");
+		assertEquals("미분류", beauty.get("peer_category"));
+		// 구 이름 뷰 = 뷰티 투영 — F&B 분류가 새어 들어오면 안 된다(기존 화면 불변).
+		Map<String, Object> legacy = db.queryForMap("SELECT * FROM account_peer_stats WHERE handle = 'k'");
+		assertEquals("미분류", legacy.get("peer_category"));
+	}
+
+	@Test
+	void 카테고리_스탯_뷰티_축은_구_V35_정의와_동치다() {
+		// 신 뷰 axis='beauty' 투영 ≡ 구 정의(is_beauty 게이트) — 양방향 EXCEPT 합 0건(스펙 §5-1).
+		Long diff = db.queryForObject("""
+				WITH old AS (
+				  SELECT s.account_handle, COALESCE(t.main_label, a.main_category) AS main_group,
+				         count(*) AS content_count
+				  FROM account_content_series s
+				  JOIN content_analyses a ON a.short_code = s.short_code
+				  LEFT JOIN (SELECT DISTINCT main_value, main_label FROM beauty_taxonomy) t
+				         ON t.main_value = a.main_category
+				  WHERE a.is_beauty IS TRUE AND a.main_category IS NOT NULL
+				  GROUP BY 1, 2),
+				new AS (
+				  SELECT account_handle, main_group, content_count
+				  FROM account_category_stats WHERE axis = 'beauty')
+				SELECT (SELECT count(*) FROM (SELECT * FROM old EXCEPT SELECT * FROM new) d1)
+				     + (SELECT count(*) FROM (SELECT * FROM new EXCEPT SELECT * FROM old) d2)
+				""", Long.class);
+		assertEquals(0L, diff);
+	}
+
+	@Test
+	void FnB_분류는_카테고리_스탯에_fnb_축으로_실린다() {
+		Map<String, Object> row = db.queryForMap("""
+				SELECT main_group, content_count FROM account_category_stats
+				WHERE account_handle = 'k' AND axis = 'fnb' AND main_group = '간식류'""");
+		assertEquals(2L, row.get("content_count"));
 	}
 }

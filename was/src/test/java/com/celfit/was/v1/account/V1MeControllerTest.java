@@ -25,6 +25,7 @@ import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.auth.UserProfile;
 import com.celfit.was.auth.UserRepository;
 import com.celfit.was.config.SecurityConfig;
+import com.celfit.was.v1.common.FeatureOverridesCodec;
 import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
 import java.time.OffsetDateTime;
@@ -53,7 +54,8 @@ import org.springframework.test.web.servlet.MockMvc;
  */
 @WebMvcTest(controllers = V1MeController.class,
 		properties = "was.cors.allowed-origins=http://localhost:3000")
-@Import({SignupValidator.class, V1ExceptionAdvice.class, SecurityConfig.class})
+@Import({SignupValidator.class, V1ExceptionAdvice.class, SecurityConfig.class,
+		FeatureOverridesCodec.class})
 class V1MeControllerTest {
 
 	private static final String PASSWORD = "Passw0rd!";
@@ -83,7 +85,7 @@ class V1MeControllerTest {
 		return new UserProfile(7L, "user@example.com", "김우민", "우민", "brand",
 				"portal_search", "+82", "010-1234-5678", "하이프나우", "2-10", "beauty", "staff",
 				true, OffsetDateTime.parse("2026-07-01T00:00:00Z"), null,
-				OffsetDateTime.parse("2026-06-01T00:00:00Z"), "USER");
+				OffsetDateTime.parse("2026-06-01T00:00:00Z"), "USER", "{}");
 	}
 
 	private void givenAppUser() {
@@ -127,7 +129,7 @@ class V1MeControllerTest {
 		given(userRepository.findProfileById(9L)).willReturn(Optional.of(
 				new UserProfile(9L, "admin@example.com", "관리자", null, "brand",
 						"portal_search", "+82", "010-1234-5678", "하이프나우", "2-10", "beauty", "staff",
-						false, null, null, OffsetDateTime.parse("2026-06-01T00:00:00Z"), "ADMIN")));
+						false, null, null, OffsetDateTime.parse("2026-06-01T00:00:00Z"), "ADMIN", "{}")));
 
 		mockMvc.perform(get("/v1/me").with(user(adminPrincipal)))
 				.andExpect(status().isOk())

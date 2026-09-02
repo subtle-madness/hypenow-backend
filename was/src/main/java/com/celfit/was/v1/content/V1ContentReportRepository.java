@@ -55,7 +55,9 @@ public class V1ContentReportRepository {
 	 *
 	 * <p>모수 규칙:
 	 * <ul>
-	 * <li>뷰티 분석분(is_beauty)만. 카테고리는 beauty_taxonomy 대분류(main_category).
+	 * <li>같은 대분류(main_category) 분석분만 — 대분류가 축을 결정하므로(불변식: main 있음 ⇒ 축
+	 *     확정, 서빙 개방 §2) 구 is_beauty=true 게이트는 뷰티 대분류에선 잉여, F&amp;B에선 표본 0건을
+	 *     만들어 제거(2026-09-01). 카테고리는 beauty_taxonomy 대분류.
 	 * <li><b>조회수 NULL 제외</b> — 피드는 views가 항상 NULL이라(프로젝트 규칙) 모수는 사실상 릴스다.
 	 * <li>지표 시점이 timely 또는 레거시 NULL인 건만 — 늦크롤 백필은 조회수가 더 오래 누적돼
 	 *     평균을 부풀린다(운영 실측: cleansing 전체 평균 75,543 vs timely 18,499). 랭킹
@@ -73,7 +75,6 @@ public class V1ContentReportRepository {
 				FROM contents c
 				JOIN content_analyses an ON an.short_code = c.short_code
 				WHERE an.main_category = :mc
-				  AND an.is_beauty = true
 				  AND c.views IS NOT NULL
 				  AND (an.metric_timeliness = 'timely' OR an.metric_timeliness IS NULL)
 				""").param("mc", mainCategory).param("views", views == null ? -1L : views)

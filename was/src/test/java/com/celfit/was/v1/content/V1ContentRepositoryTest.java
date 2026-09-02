@@ -80,7 +80,8 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				CREATE TABLE beauty_distributors (
 				    name text PRIMARY KEY,
 				    sort int  NOT NULL,
-				    slug text NOT NULL UNIQUE
+				    slug text NOT NULL UNIQUE,
+				    axis text NOT NULL DEFAULT 'beauty'
 				)""");
 		// image_assets 사본 DDL (analytics 아카이브 잡이 채우는 테이블 — Task 2 DDL과 동일 형상)
 		jdbcTemplate.execute("""
@@ -100,9 +101,10 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				 ('makeup', '메이크업', '립메이크업', '립틴트', 3, 1, 1)
 				""");
 		jdbcTemplate.update("""
-				INSERT INTO beauty_distributors (name, sort, slug) VALUES
-				 ('올리브영', 1, 'oliveyoung'),
-				 ('다이소', 2, 'daiso')
+				INSERT INTO beauty_distributors (name, sort, slug, axis) VALUES
+				 ('올리브영', 1, 'oliveyoung', 'beauty'),
+				 ('다이소', 2, 'daiso', 'beauty'),
+				 ('GS25', 10, 'gs25', 'fnb')
 				""");
 
 		// 계정 2: alpha(5000) · beta(20000)
@@ -132,6 +134,8 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				  NULL, 'https://ig/f1', NULL, 50, 5, 300, '2026-07-05T03:00:00Z', 300),
 				 ('f2', 'beta', 'https://thumb/f2.jpg', '피드 정렬용', '2026-07-03T03:00:00Z', 'feed',
 				  NULL, 'https://ig/f2', 800, 80, 8, 350, '2026-07-06T03:00:00Z', 350),
+				 ('fb1', 'alpha', 'https://thumb/fb1.jpg', '밀키트 릴스', '2026-07-02T04:00:00Z', 'reels',
+				  22, 'https://ig/fb1', 2000, 200, 20, 600, '2026-07-05T04:00:00Z', 600),
 				 ('nb1', 'alpha', 'https://thumb/nb1.jpg', '일상 브이로그', '2026-07-02T03:00:00Z', 'reels',
 				  22, 'https://ig/nb1', 5000, 500, 50, 800, '2026-07-05T03:00:00Z', 800),
 				 -- 시점 마킹 대조군(별도 기간 [07-11, 07-20) — 기존 테스트 무영향):
@@ -164,6 +168,9 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				 ('f1', 'makeup', '["립틴트"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'timely'),
 				 ('f2', 'skincare', '["토너"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'timely'),
 				 ('nb1', NULL, NULL, 'organic', NULL, NULL, NULL, false, 'timely'),
+				 -- F&B 분석행(2026-08-31 서빙 개방) — 축 파생으로 is_beauty=false ∧ main 확정
+				 ('fb1', 'convenience', '["가공/간편식","밀키트"]'::jsonb, 'organic', NULL, NULL,
+				  '["GS25"]'::jsonb, false, 'timely'),
 				 ('tl1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'timely'),
 				 ('lb1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'late_backfill'),
 				 ('lg1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, NULL),
@@ -175,7 +182,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 	/** 기본 조회: 2026-07-01~07-10, contentType 기본(reels)·sort 기본(hype)·limit 기본(100)·offset 기본(0). */
 	private V1ContentQuery query() {
 		return V1ContentQuery.of(LocalDate.parse("2026-07-01"), LocalDate.parse("2026-07-10"),
-				null, null, null, null, null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, null, null, null, null, null);
 	}
 
 	private V1ContentQuery query(String contentType, String mainCategory, String midCategory,
@@ -187,7 +194,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 			String subCategory, String distributorId, String sort, Integer limit, Integer offset) {
 		return V1ContentQuery.of(LocalDate.parse("2026-07-01"), LocalDate.parse("2026-07-10"),
 				contentType, mainCategory, midCategory, subCategory, null, null, null,
-				distributorId, sort, limit, offset);
+				distributorId, sort, limit, offset, null);
 	}
 
 	@Test
@@ -212,7 +219,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 		// [07-11, 07-20) 창: tl1(timely)·lg1(시점 NULL 레거시)는 노출, lb1(late_backfill)은 제외.
 		// lb1은 hype 999로 필터 없으면 1위인데, 늦크롤 지표 편향 때문에 랭킹에서 아예 빠진다.
 		V1ContentQuery q = V1ContentQuery.of(LocalDate.parse("2026-07-11"), LocalDate.parse("2026-07-20"),
-				null, null, null, null, null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, null, null, null, null, null);
 
 		List<ContentCardRow> rows = repository.findCards(q);
 
@@ -304,7 +311,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 		// short_code를 타서 a1이 먼저 나온다(직접 확인: orderBy()를 hype_score 기준으로 바꿔
 		// 재실행하면 이 단언이 깨진다).
 		V1ContentQuery q = V1ContentQuery.of(LocalDate.parse("2026-08-01"), LocalDate.parse("2026-08-05"),
-				null, null, null, null, null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, null, null, null, null, null);
 
 		List<ContentCardRow> rows = repository.findCards(q);
 
@@ -314,11 +321,59 @@ class V1ContentRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 유통사_옵션은_전체를_슬러그_오름차순으로_내린다() {
-		List<Map<String, Object>> options = repository.findDistributorOptions();
+	void 무필터_랭킹에_FnB_콘텐츠는_안_나온다() {
+		// 기본 화면 불변(서빙 개방 §6-1) — 미러에 F&B가 있어도 is_beauty=true 게이트가 지킨다
+		List<ContentCardRow> rows = repository.findCards(query("reels", null, null, null, null, "latest", 50));
+		assertThat(rows).extracting(ContentCardRow::shortCode).doesNotContain("fb1");
+	}
 
-		assertThat(options).containsExactly(
+	@Test
+	void FnB_대분류_필터로_FnB_콘텐츠가_나온다() {
+		// main 필터 시 is_beauty 조건 제거(불변식: main 있음 ⇒ 축 확정 — 서빙 개방 §2)
+		List<ContentCardRow> rows = repository.findCards(query("reels", "convenience", null, null, null, "latest", 50));
+		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("fb1");
+	}
+
+	@Test
+	void vertical_fnb는_FnB_축_전체를_내린다() {
+		// 2026-09-01 FE 피드백 #1 — 대분류 없이 축 전체. nb1(무관, main NULL·is_beauty=false)은
+		// F&B 축이 아니므로 안 낀다(main IN F&B slug만).
+		V1ContentQuery q = V1ContentQuery.of(LocalDate.parse("2026-07-01"),
+				LocalDate.parse("2026-07-10"), "reels", null, null, null, null, null, null, null,
+				"latest", 50, null, "fnb");
+		List<ContentCardRow> rows = repository.findCards(q);
+		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("fb1");
+		assertThat(repository.countCards(q)).isEqualTo(1);
+	}
+
+	@Test
+	void vertical_beauty는_무필터와_동치다() {
+		V1ContentQuery q = V1ContentQuery.of(LocalDate.parse("2026-07-01"),
+				LocalDate.parse("2026-07-10"), "reels", null, null, null, null, null, null, null,
+				"latest", 50, null, "beauty");
+		List<ContentCardRow> vertical = repository.findCards(q);
+		List<ContentCardRow> plain = repository.findCards(query("reels", null, null, null, null, "latest", 50));
+		assertThat(vertical).extracting(ContentCardRow::shortCode)
+				.isEqualTo(plain.stream().map(ContentCardRow::shortCode).toList());
+	}
+
+	@Test
+	void 뷰티_대분류_필터는_기존과_동치다() {
+		// is_beauty 조건 제거 후에도 뷰티 필터 결과 불변(main=skincare ⇒ is_beauty=true 파생)
+		List<ContentCardRow> rows = repository.findCards(query("reels", "skincare", null, null, null, "latest", 50));
+		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("r2");
+	}
+
+	@Test
+	void 유통사_옵션은_요청_축만_슬러그_오름차순으로_내린다() {
+		// 어휘 테이블은 두 축의 유통사를 함께 담는다(2026-08-31). 축 인자(2026-09-01 FE #5)로
+		// 화면 축에 맞는 어휘만 내린다 — 뷰티 화면에 GS25가 뜨면 안 된다.
+		List<Map<String, Object>> beauty = repository.findDistributorOptions("beauty");
+		assertThat(beauty).containsExactly(
 				Map.of("id", "daiso", "name", "다이소"),
 				Map.of("id", "oliveyoung", "name", "올리브영"));
+
+		List<Map<String, Object>> fnb = repository.findDistributorOptions("fnb");
+		assertThat(fnb).containsExactly(Map.of("id", "gs25", "name", "GS25"));
 	}
 }

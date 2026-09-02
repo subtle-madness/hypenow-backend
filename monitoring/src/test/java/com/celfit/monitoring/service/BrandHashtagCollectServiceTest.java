@@ -64,6 +64,11 @@ class BrandHashtagCollectServiceTest {
 
 	private static final class StubTags extends BrandHashtagRepository {
 		List<String> tags = List.of();
+		/** markRunStarted/markRunFinished 호출 인자 캡처(태그별 실행 상태 기록, 2026-08-31). */
+		final List<String> runStarted = new ArrayList<>();
+		final List<String> runFinished = new ArrayList<>();
+		final Map<String, Integer> runFoundCounts = new HashMap<>();
+		final Map<String, Boolean> runFailed = new HashMap<>();
 
 		StubTags() {
 			super(null);
@@ -72,6 +77,18 @@ class BrandHashtagCollectServiceTest {
 		@Override
 		public List<String> findTags(long brandId) {
 			return tags;
+		}
+
+		@Override
+		public void markRunStarted(long brandId, String tag) {
+			runStarted.add(tag);
+		}
+
+		@Override
+		public void markRunFinished(long brandId, String tag, int foundCount, boolean failed) {
+			runFinished.add(tag);
+			runFoundCounts.put(tag, foundCount);
+			runFailed.put(tag, failed);
 		}
 	}
 
@@ -459,5 +476,73 @@ class BrandHashtagCollectServiceTest {
 		service(4, 3).sweep(brand);
 
 		assertThat(tagged.upsertedHashtag).containsExactly("A1", "A2", "B1");
+	}
+
+	// ── 태그별 실행 상태 기록(FE 요청, 2026-08-31) ────────────────────────────
+
+	@Test
+	void 정상_종료된_태그는_신규_편입_건수와_함께_성공으로_기록된다() {
+		tags.tags = List.of("cclime");
+		pagesByTag.put("cclime", List.of(sectionsBody(null,
+				media("N1", RECENT, "poster1"), media("N2", RECENT, "poster2"))));
+
+		service(4, 1000).sweep(brand);
+
+		assertThat(tags.runStarted).containsExactly("cclime");
+		assertThat(tags.runFinished).containsExactly("cclime");
+		assertThat(tags.runFoundCounts).containsEntry("cclime", 2);
+		assertThat(tags.runFailed).containsEntry("cclime", false);
+	}
+
+	/** Hiker 404(게시물 0건)는 fetchHashtagRecentPage가 이미 빈 페이지로 흡수한다 — 정상 종료다. */
+	@Test
+	void 게시물_0건_태그도_실패가_아니라_성공_0건으로_기록된다() {
+		tags.tags = List.of("cclime");
+		pagesByTag.put("cclime", List.of(sectionsBody(null)));
+
+		service(4, 1000).sweep(brand);
+
+		assertThat(tags.runFinished).containsExactly("cclime");
+		assertThat(tags.runFoundCounts).containsEntry("cclime", 0);
+		assertThat(tags.runFailed).containsEntry("cclime", false);
+	}
+
+	@Test
+	void 예외로_격리된_태그는_실패로_기록되고_건수는_0이다() {
+		tags.tags = List.of("실패");
+		failingTags.add("실패");
+
+		service(4, 1000).sweep(brand);
+
+		assertThat(tags.runStarted).containsExactly("실패");
+		assertThat(tags.runFinished).containsExactly("실패");
+		assertThat(tags.runFoundCounts).containsEntry("실패", 0);
+		assertThat(tags.runFailed).containsEntry("실패", true);
+	}
+
+	@Test
+	void 태그별_실행_기록은_서로_독립적이다() {
+		tags.tags = List.of("실패", "cclime");
+		failingTags.add("실패");
+		pagesByTag.put("cclime", List.of(sectionsBody(null, media("N1", RECENT, "poster1"))));
+
+		service(4, 1000).sweep(brand);
+
+		assertThat(tags.runStarted).containsExactly("실패", "cclime");
+		assertThat(tags.runFailed).containsEntry("실패", true).containsEntry("cclime", false);
+		assertThat(tags.runFoundCounts).containsEntry("실패", 0).containsEntry("cclime", 1);
+	}
+
+	/** 편입 상한으로 아예 열거되지 않은 태그는 시작·종료 기록 자체가 없다(열거 자체가 없었으므로). */
+	@Test
+	void 편입_상한으로_열거되지_않은_태그는_실행_기록이_없다() {
+		tags.tags = List.of("cclime", "끌리메");
+		pagesByTag.put("cclime", List.of(sectionsBody(null,
+				media("N1", RECENT, "poster1"), media("N2", RECENT, "poster2"))));
+
+		service(4, 2).sweep(brand);
+
+		assertThat(tags.runStarted).containsExactly("cclime");
+		assertThat(tags.runFinished).containsExactly("cclime");
 	}
 }

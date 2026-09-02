@@ -2,7 +2,7 @@
 
 - **소속 트랙군**: crawler 판정 트랙 — 설계: [specs/2026-08-23-fnb-category-design.md](../superpowers/specs/2026-08-23-fnb-category-design.md)
 - **의존**: 트랙 P(뷰티 판정 v3 한국어 필터)·CC(FOREIGN_INFLUENCER 재판정)의 판정 잡 구조 위에서 동작
-- **상태**: ✅ 구현 완료(2026-08-24, 한 PR) — 수집 토글 on은 백필 완료 후 별도 결정(⬜)
+- **상태**: ✅ 구현 완료(2026-08-24, 한 PR) — 수집 토글도 on(운영 확인 2026-08-31)
 
 ## 내용
 
@@ -22,7 +22,7 @@
 | 5 | 어드민 — 명단 F&B 필터·수동 오버라이드(MANUAL 보호 동일)·대시보드 "F&B 판정" 타일(백필 잔여 관측), `BeautyJob.Summary` F&B 카운트 | ✅ |
 | 6 | `v_base_influencer`에 `fnb`·`fnb_company` 노출(소비자 없음, 서빙 무변경) + SQL 하니스 `00_base` 단언 | ✅ |
 | 7 | 문서·PR | ✅ |
-| — | **수집 토글 on**(`UPDATE app_setting SET value='true' WHERE key='fnb.pipeline-enabled'`) — F&B 모수·Hiker 비용 확인 후 별도 결정 | ⬜ |
+| — | **수집 토글 on**(`UPDATE app_setting SET value='true' WHERE key='fnb.pipeline-enabled'`) — 8월 중순 켜짐. 2026-08-31 운영 확인: `fnb.pipeline-enabled=true`(홈/리빙은 아직 `false`), F&B 단독 계정 5,575개·ENUMERATION 콘텐츠 101,932건 적재, timely 비율은 08-24 업로드주 기준 23.0%로 뷰티(23.8%)와 동률 | ✅ |
 
 ### 주요 결정
 
@@ -41,6 +41,9 @@
   `beauty.batch-limit` 내). 당기려면 어드민에서 판정 수동 트리거.
 - 백필 진행률은 대시보드 "③-2 F&B 판정" 타일의 미판정 수로 본다.
 - 토글 on은 재기동 불필요 — 잡이 실행 시점마다 `app_setting`을 읽는다.
+- ⚠️ **토글 on은 런타임 UPDATE라 커밋에 안 남는다** — 이 문서의 상태를 그대로 믿으면 "아직 off"로
+  오독한다(2026-08-31 실제 발생). 실상은 운영 `app_setting`을 직접 조회할 것:
+  `SELECT key, value FROM app_setting WHERE key LIKE '%pipeline-enabled%';`
 
 ## 검증
 
@@ -57,7 +60,10 @@
 - **F&B 축 rejudge 대칭 확장** — 기존 뷰티 rejudge 3종(재료 갱신·캡션 0건 등)의 F&B 대응.
   재료(`fnb_caption_count`·`fnb_judged_at`)는 이번에 쌓기 시작했으므로 필요 시 바로 확장 가능.
 - **카테고리 서빙 개편** — 랭킹·상세·was API가 카테고리를 인지하도록. 현재 `v_base_influencer`의
-  `fnb`·`fnb_company` 노출이 그 재료다(소비자 없음).
+  `fnb`·`fnb_company` 노출이 그 재료다.
+  → **LLM 계층 절반은 트랙 [LL2](LL2-fnb-콘텐츠-분류.md)에서 완료**(2026-08-31): 어휘 축 유도 +
+  분석 후보 뷰 분리로 F&B 콘텐츠가 분석 파이프라인을 탄다. `v_analysis_source`가 `fnb` 컬럼의
+  첫 소비자다. 서빙(랭킹·발굴) 개방은 FE 명세 도착 후 별도 트랙.
 - **`SettingsService` boolean 설정 UI** — `fnb.pipeline-enabled` 토글이 지금은 운영 수동 UPDATE다.
   boolean 설정이 더 늘면 어드민에서 켜고 끄는 편이 낫다.
 

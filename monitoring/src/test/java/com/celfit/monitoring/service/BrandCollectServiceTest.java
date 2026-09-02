@@ -114,9 +114,23 @@ class BrandCollectServiceTest {
 	private static final class RecordingBrands extends BrandRepository {
 		BrandRepository.Coverage coverage = new BrandRepository.Coverage(false, null);
 		final List<String> coverageWrites = new ArrayList<>();
+		/** 진행 워터마크 touch 관찰(08-31 백필 캐시 고착 수리) — enrich 워커에서 나가므로 동기화. */
+		final List<Long> progressTouches = Collections.synchronizedList(new ArrayList<>());
+		/** 정산 마킹과의 호출 순서 검증용 — 기본은 격리된 리스트. */
+		private List<String> callOrder = new ArrayList<>();
 
 		RecordingBrands() {
 			super(null);
+		}
+
+		void useSharedCallOrder(List<String> shared) {
+			this.callOrder = shared;
+		}
+
+		@Override
+		public void touchProgress(long brandId) {
+			progressTouches.add(brandId);
+			callOrder.add("progress");
 		}
 
 		@Override
@@ -220,9 +234,15 @@ class BrandCollectServiceTest {
 		// 댓글 게이트 첫머리의 배치 조회 실패 대역(커넥션 blip) — 건별 격리가 닿지 않는 지점이다.
 		boolean commentsCountsFails = false;
 		int depthCalls = 0;
+		/** 진행 워터마크 touch와의 호출 순서 검증용(08-31) — 기본은 격리된 리스트. */
+		private List<String> callOrder = new ArrayList<>();
 
 		InMemoryTagged() {
 			super(null);
+		}
+
+		void useSharedCallOrder(List<String> shared) {
+			this.callOrder = shared;
 		}
 
 		@Override
@@ -304,6 +324,7 @@ class BrandCollectServiceTest {
 				throw new IllegalStateException("정산 마킹 실패(DB 일시 오류)");
 			}
 			enriched.addAll(codes);
+			callOrder.add("enriched");
 		}
 
 		@Override
@@ -1472,6 +1493,64 @@ class BrandCollectServiceTest {
 
 		assertThat(visible).containsExactly("visible");   // 하드 실패에도 훅은 정상 발화
 		assertThat(tagged.enriched).contains("A");          // 정산도 기존 규칙대로 찍힌다(무변경)
+	}
+
+	// ---------- 진행 워터마크(touchProgress, 2026-08-31 등록 백필 캐시 고착 수리) ----------
+
+	/**
+	 * 페이지 보강이 끝나면 브랜드 진행 워터마크(last_swept_at)를 전진시킨다 — was 인덱스 캐시
+	 * (BrandIndexCache)의 버전키가 brand_account 워터마크만 보므로, 페이지마다 안 움직이면 백필
+	 * 도중 폴링이 전부 캐시에 붙어 게시물이 완주 시점에 한꺼번에 나타난다(08-31 skinfood 실측:
+	 * 90초간 21건 동결 후 247건 일괄 노출).
+	 */
+	@Test
+	void 보강이_끝나면_브랜드_워터마크를_전진시킨다() {
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(brands.progressTouches).containsExactly(1L);
+	}
+
+	/**
+	 * 전진은 정산 마킹(markEnriched) 뒤여야 한다 — 앞이면 새 버전키로 재계산된 인덱스가 아직
+	 * 정산 안 된 단면을 캐시해, 그 페이지가 다음 전진까지 다시 안 보인다.
+	 */
+	@Test
+	void 워터마크_전진은_정산_마킹_후에_발생한다() {
+		List<String> order = new ArrayList<>();
+		tagged.useSharedCallOrder(order);
+		brands.useSharedCallOrder(order);
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(order).containsExactly("enriched", "progress");
+	}
+
+	/** 빈 배치는 데이터 변화가 없다 — 전진하면 폴링마다 헛 재계산만 유발한다. */
+	@Test
+	void 빈_배치에는_워터마크를_전진시키지_않는다() {
+		service(2000).enrich(brand, List.of(), () -> { });
+
+		assertThat(brands.progressTouches).isEmpty();
+	}
+
+	/**
+	 * 게시자 보강 하드 실패에도 전진한다 — markEnriched와 같은 finally 보장. 정산이 찍힌 이상
+	 * (게이트 통과) 워터마크가 안 움직이면 그 페이지는 완주까지 캐시 뒤에 숨는다.
+	 */
+	@Test
+	void 게시자_보강_하드_실패에도_워터마크는_전진한다() {
+		authors.freshLookupFails = true;
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+		BrandCollectService svc = service(2000);
+		List<PostInfo> posts = svc.sweepCore(brand);
+
+		assertThatThrownBy(() -> svc.enrich(brand, posts, null))
+				.isInstanceOf(IllegalStateException.class);
+
+		assertThat(brands.progressTouches).containsExactly(1L);
 	}
 
 	/** 태그 0건(빈 배치)도 onVisible을 1회 받는다 — 못 받으면 그 브랜드가 collecting에 영구히 갇힌다. */

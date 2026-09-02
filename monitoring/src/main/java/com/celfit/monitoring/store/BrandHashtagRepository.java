@@ -137,4 +137,42 @@ public class BrandHashtagRepository {
 			recordTagMatch(brandId, shortCode, tag);
 		}
 	}
+
+	// ---------- 태그별 스윕 실행 상태(FE 요청, 2026-08-31) ----------
+
+	/** 태그별 실행 상태 조회 재료(활성 태그만) — findTags와 같은 정렬(등록순). */
+	public record RunStateRow(String tag, OffsetDateTime lastRunStartedAt, OffsetDateTime lastRunFinishedAt,
+			Integer lastRunFoundCount, boolean lastRunFailed) {
+	}
+
+	/** 이 브랜드의 활성 태그 전체 실행 상태 원본 — status 판정은 호출측(BrandHashtagRunStateResolver)이 한다. */
+	public List<RunStateRow> findRunStates(long brandId) {
+		return db.query("""
+				SELECT tag, last_run_started_at, last_run_finished_at, last_run_found_count, last_run_failed
+				FROM brand_hashtag WHERE brand_id = ? AND deleted_at IS NULL ORDER BY created_at, tag
+				""",
+				(rs, rowNum) -> new RunStateRow(rs.getString("tag"),
+						rs.getObject("last_run_started_at", OffsetDateTime.class),
+						rs.getObject("last_run_finished_at", OffsetDateTime.class),
+						rs.getObject("last_run_found_count", Integer.class),
+						rs.getBoolean("last_run_failed")),
+				brandId);
+	}
+
+	/** 태그 실행 시작 기록(BrandHashtagCollectService.doSweep이 sweepTag 호출 직전에 부른다). */
+	public void markRunStarted(long brandId, String tag) {
+		db.update("UPDATE brand_hashtag SET last_run_started_at = now() WHERE brand_id = ? AND tag = ?",
+				brandId, tag);
+	}
+
+	/**
+	 * 태그 실행 종료 기록 — 정상 종료(신규 편입 건수, failed=false)·예외(격리 후 failed=true, 건수는
+	 * 0으로 통일 — 부분 진행분을 추적하지 않아 일관성을 우선한다) 공용.
+	 */
+	public void markRunFinished(long brandId, String tag, int foundCount, boolean failed) {
+		db.update("""
+				UPDATE brand_hashtag SET last_run_finished_at = now(), last_run_found_count = ?, last_run_failed = ?
+				WHERE brand_id = ? AND tag = ?""",
+				foundCount, failed, brandId, tag);
+	}
 }

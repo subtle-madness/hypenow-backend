@@ -38,9 +38,13 @@ class BeautyTaxonomySeedTest {
 	}
 
 	@Test
-	void 대분류_slug는_프론트_배포본_7종이다() {
+	void 뷰티축_대분류_slug는_프론트_배포본_7종이다() {
+		// 2026-08-31 F&B 어휘 추가로 mainCategories()는 축을 섞는다 — 프론트 계약(뷰티 필터)은
+		// 축으로 좁혀 검증한다. 축 전체 목록은 아래 F&B 테스트가 함께 본다.
 		assertEquals(Set.of("skincare", "suncare", "makeup", "cleansing", "haircare", "fragrance", "esthetic"),
-				taxonomy.mainCategories());
+				Set.copyOf(db.queryForList(
+						"SELECT DISTINCT main_value FROM beauty_taxonomy WHERE axis = 'beauty'",
+						String.class)));
 	}
 
 	@Test
@@ -64,15 +68,49 @@ class BeautyTaxonomySeedTest {
 	}
 
 	@Test
-	void 시드는_소분류_86행이다() {
-		// 시드 행 누락·중복을 총량으로 방어 (프론트 배포본 소분류 수 — Set은 동명 라벨이 접혀 SQL로 센다)
-		assertEquals(86L, db.queryForObject("SELECT count(*) FROM beauty_taxonomy", Long.class));
+	void 시드는_축별_소분류_행수가_고정이다() {
+		// 시드 행 누락·중복을 총량으로 방어 (Set은 동명 라벨이 접혀 SQL로 센다).
+		// 축을 나눠 세는 이유: 한쪽 어휘를 늘려도 다른 축의 회귀는 그대로 잡힌다.
+		assertEquals(86L, db.queryForObject(
+				"SELECT count(*) FROM beauty_taxonomy WHERE axis = 'beauty'", Long.class));
+		assertEquals(24L, db.queryForObject(
+				"SELECT count(*) FROM beauty_taxonomy WHERE axis = 'fnb'", Long.class));
 	}
 
 	@Test
-	void 유통사_어휘는_프론트_필터값_고정이다() {
-		assertEquals(Set.of("올리브영", "다이소"), taxonomy.distributors());
-		assertEquals("올리브영|다이소", taxonomy.distributorsPrompt());
+	void 유통사_어휘는_축별_프론트_필터값_고정이다() {
+		assertEquals(Set.of("올리브영", "다이소"), Set.copyOf(db.queryForList(
+				"SELECT name FROM beauty_distributors WHERE axis = 'beauty'", String.class)));
+	}
+
+	@Test
+	void FnB_대분류_6개가_fnb축으로_시드된다() {
+		assertEquals(List.of("alcohol", "beverage", "convenience", "health-food", "recipe", "snack"),
+				db.queryForList(
+						"SELECT DISTINCT main_value FROM beauty_taxonomy WHERE axis = 'fnb' ORDER BY 1",
+						String.class));
+		// 기존 뷰티 어휘는 전부 beauty 축으로 남는다 (DEFAULT 백필)
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM beauty_taxonomy WHERE axis NOT IN ('beauty','fnb')", Long.class));
+	}
+
+	@Test
+	void 소분류_라벨은_축_전체에서_유일하다() {
+		// sub_categories는 정확 일치 매칭이라 라벨이 여러 대분류에 걸치면 필터가 오탐한다.
+		// 요리/레시피의 '음료'를 '음료 레시피'로 분리한 이유 (설계 §3).
+		assertEquals(List.of(), db.queryForList("""
+				SELECT sub_label FROM beauty_taxonomy
+				GROUP BY sub_label HAVING count(DISTINCT main_value) > 1
+				ORDER BY 1""", String.class), "소분류 라벨이 여러 대분류에 걸침 — 필터 오탐");
+	}
+
+	@Test
+	void FnB_유통사가_fnb축으로_시드된다() {
+		assertEquals(11L, db.queryForObject(
+				"SELECT count(*) FROM beauty_distributors WHERE axis = 'fnb'", Long.class));
+		// slug는 was distributorId 필터값 — NOT NULL·UNIQUE 계약을 F&B 행도 지켜야 한다
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM beauty_distributors WHERE slug IS NULL", Long.class));
 	}
 
 	@Test

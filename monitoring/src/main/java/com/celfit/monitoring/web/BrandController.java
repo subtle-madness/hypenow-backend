@@ -5,6 +5,7 @@ import com.celfit.instagram.source.PostShapeUnsupportedException;
 import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.service.BrandDirectCollectService;
+import com.celfit.monitoring.service.BrandHashtagRunStateResolver;
 import com.celfit.monitoring.service.BrandHashtagTags;
 import com.celfit.monitoring.service.BrandRegistrationService;
 import com.celfit.monitoring.service.ValidationException;
@@ -78,6 +79,16 @@ public class BrandController {
 	 * 입력한 문자열과 실제 저장된 태그가 어긋난다).
 	 */
 	public record HashtagTagsBody(List<String> tags) {}
+
+	/**
+	 * 태그별 스윕 실행 상태(FE 요청, 2026-08-31) — GET run-state 응답 원소. status는
+	 * {@link BrandHashtagRunStateResolver}가 조회 시점에 계산한 값(collecting|done|failed, 저장
+	 * 안 함), lastRunAt·lastFoundCount는 직전 완료 실행의 값(status가 collecting이어도 노출).
+	 */
+	public record TagRunState(String tag, String status, OffsetDateTime lastRunAt, Integer lastFoundCount) {}
+
+	/** run-state 응답 바디 — was가 사용자 장부 태그와 병합해 FE 계약(tags: 객체 배열)을 만든다. */
+	public record HashtagRunStateBody(List<TagRunState> tags) {}
 
 	/**
 	 * direct 등록 요청(2026-08-18 direct 통합 §2-2·§4-2). registeredAt·importLegacyHistory는 이관
@@ -243,6 +254,30 @@ public class BrandController {
 			return brandNotFound();
 		}
 		return ResponseEntity.ok(new HashtagTagsBody(hashtags.findTags(row.get().id())));
+	}
+
+	/**
+	 * 태그별 스윕 실행 상태(FE 요청, 2026-08-31, was GET hashtag-tags 병합 재료) — 브랜드 미존재·
+	 * 비ACTIVE는 404(태그 GET과 동형). 활성 태그 전체를 돌려준다(deleted_at 있는 태그는 빠진다 —
+	 * was는 이걸 "monitoring에 없음"으로 보고 collecting/lastRunAt=null로 접는다).
+	 */
+	@GetMapping("/{username}/hashtag-tags/run-state")
+	public ResponseEntity<?> hashtagRunState(@PathVariable String username) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		OffsetDateTime now = OffsetDateTime.now();
+		List<TagRunState> states = hashtags.findRunStates(row.get().id()).stream()
+				.map(r -> {
+					BrandHashtagRunStateResolver.RunState resolved = BrandHashtagRunStateResolver.resolve(
+							r.lastRunStartedAt(), r.lastRunFinishedAt(), r.lastRunFoundCount(), r.lastRunFailed(),
+							now);
+					return new TagRunState(r.tag(), resolved.status(), resolved.lastRunAt(),
+							resolved.lastFoundCount());
+				})
+				.toList();
+		return ResponseEntity.ok(new HashtagRunStateBody(states));
 	}
 
 	/**

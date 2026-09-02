@@ -144,17 +144,67 @@ class V1BrandAccountServiceHashtagTagsTest {
 		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of(USERNAME));   // push 실패와 무관하게 진행
 	}
 
-	// ---------- 조회 ----------
+	// ---------- 조회(2026-08-31 태그별 실행 상태 확장) ----------
 
+	/**
+	 * 태그 목록 자체의 정본은 여전히 원장이다(08-19 사용자 스코프 개정 그대로) — 하지만 실행
+	 * 상태는 원장이 모르는 정보라 monitoring run-state를 호출해 병합한다(태그 목록 조회
+	 * {@code getHashtagTags(String)}는 부르지 않는다 — 별개 엔드포인트 getHashtagRunStates).
+	 */
 	@Test
-	void getHashtagTags는_원장을_그대로_읽고_monitoring을_호출하지_않는다() {
+	void getHashtagTags는_원장_태그에_monitoring_실행_상태를_병합한다() {
 		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID))
 				.willReturn(new LinkedHashSet<>(List.of("리즈다", "lizda")));
+		OffsetDateTime finishedAt = OffsetDateTime.parse("2026-08-31T10:00:00Z");
+		given(commandClient.getHashtagRunStates(USERNAME)).willReturn(List.of(
+				new MonitoringCommandClient.TagRunState("리즈다", "done", finishedAt, 3),
+				new MonitoringCommandClient.TagRunState("lizda", "collecting", null, null)));
 
-		List<String> tags = service.getHashtagTags(USER_ID, BRAND_ID);
+		List<BrandHashtagTagsResponse.TagStatus> tags = service.getHashtagTags(USER_ID, BRAND_ID);
 
-		assertThat(tags).containsExactly("리즈다", "lizda");
+		assertThat(tags).hasSize(2);
+		assertThat(tags.get(0).tag()).isEqualTo("리즈다");
+		assertThat(tags.get(0).status()).isEqualTo("done");
+		assertThat(tags.get(0).lastFoundCount()).isEqualTo(3);
+		assertThat(tags.get(1).tag()).isEqualTo("lizda");
+		assertThat(tags.get(1).status()).isEqualTo("collecting");
+		assertThat(tags.get(1).lastRunAt()).isNull();
 		then(commandClient).should(never()).getHashtagTags(anyString());
+	}
+
+	/** 원장에는 있는데 monitoring run-state 응답에 없는 태그(드리프트·tombstone)는 collecting/null로 접는다. */
+	@Test
+	void getHashtagTags는_monitoring에_없는_태그를_collecting으로_접는다() {
+		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID))
+				.willReturn(new LinkedHashSet<>(List.of("리즈다")));
+		given(commandClient.getHashtagRunStates(USERNAME)).willReturn(List.of());
+
+		List<BrandHashtagTagsResponse.TagStatus> tags = service.getHashtagTags(USER_ID, BRAND_ID);
+
+		assertThat(tags).containsExactly(new BrandHashtagTagsResponse.TagStatus("리즈다", "collecting", null, null));
+	}
+
+	/** monitoring 접속 실패는 best-effort — GET을 500으로 떨구지 않고 전체 collecting으로 접는다. */
+	@Test
+	void getHashtagTags는_monitoring_실패를_격리하고_collecting으로_폴백한다() {
+		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID))
+				.willReturn(new LinkedHashSet<>(List.of("리즈다")));
+		willThrow(new RuntimeException("monitoring 접속 실패")).given(commandClient).getHashtagRunStates(USERNAME);
+
+		List<BrandHashtagTagsResponse.TagStatus> tags = service.getHashtagTags(USER_ID, BRAND_ID);
+
+		assertThat(tags).containsExactly(new BrandHashtagTagsResponse.TagStatus("리즈다", "collecting", null, null));
+	}
+
+	/** 원장이 비었으면 monitoring 호출조차 하지 않는다(불필요한 왕복 방지 — 기존 관용구). */
+	@Test
+	void getHashtagTags는_원장이_비면_monitoring을_호출하지_않는다() {
+		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID)).willReturn(new LinkedHashSet<>());
+
+		List<BrandHashtagTagsResponse.TagStatus> tags = service.getHashtagTags(USER_ID, BRAND_ID);
+
+		assertThat(tags).isEmpty();
+		then(commandClient).should(never()).getHashtagRunStates(anyString());
 	}
 
 	// ---------- 교체(PUT) — 합집합 계산 ----------

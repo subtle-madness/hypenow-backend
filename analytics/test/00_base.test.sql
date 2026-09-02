@@ -2,8 +2,9 @@
 DO $$
 BEGIN
   -- v_base_influencer: 판정 컬럼 노출
-  ASSERT (SELECT count(*) FROM analytics.v_base_influencer WHERE username LIKE 'dummy_%') = 5,
-    'v_base_influencer dummy rows != 5';
+  -- 08-31: F&B 단독 계정(dummy_fb) 추가로 5 → 6
+  ASSERT (SELECT count(*) FROM analytics.v_base_influencer WHERE username LIKE 'dummy_%') = 6,
+    'v_base_influencer dummy rows != 6';
   ASSERT (SELECT beauty FROM analytics.v_base_influencer WHERE username = 'dummy_a') = true,
     'v_base_influencer dummy_a beauty != true';
   ASSERT (SELECT beauty_company FROM analytics.v_base_influencer WHERE username = 'dummy_co') = true,
@@ -18,8 +19,8 @@ BEGIN
     'v_base_influencer dummy_co home_living not null (미판정)';
 
   -- v_base_profile: 계정별 최신 1건 + 소스 분기
-  ASSERT (SELECT count(*) FROM analytics.v_base_profile WHERE username LIKE 'dummy_%') = 4,
-    'v_base_profile dummy rows != 4 (e는 프로필 없음)';
+  ASSERT (SELECT count(*) FROM analytics.v_base_profile WHERE username LIKE 'dummy_%') = 5,
+    'v_base_profile dummy rows != 5 (e는 프로필 없음 — 08-31 fb 프로필 추가로 4→5)';
   ASSERT (SELECT followers FROM analytics.v_base_profile WHERE username = 'dummy_a') = 5500,
     'v_base_profile dummy_a followers != 5500 (최신 SELF_GQL 실컬럼)';
   ASSERT (SELECT display_name FROM analytics.v_base_profile WHERE username = 'dummy_a') = '더미 에이',
@@ -44,8 +45,9 @@ BEGIN
     'v_base_profile dummy_b external_link not null (키 없음)';
 
   -- v_base_reel_item: clips 아이템 평탄화
-  ASSERT (SELECT count(*) FROM analytics.v_base_reel_item WHERE short_code LIKE 'dummy_%') = 8,
-    'v_base_reel_item dummy rows != 8 (r1x3 + rn + r3 + r4 + r5 + ra1)';
+  -- 08-31: F&B 단독 계정 릴스(fb1) 추가로 8 → 9
+  ASSERT (SELECT count(*) FROM analytics.v_base_reel_item WHERE short_code LIKE 'dummy_%') = 9,
+    'v_base_reel_item dummy rows != 9 (r1x3 + rn + r3 + r4 + r5 + ra1 + fb1)';
   ASSERT (SELECT views FROM analytics.v_base_reel_item WHERE short_code = 'dummy_rn') = 100,
     'v_base_reel_item rn views != 100 (ig_play_count 폴백)';
   ASSERT (SELECT paid_partnership FROM analytics.v_base_reel_item WHERE short_code = 'dummy_r3') = true,

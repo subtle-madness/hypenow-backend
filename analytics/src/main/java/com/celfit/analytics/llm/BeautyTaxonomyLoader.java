@@ -29,12 +29,14 @@ public final class BeautyTaxonomyLoader {
 
 	private BeautyTaxonomy load() {
 		List<BeautyTaxonomy.Entry> entries = analysis.query("""
-				SELECT main_value, main_label, mid_label, sub_label
+				SELECT main_value, main_label, mid_label, sub_label, axis
 				FROM beauty_taxonomy ORDER BY main_order, mid_order, sub_order""",
 				(rs, i) -> new BeautyTaxonomy.Entry(
-						rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4)));
-		List<String> distributors = analysis.queryForList(
-				"SELECT name FROM beauty_distributors ORDER BY sort", String.class);
+						rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4),
+						rs.getString(5)));
+		List<BeautyTaxonomy.Distributor> distributors = analysis.query(
+				"SELECT name, axis FROM beauty_distributors ORDER BY sort",
+				(rs, i) -> new BeautyTaxonomy.Distributor(rs.getString(1), rs.getString(2)));
 		if (entries.isEmpty() || distributors.isEmpty()) {
 			throw new IllegalStateException("분류 어휘 테이블이 비어 있음 — V30 시드 확인");
 		}

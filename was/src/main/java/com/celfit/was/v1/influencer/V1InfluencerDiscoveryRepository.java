@@ -110,18 +110,31 @@ public class V1InfluencerDiscoveryRepository {
 		String fromJoins = FROM_JOINS;
 		StringBuilder where = new StringBuilder("WHERE true");
 		Map<String, Object> params = new HashMap<>();
-		// 뷰티 게시물 비율 게이트 — 항상 적용(스펙 §4). 분석 표본이 minAnalyzed 미만이면 통과,
-		// 그 이상이면 뷰티 비율이 minBeautyRatio 이상인 계정만 통과.
-		// NULLIF(analyzed_count, 0) 필수 — Postgres는 OR 단축 평가를 보장하지 않아 실행 계획에 따라
-		// 두 번째 항도 평가될 수 있다. 창 내 게시물이 전부 is_beauty NULL(캡션·썸네일 둘 다 없음)이면
-		// account_beauty_ratio에 행은 존재하되 analyzed_count=0이라 division by zero로 500이 난다.
-		// NULLIF로 그 경우 두 번째 항을 NULL로 만들면 첫 항(TRUE)과 OR돼 TRUE — 표본 부족 보류와 동일 취급.
-		where.append("""
+		// 축 분기 (2026-08-31 F&B 서빙 개방 §3): 무필터·뷰티축 필터 = 뷰티 계정(기본 화면 불변),
+		// F&B축 필터 = F&B 계정. COALESCE 방향이 다르다 — beauty는 true(롤링 창에서 구 미러가 축을
+		// 안 채운 기존 행은 전부 뷰티 모수 출신), fnb는 false(미러 전엔 F&B 계정이 미러에 없다).
+		// vertical=fnb는 대분류 없이 축 전체 조회(2026-09-01 FE 피드백 #1) — 비중 게이트 없이
+		// COALESCE(a.fnb, false)만 적용된다(아래 mainCategory 블록이 안 붙는다). vertical=beauty는
+		// 뷰티 경로 그대로(무필터와 동치).
+		if (q.fnbAxis()) {
+			where.append(" AND COALESCE(a.fnb, false)");
+			// 뷰티 게시물 비율 게이트는 F&B축에 적용하지 않는다 — F&B 계정은 뷰티 비율이 0이라
+			// 걸면 전멸한다. 오판 계정 방어는 아래 F&B 비중 20% 게이트가 같은 역할(실측 게시물 기반).
+		} else {
+			where.append(" AND COALESCE(a.beauty, true)");
+			// 뷰티 게시물 비율 게이트 — 뷰티 경로에 항상 적용(스펙 §4). 분석 표본이 minAnalyzed
+			// 미만이면 통과, 그 이상이면 뷰티 비율이 minBeautyRatio 이상인 계정만 통과.
+			// NULLIF(analyzed_count, 0) 필수 — Postgres는 OR 단축 평가를 보장하지 않아 실행 계획에 따라
+			// 두 번째 항도 평가될 수 있다. 창 내 게시물이 전부 is_beauty NULL(캡션·썸네일 둘 다 없음)이면
+			// account_beauty_ratio에 행은 존재하되 analyzed_count=0이라 division by zero로 500이 난다.
+			// NULLIF로 그 경우 두 번째 항을 NULL로 만들면 첫 항(TRUE)과 OR돼 TRUE — 표본 부족 보류와 동일 취급.
+			where.append("""
 
-				  AND (COALESCE(br.analyzed_count, 0) < :minAnalyzed
-				       OR 100.0 * br.beauty_count / NULLIF(br.analyzed_count, 0) >= :minBeautyRatio)""");
-		params.put("minAnalyzed", MIN_ANALYZED);
-		params.put("minBeautyRatio", MIN_BEAUTY_RATIO_PERCENT);
+					  AND (COALESCE(br.analyzed_count, 0) < :minAnalyzed
+					       OR 100.0 * br.beauty_count / NULLIF(br.analyzed_count, 0) >= :minBeautyRatio)""");
+			params.put("minAnalyzed", MIN_ANALYZED);
+			params.put("minBeautyRatio", MIN_BEAUTY_RATIO_PERCENT);
+		}
 		if (q.mainCategory() != null) {
 			// 비중 임계값 매칭(포함 여부 아님) — 산식은 account_category_share가 사전계산
 			// (분모·round가 categoryShares.pct와 동일 — matview 정의 주석 참조, 스펙 6.21).
@@ -231,8 +244,14 @@ public class V1InfluencerDiscoveryRepository {
 		};
 	}
 
-	/** categoryShares 재료 — 분모는 창 내 "뷰티 판정 + 대분류 보유" 게시물 수, 비중 내림차순. */
-	public List<ShareRow> findShares(List<String> handles) {
+	/**
+	 * categoryShares 재료 — 요청 축의 대분류만, 분모는 창 내 "그 축 대분류 보유" 게시물 수,
+	 * 비중 내림차순. 축 소속은 어휘(beauty_taxonomy.axis)가 정본(2026-08-31 F&B 분류 설계 §2) —
+	 * 뷰티 축은 구 게이트 is_beauty IS TRUE와 동치(불변식: main NOT NULL ∧ axis=beauty ⟺
+	 * is_beauty=true ∧ main NOT NULL, account_category_share 재정의와 같은 근거), F&B 축은
+	 * F&B 분류분이 새로 나온다(2026-09-01 FE "카테고리 정보 준비 중" 해소).
+	 */
+	public List<ShareRow> findShares(List<String> handles, boolean fnbAxis) {
 		if (handles.isEmpty()) {
 			return List.of();
 		}
@@ -242,11 +261,14 @@ public class V1InfluencerDiscoveryRepository {
 						             sum(count(*)) OVER (PARTITION BY s.account_handle) AS total
 						      FROM account_content_series s
 						      JOIN content_analyses an ON an.short_code = s.short_code
-						      WHERE s.account_handle IN (:handles)
-						        AND an.is_beauty IS TRUE AND an.main_category IS NOT NULL
+						      JOIN (SELECT DISTINCT main_value, axis FROM beauty_taxonomy) t
+						           ON t.main_value = an.main_category
+						      WHERE s.account_handle IN (:handles) AND t.axis = :axis
 						      GROUP BY s.account_handle, an.main_category) x
 						ORDER BY account_handle, pct DESC, main_category
-						""").param("handles", handles).query(ShareRow.class).list();
+						""").param("handles", handles)
+				.param("axis", fnbAxis ? "fnb" : "beauty")
+				.query(ShareRow.class).list();
 	}
 
 	/** collaboratedBrands 재료 — 협찬(ad_type='sponsored') 콘텐츠의 detected_brands name, 빈도 내림차순. */

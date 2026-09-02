@@ -1,9 +1,10 @@
 -- LLM 캡션 선분석 후보 (분석 잡 전용 — 미러 안 함). 스펙 2026-07-17 §5, 07-20 백필 재도입 개정.
--- raw만 보고 판단 가능한 자격까지만 뷰가 담당: 뷰티 모수 ∩ ENUMERATION ∩ 캡션 존재 ∩
+-- raw만 보고 판단 가능한 자격까지만 뷰가 담당: 분석 모수(뷰티 ∪ F&B) ∩ ENUMERATION ∩ 캡션 존재 ∩
 -- 성숙(제때창이 완전히 지난 날) ∩ (제때 크롤 OR 최근 N개 윈도우 포함).
 -- '이미 분석됨' 제외(analysis DB content_analyses 대조)·배치 상한·정렬 정책은 Java 몫 —
 -- Haiku/Gemini Batch 파이프라인이 이 뷰를 입구로 배치를 구성한다.
--- v_contents 위에 얹는다: 모수·고정 지표·최신 메타(캡션·썸네일) 규칙을 그대로 승계.
+-- v_analysis_source 위에 얹는다(2026-08-31 — 구 버전은 서빙 뷰 v_contents 위였다):
+-- 고정 지표·최신 메타(캡션·썸네일) 규칙은 그대로 승계하되 모수만 분석용(뷰티 ∪ F&B)으로 넓힌다.
 --
 -- 제때 크롤 가드 (07-20 날짜기준 재정정, 판정 로직 자체는 유지): "시간 간격(72~96h)"이 아니라
 -- **캡처 캘린더일(KST)이 업로드 캘린더일 + pin(기본 3) ~ +pin+slack(기본 1)** 인가로 판정한다.
@@ -34,6 +35,44 @@
 -- 그래서 배리어 이후에도 베이스라인(OR·timely 노출 이전, ~150ms)보단 느리다. MATERIALIZED CTE도
 -- 동급 배리어로 동작하나 넓은 행(캡션·썸네일 포함)을 임시파일에 스풀해 이 안(OFFSET 0)보다 실측
 -- 12% 가량 더 느렸다 — 원인은 CTE 강제 구체화, OFFSET 0은 스트리밍 배리어라 스풀이 없다.)
+-- 분석 후보의 소스 (2026-08-31 신설). 서빙 뷰 v_contents(02)에서 떼어낸다.
+-- 왜: 미러가 `SELECT * FROM v_contents`로 통째 복사하므로, 분석 모수를 넓히려고 02를 건드리면
+-- 그 즉시 랭킹 API가 열린다. 분석 모수(뷰티 ∪ F&B)와 서빙 모수(뷰티)는 이제 서로 독립이다.
+-- hype_score는 04가 쓰지 않으므로 계산하지 않는다 — v_contents보다 오히려 짧다.
+-- recency_rank를 여기서 직접 매기는 이유: 구 04는 최근창 판정을 v_recent_content(01)에 위임했는데
+-- 01도 뷰티 게이트라, 그대로 두면 F&B는 in_window가 영원히 false가 된다(백로그가 통째로 빠지는 급소).
+-- 홈/리빙을 추가할 땐 아래 모수에 OR 한 항이 는다(계정 축은 crawler 컬럼이라 어휘에서 유도 불가).
+CREATE OR REPLACE VIEW analytics.v_analysis_source AS
+WITH pool AS (
+  SELECT c.content_id, c.short_code, c.owner_username, c.uploaded_at, c.content_type
+  FROM analytics.v_base_content c
+  JOIN analytics.v_base_influencer i ON i.influencer_id = c.influencer_id
+  WHERE c.origin = 'ENUMERATION'
+    AND i.status = 'QUALIFIED'
+    AND ( (i.beauty AND NOT i.beauty_company)
+       OR (i.fnb    AND NOT i.fnb_company) )
+)
+SELECT
+  p.content_id,
+  p.short_code,
+  p.owner_username      AS account_handle,
+  p.uploaded_at         AS posted_at,
+  lower(p.content_type) AS content_type,
+  d.caption,
+  d.thumbnail_url,
+  m.views,
+  m.likes,
+  m.comments_count      AS comments,
+  m.captured_at         AS metric_captured_at,
+  m.paid_partnership    AS ad_marked,
+  pr.followers,
+  row_number() OVER (PARTITION BY p.owner_username
+                     ORDER BY p.uploaded_at DESC, p.content_id DESC) AS recency_rank
+FROM pool p
+JOIN analytics.v_base_detail    d USING (content_id)
+JOIN analytics.v_pinned_metrics m USING (content_id)
+LEFT JOIN analytics.v_base_profile pr ON pr.username = p.owner_username;
+
 CREATE OR REPLACE VIEW analytics.v_analysis_candidates AS
 SELECT
   short_code,
@@ -48,7 +87,7 @@ SELECT
   comments,
   metric_captured_at,
   timely,
-  -- 인스타 유료 파트너십 태그 — v_contents가 이미 핀 스냅샷에서 들고 있어 그대로 통과시킨다
+  -- 인스타 유료 파트너십 태그 — 소스 뷰가 이미 핀 스냅샷에서 들고 있어 그대로 통과시킨다
   -- (조인 추가 없음 = 플랜 불변). LLM 프롬프트에 확정 사실로 싣는 용도.
   ad_marked
 FROM (
@@ -59,27 +98,29 @@ FROM (
     v.posted_at AS uploaded_at,
     v.caption,
     v.thumbnail_url,
-    pr.followers,
+    v.followers,
     v.views,
     v.likes,
     v.comments,
     v.metric_captured_at,
     v.ad_marked,
     t.timely,
-    -- 최근 N개 윈도우(01 뷰) 포함 여부도 배리어 안에서 미리 계산해 바깥 OR과 분리한다.
-    EXISTS (SELECT 1 FROM analytics.v_recent_content rw WHERE rw.short_code = v.short_code) AS in_window
-  FROM analytics.v_contents v
-  LEFT JOIN analytics.v_base_profile pr ON pr.username = v.account_handle
+    -- 최근 N개 윈도우 포함 여부도 배리어 안에서 미리 계산해 바깥 OR과 분리한다.
+    -- 08-31: 01 뷰(뷰티 게이트) 위임 → 소스 뷰의 recency_rank 비교로 교체.
+    (v.recency_rank <= COALESCE(
+       (SELECT value::int FROM app_setting WHERE key = 'analytics.recent-window'), 12)) AS in_window
+  FROM analytics.v_analysis_source v
   CROSS JOIN LATERAL (
     SELECT EXISTS (
       -- 캡처 캘린더일(KST)이 [업로드일+pin, 업로드일+pin+slack)에 드는 usable 스냅샷이 있는가.
       -- 성능: captured_at을 행마다 date로 변환하지 않고, 캘린더일 경계를 KST 자정 timestamptz로
       -- 계산해 captured_at을 그대로 범위 비교한다(sargable — 세미조인 플랜 유지, 스냅샷 뷰 1회 계산).
       -- 캡처가 KST일 X에 든다 ⟺ [KST자정(X), KST자정(X+1)) 이므로 결과는 날짜 변환과 완전 동치.
+      -- 08-31: 구 버전은 content_id를 얻으려 v_serving_content(뷰티 게이트)를 조인했다 —
+      -- 그대로 두면 F&B는 timely가 영원히 false다. 소스 뷰가 content_id를 직접 들고 있어 조인이 없어졌다.
       SELECT 1
-      FROM analytics.v_serving_content sc
-      JOIN analytics.content_snapshot_cache s USING (content_id)
-      WHERE sc.short_code = v.short_code
+      FROM analytics.content_snapshot_cache s
+      WHERE s.content_id = v.content_id
         AND s.captured_at >= (((v.posted_at AT TIME ZONE 'Asia/Seoul')::date
               + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
             )::timestamp AT TIME ZONE 'Asia/Seoul')
@@ -88,7 +129,7 @@ FROM (
               + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.analyze-timely-slack-days'), 1)
             )::timestamp AT TIME ZONE 'Asia/Seoul')
         AND s.likes IS NOT NULL AND s.comments_count IS NOT NULL
-        AND (sc.content_type <> 'REELS' OR s.views IS NOT NULL)
+        AND (v.content_type <> 'reels' OR s.views IS NOT NULL)
     ) AS timely
   ) t
   WHERE v.caption IS NOT NULL AND btrim(v.caption) <> ''
