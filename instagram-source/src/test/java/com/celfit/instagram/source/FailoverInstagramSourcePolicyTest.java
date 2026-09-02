@@ -341,4 +341,94 @@ class FailoverInstagramSourcePolicyTest {
 
 		assertThat(metrics.records).containsExactly("fetchPost|self|notfound");
 	}
+
+	// ── 경로별(표면별) 자체크롤 토글 — Predicate<String> 생성자(부분 개통 지원) ──────
+
+	@Test
+	void path_predicate에서_빠진_경로만_hiker로_가고_나머지는_self를_그대로_쓴다() {
+		PostInfo selfPost = post("SELF");
+		CommentInfo comment = new CommentInfo("1", "u", "text", null, Instant.now(), null);
+		CommentsFetch selfComments = new CommentsFetch(List.of(comment), true);
+		InstagramSource self = new ThrowingSource("self") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				throw new AssertionError("self.fetchPost 호출되면 안 됨 — path_predicate에서 제외됨");
+			}
+
+			@Override
+			public CommentsFetch fetchComments(String shortCode, String postUsername, int pages) {
+				return selfComments;
+			}
+		};
+		PostInfo hikerPost = post("HIKER");
+		InstagramSource hiker = new ThrowingSource("hiker") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				return hikerPost;
+			}
+		};
+		// fetchPost만 제외 — 나머지 경로(fetchComments 등)는 여전히 self.
+		FailoverInstagramSource source =
+				new FailoverInstagramSource(self, hiker, (String path) -> !"fetchPost".equals(path));
+
+		assertThat(source.fetchPost("ABC")).isSameAs(hikerPost);
+		assertThat(source.fetchComments("ABC", "acct", 1)).isSameAs(selfComments);
+	}
+
+	@Test
+	void path_predicate가_전_경로_false면_경로_무관하게_전부_hiker다() {
+		InstagramSource self = new ThrowingSource("self");
+		PostInfo hikerPost = post("HIKER");
+		InstagramSource hiker = new ThrowingSource("hiker") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				return hikerPost;
+			}
+		};
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, (String path) -> false);
+
+		assertThat(source.fetchPost("ABC")).isSameAs(hikerPost);
+	}
+
+	@Test
+	void path_predicate는_매_콜마다_재확인된다() {
+		PostInfo selfPost = post("SELF");
+		InstagramSource self = new ThrowingSource("self") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				return selfPost;
+			}
+		};
+		PostInfo hikerPost = post("HIKER");
+		InstagramSource hiker = new ThrowingSource("hiker") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				return hikerPost;
+			}
+		};
+		AtomicBoolean pathEnabled = new AtomicBoolean(false);
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, path -> pathEnabled.get());
+
+		assertThat(source.fetchPost("ABC")).isSameAs(hikerPost);
+		pathEnabled.set(true);
+		assertThat(source.fetchPost("ABC")).isSameAs(selfPost);
+	}
+
+	@Test
+	void path_predicate로_제외된_경로는_metrics에_기존_전역_off와_동일하게_관측된다() {
+		InstagramSource self = new ThrowingSource("self");
+		InstagramSource hiker = new ThrowingSource("hiker") {
+			@Override
+			public PostInfo fetchPost(String shortCode) {
+				return post("HIKER");
+			}
+		};
+		RecordingMetrics metrics = new RecordingMetrics();
+		FailoverInstagramSource source =
+				new FailoverInstagramSource(self, hiker, (String path) -> false, metrics);
+
+		source.fetchPost("ABC");
+
+		assertThat(metrics.records).containsExactly("fetchPost|hiker|ok");
+	}
 }

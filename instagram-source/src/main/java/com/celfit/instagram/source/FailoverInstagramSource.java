@@ -6,14 +6,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 수집 정책 계층 — 자체크롤 1순위 + Hiker 폴백 + 에러 taxonomy 라우팅(스펙 §4·§8). selfEnabled는
- * BooleanSupplier라 매 콜 재확인한다(app_setting 런타임 토글·킬스위치가 재시작 없이 반영). 결과는
- * InstagramSourceMetrics로 관측한다. selfEnabled가 false를 주면 전량 Hiker(행동 변화 0).
+ * 수집 정책 계층 — 자체크롤 1순위 + Hiker 폴백 + 에러 taxonomy 라우팅(스펙 §4·§8). selfEnabledForPath는
+ * 경로별(path) 판정을 매 콜 재확인한다(app_setting 런타임 토글·킬스위치·부분 개통이 재시작 없이
+ * 반영 — 운영 점진 개통 시 "프로필만 빼고 켜기" 같은 표면 단위 제어를 지원한다). 결과는
+ * InstagramSourceMetrics로 관측한다. path에 대해 false를 주면 그 경로만 전량 Hiker(행동 변화 0).
  */
 public class FailoverInstagramSource implements InstagramSource {
 
@@ -21,23 +23,38 @@ public class FailoverInstagramSource implements InstagramSource {
 
 	private final InstagramSource self;
 	private final InstagramSource hiker;
-	private final BooleanSupplier selfEnabled;
+	private final Predicate<String> selfEnabledForPath;
 	private final InstagramSourceMetrics metrics;
 
 	/** 마일스톤 A 호환 — 자체 없이 Hiker 단독. */
 	public FailoverInstagramSource(InstagramSource hiker) {
-		this(null, hiker, () -> false, InstagramSourceMetrics.NOOP);
+		this(null, hiker, path -> false, InstagramSourceMetrics.NOOP);
 	}
 
+	/** 전역 토글 호환 — path와 무관하게 동일 판정(경로별 제어가 필요 없는 호출부·기존 테스트용). */
 	public FailoverInstagramSource(InstagramSource self, InstagramSource hiker, BooleanSupplier selfEnabled) {
-		this(self, hiker, selfEnabled, InstagramSourceMetrics.NOOP);
+		this(self, hiker, path -> selfEnabled.getAsBoolean(), InstagramSourceMetrics.NOOP);
 	}
 
+	/** 전역 토글 호환 — path와 무관하게 동일 판정(경로별 제어가 필요 없는 호출부·기존 테스트용). */
 	public FailoverInstagramSource(InstagramSource self, InstagramSource hiker, BooleanSupplier selfEnabled,
 			InstagramSourceMetrics metrics) {
+		this(self, hiker, path -> selfEnabled.getAsBoolean(), metrics);
+	}
+
+	/** 경로별(표면별) 자체크롤 토글 — path(=route()가 넘기는 논리 경로명, metric path 태그와 동일)별로
+	 * 판정한다. 운영 점진 개통 수단(예: IgSourceSettings::selfEnabledForPath). */
+	public FailoverInstagramSource(InstagramSource self, InstagramSource hiker,
+			Predicate<String> selfEnabledForPath) {
+		this(self, hiker, selfEnabledForPath, InstagramSourceMetrics.NOOP);
+	}
+
+	/** 경로별(표면별) 자체크롤 토글 + 관측 훅. */
+	public FailoverInstagramSource(InstagramSource self, InstagramSource hiker,
+			Predicate<String> selfEnabledForPath, InstagramSourceMetrics metrics) {
 		this.self = self;
 		this.hiker = hiker;
-		this.selfEnabled = selfEnabled;
+		this.selfEnabledForPath = selfEnabledForPath;
 		this.metrics = metrics;
 	}
 
@@ -105,7 +122,7 @@ public class FailoverInstagramSource implements InstagramSource {
 	 * (Hiker 자체 예외는 그대로 전파, 미기록).
 	 */
 	private <T> T route(String path, Supplier<T> selfCall, Supplier<T> hikerCall) {
-		if (self == null || !selfEnabled.getAsBoolean()) {
+		if (self == null || !selfEnabledForPath.test(path)) {
 			T r = hikerCall.get();
 			metrics.record(path, "hiker", "ok");
 			return r;
