@@ -117,10 +117,22 @@ public class BrandHashtagCollectService {
 	/** 브랜드 1개분 해시태그 수집 — 태그가 없으면 콜 0으로 즉시 반환한다. */
 	public void sweep(BrandRow brand) {
 		// 콜 집계 스코프(어드민 크롤링 비용) — 열거·보강 콜 전부 이 브랜드 몫으로 계상된다.
-		callContext.runScoped(brand.id(), () -> doSweep(brand));
+		callContext.runScoped(brand.id(), () -> doSweep(brand, false));
 	}
 
-	private void doSweep(BrandRow brand) {
+	/**
+	 * 딥 재백필 1회 경로(2026-09-02 설계 §2) — 구 하드스톱(post-limit 1000) 기간에 편입이 막혀
+	 * 버려진 게시물은 dedup 조기 종료(페이지에 기존 행이 보이면 중단) 탓에 증분 스윕으로는 영영
+	 * 회수되지 않는다. 이 경로는 조기 종료만 무시하고 나머지(예산·낭비 가드·maxPages·수집 창)는
+	 * 일반 스윕과 동일하다. recent 스트림이 옛 게시물을 어디까지 돌려주는지는 보장이 없어 회수는
+	 * best-effort다. {@link HashtagDeepResweepStartupRunner} 전용 — 상시 경로에 쓰지 말 것
+	 * (매 스윕 딥으로 돌면 태그당 페이지 콜이 상시 ~수십 배가 된다).
+	 */
+	public void deepResweep(BrandRow brand) {
+		callContext.runScoped(brand.id(), () -> doSweep(brand, true));
+	}
+
+	private void doSweep(BrandRow brand, boolean deep) {
 		List<String> tagList = tags.findTags(brand.id());
 		if (tagList.isEmpty()) {
 			return;
@@ -147,8 +159,8 @@ public class BrandHashtagCollectService {
 			// 뒤 태그 전부를 영구 굶긴다. BrandDirectCollectService.collectOne과 같은 이유의 격리이고,
 			// 미처리분은 다음 스윕이 같은 순서로 재시도한다(별도 백스톱 불필요 — 열거 자체가 멱등).
 			try {
-				// deep=false — Task 4가 이 파라미터로 심층 재열거를 배선한다(이 태스크에선 항상 false).
-				int created = sweepTag(brand, tag, cutoff, now, state, false);
+				// deep 파라미터 전달 — deepResweep이 true로 호출하면 dedup 조기 종료를 무시한다.
+				int created = sweepTag(brand, tag, cutoff, now, state, deep);
 				savedTotal += created;
 				tags.markRunFinished(brand.id(), tag, created, false);
 			} catch (RuntimeException e) {

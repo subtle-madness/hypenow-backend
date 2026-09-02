@@ -110,6 +110,8 @@ monitoring:
       post-limit: 2000           # 해시태그 감시 세트 크기(2026-09-02 설계 §1) — 구 "편입 하드스톱"이
                                  # 아니라 롤링 세트다: 신규는 항상 편입, 게시일 최신 2,000 밖은 동결.
                                  # 2단계 재수집(BrandDirectCollectService)이 같은 키를 읽는다. 0 이하 = 무제한.
+      deep-resweep-on-startup: false  # 딥 재백필 1회 킬 스위치(2026-09-02 설계 §2) — 상한 상향 배포
+                                      # 시에만 env로 true 1회 주입(러너 javadoc의 운영 절차 참조)
     ad-disclosure:
       judge-model: gemini-3.1-flash-lite   # Tier2 문구 추출 모델(스펙 §5) — analytics 전 축과 통일
       concurrency: 4    # Tier2 LLM 전용 풀(enrichWorker와 분리 — 스펙 §7). LLM 지연이 보강 처리량을 잠식하지 않게 함

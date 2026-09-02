@@ -609,4 +609,23 @@ class BrandHashtagCollectServiceTest {
 		assertThat(tags.runFoundCounts).containsEntry("실패", 0).containsEntry("cclime", 1);
 	}
 
+	// ── 딥 재백필(2026-09-02 설계 §2) ──────────────────────────────────────
+
+	/** 딥 재백필(설계 §2) — dedup 조기 종료를 무시하고 예산까지 내려가 하드스톱 기간 유실분을 줍는다. */
+	@Test
+	void 딥_재백필은_기존_행을_만나도_다음_페이지로_내려간다() {
+		tagged.hashtag.add("KNOWN1");
+		tagged.known.add("KNOWN1");
+		tagged.nthNewestHashtag = null;
+		tags.tags = List.of("t1");
+		pagesByTag.put("t1", List.of(
+				sectionsBody("cur2", media("KNOWN1", RECENT, "poster1")),
+				sectionsBody(null, media("LOST1", RECENT - 86400, "poster2"))));
+
+		service(2000, 2000).deepResweep(brand);
+
+		assertThat(tagged.upsertedHashtag).containsExactly("LOST1");
+		assertThat(tagCalls()).isEqualTo(2);
+	}
+
 }
