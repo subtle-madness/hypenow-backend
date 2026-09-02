@@ -3,10 +3,10 @@ package com.celfit.monitoring.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.instagram.source.HikerBackend;
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.PostInfo;
-import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
@@ -176,7 +176,8 @@ class BrandRegistrationServiceTest {
 		private List<String> callOrder = new CopyOnWriteArrayList<>();
 
 		StubCollect() {
-			super(null, null, null, null, null, null, null, null, null, null, 2000, 10000, 3, 30, true);
+			super(null, null, null, null, null, null, null, null, null, null, null, null,
+					2000, 10000, 3, 30, true);
 		}
 
 		/** 호출 순서 검증용 — 다른 스텁과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
@@ -208,6 +209,16 @@ class BrandRegistrationServiceTest {
 			return all;   // 반환은 전체 누적분(실코드와 동일) — 새 배선은 이걸 쓰지 않는다.
 		}
 
+		/** BrandRegistrationService.runBackfillSafely는 사용자 트리거 전용 진입점(사용자 트리거 비동기
+		 * 도입 시점 토글, 2026-09)을 부른다 — 이 스텁은 라우팅 자체를 검증하지 않으므로 기존
+		 * sweepCore 오버라이드로 그대로 위임한다(어느 InstagramSource 빈을 타는지는
+		 * HikerConfig·BrandCollectService 자체 테스트가 검증한다). */
+		@Override
+		public List<PostInfo> sweepCoreUserTriggered(BrandRow brand,
+				java.util.function.Consumer<List<PostInfo>> onPageCollected) {
+			return sweepCore(brand, onPageCollected);
+		}
+
 		/**
 		 * 3-인자(onVisible 훅) 버전만 오버라이드한다 — 2-인자 {@code enrich(brand, posts)}는 실
 		 * {@code BrandCollectService}의 위임(onVisible=null)을 그대로 쓰므로, 가상 디스패치로 결국
@@ -231,6 +242,13 @@ class BrandRegistrationServiceTest {
 			enriched.add(brand.username());
 			enrichedPosts.add(posts.stream().map(PostInfo::shortCode).toList());
 			callOrder.add("enrich");
+		}
+
+		/** runEnrichSafely도 사용자 트리거 전용 진입점을 부른다 — 위 sweepCoreUserTriggered와 같은
+		 * 이유로 기존 enrich(3-인자) 오버라이드에 위임한다. */
+		@Override
+		public void enrichUserTriggered(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
+			enrich(brand, posts, onVisible);
 		}
 
 		private static void sleep(Duration delay) {
@@ -266,6 +284,13 @@ class BrandRegistrationServiceTest {
 			}
 			swept.add(brand.username());
 			callOrder.add("hashtag");
+		}
+
+		/** BrandRegistrationService.triggerHashtagSweep은 사용자 트리거 전용 진입점(2026-09 도입 시점
+		 * 토글)을 부른다 — 위 StubCollect와 같은 이유로 기존 sweep 오버라이드에 위임한다. */
+		@Override
+		public void sweepUserTriggered(BrandRow brand) {
+			sweep(brand);
 		}
 	}
 
@@ -387,7 +412,7 @@ class BrandRegistrationServiceTest {
 	}
 
 	private BrandRegistrationService service() {
-		HikerClient hiker = new HikerClient(path -> {
+		HikerBackend hiker = new HikerBackend(path -> {
 			hikerCalls.add(path);
 			return PROFILE_JSON;
 		});

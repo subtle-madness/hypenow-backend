@@ -1,6 +1,6 @@
 package com.celfit.monitoring.store;
 
-import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.instagram.source.PostInfo;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Collection;

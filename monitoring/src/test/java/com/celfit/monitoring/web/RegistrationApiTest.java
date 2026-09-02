@@ -9,9 +9,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.celfit.monitoring.hiker.HikerFetchException;
-import com.celfit.monitoring.hiker.HikerHttp;
-import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.instagram.source.HikerFetchException;
+import com.celfit.instagram.source.HikerHttp;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.service.CollectService;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.io.IOException;
@@ -221,7 +221,7 @@ class RegistrationApiTest {
 	/**
 	 * 게시물 0건 계정 — Hiker는 프로필(200)은 정상 응답하지만 열거(medias)에 404
 	 * {"detail":"Entries not found"}를 준다(릴스 0건 계정이 /v2/user/clips에서 겪는 것과 동일 규칙).
-	 * HikerClient.fetchRecentPosts가 이 404를 빈 리스트로 강등하지 않으면 SubjectNotFoundException이
+	 * HikerBackend.fetchRecentPosts가 이 404를 빈 리스트로 강등하지 않으면 SubjectNotFoundException이
 	 * 전파돼 등록이 404 SUBJECT_NOT_FOUND로 죽고 target 행이 생기지 않는다(실제 계정 wo_om3 재현 사례).
 	 */
 	@Test

@@ -1,9 +1,9 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
-import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.store.TargetRow;
@@ -101,14 +101,14 @@ public class RegistrationService {
 
 	/**
 	 * POST 등록은 감지·승인 단계가 없다 — 등록 즉시 그 게시물을 추적한다(TRACKING).
-	 * username(소유 계정)은 사용자가 주지 않고 단건 응답에서 얻는다 — 부재 판정은 HikerClient.fetchPost가
+	 * username(소유 계정)은 사용자가 주지 않고 단건 응답에서 얻는다 — 부재 판정은 HikerBackend.fetchPost가
 	 * 이미 했다(셰이프 이상 → FETCH_FAILED 502). 여기서 다시 보면 upsert가 먼저 터져서 죽은 가드가 된다.
 	 */
 	private Result registerPost(RegisterCommand cmd) {
 		PostInfo post = collect.collectPostForRegistration(cmd.shortCode());
 		// short_code는 Hiker 응답을 정본으로 쓴다 — 스냅샷도 응답값으로 적재되므로, 요청값을 그대로
 		// 저장하면 둘이 갈릴 때(대소문자·별칭) tracked_short_code 조인이 빗나가 뷰 게시물 구획이 영구 null.
-		// null이 아니라 isBlank로 본다 — HikerClient.toPost의 code는 키 부재 시 빈 문자열이라 null 검사는 죽는다.
+		// null이 아니라 isBlank로 본다 — HikerBackend.toPost의 code는 키 부재 시 빈 문자열이라 null 검사는 죽는다.
 		String shortCode = isBlank(post.shortCode()) ? cmd.shortCode() : post.shortCode();
 		// 등록 직후 댓글까지 즉시 수집한다 — 그렇지 않으면 DailySweepJob.sweepComments가 도는
 		// 다음 스윕까지 최대 24시간 댓글 본문이 비어 있다(ACCOUNT 모드는 첫 감지가 스윕 안에서
@@ -154,7 +154,9 @@ public class RegistrationService {
 		// (TargetCallContext 주석 참조). 등록 스코프에 기대면 백필 콜이 조용히 미집계로 샌다.
 		metricsBackfill.execute(() -> callContext.runScoped(Set.of(userId), () -> {
 			try {
-				collect.retryReelsMetrics(post.ownerUserId(), List.of(post));
+				// 사용자 트리거 비동기 전용 라우팅(2026-09 도입 시점 토글) — DailySweepJob의
+				// retryReelsMetrics(자체 1순위 고정)와 달리 이 경로는 토글로 Hiker/자체를 오간다.
+				collect.retryReelsMetricsUserTriggered(post.ownerUserId(), List.of(post));
 			} catch (RuntimeException e) {
 				log.warn("등록 직후 저장·리포스트 백필 실패(격리) — {}: {}", post.shortCode(), e.toString());
 			}
