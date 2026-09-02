@@ -2,9 +2,9 @@ package com.celfit.monitoring.ad;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.ad.AdDisclosureExtractor.Category;
 import com.celfit.monitoring.ad.AdDisclosureExtractor.Disclosure;
-import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.store.BrandPostMetaRepository;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -31,7 +31,7 @@ class AdDisclosureJudgeServiceTest {
 				true, false, false);
 	}
 
-	/** contentType=FEED이지만 videoUrl을 가진 단일 동영상 게시물 — HikerClient는 REELS/FEED 2값만
+	/** contentType=FEED이지만 videoUrl을 가진 단일 동영상 게시물 — HikerBackend는 REELS/FEED 2값만
 	 * 매핑하므로 일반 피드의 단일 동영상도 이 셰이프로 온다(코디네이터 리뷰 반영). */
 	private static PostInfo feedVideoPost(String shortCode, String caption) {
 		return new PostInfo(shortCode, "poster1", null, null, "uid1", "FEED", caption, null,
@@ -364,7 +364,8 @@ class AdDisclosureJudgeServiceTest {
 				new BrandPostMetaRepository.UnjudgedPost("F3", "", "FEED", null, null),
 				new BrandPostMetaRepository.UnjudgedPost("F4", "", "FEED", null, null),
 				new BrandPostMetaRepository.UnjudgedPost("F5", "", "FEED", null, null));
-		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run, 2);
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run, 2,
+				10);
 
 		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged();
 
@@ -385,7 +386,7 @@ class AdDisclosureJudgeServiceTest {
 		extractor.fail = true;
 		FakeRepo repo = new FakeRepo();
 		repo.unjudged = List.of(new BrandPostMetaRepository.UnjudgedPost("AAA", "체험단 후기", "FEED", null, null));
-		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run, 500);
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run, 500, 10);
 
 		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged();
 
@@ -428,8 +429,8 @@ class AdDisclosureJudgeServiceTest {
 				new BrandPostMetaRepository.UnjudgedPost("F4", "체험단 후기 4", "FEED", null, null),
 				new BrandPostMetaRepository.UnjudgedPost("F5", "체험단 후기 5", "FEED", null, null),
 				new BrandPostMetaRepository.UnjudgedPost("F6", "체험단 후기 6", "FEED", null, null));
-		// batchSize=6(전부 한 배치), llmFailureAbortThreshold=3, backfillMaxPerRun=0(무제한 — breaker만 검증)
-		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run, 6, 3, 0);
+		// batchSize=6(전부 한 배치), llmFailureAbortThreshold=3
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run, 6, 3);
 
 		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged();
 
@@ -450,54 +451,12 @@ class AdDisclosureJudgeServiceTest {
 				new BrandPostMetaRepository.UnjudgedPost("F4", "체험단 후기 4", "FEED", null, null));  // 실패해도 임계(3) 미달
 		extractor.failCaptions = Set.of("체험단 후기 1", "체험단 후기 3", "체험단 후기 4");
 		// batchSize=4(한 배치로 전부) — 순서대로 F1(실패,1) F2(성공,리셋) F3(실패,1) F4(실패,2) → 임계 3 도달 안 함
-		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run, 4, 3, 0);
+		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, extractor, Runnable::run, 4, 3);
 
 		service.backfillUnjudged();
 
 		assertThat(repo.written).containsOnlyKeys("F2");   // 성공은 F2뿐
 		assertThat(extractor.calls).containsExactly("체험단 후기 1", "체험단 후기 3", "체험단 후기 4");
-	}
-
-	/**
-	 * 백필 방어선 — 1회 실행 상한 복원(2026-08-18, 429 폭주 실측 계기). 상한(3)에 도달하면
-	 * 잔량이 남아 있어도(F4·F5) 정상 종료하고, 다음 호출이 이어서 처리한다는 계약이므로 여기서는
-	 * "이번 호출은 상한만큼만 쓴다"만 검증한다.
-	 */
-	@Test
-	void 백필_1회_실행_상한에_도달하면_잔여를_다음_주기로_넘긴다() {
-		FakeRepo repo = new FakeRepo();
-		repo.unjudged = List.of(
-				new BrandPostMetaRepository.UnjudgedPost("F1", "", "FEED", null, null),
-				new BrandPostMetaRepository.UnjudgedPost("F2", "", "FEED", null, null),
-				new BrandPostMetaRepository.UnjudgedPost("F3", "", "FEED", null, null),
-				new BrandPostMetaRepository.UnjudgedPost("F4", "", "FEED", null, null),
-				new BrandPostMetaRepository.UnjudgedPost("F5", "", "FEED", null, null));
-		// batchSize=2, llmFailureAbortThreshold=기본치(breaker 무관), backfillMaxPerRun=3
-		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run,
-				2, 10, 3);
-
-		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged();
-
-		assertThat(outcome.remaining()).isEqualTo(5);   // 시작 시점 전체 잔량
-		assertThat(outcome.processed()).isEqualTo(3);   // 상한만큼만 처리
-		assertThat(repo.written).hasSize(3);
-		assertThat(repo.written).containsOnlyKeys("F1", "F2", "F3");   // F4·F5는 남겨둠
-	}
-
-	@Test
-	void 백필_상한이_0이면_기존과_같이_무제한이다() {
-		FakeRepo repo = new FakeRepo();
-		repo.unjudged = List.of(
-				new BrandPostMetaRepository.UnjudgedPost("F1", "", "FEED", null, null),
-				new BrandPostMetaRepository.UnjudgedPost("F2", "", "FEED", null, null),
-				new BrandPostMetaRepository.UnjudgedPost("F3", "", "FEED", null, null));
-		AdDisclosureJudgeService service = new AdDisclosureJudgeService(repo, new FakeExtractor(), Runnable::run,
-				2, 10, 0);
-
-		AdDisclosureJudgeService.BackfillOutcome outcome = service.backfillUnjudged();
-
-		assertThat(outcome.processed()).isEqualTo(3);
-		assertThat(repo.written).hasSize(3);
 	}
 
 	/**

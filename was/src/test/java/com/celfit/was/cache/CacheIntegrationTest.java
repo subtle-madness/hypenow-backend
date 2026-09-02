@@ -113,7 +113,7 @@ class CacheIntegrationTest extends IntegrationTest {
 	private static V1ContentQuery q(int limit, int offset) {
 		LocalDate today = LocalDate.now(KST);
 		return V1ContentQuery.of(today.minusDays(7), today,
-				null, null, null, null, null, null, null, null, null, limit, offset);
+				null, null, null, null, null, null, null, null, null, limit, offset, null);
 	}
 
 	@Test
@@ -164,9 +164,9 @@ class CacheIntegrationTest extends IntegrationTest {
 		// 따로 부르면 자정 경계에서 날짜가 어긋나 두 캐시 키가 서로 달라질 수 있다.
 		LocalDate today = LocalDate.now(KST);
 		controller.contents(null, today.minusDays(7), today,
-				null, null, null, null, null, null, null, null, null, 1, 0);
+				null, null, null, null, null, null, null, null, null, 1, 0, null);
 		V1ContentQuery next = V1ContentQuery.of(today.minusDays(7), today,
-				null, null, null, null, null, null, null, null, null, 1, 0).next();
+				null, null, null, null, null, null, null, null, null, 1, 0, null).next();
 		Cache cache = cacheManager.getCache(CacheConfig.CONTENT_RANKING);
 		awaitCached(cache, next.cacheKey());
 		var cached = (ContentPage) cache.get(next.cacheKey()).get();

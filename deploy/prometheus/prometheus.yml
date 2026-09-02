@@ -1,4 +1,4 @@
-# was 지표 수집(스펙 2026-08-10) — 30초 간격. 대상 추가(crawler/analytics)는 job을 늘리면 된다.
+# was 지표 수집(스펙 2026-08-10) — 30초 간격.
 global:
   scrape_interval: 30s
   scrape_timeout: 10s
@@ -15,6 +15,18 @@ scrape_configs:
     metrics_path: /actuator/prometheus
     static_configs:
       - targets: ["monitoring:9083"]
+
+  # crawler·analytics JVM 지표(2026-08-31) — 08-22 스펙의 이연분 확장. 관리 포트는 앱 포트 +1000
+  # (compose env MANAGEMENT_SERVER_PORT), job 이름은 ops-metrics 대시보드 $module 값과 일치해야 한다.
+  - job_name: crawler
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["crawler:9080"]
+
+  - job_name: analytics
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["analytics:9082"]
 
   # 호스트·컨테이너 지표(대시보드 개편 스펙 2026-08-18) — node-exporter는 CPU·메모리·디스크,
   # cAdvisor는 컨테이너별 사용량. 둘 다 기본 경로(/metrics)라 metrics_path 불요.

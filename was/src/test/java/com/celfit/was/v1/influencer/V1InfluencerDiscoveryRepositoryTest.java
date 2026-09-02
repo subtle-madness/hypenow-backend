@@ -33,7 +33,7 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 			String follower, String activity, String sponsored, String contact, String sort,
 			Integer limit, Integer offset) {
 		return V1InfluencerDiscoveryQuery.of(q, main, mid, sub, follower, activity, sponsored,
-				contact, sort, limit, offset);
+				contact, sort, limit, offset, null);
 	}
 
 	private static V1InfluencerDiscoveryQuery all() {
@@ -59,7 +59,9 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				    handle            text PRIMARY KEY,
 				    display_name      text,
 				    profile_image_url text,
-				    followers         bigint
+				    followers         bigint,
+				    beauty            boolean,
+				    fnb               boolean
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE account_summaries (
@@ -121,6 +123,7 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				    main_order int  NOT NULL,
 				    mid_order  int  NOT NULL,
 				    sub_order  int  NOT NULL,
+				    axis       text NOT NULL DEFAULT 'beauty',
 				    PRIMARY KEY (main_value, mid_label, sub_label)
 				)""");
 		jdbcTemplate.execute("""
@@ -145,11 +148,14 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("""
 				CREATE VIEW account_category_share AS
 				SELECT s.account_handle, an.main_category,
-				       round(100.0 * count(*) / sum(count(*)) OVER (PARTITION BY s.account_handle))::int AS pct
+				       round(100.0 * count(*)
+				             / sum(count(*)) OVER (PARTITION BY s.account_handle, t.axis))::int AS pct
 				FROM account_content_series s
 				JOIN content_analyses an ON an.short_code = s.short_code
-				WHERE an.is_beauty IS TRUE AND an.main_category IS NOT NULL
-				GROUP BY s.account_handle, an.main_category
+				JOIN (SELECT DISTINCT main_value, axis FROM beauty_taxonomy) t
+				     ON t.main_value = an.main_category
+				WHERE an.main_category IS NOT NULL
+				GROUP BY s.account_handle, an.main_category, t.axis
 				""");
 		jdbcTemplate.execute("""
 				CREATE VIEW account_sponsored_counts AS
@@ -160,11 +166,12 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				""");
 
 		jdbcTemplate.update("""
-				INSERT INTO accounts (handle, display_name, profile_image_url, followers) VALUES
-				  ('glow', '글로우', 'https://cdn/glow.jpg', 20000),
-				  ('calm', '카암', 'https://cdn/calm.jpg', 30000),
-				  ('mute', '뮤트', NULL, 40000),
-				  ('tiny', '타이니', NULL, 1000)""");
+				INSERT INTO accounts (handle, display_name, profile_image_url, followers, beauty, fnb) VALUES
+				  ('glow', '글로우', 'https://cdn/glow.jpg', 20000, true, false),
+				  ('calm', '카암', 'https://cdn/calm.jpg', 30000, NULL, NULL),
+				  ('mute', '뮤트', NULL, 40000, true, false),
+				  ('tiny', '타이니', NULL, 1000, true, false),
+				  ('fbfood', '푸드핏', NULL, 12000, false, true)""");
 		// avg_hype_raw는 avg_hype_score(정수 반올림)를 만드는 반올림 전 평균 — 2026-07-30까지는
 		// 정렬 키였다(스펙 2026-07-30-hype-score-v3-decay-after-mapping-design.md §9 하위절).
 		// avg_hype_score_precise(2026-07-30, 스펙 §10 — 콘텐츠 출력 매핑 반영 소수 표시값) 도입 후
@@ -183,7 +190,24 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				  ('mute', 40000, 50, 40, NULL, NULL, NULL, 1.0, 300, 10,
 				   NULL, NULL, now() - interval '40 days', NULL, NULL),
 				  ('tiny', 1000, 10, 20, '새싹', 2000, 2.0, 3.0, 25, 3,
-				   45, 44.7, now() - interval '5 days', NULL, 44.7000)""");
+				   45, 44.7, now() - interval '5 days', NULL, 44.7000),
+				  -- F&B 단독 계정 — reach 2위 값이라 축 게이트가 없으면 무필터 상위에 섞인다
+				  ('fbfood', 12000, 80, 60, '밀키트 리뷰', 40000, 10.0, 3.5, 1500, 90,
+				   60, 59.5, now() - interval '2 days', NULL, 59.5000)""");
+		// fbfood 창 8개: 분석 8건 전부 비뷰티(뷰티 비율 0%) — F&B 필터의 뷰티비율 게이트 스킵 검증
+		// 재료. 그중 convenience 분류 2건 → F&B 축 분모 2, 비중 100% ≥ 20% 게이트 통과.
+		for (int i = 1; i <= 8; i++) {
+			jdbcTemplate.update("""
+					INSERT INTO account_content_series (short_code, account_handle, posted_at,
+					  content_type, views, likes, comments, sponsored)
+					VALUES (?, 'fbfood', now() - (? || ' days')::interval, 'reels', 10000, 500, 40, false)""",
+					"fb_p" + i, i);
+			jdbcTemplate.update("""
+					INSERT INTO content_analyses (short_code, is_beauty, main_category, sub_categories,
+					  ad_type, detected_brands)
+					VALUES (?, false, ?, NULL, 'organic', NULL)""",
+					"fb_p" + i, i <= 2 ? "convenience" : null);
+		}
 		// glow 창 5개: g1(1일 전)~g5(5일 전). 분류 5개 중 스킨케어 4·메이크업 1, 협찬 g2·g4.
 		jdbcTemplate.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at,
@@ -229,10 +253,11 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				  ('glow', now() - interval '1 day', '저자극 스킨케어 리뷰 톤')""");
 		jdbcTemplate.update("""
 				INSERT INTO beauty_taxonomy (main_value, main_label, mid_label, sub_label,
-				  main_order, mid_order, sub_order) VALUES
-				  ('makeup', '메이크업', '립메이크업', '립틴트', 3, 1, 1),
-				  ('makeup', '메이크업', '립메이크업', '립스틱', 3, 1, 2),
-				  ('skincare', '스킨케어', '크림', '크림', 1, 3, 1)""");
+				  main_order, mid_order, sub_order, axis) VALUES
+				  ('makeup', '메이크업', '립메이크업', '립틴트', 3, 1, 1, 'beauty'),
+				  ('makeup', '메이크업', '립메이크업', '립스틱', 3, 1, 2, 'beauty'),
+				  ('skincare', '스킨케어', '크림', '크림', 1, 3, 1, 'beauty'),
+				  ('convenience', '가공/간편식', '가공/간편식', '밀키트', 10, 1, 2, 'fnb')""");
 		jdbcTemplate.update("""
 				INSERT INTO image_assets (kind, key, object_path) VALUES
 				  ('profile', 'glow', 'p/glow.jpg'),
@@ -340,6 +365,50 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
+	void 무필터_발굴에_FnB_계정은_안_나온다() {
+		// 기본 화면 불변(서빙 개방 §6-3) — COALESCE(a.beauty, true)가 지킨다.
+		// calm(축 NULL — 롤링 창 재현)은 뷰티 취급으로 그대로 나온다.
+		assertThat(repository.findCards(all())).extracting(CardRow::handle)
+				.containsExactly("glow", "calm", "tiny", "mute");
+	}
+
+	@Test
+	void FnB_대분류_필터는_FnB_계정만_내고_뷰티비율_게이트를_안_문다() {
+		// fbfood는 분석 8건 전부 비뷰티(뷰티 비율 0%) — 뷰티비율 게이트를 물면 전멸한다(§3).
+		// 오판 방어는 F&B 비중 게이트(convenience 100% ≥ 20%)가 같은 역할.
+		var fnb = query(null, "convenience", null, null, null, null, null, null, null, null, null);
+		assertThat(repository.findCards(fnb)).extracting(CardRow::handle)
+				.containsExactly("fbfood");
+	}
+
+	@Test
+	void vertical_fnb는_FnB_계정_전체를_비중_게이트_없이_낸다() {
+		// 2026-09-01 FE 피드백 #1 — 대분류 없이 축 전체. 비중 게이트(EXISTS)는 mainCategory
+		// 블록 소속이라 안 붙고, COALESCE(a.fnb, false)만 적용된다.
+		var fnb = V1InfluencerDiscoveryQuery.of(null, null, null, null, null, null, null, null,
+				null, null, null, "fnb");
+		assertThat(repository.findCards(fnb)).extracting(CardRow::handle)
+				.containsExactly("fbfood");
+		assertThat(repository.countCards(fnb)).isEqualTo(1);
+	}
+
+	@Test
+	void vertical_beauty는_무필터와_동치다() {
+		var beauty = V1InfluencerDiscoveryQuery.of(null, null, null, null, null, null, null, null,
+				null, null, null, "beauty");
+		assertThat(repository.findCards(beauty)).extracting(CardRow::handle)
+				.containsExactly("glow", "calm", "tiny", "mute");
+	}
+
+	@Test
+	void 뷰티_대분류_필터에_FnB_계정은_안_섞인다() {
+		// 축 조건(COALESCE(a.beauty, true))이 뷰티 필터 경로에도 걸린다
+		var makeup = query(null, "makeup", null, null, null, null, null, null, null, null, null);
+		assertThat(repository.findCards(makeup)).extracting(CardRow::handle)
+				.containsExactly("glow");
+	}
+
+	@Test
 	void 중분류는_소분류_확장_소분류는_태깅_1개면_매칭() {
 		var mid = query(null, "makeup", "립메이크업", null, null, null, null, null, null, null, null);
 		assertThat(repository.findCards(mid)).extracting(CardRow::handle).containsExactly("glow");
@@ -440,9 +509,36 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 
 	@Test
 	void 보강_카테고리_비중은_분류_모수_기준_내림차순() {
-		var shares = repository.findShares(List.of("glow"));
-		assertThat(shares).extracting(r -> r.mainCategory() + ":" + r.pct())
-				.containsExactly("skincare:80", "makeup:20");
+		// 뷰티 축 — F&B 단독 계정(fbfood)은 행 없음(카드 조립이 축 밖 비중을 안 싣는다)
+		var shares = repository.findShares(List.of("glow", "fbfood"), false);
+		assertThat(shares)
+				.extracting(r -> r.accountHandle() + ":" + r.mainCategory() + ":" + r.pct())
+				.containsExactly("glow:skincare:80", "glow:makeup:20");
+	}
+
+	@Test
+	void 보강_카테고리_비중_FnB축은_FnB_분류분이_분모다() {
+		// 혼합 계정 검증 재료 — calm(뷰티 3건)에 F&B 분류 1건 추가. 축별 분모가 분리되지 않으면
+		// F&B축 비중이 25%(전체 분류 4건 분모)로 나온다.
+		jdbcTemplate.update("""
+				INSERT INTO account_content_series (short_code, account_handle, posted_at,
+				  content_type, views, likes, comments, sponsored)
+				VALUES ('c4', 'calm', now() - interval '13 days', 'reels', 20000, 400, 20, false)""");
+		jdbcTemplate.update("""
+				INSERT INTO content_analyses (short_code, is_beauty, main_category, sub_categories,
+				  ad_type, detected_brands)
+				VALUES ('c4', false, 'convenience', NULL, 'organic', NULL)""");
+
+		var fnbShares = repository.findShares(List.of("glow", "calm", "fbfood"), true);
+		// 뷰티 단독 glow는 F&B축에 행 없음, calm·fbfood는 F&B 분류분만 분모(각 100%)
+		assertThat(fnbShares)
+				.extracting(r -> r.accountHandle() + ":" + r.mainCategory() + ":" + r.pct())
+				.containsExactly("calm:convenience:100", "fbfood:convenience:100");
+
+		// 같은 계정의 뷰티축 비중은 F&B 게시물과 무관하게 유지된다
+		assertThat(repository.findShares(List.of("calm"), false))
+				.extracting(r -> r.mainCategory() + ":" + r.pct())
+				.containsExactly("skincare:100");
 	}
 
 	@Test

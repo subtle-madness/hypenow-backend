@@ -16,19 +16,15 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
  * 해석 문구 갱신 계약: 낡은 행(synthesis_version 불일치)만 골라 문구·기준선만 UPDATE하고
  * 사실 추출 컬럼은 보존한다. 후보 자격과 무관하게 갱신되며, 갱신 후 재실행은 무동작.
  */
-@Testcontainers
 class ContentSynthesisRefreshJobTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	JdbcTemplate db;
 	DataSource ds;

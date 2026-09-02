@@ -72,8 +72,8 @@ class GeminiBeautyJudgeTest {
     }
 
     @Test
-    void 출력_토큰_상한이_2축_분량으로_상향되어_있다() {
+    void 출력_토큰_상한이_3축_분량으로_상향되어_있다() {
         String body = GeminiBeautyJudge.requestBody(om, "prompt");
-        assertEquals(16384, om.readTree(body).path("generationConfig").path("maxOutputTokens").asInt());
+        assertEquals(24576, om.readTree(body).path("generationConfig").path("maxOutputTokens").asInt());
     }
 }

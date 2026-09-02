@@ -49,6 +49,19 @@ monitoring:
     request-timeout: 15s
     max-retries: 2       # 일시 오류(5xx·IO) 전용. 404는 재시도하지 않는다
     retry-backoff: 2s    # 회차마다 × n (2s → 4s)
+  proxy:
+    residential-url: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:}
+    mobile-url: ${DATAIMPULSE_MOBILE_PROXY_URL:}
+    request-timeout: 15s
+    geo-kr: false          # C 실측 전 기본 off(스펙 §10-1)
+    # 자체크롤 on/off는 boot 프로퍼티가 아니라 app_setting 'ig-source.self-enabled'(런타임 토글)로 제어
+    comment-doc-id: ${IG_COMMENT_DOC_ID:}
+    comment-friendly-name: ${IG_COMMENT_FRIENDLY_NAME:}
+  self-retry:
+    # F3: self 재시도(최대 3회 × request-timeout 15s=최악 45s) 총 시간예산 — 초과 시 남은 재시도를
+    # 포기하고 즉시 Hiker로 폴백한다. 동기 등록(was→monitoring read timeout 10s)에서 폴백 전에
+    # 사용자가 503을 보는 걸 막는다. p95 정상 경로(wpi 5.3s 실측)는 예산 안에서 1회 시도로 끝난다.
+    budget: 8s
   sweep:
     retry-rounds: 3      # 스윕 말미 일시 실패 계정 재시도 라운드 수
     retry-interval: 10m  # 라운드 간격 × 라운드 번호 (10m → 20m → 30m)
@@ -85,7 +98,7 @@ monitoring:
                                     # 컷 밖 게시물은 지표 동결·계속 서빙(due 재열거 루프 차단). 위
                                     # 안전 밸브(ERROR·커버 미처리)와 역할이 다르다 — was 목록 상한
                                     # (V1BrandPostsController.POST_LIMIT 2000)과 정합값.
-                                    # 0 이하면 무제한(backfill-max-per-run 관용 일치)
+                                    # 0 이하면 무제한
     comment-pages: 3            # 게시물당 댓글 상한 3콜 45개(스펙 §2 — 정책 v1에서 30일 보충 없이 유지 확정)
     author-stale-days: 30       # 게시자 프로필 등장 시 stale 갱신 기준(스펙 §8)
     enrich-concurrency: 10      # 보강(게시자·댓글) 워커 풀 크기 — 08-13 실측에서 6/8/10 어느 레벨도 5초 초과 콜
@@ -96,11 +109,22 @@ monitoring:
                                     # 전역 동시 콜은 워커 풀이 상한이라 이 값을 올려도 안 늘어난다(콜은 전부 워커 풀로 나간다)
     backfill-concurrency: 2     # 등록 백필 core 동시 스레드(08-12) — 전역 동시 콜 최악 13(워커 10+스윕 1+core 2).
                                 # 올리려면 힙(콜당 ~10MB)과 꼬리 레이턴시 재검토
+    unenumerated-sweep-limit: 2000  # 스윕당 2단계 재수집(direct∪hashtag) 상한 — 감시 세트 크기(hashtag.post-limit)와
+                                    # 정합값(2026-09-02 감시 세트 설계 §3: 모수가 세트로 한정되므로 사실상 안전 밸브).
+                                    # 0 이하 = 무제한. 구 300(2026-08-27 점진 상환)은 캠페인 브랜드의 매일 티어 due가
+                                    # 상한을 매일 초과해 꼬리가 구조적으로 밀렸다(09-02 미처리 1,828건 진단).
+    unenriched-backfill-on-startup: true   # 기동 즉시 백필 킬 스위치(2026-08-28 사용자 지시) — 이관 직후
+                                    # 미보강(enriched_at IS NULL) 전량을 위 스윕 상한을 기다리지 않고 기동
+                                    # 시점에 즉시 보강한다. 잔량 없으면 브랜드마다 빈 조회 한 번뿐인 no-op.
     hashtag:
-      window-days: 90            # 해시태그 발견 게시물 저장 윈도우(스펙 §4) — taken_at이 이보다 오래면 미저장.
-                                 # 브랜드 본체 스윕의 옛 window-days(08-09 티어 정책에서 제거)와 별개 키 — 재도입 아님
-      max-pages: 4               # 해시태그 recent 열거 태그당 상한(조기 종료가 정상 경로에선 이보다 먼저 끊는다)
-      judge-model: gemini-3.1-flash-lite   # analytics 전 축과 통일된 모델(2.5-flash 아님)
+      max-pages: 100             # 태그당 recent 열거 안전 밸브(2026-09-02 감시 세트 설계 §2 — 구 4).
+                                 # 정상 종료는 예산 소진·dedup·낭비 가드·스트림 소진이 먼저 온다.
+                                 # 세트 2,000 ≈ 85페이지에 여유를 둔 값.
+      post-limit: 2000           # 해시태그 감시 세트 크기(2026-09-02 설계 §1) — 구 "편입 하드스톱"이
+                                 # 아니라 롤링 세트다: 신규는 항상 편입, 게시일 최신 2,000 밖은 동결.
+                                 # 2단계 재수집(BrandDirectCollectService)이 같은 키를 읽는다. 0 이하 = 무제한.
+      deep-resweep-on-startup: false  # 딥 재백필 1회 킬 스위치(2026-09-02 설계 §2) — 상한 상향 배포
+                                      # 시에만 env로 true 1회 주입(러너 javadoc의 운영 절차 참조)
     ad-disclosure:
       judge-model: gemini-3.1-flash-lite   # Tier2 문구 추출 모델(스펙 §5) — analytics 전 축과 통일
       concurrency: 4    # Tier2 LLM 전용 풀(enrichWorker와 분리 — 스펙 §7). LLM 지연이 보강 처리량을 잠식하지 않게 함
@@ -109,12 +133,11 @@ monitoring:
                         # 백필은 08-18 상한 제거 개정으로 상한 설정이 없다 — 잔량 0까지 전량 처리(LLM 풀 동시 4가 자연 속도 제한)
       # 백필 방어선(2026-08-18, #490 이후 스테이징 429 폭주 15분간 분당 83~146건 실측 계기) —
       # 연속 실패 서킷브레이커: LLM 연속 실패가 이 값에 도달하면 진행 중 배치 나머지는 LLM 호출을
-      # 건너뛰고, 배치 종료 후 런 자체를 중단한다(잔여는 다음 주기가 재시도).
+      # 건너뛰고, 배치 종료 후 런 자체를 중단한다(잔여는 다음 주기가 재시도). 1회 실행 처리량 상한은
+      # 두지 않는다(2026-08-27 폐기 결정 — 상한은 expose 개통 후 verdict NULL 잔량을 FE에 부분
+      # 판정·과소 위험 카운트로 서빙하는 해악이라 제거. 버스트 방어는 concurrency, 장애 방어는
+      # 이 서킷브레이커, 오판정 대응은 enabled 킬 스위치·리셋 재배포가 정본. DECISIONS.md 참조).
       llm-failure-abort-threshold: 10
-      # 1회 백필 호출 처리 상한 — 0 이하면 무제한. 기본 무제한(08-18 사용자 결정 원복 — 429의 원인은
-      # 상한이 아니라 무료 키 쿼터였고, Vertex 전환 + 위 서킷브레이커로 무제한이 안전하다).
-      # 운영에서 일시적으로 누르고 싶을 때만 env로 양수를 준다.
-      backfill-max-per-run: 0
   # LLM 전송(2026-08-18 Vertex 전환) — GOOGLE_APPLICATION_CREDENTIALS(SA 키)와 vertex-project가
   # 모두 설정돼 있으면 Vertex, 아니면 gemini.api-key(AI Studio)로 그레이스풀 폴백한다
   # (LlmTransportConfig.useVertex — analytics LlmConfig.useVertex 패턴 준용).
@@ -124,19 +147,6 @@ monitoring:
   gemini:
     api-key: ${GEMINI_API_KEY:}
     base-url: https://generativelanguage.googleapis.com
-  alarm:
-    dispatch-cron: "-"   # "-"=비활성. 운영은 5분 틱(0 */5 * * * *)을 env로 주입
-    debounce: 10m        # 즉시 레인 몰아치기 흡수 — 마지막 이벤트가 이 시간 안이면 다음 틱으로 미룬다
-    debounce-cap: 30m    # 디바운스 최대 대기 — 가장 오래된 due가 이 시간을 넘기면 유입 중이어도 발송
-    max-attempts: 5      # 행별 발송 시도 상한. 도달하면 due 조회에서 빠진다(영구 실패 수신자 무한 재시도 차단)
-    allowed-recipients: ${MONITORING_ALARM_ALLOWED_RECIPIENTS:}   # 콤마 목록. 비어있으면(운영 기본) 무제한 — dev/test에서 실사용자 이메일 유출 방지용 안전판
-    reader:              # analysis DB app 스키마 읽기 전용(계약 v2 §6 — 두 객체만 GRANT)
-      url: ${MONITORING_ALARM_READER_URL:}
-      username: ${MONITORING_ALARM_READER_USERNAME:}
-      password: ${MONITORING_ALARM_READER_PASSWORD:}
-  mail:
-    resend-api-key: ${RESEND_API_KEY:}          # 미설정이면 로깅 폴백(실발송 없음)
-    from: hypenow <no-reply@hypenow.io>
   image:
     # 프로필 이미지 아카이브(설계 스펙 §3-1) — 미설정이면 잡이 로그만 남기고 no-op(기동 실패 아님).
     # 운영은 analytics와 같은 버킷·쓰기 PAR을 재사용(compose.yaml MONITORING_IMAGE_PAR_URL 참고).

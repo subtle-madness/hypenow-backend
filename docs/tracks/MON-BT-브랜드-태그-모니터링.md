@@ -34,7 +34,7 @@ V20260811085943) + 매일 브랜드 스윕에 합류하는 해시태그 파이�
 서비스에 이번에 추가. **잔여**: FE 공유 필요 — 해시태그 발견 게시물 별도 탭·제외 문자열 관리
 UI(계약 §8-4).
 
-안전 상한 개정(08-12 — DECISIONS 08-12 행, [spec 2026-08-12](../superpowers/specs/2026-08-12-brand-sweep-cap-revision-design.md)):
+안전 상한 개정(08-12 — DECISIONS 08-12 행, [spec 2026-08-12](../superpowers/specs/archive/2026-08-12-brand-sweep-cap-revision-design.md)):
 `max-posts-per-sweep` **2,000 → 10,000** + 도달 시 error 로그(열거 건수·목표 컷·커버 깊이).
 tooq.official(id=34, 11.8건/일 정상 고물량) 등록 백필이 상한 2,000에 걸려 365일 창의 172~365일
 구간이 조용히 영구 공백이 된 운영 실측 대응 — 상한 중단도 정상 반환이라 touchSwept가 찍혀
@@ -44,7 +44,7 @@ tooq.official(id=34, 11.8건/일 정상 고물량) 등록 백필이 상한 2,000
 `UPDATE brand_account SET last_swept_on=NULL WHERE id=34` → 야간 스윕 재백필(~205콜)** —
 was ready가 `last_swept_at` 기준(08-10)이라 FE 무영향. 실행 대기(운영 DB 쓰기 — 사용자 확인 필요).
 
-백필 페이지 스트리밍 적재 + 조기 서빙(2026-08-12 — [spec 2026-08-12](../superpowers/specs/2026-08-12-brand-backfill-streaming-serving-design.md)):
+백필 페이지 스트리밍 적재 + 조기 서빙(2026-08-12 — [spec 2026-08-12](../superpowers/specs/archive/2026-08-12-brand-backfill-streaming-serving-design.md)):
 tooq.official 등록 실측(운영)에서 등록 → ready가 **8분 24초**(365일 열거 96콜 × p50 4.9초를
 전부 끝낸 뒤에야 일괄 적재·ready)라 그동안 FE가 이미 받아온 데이터까지 로딩 화면으로 가렸다.
 `sweepCore`를 **페이지(~21건) 단위 즉시 적재**로 바꾸고(중복 콜 0 — 커서 체인은 그대로,
@@ -70,7 +70,7 @@ OOM 재발 방지 + 백필 core 2병렬(08-12 — DECISIONS 08-12 행):
 이 공식과 꼬리 레이턴시(request-timeout 15초 초과 시 과금 2배)로 판단한다.
 
 수집 범위 선택 + 기간 확장(2026-08-12 — DECISIONS 08-12 행,
-[spec 2026-08-12](../superpowers/specs/2026-08-12-brand-collection-months-design.md)): 등록에
+[spec 2026-08-12](../superpowers/specs/archive/2026-08-12-brand-collection-months-design.md)): 등록에
 수집 창 선택(1/3/6/12개월)을 도입했다. 창은 유저 단위가 아니라 **공유 크롤 자산 단위**
 (`brand_account.collection_months`, 신설 — 기존 행은 DEFAULT 12로 사실과 일치)이고 **절대
 줄이지 않는다**(유저 간 max). 전역 `registration-window-days:365`가 이 컬럼으로 대체돼
@@ -85,7 +85,7 @@ now()) 신설, 응답에 `collectionMonths` 추가. 부수 정정: 브랜드 스
 **08-17 개정으로 "자산 레벨 하나"는 부분 뒤집혔다 — 아래 링크 레벨 항목 참조.**
 
 링크 레벨 표시 창(2026-08-17 — DECISIONS 08-17 행,
-[spec 2026-08-17](../superpowers/specs/2026-08-17-brand-link-collection-months-design.md)):
+[spec 2026-08-17](../superpowers/specs/archive/2026-08-17-brand-link-collection-months-design.md)):
 08-12의 "자산 레벨 값 하나로 관리"가 공유 브랜드에서 무너졌다 — 3개월을 신청한 유저가
 12개월치 전량을 받는다(cclime 실사례). 신청값이 어디에도 영속화되지 않아 유저별로 자를
 근거 자체가 없었다. **크롤 자산은 그대로 두고**(`brand_account.collection_months` = 유저 간
@@ -101,7 +101,7 @@ max, 축소 없음 — 수집한 사실이 정본) 유저-브랜드 링크에 �
 tagged가 목록·상세 어디에도 없는데 등록만 DUPLICATE로 막혀 영구 도달 불능(데드엔드)이 된다.
 
 완결 배치 서빙(2026-08-13 — **구현 완료**, 커밋 `2d0d9b60`~`43b8a6a7` ·
-[spec 2026-08-13](../superpowers/specs/2026-08-13-brand-initial-batch-serving-design.md)):
+[spec 2026-08-13](../superpowers/specs/archive/2026-08-13-brand-initial-batch-serving-design.md)):
 FE 요청서(08-13)로 "완성된 게시물만 내려달라"는 계약 변경이 들어와, 서빙 판정을
 "열거 적재됨"에서 **게시물 단위 보강 정산**(`brand_tagged_post.enriched_at` 신설)으로 옮겼다.
 방출 단위는 열거 페이지(21건) 배치 — **첫 페이지 배치 완료가 곧 `markServing`**이라 08-12의
@@ -302,8 +302,8 @@ FE의 조합 로직일 뿐이며, 그 배지 표시에도 캡션 판정(`NOT_DIS
 수집 개수 상한(2026-08-19 — **구현 완료**,
 [spec 2026-08-19](../superpowers/specs/2026-08-19-brand-collection-post-limit-design.md) ·
 [plan(아카이브)](../superpowers/plans/archive/2026-08-19-brand-collection-post-limit.md)):
-전역 설정 `monitoring.brand.collection-post-limit`(기본 **2,000**, **0 이하면 무제한** —
-`backfill-max-per-run` 관용 일치) 신설. 한 실행의 열거량이 상한에 닿으면 INFO 로그와 함께
+전역 설정 `monitoring.brand.collection-post-limit`(기본 **2,000**, **0 이하면 무제한**) 신설.
+한 실행의 열거량이 상한에 닿으면 INFO 로그와 함께
 **의도된 자연 종료**로 끊고, `coveredCutoff=true`로 `touchCrawledDepth`를 **목표 컷 전체**에
 찍는다 — 컷 밖(더 깊은) 게시물은 실크롤 없이 `last_crawled_at`이 갱신돼 ①매 스윕이 같은
 깊이를 다시 여는 due 낭비 루프가 끊기고 ②마지막 수집 시점 지표로 **동결된 채 계속 서빙**된다
@@ -393,6 +393,45 @@ tagged `taken_at` 프록시)은 코드리뷰로 기각·폐기** — 자연 완�
 파라미터(성과만 true, 목록·존재/중복 판정은 false), direct 등록 행 면제(§7-3)·경계일
 포함(covered 판정과 동일 규칙). DECISIONS.md 2026-08-20 두 항목 참조.
 
+해시태그 직접 수집 전환(2026-08-27 설계 확정 → **08-28 구현 완료, 브랜치
+`feat/hashtag-direct-collection`, PR 대기** — [설계](../superpowers/specs/archive/2026-08-27-hashtag-direct-collection-design.md)):
+위 "해시태그 감지 확장"(08-11) 구조를 전면 폐기하고 `brand_tagged_post` 풀에 직접 편입한다.
+LLM 관련성 판정(`BrandMentionJudge`)·구 감지 테이블(`brand_hashtag_post`) 쓰기 중단, 신규
+`hashtag_detected_at` 성분 컬럼(tag_detected_at·direct_registered_at과 병존) + 매칭 태그 원장
+`brand_post_matched_tag` 신설. 판정 없이 전부 편입하되 브랜드 본인 계정 게시물은 규칙 기반
+제외, 브랜드당 1000 상한(tagged 2000과 별도 카운터), 수집 기간은 고정 90일 폐기하고 브랜드
+collectionMonths 적용. `/posts` 통합 목록에 source=hashtag로 합류 + 사용자 격리(장부∩매칭,
+기존 fail-open 폐기). 구 `/hashtag-posts`는 새 풀로 리라우팅 후 FE 전환 확인되면 다음 릴리스
+제거, 구 감지 테이블(`brand_hashtag_post`·`brand_hashtag_post_matched_tags`) DROP도 다음
+릴리스(expand-contract). `HashtagPostThumbnailArchiveJob`은 구 테이블 잔존 행 서빙 전용으로
+의도적으로 얼려두고 테이블과 함께 다음 릴리스 제거. **08-28 기동 즉시 보강 러너 추가**(사용자
+지시 — 이관분을 야간 스윕 2단계 상한(300건/스윕)의 점진 소진에 맡기지 않고, 앱 기동 시
+`UnenrichedBackfillStartupRunner`가 활성 브랜드 전부의 미보강(enriched_at IS NULL) 잔량을 즉시
+전량 보강한다. `AdDisclosureBackfillStartupRunner`와 동형 골격, 킬 스위치
+`monitoring.brand.unenriched-backfill-on-startup`. 야간 스윕의 상한·캐던스는 무변화 — 안전망
+그대로 유지). **08-28 태그 생성 권한 was 일원화**(DECISIONS.md 2026-08-28 행) — monitoring 등록·
+replay의 자가 태그 시드(`seedHashtagsSafely`) 제거, was가 링크 생성 시 유도 태그를 일반 태그
+add로 push(재활성 의미론 포함) + 초기 백필 미완 브랜드는 태그 추가 즉시 스윕 스킵 가드
+(`triggerHashtagSweepIfNonEmpty`, 백필 꼬리가 대신 처리).
+
+게시물 목록 서버 필터·패싯 + 인플루언서 집계 API(2026-08-27 — DECISIONS 08-27 행,
+[spec 2026-08-27](../superpowers/specs/2026-08-27-post-list-server-filter-facets-design.md)):
+FE 변경요청 2건을 한 브랜치(`feature/post-list-server-filter-facets-04b967`)로 처리 —
+① 목록 고정비 제거(P0)·서버 필터 5종(P1)·패싯+influencerCount(P1)·해시태그 발견 게시물
+count 전용 엔드포인트(P2), ② `GET /v1/brand-monitoring/influencers` 신설.
+P0의 요지는 `findBrandPostIndex`에서 **캡션 원문을 빼고 협찬 마커 매치를 SQL boolean으로**
+받는 것(`lower(m.caption) ~ :markerRegex`) — 마커 상수는 `BrandSponsorshipClassifier` 한 곳에
+남아 **키워드 소급성이 유지**되고, 동치성은 골든 코퍼스(`BrandSponsorshipSqlEquivalenceTest`)가
+봉인한다. 인덱스 프로젝션은 소형 컬럼으로 확장(`content_type`·`ad_verdict`·author 조인 3필드),
+정렬 키는 시계열 전량 대신 최신 1행만 읽는 `findLatestMetricsForBrand` 신설.
+`meta.facets`는 **additive 신규 키**로 기존 `meta.counts`·전량 모드 응답은 불변.
+필터 판정은 **FE 화면 코드가 정본**(`brand-influencers.ts`·`ad-disclosure.ts` 1:1 이식) —
+follower 밴드는 요청서의 "6.21과 동일"이 아니라 실제 화면의 5토큰을 따랐다(**FE 통보 필요**).
+**perf119 실측 유의**: 캡션 전송 제거분(13.5→6.1ms)보다 마커 평가의 WAS→PG 이동분이 커서
+DB 왕복 자체는 13.5→107.2ms로 늘었다(구 경로의 Java 판정 87.1ms와 맞바꾼 등가 교환).
+DB 측 전송분이 ~7.5ms뿐이라 로컬 하니스로는 ~1.9초 고정비의 본체(JDBC 매핑·GC·2코어 경합)를
+못 잰다 — **dev-api 배포 후 FE와 동일 조건 재측정이 판정 지점**(아래 미결·후속).
+
 ## 잔여 작업
 
 - **[수집 상한 v2 배포 후] 기존 capped 브랜드 커버리지 운영 보정 1회** — `collection_capped`·
@@ -424,6 +463,18 @@ tagged `taken_at` 프록시)은 코드리뷰로 기각·폐기** — 자연 완�
     (`common-llm` 모듈 신설 — DECISIONS.md 08-18 항목 참조). 상한 기본값은 도입 직후
     1000 → **0(무제한)으로 원복**(같은 날 사용자 결정 — 429의 원인은 상한이 아니라 무료 키
     쿼터였고 Vertex + 서킷브레이커로 무제한이 안전. 상한은 env로만 임시 사용).
+    **08-27 1회 실행 상한 폐기**(DECISIONS.md 08-27 항목 참조 — 당초 "LLM 호출 수로 계량
+    단위 교정"으로 착수했다가 사용자 논의로 방향이 바뀌어 상한 자체를 없앴다): 상한(총량
+    분산)은 필요 없는 게 아니라 해로운 기능이었다 — verdict NULL 게시물은 FE에서 배지
+    미표시·위험 카운트 제외로 서빙되는데, 08-18에 잔량 29,455건을 상한 1000으로 한 달간
+    분산한 게 무해했던 건 당시 expose가 꺼져 있었기 때문이고, 08-19 노출 개통 후에는 같은
+    상황이 "한 달간 틀린 데이터 서빙"이 된다. 분산은 비용 총액을 줄이지도 않는다(미룰
+    뿐이다). `AdDisclosureJudgeService`에서 상한 관련 상수·필드·생성자 파라미터·루프
+    상단 break를 전부 제거 — 버스트 속도 방어는 워커 풀 동시성(`concurrency` 4)이, 장애
+    폭주 방어는 연속 실패 서킷브레이커(`llm-failure-abort-threshold`, 무변경)가 그대로
+    담당한다. 잘못된 판정이 배포됐을 때의 대응은 `enabled` 킬 스위치·`AD_DISCLOSURE_EXPOSE`·
+    리셋 후 재배포가 정본이다. 프로퍼티 `backfill-max-per-run` 삭제(기본값이 이미
+    0=무제한이었으므로 운영 동작은 무변화).
   - 캡션·videoUrl 저장값 폴백 — 일시적 결손(보강 미완주 등) 시 캡션 부재를 그대로
     `NOT_DISCLOSED`로 오판정하지 않도록 방어.
   - `judgePosts` 성공 요약 로그 — 배치당 verdict 분포를 남겨 드라이런 검토 근거로 쓴다.
@@ -459,6 +510,33 @@ tagged `taken_at` 프록시)은 코드리뷰로 기각·폐기** — 자연 완�
 
 ## 미결·후속
 
+- **[게시물 목록 서버 필터 배포 후] dev-api 재측정으로 P0 효과 확정 + FE 회신** — 로컬
+  perf119 하니스는 DB 왕복만 재고, 스펙이 지목한 요청당 ~1.9초 고정비의 본체(JDBC String
+  생성·GC·2코어 호스트 CPU 경합)를 재지 못한다(DB 측 전송분은 ~7.5ms뿐). FE 실측과 **같은
+  조건**(계정 119·12개월·2,000건, 4병렬 포함)으로 재측정해 회신한다. 회신에 함께 확인 요청할
+  것 5건: `meta.facets` 키 형태, follower 5토큰 어휘(요청서의 "6.21과 동일"과 다름),
+  profileUrl 형식, **meta 셰이프 2종**(게시물 목록은 중첩 `meta.page`, 인플루언서는 flat
+  `meta{total,offset,limit}` — 의도된 설계), **`facets.*.all`은 기존 `counts.all`과 동일하게
+  `POST_LIMIT`(2,000) 캡 미적용**.
+- **[staging→main 승격 게이트] 4병렬 재측정 시 풀 공유 엔드포인트까지 함께 본다** — dev-api
+  재측정에서 브랜드 목록 응답시간만 보지 말고, **monitoring-ro 풀(max 3)을 공유하는 다른
+  엔드포인트(캠페인 items·성과 대시보드)의 p95와 Hikari 대기 지표**를 함께 확인한다. 신 인덱스
+  쿼리가 DB 왕복을 13.5→107ms로 늘려 **커넥션 점유가 8배**다 — 총 CPU는 구 경로의 WAS Java
+  판정 87ms와 등가 교환이지만 **점유는 등가가 아니라서**, 08-27 벤치로 확정된 풀 대기 병목
+  (캠페인 items 꼬리 지연)이 타 표면으로 번질 수 있다. 완화 후보: `caption ~*`(107→59ms —
+  아래 후속 후보, 케이스 폴딩 코퍼스 보강이 선행)·풀 상향(실측 근거 필요).
+- ~~인덱스 조회의 author username 폴백이 추가 왕복 비용을 낼 가능성~~ → **실측 무해**(perf119
+  실측 2026-08-27): 창 안 4,969행 중 `author_ig_user_id`가 NULL인 행이 10.0%(499건)이지만
+  `author_profile` 전체가 3,173행뿐이라 폴백 배치 쿼리가 **2.96ms**다.
+- **[후속 후보] `/influencers`의 `accountIds` 개수 상한이 없다** — 소유 링크로 제한돼 인가
+  문제는 아니지만(타 유저 브랜드는 조회 자체가 안 됨), 계정 수에 비례해 조회량이 늘어난다.
+  상한(예: 20) 도입 또는 최소한 계정 수 로깅을 검토한다.
+- **[후속 후보] 협찬 마커 매치를 `lower(caption) ~` → `caption ~*` 로** — perf119 실측상
+  신 인덱스 쿼리 101ms 중 `lower()`가 ~51ms라 107.2→58.7ms(1.8배)가 된다. 다만 `~*`의 케이스
+  폴딩은 Java `toLowerCase(Locale.ROOT)`와 유니코드 엣지(터키어 İ, ẞ 등)에서 어긋날 수 있어
+  `BrandSponsorshipSqlEquivalenceTest` 골든 코퍼스에 해당 사례를 추가해 동치성을 먼저 봉인해야
+  한다. **perf119 캡션이 전부 합성 ASCII(익명화 사본)라 CJK 실캡션 비용은 미측정**인 점도 함께
+  확인 대상.
 - ~~창 밖 tagged 등록이 DUPLICATE로 막혀 데드엔드가 되는 문제, "의도된 대가"로 수용~~(08-17
   링크 레벨 표시 창) → **08-18 direct 파이프라인 통합으로 대가 없이 해소**: 창 밖 tagged를
   직접 등록하면 `direct_registered_at`이 채워지고 direct 행은 표시 창 예외라 그 자리에서 바로
@@ -502,3 +580,20 @@ tagged `taken_at` 프록시)은 코드리뷰로 기각·폐기** — 자연 완�
   - 기존 저장 verdict 중 제외 문자열 substring 매칭으로 SELF 처리된 행은 불변(판정은 저장 후 불변 원칙) — 신규 수집분부터 정확 일치 기준.
   - 경쟁사(competitor) 계정: 해시태그 감지는 돌지만 direct 등록이 403이라 발견 카드 "성과 측정 시작"은 own 전용 — **FE 회신 필요**(경쟁사 화면 승격 버튼 노출 정책).
   - **08-18 정정**: `brandPostId`가 tagged로 채워지는 경로를 제거 — 발견 목록("태그 안 된 게시물")에서 tagged 겹침 행(사진 태그+해시태그 동시 게시물) 자체를 제외한다, direct 매핑이 있는 행은 tagged 여부와 무관하게 유지(direct 우선). 계약 v2.10 내 정정, `feat/hashtag-hide-tagged-overlap`.
+- **FE 최종 요청 3건 처리(08-28) — 배포 후 dev-api 재측정이 판정 지점**(DECISIONS 08-28 세 행):
+  - ① growth `followersSum` 분모 규칙 수정 — 스테이징 실데이터로 FE 기대값 3구간 정확히 일치 확인. FE가 이걸 기다려 **성과 대시보드 개요 탭 전환을 보류** 중이라, 배포되면 FE에 알릴 것.
+  - ② 브랜드 계열 고정비 — **FE 진단(캡션 미적용)은 오진**이고 본체는 모수 전량의 JDBC 매핑이었다. `BrandIndexCache`(버전키 = `DashboardVersion`)로 재조립 제거. 로컬 실측은 20페이지 0.95초지만 **운영·스테이징은 2코어 + 5,111행이라 첫 페이지는 여전히 ~2초**다 — FE 목표(2,000건 6초)는 충족하지만 "페이지당 0.3초"와는 다른 모양이니 배포 후 FE와 조건 맞춰 재측정할 것.
+  - ③ `total`·`facets` 2,000 모수 통일 + `meta.collectionCapped` 신설(additive) — FE가 상한 안내 판정을 `total === limit`에서 이 키로 옮겨야 한다. **FE 회신 필요**.
+  - **②의 첫 요청(~2초)은 후속 과제로 확정** — 현재 조치는 모수 재사용이라 캐시 미스 경로가 종전 그대로다(로컬 A/B: 변경 전 226ms / 미스 233ms / 적중 36ms). FE에도 "이대로 두고 첫 요청 개선은 계속 모색"으로 회신했다. 유력안은 **counts·facets의 SQL 집계 이전**(스테이징 선실측: 집계 단일 패스 180ms · 페이지 100건 5ms · 인플루언서 GROUP BY 240ms → 모든 요청 ~290ms). 핵심 트릭은 수집 상한 `ORDER BY taken_at DESC LIMIT 2000`을 SQL에 두면 플래너가 limit을 먼저 적용해 협찬 정규식이 5,111행 대신 2,000행만 타는 것(EXPLAIN 확인) — ③ 작업이 ②의 해법을 겸한다. 걸림돌은 판정 로직 SQL 이중화(08-27 `postgresMarkerRegex`+골든 코퍼스 패턴 재사용)·app/monitoring DB 분리로 `ownedShortCodes` 바인드 배열화·컨트롤러 테스트 90여 개 Testcontainers 재작성. 쪼개기는 상세 존재 판정 타게팅 → 목록 집계 → 인플루언서 집계 3단계.
+  - 잔여 후보(이번 범위 밖): 브랜드 표면에도 ETag 조건부 반환 도입(같은 URL 재방문 한정 이득), 협찬 정규식 `caption ~*` 전환(08-27 행), 인덱스 프로젝션에서 목록이 안 쓰는 게시자 URL 2컬럼 분리.
+- **인덱스 캐시 힙 예산(08-28 실측, DECISIONS 08-28 행)** — ref당 890바이트. 활성 링크 132개 전수로
+  가능한 엔트리 528개를 크기순 누적하면 **8개 62MB · 16개 91MB · 32개 116MB · 전부여도 170MB**
+  (큰 브랜드가 앞쪽에 다 들어와 곡선이 금방 평평하다). 운영 was 힙 2GB · Old Gen 최대 887MB이라
+  최악을 얹어도 1,003MB로 절반이 남는다.
+  - **`MAX_ENTRIES`는 메모리 다이얼이 아니라 폭주 방지 백스톱**이다. 값은 **작업 집합**으로 고른다 —
+    인플루언서 조회가 브랜드당 2엔트리(인덱스+스냅샷)를 쓰고 게시물 상세는 그 유저의 전 브랜드를
+    훑는데, 브랜드 8개 보유 유저가 실재해 상한이 작으면 **한 요청이 자기 엔트리를 밀어내 적중률 0**이
+    된다(8로 낮췄다가 이 이유로 32로 되돌린 전력 — DECISIONS 행 참조).
+  - **재검토 트리거는 "브랜드 창 안 총 행수"**(엔트리 수도 유저 수도 아니다 — 상주량이 여기에 선형).
+    08-28 기준 156개 브랜드 69,972행. 3배(약 21만)가 되면 절대 상한이 500MB대라 상한·구조를 다시 볼 것.
+  - 힙 재측정 레시피(로컬 실데이터 기동 + `jcmd GC.run`/`GC.heap_info`/`GC.class_histogram`)는 메모리 노트 참조.

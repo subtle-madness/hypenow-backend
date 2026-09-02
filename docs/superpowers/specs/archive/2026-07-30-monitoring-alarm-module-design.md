@@ -4,7 +4,7 @@
 >
 > 대체: [2026-07-29-monitoring-email-alarm-design.md](2026-07-29-monitoring-email-alarm-design.md)
 > (was 크론 방식 — PR #183 미머지 폐기. 알람 소유가 monitoring으로 이동하며 전면 재설계).
-> 계약 정본: [docs/contracts/monitoring-was-contract.md](../../contracts/monitoring-was-contract.md)
+> 계약 정본: [docs/contracts/monitoring-was-contract.md](../../../contracts/monitoring-was-contract.md)
 > — 이 트랙에서 **v2.0**으로 개정.
 
 ## 1. 배경·사용자 결정 (2026-07-29~30)

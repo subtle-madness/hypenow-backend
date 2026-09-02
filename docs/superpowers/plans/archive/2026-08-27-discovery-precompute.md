@@ -8,7 +8,7 @@
 
 **Tech Stack:** Spring Boot 4.1 / Java 21 / Flyway / JdbcClient / Testcontainers(PostgreSQL)
 
-**스펙:** [2026-08-27-discovery-precompute-design.md](../specs/2026-08-27-discovery-precompute-design.md)
+**스펙:** [2026-08-27-discovery-precompute-design.md](../../specs/2026-08-27-discovery-precompute-design.md)
 
 ## Global Constraints
 

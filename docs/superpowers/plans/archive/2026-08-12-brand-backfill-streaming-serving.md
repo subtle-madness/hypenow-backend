@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: ✅ 실행 완료(2026-08-12) · 스펙: [2026-08-12-brand-backfill-streaming-serving-design.md](../../specs/2026-08-12-brand-backfill-streaming-serving-design.md)
+> 상태: ✅ 실행 완료(2026-08-12) · 스펙: [2026-08-12-brand-backfill-streaming-serving-design.md](../../specs/archive/2026-08-12-brand-backfill-streaming-serving-design.md)
 
 **Goal:** 브랜드 등록 백필이 365일 열거를 끝내기 전에, 최근 30일 커버 시점에 FE ready(`last_swept_at`)를 당기고 페이지마다 즉시 적재한다 — tooq.official 실측 8분 24초 → 약 1분 30초.
 

@@ -141,6 +141,7 @@ public final class ArchiveTables {
 			List.of(), "t.user_id = :userId");
 
 	/**
+<<<<<<< HEAD
 	 * AI 어시스턴트 질문 로그(2026-08-27 브랜드 모니터링 AI 어시스턴트 PoC) — users CASCADE(직접
 	 * FK). BRAND_HASHTAG_TAGS와 같은 위상(자식 없음, 순정 CASCADE 자식이라 명시 DELETE 불필요 —
 	 * USERS 삭제 시 함께 사라진다).
@@ -165,6 +166,14 @@ public final class ArchiveTables {
 	 */
 	public static final ArchiveTable AI_CONVERSATIONS = new ArchiveTable(
 			"app.ai_conversations", List.of("id"), "t.user_id",
+			List.of(), "t.user_id = :userId");
+
+	/**
+	 * 광고 미표기 알림 이력(2026-08-27 주간 개편 §8) — users CASCADE(직접 FK). BRAND_HASHTAG_TAGS와
+	 * 같은 위상이다(자식 없음, 단순 유저 소유 매핑). 탈퇴 시 이관만 하고 삭제는 users CASCADE가 한다.
+	 */
+	public static final ArchiveTable AD_DISCLOSURE_NOTICES = new ArchiveTable(
+			"app.ad_disclosure_notices", List.of("user_id", "short_code"), "t.user_id",
 			List.of(), "t.user_id = :userId");
 
 	/**
@@ -193,10 +202,11 @@ public final class ArchiveTables {
 			BRAND_POST_CAMPAIGNS,
 			BRAND_HASHTAG_TAGS,
 			AI_CHAT_LOGS,
-			AI_CONVERSATIONS);
+			AI_CONVERSATIONS,
+			AD_DISCLOSURE_NOTICES);
 
 	/**
-	 * 탈퇴 시 이관 대상과 순서 — 자식 14개 + users. CATALOG의 부분집합이어야 한다(테스트로 강제).
+	 * 탈퇴 시 이관 대상과 순서 — 자식 18개 + users. CATALOG의 부분집합이어야 한다(테스트로 강제).
 	 * 이관(INSERT)은 전부 삭제(DELETE)보다 먼저 일어나므로 순서 자체가 정확성에 영향을 주진
 	 * 않지만, 자식 → 부모 순으로 읽히게 둔다. NOTICES·NOTICE_ITEMS는 users FK가 없어 여기 없다
 	 * (클래스 주석 참고).
@@ -219,6 +229,7 @@ public final class ArchiveTables {
 			BRAND_HASHTAG_TAGS,
 			AI_CHAT_LOGS,
 			AI_CONVERSATIONS,
+			AD_DISCLOSURE_NOTICES,
 			USERS);
 
 	private ArchiveTables() {

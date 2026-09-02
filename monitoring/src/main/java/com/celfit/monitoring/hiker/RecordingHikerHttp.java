@@ -1,5 +1,6 @@
 package com.celfit.monitoring.hiker;
 
+import com.celfit.instagram.source.HikerHttp;
 import com.celfit.monitoring.store.RawPayloadRepository;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -87,7 +88,7 @@ public class RecordingHikerHttp implements HikerHttp {
 		String key = switch (kindOf(path)) {
 			case "PROFILE" -> "username";
 			case "POSTS", "TAGGED" -> "user_id";
-			// 게시자 프로필의 실 파라미터는 id다(user_id는 Hiker 422 — HikerClient.fetchAuthorProfile 주석).
+			// 게시자 프로필의 실 파라미터는 id다(user_id는 Hiker 422 — HikerBackend.fetchAuthorProfile 주석).
 			// 08-07~08-12엔 user_id를 찾다 실패해 subject에 경로가 통째로 남았다(콜 집계 백필이 경로형을
 			// 함께 복원하는 이유 — V20260812153000).
 			case "PROFILE_BY_ID" -> "id";

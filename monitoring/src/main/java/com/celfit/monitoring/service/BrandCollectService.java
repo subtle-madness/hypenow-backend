@@ -1,11 +1,13 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.instagram.source.CommentsFetch;
+import com.celfit.instagram.source.InstagramSource;
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.ProfileInfo;
+import com.celfit.instagram.source.SubjectNotFoundException;
+import com.celfit.instagram.source.TaggedPage;
 import com.celfit.monitoring.ad.AdDisclosureJudgeService;
 import com.celfit.monitoring.hiker.BrandCallContext;
-import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.PostInfo;
-import com.celfit.monitoring.hiker.ProfileInfo;
-import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
 import com.celfit.monitoring.store.BrandRepository;
@@ -66,7 +68,18 @@ public class BrandCollectService {
 	static final int MAX_ABSENCE_VERIFY_PER_SWEEP = 30;
 	static final Duration ABSENCE_RECHECK = Duration.ofDays(7);
 
-	private final HikerClient hiker;
+	/** 스케줄 트리거(새벽 스윕) 전용 — 자체 1순위 + Hiker 폴백. sweepCore(2-인자)·enrich(2·3-인자)의
+	 * 기본 오버로드가 쓴다. */
+	private final InstagramSource hiker;
+	/** direct 게시물 동기 등록 전용({@link #enrichSync} · {@link BrandDirectCollectService}) — Hiker
+	 * 1순위 + 장애 시에만 self 구조. 클래스 javadoc 및 {@link #enrichSync} 참조. */
+	private final InstagramSource syncHiker;
+	/** 사용자 트리거 비동기 흐름(등록 백필·보강 — {@link BrandRegistrationService#runBackfillSafely}·
+	 * {@link BrandRegistrationService#runEnrichSafely}) 전용 — 2026-09 도입 시점 토글
+	 * (userTriggeredInstagramSource, HikerConfig 참조). {@link #sweepCoreUserTriggered}·
+	 * {@link #enrichUserTriggered} 오버로드가 쓴다. 시드는 Hiker 1순위와 동형(행동 변화 0), 토글이
+	 * 켜지면 자체 1순위로 전환 — {@link #hiker}·{@link #syncHiker}와 달리 정책 자체가 런타임에 바뀐다. */
+	private final InstagramSource userTriggeredHiker;
 	private final BrandCallContext callContext;
 	private final BrandSnapshotWriter writer;
 	private final BrandSnapshotRepository snapshots;
@@ -82,7 +95,9 @@ public class BrandCollectService {
 	private final int authorStaleDays;
 	private final boolean adDisclosureEnabled;
 
-	public BrandCollectService(HikerClient hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
+	public BrandCollectService(InstagramSource hiker, @Qualifier("syncInstagramSource") InstagramSource syncHiker,
+			@Qualifier("userTriggeredInstagramSource") InstagramSource userTriggeredHiker,
+			BrandCallContext callContext, BrandSnapshotWriter writer,
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
 			BrandRepository brands, AdDisclosureJudgeService adJudge,
@@ -93,6 +108,8 @@ public class BrandCollectService {
 			@Value("${monitoring.brand.author-stale-days:30}") int authorStaleDays,
 			@Value("${monitoring.brand.ad-disclosure.enabled:true}") boolean adDisclosureEnabled) {
 		this.hiker = hiker;
+		this.syncHiker = syncHiker;
+		this.userTriggeredHiker = userTriggeredHiker;
 		this.callContext = callContext;
 		this.writer = writer;
 		this.snapshots = snapshots;
@@ -168,7 +185,7 @@ public class BrandCollectService {
 	 * <p>열거 중단은 <b>5종</b>이다(2026-08-19 수집 개수 상한 신설로 4종에서 늘었다) —
 	 * ①페이지 전체가 깊이 컷(수집 창/14일) 이전 ②커서 소진(nextPageId null·빈 페이지)
 	 * ③커서 미전진(신규 code 0건) ④안전 상한(maxPostsPerSweep) 도달 ⑤수집 개수 상한
-	 * (collectionPostLimit, <b>0 이하면 무제한</b> — backfill-max-per-run 관용 일치) 도달.
+	 * (collectionPostLimit, <b>0 이하면 무제한</b>) 도달.
 	 * ①②⑤는 coveredCutoff=true → touchCrawledDepth로 깊이를 touch하고, ③④는 미커버라
 	 * touch하지 않는다(다음 스윕이 같은 깊이를 다시 연다). 단 ⑤의 touch 깊이는 ①②와 달리
 	 * <b>실제 커버 깊이가 아니라 목표 컷 전체</b>다 — 컷 밖 게시물의 지표를 마지막 수집 시점으로
@@ -190,12 +207,21 @@ public class BrandCollectService {
 	 */
 	public List<PostInfo> sweepCore(BrandRow brand, Consumer<List<PostInfo>> onPageCollected) {
 		// 콜 집계 스코프(어드민 크롤링 비용) — 이 안의 Hiker 콜은 전부 이 브랜드 몫으로 계상된다.
-		// 등록 백필(두-인자 직접 호출)도 같은 진입점이라 함께 계상된다.
-		return callContext.scoped(brand.id(), () -> doSweepCore(brand, onPageCollected));
+		return callContext.scoped(brand.id(), () -> doSweepCore(brand, onPageCollected, hiker));
 	}
 
-	private List<PostInfo> doSweepCore(BrandRow brand, Consumer<List<PostInfo>> onPageCollected) {
-		refreshBrandProfileSafely(brand);
+	/**
+	 * 등록 백필({@link BrandRegistrationService#runBackfillSafely}) 전용 진입점 — {@link #userTriggeredHiker}로
+	 * 라우팅한다(필드+진입점 분리 패턴, {@link #enrichSync} 참조). 열거 로직(doSweepCore)은
+	 * {@link #sweepCore(BrandRow, Consumer)}와 완전히 동일 — 소스만 갈린다.
+	 */
+	public List<PostInfo> sweepCoreUserTriggered(BrandRow brand, Consumer<List<PostInfo>> onPageCollected) {
+		return callContext.scoped(brand.id(), () -> doSweepCore(brand, onPageCollected, userTriggeredHiker));
+	}
+
+	private List<PostInfo> doSweepCore(BrandRow brand, Consumer<List<PostInfo>> onPageCollected,
+			InstagramSource source) {
+		refreshBrandProfileSafely(brand, source);
 		Instant now = Instant.now();
 		Instant cutoff = enumerationCutoff(brand, now);
 		LocalDate today = LocalDate.now(KST);
@@ -208,7 +234,7 @@ public class BrandCollectService {
 		boolean coveredCutoff = false;
 		boolean cappedThisRun = false;   // 수집 개수 상한으로 끊겼는가 — 백필 커버리지 기록 입력(스펙 §7-1)
 		while (true) {
-			HikerClient.TaggedPage page = hiker.fetchTaggedPage(brand.igUserId(), cursor);
+			TaggedPage page = source.fetchTaggedPage(brand.igUserId(), cursor);
 			if (page.posts().isEmpty()) {
 				// 태그 0건(404 → 빈 페이지)·커서 종료는 자연 종료. 반대로 아직 커서가 살아 있는데
 				// 빈 페이지가 오는 건 일시 오류와 구분할 수 없어 커버로 치지 않는다(보수적 판정).
@@ -242,8 +268,8 @@ public class BrandCollectService {
 			// due의 last_crawled_at이 실크롤 없이 갱신돼 ①매 스윕이 그 깊이를 다시 여는 낭비 루프가
 			// 차단되고 ②그 게시물들은 마지막 수집 시점 지표로 동결된 채 계속 서빙된다(was 목록
 			// 상한 2,000과 정합). 판정이 커서 소진 뒤인 이유는 밸브와 동일 — 마지막 페이지에서 정확히
-			// 상한에 닿는 건 자연 종료다. 0 이하면 무제한이다(backfill-max-per-run 관용 일치) —
-			// 0을 "1페이지 후 목표 컷 전체 동결"로 읽으면 브랜드가 티어 주기 동안 조용히 얼어붙는다.
+			// 상한에 닿는 건 자연 종료다. 0 이하면 무제한이다 — 0을 "1페이지 후 목표 컷 전체 동결"로
+			// 읽으면 브랜드가 티어 주기 동안 조용히 얼어붙는다.
 			if (collectionPostLimit > 0 && seen.size() >= collectionPostLimit) {
 				log.info("브랜드 태그 수집 개수 상한({}) 도달 — {} 의도된 자연 종료"
 								+ " (열거 {}건, 목표 컷 {}, 실제 커버 깊이 {})",
@@ -287,7 +313,7 @@ public class BrandCollectService {
 			// 태그 부재 검증(2026-08-25 tagged 삭제 감지 설계) — 커버한 열거에서 사라진 tagged-only
 			// 게시물만 단건 콜로 확정한다. ⑤(수집 상한) 종료는 목표 컷이 아니라 실제 커버 깊이가
 			// 하한이다 — 목표 컷을 쓰면 미도달 구간 전체를 부재로 오판해 검증 콜이 폭주한다.
-			verifyAbsentTagged(brand, seen, cappedThisRun ? oldestTakenAt(collected) : cutoff, now);
+			verifyAbsentTagged(brand, seen, cappedThisRun ? oldestTakenAt(collected) : cutoff, now, source);
 		}
 		if (brand.lastSweptOn() == null) {
 			// 백필 커버리지 기록(스펙 §7-1) — 일일 스윕은 기록하지 않는다(창 커버리지는 백필 속성:
@@ -318,7 +344,8 @@ public class BrandCollectService {
 	 * 매일 콜을 유발하지 않게). 그 외 실패는 격리(다음 스윕 재시도). 재관측(touchCrawled)이 두 표식을
 	 * 해제한다. 검증 하한이 null(⑤ 컷인데 편입 0건 — 깊이 미상)이면 범위를 정할 수 없어 건너뛴다.
 	 */
-	private void verifyAbsentTagged(BrandRow brand, Set<String> seen, Instant verifyFloor, Instant now) {
+	private void verifyAbsentTagged(BrandRow brand, Set<String> seen, Instant verifyFloor, Instant now,
+			InstagramSource source) {
 		if (verifyFloor == null) {
 			return;
 		}
@@ -338,7 +365,7 @@ public class BrandCollectService {
 		int gone = 0;
 		for (String code : toVerify) {
 			try {
-				hiker.fetchPost(code);
+				source.fetchPost(code);
 				taggedPosts.markAbsenceChecked(brand.id(), code, now);
 			} catch (SubjectNotFoundException e) {
 				log.info("tagged 게시물 부재 확정 — unavailable 마킹: {} ({})", code, e.toString());
@@ -355,8 +382,11 @@ public class BrandCollectService {
 	/**
 	 * 브랜드별 수집 창 컷 — KST 캘린더 개월(요청서 "게시물 taken_at 기준 최근 N개월").
 	 * 열거 깊이(백필)와 편입 필터가 같은 컷을 쓴다 — 창 밖 소급 태그가 편입되지 않게.
+	 *
+	 * <p>package-private인 이유(2026-08-27): 해시태그 수집({@link BrandHashtagCollectService})도
+	 * 같은 컷을 써야 한다(설계 §2-2 — 구 windowDays=90 고정 폐기). 사본을 두면 반드시 갈린다.
 	 */
-	private static Instant collectionCutoff(BrandRow brand, Instant now) {
+	static Instant collectionCutoff(BrandRow brand, Instant now) {
 		return ZonedDateTime.ofInstant(now, KST).minusMonths(brand.collectionMonths()).toInstant();
 	}
 
@@ -404,7 +434,7 @@ public class BrandCollectService {
 	 * @see #enrich(BrandRow, List, Runnable) onVisible 훅(계정 게이트 단축) 버전
 	 */
 	public void enrich(BrandRow brand, List<PostInfo> posts) {
-		enrich(brand, posts, null);
+		enrich(brand, posts, null, hiker);
 	}
 
 	/**
@@ -426,6 +456,38 @@ public class BrandCollectService {
 	 * 부르면 그 브랜드가 collecting에 영구히 갇힌다({@link #sweepCore} 콜백 계약 참조).
 	 */
 	public void enrich(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
+		enrich(brand, posts, onVisible, hiker);
+	}
+
+	/**
+	 * 등록 백필({@link BrandRegistrationService#runEnrichSafely}) 전용 진입점 — {@link #userTriggeredHiker}로
+	 * 라우팅한다(필드+진입점 분리 패턴, {@link #enrichSync} 참조). onVisible 훅 의미는
+	 * {@link #enrich(BrandRow, List, Runnable)}와 동일 — 소스만 갈린다.
+	 */
+	public void enrichUserTriggered(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
+		enrich(brand, posts, onVisible, userTriggeredHiker);
+	}
+
+	/**
+	 * 해시태그 수집({@link BrandHashtagCollectService#sweepUserTriggered}) 전용 진입점 — onVisible 없는
+	 * 2-인자 {@link #enrich(BrandRow, List)}의 사용자 트리거 대응판.
+	 */
+	public void enrichUserTriggered(BrandRow brand, List<PostInfo> posts) {
+		enrich(brand, posts, null, userTriggeredHiker);
+	}
+
+	/**
+	 * direct 게시물 동기 등록 전용 진입점({@link BrandDirectCollectService#collectAndEnrich} —
+	 * BrandController POST .../direct-posts, was 동기 예산 안) — {@link #syncHiker}(Hiker 1순위 +
+	 * 장애 시에만 self 구조)로 강제한다. 다른 두 {@code enrich} 오버로드(스윕·백필 등 배치 경로)는
+	 * 계속 {@link #hiker}(자체 1순위 + Hiker 폴백)를 쓴다 — 동기 경로만 소스가 갈린다는 것이 이
+	 * 메서드가 존재하는 유일한 이유다. onVisible 훅 없음(direct 단건 경로는 계정 게이트 개념이 없다).
+	 */
+	public void enrichSync(BrandRow brand, List<PostInfo> posts) {
+		enrich(brand, posts, null, syncHiker);
+	}
+
+	private void enrich(BrandRow brand, List<PostInfo> posts, Runnable onVisible, InstagramSource source) {
 		if (posts.isEmpty()) {
 			if (onVisible != null) {
 				onVisible.run();
@@ -434,13 +496,17 @@ public class BrandCollectService {
 		}
 		try {
 			try {
-				ensureAuthors(brand.id(), posts);
+				ensureAuthors(brand.id(), posts, source);
 			} finally {
 				// 정산 마킹(2026-08-17 노출 게이트 개정 — 스펙 §8) — 게시자 보강 성패와 무관하게 찍는다.
 				// was 게이트(enriched_at IS NOT NULL)의 의미가 "게시자 보강 완료 = 노출 가능"으로
 				// 좁혀졌다. finally인 이유는 기존과 동일(180일 초과 게시물엔 재열거 백스톱이 없다).
 				taggedPosts.markEnriched(brand.id(),
 						posts.stream().map(PostInfo::shortCode).toList(), Instant.now());
+				// 진행 워터마크(2026-08-31 백필 캐시 고착 수리) — 정산 직후 last_swept_at을 전진시켜
+				// was 인덱스 캐시(BrandIndexCache) 버전키를 움직인다. 반드시 markEnriched 뒤:
+				// 앞이면 새 키로 재계산된 인덱스가 미정산 단면을 캐시해 이 페이지가 다시 숨는다.
+				brands.touchProgress(brand.id());
 				// 계정 게이트 훅(2026-08-18) — markEnriched와 같은 보장(finally, 하드 실패 무관)으로
 				// 댓글·판정 시작 전에 1회 호출한다.
 				if (onVisible != null) {
@@ -450,7 +516,7 @@ public class BrandCollectService {
 		} finally {
 			// 댓글·광고 판정은 노출 게이트 밖 — ensureAuthors의 하드 실패(위 예외가 여기까지 전파되는
 			// 중이어도) 포함해 항상 시도한다(2026-08-18 수정). 각자 실패해도 위 정산에는 영향 없다.
-			collectCommentsGatedSafely(brand.id(), posts);
+			collectCommentsGatedSafely(brand.id(), posts, source);
 			judgeAdDisclosuresSafely(brand, posts);
 		}
 		log.info("브랜드 태그 보강 — {} 게시자 수집·정산 완료({}건 대상)", brand.username(), posts.size());
@@ -460,9 +526,9 @@ public class BrandCollectService {
 	 * 댓글 게이트 격리 래퍼 — 노출 게이트 개정(스펙 §8) 전에는 이 실패가 markEnriched를 감싸는
 	 * finally 덕에 우연히 격리됐지만, 이제 markEnriched가 먼저 찍히므로 명시적 격리가 필요하다.
 	 */
-	private void collectCommentsGatedSafely(long brandId, List<PostInfo> posts) {
+	private void collectCommentsGatedSafely(long brandId, List<PostInfo> posts, InstagramSource source) {
 		try {
-			collectCommentsGated(brandId, posts);
+			collectCommentsGated(brandId, posts, source);
 		} catch (RuntimeException e) {
 			log.warn("댓글 게이트 실패(격리, 다음 스윕이 워터마크로 재시도) — {}: {}", brandId, e.toString());
 		}
@@ -508,9 +574,9 @@ public class BrandCollectService {
 	 * <b>반드시 best-effort</b>: 프로필 콜 실패(일시 오류·비공개 전환 포함)가 태그 열거 수집을
 	 * 막으면 안 된다 — 브랜드는 탈퇴까지 추적이 정본(스펙 §8)이라 상태 전이도 하지 않는다.
 	 */
-	private void refreshBrandProfileSafely(BrandRow brand) {
+	private void refreshBrandProfileSafely(BrandRow brand, InstagramSource source) {
 		try {
-			ProfileInfo profile = hiker.fetchProfile(brand.username());
+			ProfileInfo profile = source.fetchProfile(brand.username());
 			writer.saveBrandProfile(brand.id(), brand.username(), LocalDate.now(KST), profile);
 		} catch (RuntimeException e) {
 			log.warn("브랜드 프로필 갱신 실패(격리, best-effort) — {}: {}", brand.username(), e.toString());
@@ -615,7 +681,7 @@ public class BrandCollectService {
 	 * 캐시(author_profile)라 같은 인플루언서를 여러 브랜드가 태그해도 콜은 30일에 1번이다.
 	 * 게시자 단위 격리 — 한 명의 실패가 나머지 게시자·게시물 수집에 번지면 안 된다.
 	 */
-	private void ensureAuthors(long brandId, Collection<PostInfo> posts) {
+	private void ensureAuthors(long brandId, Collection<PostInfo> posts, InstagramSource source) {
 		Set<String> ids = posts.stream().map(PostInfo::ownerUserId).filter(Objects::nonNull)
 				.collect(Collectors.toCollection(LinkedHashSet::new));
 		if (ids.isEmpty()) {
@@ -634,7 +700,7 @@ public class BrandCollectService {
 				continue;
 			}
 			tasks.add(CompletableFuture.runAsync(() -> callContext.runScoped(brandId,
-					() -> fetchAuthorWithRetry(id)), enrichWorker));
+					() -> fetchAuthorWithRetry(source, id)), enrichWorker));
 		}
 		CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new)).join();
 	}
@@ -648,9 +714,9 @@ public class BrandCollectService {
 	 * <p>타임아웃·5xx는 재시도하지 않는다 — 전송 계층이 이미 maxRetries를 태운 뒤이고, 실측상
 	 * 느린 콜은 3회 연속 16~21초로 전부 실패해 워커만 45초 묶었다.
 	 */
-	private void fetchAuthorWithRetry(String igUserId) {
+	private void fetchAuthorWithRetry(InstagramSource source, String igUserId) {
 		try {
-			authors.upsert(hiker.fetchAuthorProfile(igUserId));
+			authors.upsert(source.fetchAuthorProfile(igUserId));
 			return;
 		} catch (SubjectNotFoundException e) {
 			log.info("게시자 404 — user_id {} 1회 재시도", igUserId);
@@ -659,7 +725,7 @@ public class BrandCollectService {
 			return;
 		}
 		try {
-			authors.upsert(hiker.fetchAuthorProfile(igUserId));
+			authors.upsert(source.fetchAuthorProfile(igUserId));
 		} catch (RuntimeException e) {
 			log.warn("게시자 프로필 재시도 실패(격리) — user_id {}: {}", igUserId, e.toString());
 		}
@@ -671,7 +737,7 @@ public class BrandCollectService {
 	 * 저장값 0이라 "댓글 1개 이상만 수집"이 자동 성립한다(댓글 숨김·0건 게시물은 콜 자체 없음).
 	 * 게시물 단위 격리.
 	 */
-	private void collectCommentsGated(long brandId, Collection<PostInfo> posts) {
+	private void collectCommentsGated(long brandId, Collection<PostInfo> posts, InstagramSource source) {
 		List<PostInfo> candidates = posts.stream().filter(p -> p.comments() != null).toList();
 		if (candidates.isEmpty()) {
 			return;
@@ -687,7 +753,7 @@ public class BrandCollectService {
 			}
 			tasks.add(CompletableFuture.runAsync(() -> callContext.runScoped(brandId, () -> {
 				try {
-					HikerClient.CommentsFetch fetch = hiker.fetchComments(p.shortCode(), p.username(),
+					CommentsFetch fetch = source.fetchComments(p.shortCode(), p.username(),
 							commentPages, comments.findIds(p.shortCode()));
 					comments.upsertForPost(p.shortCode(), fetch.comments());
 					// 저장값은 열거 관측치로 갱신한다 — 다음 게이트가 "그 사이 증가분"만 보게.

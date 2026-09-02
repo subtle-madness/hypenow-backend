@@ -80,7 +80,7 @@ public class BrandReadRepository {
 		return jdbc.sql("""
 				SELECT short_code, author_username, author_ig_user_id, taken_at, first_seen_at,
 				       comments_collected_count, last_crawled_at, tag_detected_at, direct_registered_at,
-				       unavailable_at
+				       unavailable_at, hashtag_detected_at
 				FROM brand_tagged_post
 				WHERE brand_id = :brandId
 				  AND ( taken_at >= :cutoff OR direct_registered_at IS NOT NULL )
@@ -112,38 +112,99 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 브랜드 게시물 인덱스 프로젝션(2026-08-27 목록 타임아웃 해소 설계) — counts·창·필터·정렬·페이지
-	 * 슬라이스에 필요한 판정 입력만 <b>단일 쿼리</b>로 읽는다: 행 식별·창·source 파생(short_code·
-	 * taken_at·tag_detected_at·direct_registered_at) + 협찬 판정 입력(is_paid_partnership·caption).
-	 * 협찬 판정 자체는 was의 {@code BrandSponsorshipClassifier}가 조회 시 계산한다(저장 없음 —
-	 * 키워드 개선이 과거분에 즉시 소급되는 설계라 버킷·컬럼으로 굳히지 않는다).
+	 * 브랜드 게시물 인덱스 프로젝션(2026-08-27 목록 타임아웃 해소 설계) — counts·창·서버 필터·패싯·
+	 * 정렬·페이지 슬라이스에 필요한 판정 입력만 <b>단일 쿼리</b>로 읽는다: 행 식별·창·source 파생
+	 * (short_code·taken_at·tag_detected_at·direct_registered_at) + 협찬 판정 입력
+	 * (is_paid_partnership·caption_marker) + 필터·패싯 입력(content_type·ad_verdict) + 작성자 판정
+	 * 컬럼(author_profile 조인). 협찬 판정 자체는 was의 {@code BrandSponsorshipClassifier}가 조회 시
+	 * 계산한다(저장 없음 — 키워드 개선이 과거분에 즉시 소급되는 설계라 버킷·컬럼으로 굳히지 않는다).
 	 *
-	 * <p>단일 쿼리·최소 컬럼인 이유(스테이징 실측 2026-08-27, marynmay 창 안 10,427행): 이 규모에선
-	 * DB 실행(EXPLAIN 21ms)이 아니라 <b>행×컬럼 값 전송·매핑</b>이 지배 비용이다 — 10컬럼 전량
-	 * 조회(1.78s) + 3컬럼 협찬 조회(0.44s) 2왕복 구조가 요청당 2초대를 만들었다. 창·정산 술어는
-	 * {@link #findBrandPostsInWindow}와 동형이어야 한다 — 어긋나면 counts가 목록 모수와 갈라진다.
-	 * 메타 없는 행도 모수에 남도록 LEFT JOIN(판정 입력 null → unknown). 정렬은 호출부(자바) 몫이라
-	 * ORDER BY를 두지 않는다.
+	 * <p><b>캡션 원문을 기본으로 싣지 않는 이유</b>(스테이징 실측 2026-08-27 perf119, marynmay 창 안
+	 * 10,427행): 이 규모에선 DB 실행(EXPLAIN 21ms)이 아니라 <b>행×컬럼 값 전송·매핑</b>이 지배
+	 * 비용이고, 그 고정비의 본체가 캡션 7.7MB 전송이다. 그래서 마커 매치를 SQL로 내려
+	 * ({@code lower(caption) ~ :markerRegex}) boolean 1컬럼만 돌려받는다 — 캡션 자체는 페이지에 실릴
+	 * 코드만 {@link #findPostMeta}가 다시 읽는다. 판정 트리는 자바와 동일하고({@code
+	 * BrandSponsorshipClassifier.classify(Boolean, boolean)}), SQL↔Java 동치성은 골든 코퍼스 테스트가
+	 * 봉인한다.
 	 *
-	 * <p>2026-08-30 FE 계약 개편(AI scope 강제) — {@code content_type}(m)·{@code author_username}(t) 2컬럼을
-	 * 얹는다. AI 어시스턴트의 scope 필터(mediaType·작성자 검색)가 게시물 계열 툴 전부에 강제되려면 이
-	 * 인덱스 단계에서 미디어 타입·작성자를 알아야 하고, 컬럼 2개 추가는 단일 쿼리 구조를 유지한다
-	 * ({@code com.celfit.was.v1.brandmonitoring.ai.BrandAiToolbox} 전용, 표시 표면 소비처는 무영향).
+	 * <p><b>{@code withCaptions}</b>(2026-08-31 캡션 해시태그 탑재 설계) — 해시태그 추출이 필요한
+	 * 브랜드 게시물 경로({@link BrandPostAssembler#indexForBrand})만 true로 호출해 캡션을 함께 실어
+	 * 오고({@code m.caption}), 그 비용은 {@link BrandIndexCache} 캐시 미스(버전키 변경) 시에만
+	 * 지불한다. 그 외 경로(성과 대시보드 {@code PerformanceContentAssembler.loadPoolIndex} — 캐시
+	 * 없이 매 요청 조회하고 hashtags를 쓰지 않는다)는 false로 호출해 perf119 고정비를 계속 면제받는다
+	 * — record 매핑은 컬럼명 기반이라 캡션 컬럼 자체는 항상 내려야 하므로 false일 땐 {@code NULL}을
+	 * 같은 이름(caption)으로 내린다.
+	 *
+	 * <p>작성자 컬럼을 조인으로 함께 주는 이유: 목록의 인플루언서 필터·패싯이 인덱스 단계에서
+	 * 결정돼야 페이지 슬라이스가 성립한다(하이드레이트는 이미 잘린 페이지만 본다). 조인 키가 null인
+	 * 행(author_ig_user_id 미기입)은 author 컬럼이 전부 null로 오고 username 폴백 해소는 호출부 몫이다
+	 * — 그래서 원시 관측 username(raw_author_username)도 함께 싣는다.
+	 *
+	 * <p>성과 대시보드 인덱스(2026-08-27 목록 최적화 설계)도 이 프로젝션을 상태(hidden)·작성자 판정에
+	 * 함께 쓴다 — {@code unavailable_at}·{@code author_ig_user_id}는 short 값이라 폭 증가는 무시
+	 * 수준이고(컬럼 추가는 이 기준으로만 허용), 협찬 판정은 브랜드 표면과 같은 caption_marker를 쓴다
+	 * (캡션 전송 제거 이득을 대시보드도 함께 받는다).
+	 *
+	 * <p>창·정산 술어는 {@link #findBrandPostsInWindow}와 동형이어야 한다 — 어긋나면 counts가 목록
+	 * 모수와 갈라진다. 메타 없는 행도 모수에 남도록 LEFT JOIN(판정 입력 null → unknown,
+	 * caption_marker는 좌항 IS NOT NULL 가드 덕에 false). 정렬은 호출부(자바) 몫이라 ORDER BY를 두지
+	 * 않는다.
+	 *
+	 * <p>매핑은 수동 람다다(2026-08-31) — 창 안 전 행(운영 1.6만 행대)을 싣는 쿼리라
+	 * {@code query(Class)}의 이름 기반 리플렉션 매핑(행당 ~47µs 실측, raw 대비 20배)이 지배 비용이
+	 * 된다. 조립 8.4초 분해는 2026-08-31 수동 RowMapper 설계 §1 참조.
+	 *
+	 * @param markerRegex {@code BrandSponsorshipClassifier.postgresMarkerRegex()} 산출물 — 소문자
+	 *        캡션에 대한 ARE 정규식이다(호출부가 상수를 재작성하지 않게 그 메서드만 쓴다).
+	 * @param withCaptions true면 {@code m.caption}을 실어 온다(해시태그 추출용, perf119 고정비
+	 *        재지불), false면 같은 이름의 컬럼에 {@code NULL}을 내린다(record는 컬럼명 매핑이라 존재는
+	 *        해야 한다).
 	 */
 	public List<BrandPostIndexRow> findBrandPostIndex(long brandId, OffsetDateTime cutoff,
-			boolean enrichedOnly) {
+			boolean enrichedOnly, String markerRegex, boolean withCaptions) {
 		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
+		String captionColumn = withCaptions ? "m.caption," : "NULL AS caption,";
 		return jdbc.sql("""
 				SELECT t.short_code, t.taken_at, t.tag_detected_at, t.direct_registered_at,
-				       m.is_paid_partnership, m.caption, m.content_type, t.author_username
+				       t.hashtag_detected_at, t.unavailable_at, t.author_username AS raw_author_username,
+				       t.author_ig_user_id,
+				       m.is_paid_partnership,
+				       (m.caption IS NOT NULL AND lower(m.caption) ~ :markerRegex) AS caption_marker,
+				       """ + captionColumn + """
+
+				       m.content_type, m.ad_verdict,
+				       a.username AS author_username, a.full_name AS author_full_name,
+				       a.profile_pic_url AS author_profile_pic_url,
+				       a.image_object_path AS author_image_object_path,
+				       a.followers AS author_followers
 				FROM brand_tagged_post t
 				LEFT JOIN brand_post_meta m ON m.short_code = t.short_code
+				LEFT JOIN author_profile a ON a.ig_user_id = t.author_ig_user_id
 				WHERE t.brand_id = :brandId
 				  AND ( t.taken_at >= :cutoff OR t.direct_registered_at IS NOT NULL )
 				""" + enrichedFilter)
 				.param("brandId", brandId)
 				.param("cutoff", cutoff)
-				.query(BrandPostIndexRow.class)
+				.param("markerRegex", markerRegex)
+				.query((rs, i) -> new BrandPostIndexRow(
+						rs.getString("short_code"),
+						rs.getObject("taken_at", OffsetDateTime.class),
+						rs.getObject("tag_detected_at", OffsetDateTime.class),
+						rs.getObject("direct_registered_at", OffsetDateTime.class),
+						rs.getObject("hashtag_detected_at", OffsetDateTime.class),
+						rs.getObject("unavailable_at", OffsetDateTime.class),
+						rs.getString("raw_author_username"),
+						rs.getString("author_ig_user_id"),
+						rs.getObject("is_paid_partnership", Boolean.class),
+						rs.getBoolean("caption_marker"),
+						rs.getString("content_type"),
+						rs.getString("ad_verdict"),
+						rs.getString("author_username"),
+						rs.getString("author_full_name"),
+						rs.getString("author_profile_pic_url"),
+						rs.getString("author_image_object_path"),
+						rs.getObject("author_followers", Long.class),
+						rs.getString("caption")))
 				.list();
 	}
 
@@ -159,7 +220,7 @@ public class BrandReadRepository {
 		return jdbc.sql("""
 				SELECT short_code, author_username, author_ig_user_id, taken_at, first_seen_at,
 				       comments_collected_count, last_crawled_at, tag_detected_at, direct_registered_at,
-				       unavailable_at
+				       unavailable_at, hashtag_detected_at
 				FROM brand_tagged_post
 				WHERE brand_id = :brandId AND short_code IN (:shortCodes)
 				""")
@@ -170,17 +231,24 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 게시물별 최신 스냅샷 1행의 views 경량 프로젝션(2026-08-27 목록 타임아웃 해소 설계) —
-	 * performance_desc 정렬 키 산출 전용. 시계열 전량({@link #findSnapshots})은 게시물당 최대
-	 * 365행이라 정렬 키만 필요한 경로에 싣지 않는다. content_type을 함께 주는 이유: 피드는 views를
-	 * null로 접는 서빙 규칙({@code BrandPostAssembler.snapshotOf})을 호출부가 동일 적용해야 한다.
-	 * 브랜드 창 스코프 조인인 이유는 {@link #findSponsorshipMetaForBrand} 주석 참조.
+	 * 게시물별 최신 스냅샷 1행의 지표 프로젝션(2026-08-27 대시보드 목록 최적화 설계에서 확장) —
+	 * 정렬 키(views·likes·comments·engagement)·인플루언서 집계·대시보드 ref의 최신 지표 산출 전용.
+	 * 시계열 전량({@link #findSnapshots})은 게시물당 최대 365행이라 지표만 필요한 경로에 싣지 않는다.
+	 * content_type을 함께 주는 이유: 피드는 views를 null로 접는 서빙 규칙
+	 * ({@code BrandPostAssembler.snapshotOf})을 호출부가 동일 적용해야 한다. likes_hidden은 "0"과
+	 * "숨김"을 호출부가 구분하기 위한 것이다(숨김을 0으로 뭉개면 정렬·집계가 거짓말을 한다).
+	 * 브랜드 창 스코프 조인인 이유는 {@link #findBrandPostIndex} 주석과 같다 — 창·정산 술어가
+	 * 인덱스와 동형이어야 지표가 목록 모수와 어긋나지 않는다.
+	 *
+	 * <p>매핑은 수동 람다다(2026-08-31) — 게시물당 1행이라도 창 안 전 게시물(운영 1.5만 행대)을
+	 * 싣는다. 근거는 {@link #findBrandPostIndex} 매핑 주석과 같다.
 	 */
-	public List<LatestViewsRow> findLatestViewsForBrand(long brandId, OffsetDateTime cutoff,
+	public List<LatestSnapshotRow> findLatestSnapshotsForBrand(long brandId, OffsetDateTime cutoff,
 			boolean enrichedOnly) {
 		String enrichedFilter = enrichedOnly ? " AND t.enriched_at IS NOT NULL" : "";
 		return jdbc.sql("""
-				SELECT DISTINCT ON (s.short_code) s.short_code, s.content_type, s.views
+				SELECT DISTINCT ON (s.short_code) s.short_code, s.captured_on, s.content_type,
+				       s.views, s.likes, s.likes_hidden, s.comments
 				FROM brand_post_snapshot s
 				JOIN brand_tagged_post t ON t.short_code = s.short_code
 				WHERE t.brand_id = :brandId
@@ -191,16 +259,23 @@ public class BrandReadRepository {
 				""")
 				.param("brandId", brandId)
 				.param("cutoff", cutoff)
-				.query(LatestViewsRow.class)
+				.query((rs, i) -> new LatestSnapshotRow(
+						rs.getString("short_code"),
+						rs.getObject("captured_on", LocalDate.class),
+						rs.getString("content_type"),
+						rs.getObject("views", Long.class),
+						rs.getObject("likes", Long.class),
+						rs.getBoolean("likes_hidden"),
+						rs.getObject("comments", Long.class)))
 				.list();
 	}
 
 	/**
 	 * 게시물별 최신 스냅샷 좋아요·댓글·조회수(shortcode 스코프, 2026-08-28 AI aggregate_posts 전용) —
-	 * {@link #findLatestViewsForBrand}처럼 브랜드 전체를 창·정산 조건으로 다시 훑지 않고, 호출부(AI
+	 * {@link #findLatestSnapshotsForBrand}처럼 브랜드 전체를 창·정산 조건으로 다시 훑지 않고, 호출부(AI
 	 * 툴박스)가 인덱스에서 이미 걸러낸 shortcode 집합만 받는다({@link #findBrandPostsByShortCodes}와
 	 * 같은 위상 — 인덱스 프로젝션의 후속 배치 조회). content_type을 함께 주는 이유는
-	 * findLatestViewsForBrand와 동일(피드 views null 서빙 규칙을 호출부가 재현해야 한다).
+	 * findLatestSnapshotsForBrand와 동일(피드 views null 서빙 규칙을 호출부가 재현해야 한다).
 	 */
 	public List<LatestMetricsRow> findLatestMetricsByShortCodes(Collection<String> shortCodes) {
 		if (shortCodes.isEmpty()) {
@@ -292,7 +367,11 @@ public class BrandReadRepository {
 				.list();
 	}
 
-	/** 게시자(인플루언서) 프로필 — 기본 경로. author_profile의 PK가 ig_user_id라 중복이 없다. */
+	/**
+	 * 게시자(인플루언서) 프로필 — 기본 경로. author_profile의 PK가 ig_user_id라 중복이 없다.
+	 *
+	 * <p>게시자 프로필 배치 조회 — 매핑은 수동 람다(2026-08-31, 근거는 {@link #findBrandPostIndex} 참조).
+	 */
 	public List<AuthorRow> findAuthors(Collection<String> igUserIds) {
 		if (igUserIds.isEmpty()) {
 			return List.of();
@@ -304,7 +383,14 @@ public class BrandReadRepository {
 				WHERE ig_user_id IN (:igUserIds)
 				""")
 				.param("igUserIds", igUserIds)
-				.query(AuthorRow.class)
+				.query((rs, i) -> new AuthorRow(
+						rs.getString("ig_user_id"),
+						rs.getString("username"),
+						rs.getString("full_name"),
+						rs.getObject("followers", Long.class),
+						rs.getString("profile_pic_url"),
+						rs.getObject("is_verified", Boolean.class),
+						rs.getString("image_object_path")))
 				.list();
 	}
 
@@ -354,18 +440,125 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 해시태그 발견 게시물의 매칭 태그 전체(2026-08-19, was 사용자 스코프 필터 지원) —
-	 * {@code brand_hashtag_post_matched_tags}(모니터링 스윕이 게시물당 매칭된 활성 태그 전부를
-	 * 기록하는 M:N 테이블, {@code matched_tag} 단일 컬럼과 별개). 조회자 본인의 태그 원장
-	 * ({@code app.brand_hashtag_tags})과의 교집합 판정은 was 코드({@code BrandHashtagPostAssembler})가
-	 * 한다 — 여기서는 monitoring DB만 읽는다(시스템 경계, app 스키마와 SQL 조인 금지).
+	 * 지난주 <b>태그 열거로 새로 발견된</b> 게시물 + 최신 스냅샷 지표(설계 §4 브랜드 새 게시물).
+	 * direct 등록분은 제외한다 — 사용자가 스스로 넣은 게시물은 "발견 소식"이 아니다.
+	 * 스냅샷이 아직 없는 발견분도 모수에 남도록 LEFT JOIN이며, 그때 지표는 전부 null이다.
+	 *
+	 * <p>2026-08-28 품질 리뷰 I3: 잡이 유저마다 호출하던 것을 전 유저 브랜드id를 한데 모아 <b>1회</b>
+	 * 호출하는 방식으로 바뀌었다 — brandIds가 이제 여러 유저의 브랜드를 함께 담을 수 있어, DISTINCT ON을
+	 * short_code 단독이 아니라 (brand_id, short_code)로 건다. short_code 단독으로 접으면 브랜드 A·B가
+	 * 각각 발견한 동일 shortCode 중 하나가 사라져 그 브랜드를 보는 유저가 소식을 못 받는다 — 유저별
+	 * 최종 dedup(같은 유저가 여러 브랜드를 걸고 있어 겹치는 경우)은 호출부({@code WeeklyDigestJob})가
+	 * brandId로 되짚은 뒤 shortCode 기준으로 한다.
+	 */
+	public List<WeeklyPostMetrics> findTaggedPostsDiscoveredBetween(Collection<Long> brandIds,
+			OffsetDateTime from, OffsetDateTime toExclusive) {
+		if (brandIds.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT DISTINCT ON (t.brand_id, t.short_code) t.brand_id, t.short_code, t.author_username,
+				       s.content_type, s.views, s.likes, s.comments
+				FROM brand_tagged_post t
+				LEFT JOIN brand_post_snapshot s ON s.short_code = t.short_code
+				WHERE t.brand_id IN (:brandIds)
+				  AND t.direct_registered_at IS NULL
+				  AND t.tag_detected_at >= :from AND t.tag_detected_at < :toExclusive
+				ORDER BY t.brand_id, t.short_code, s.captured_on DESC NULLS LAST
+				""")
+				.param("brandIds", brandIds)
+				.param("from", from)
+				.param("toExclusive", toExclusive)
+				.query(WeeklyPostMetrics.class)
+				.list();
+	}
+
+	/**
+	 * 지난주 <b>해시태그 스윕이 새로 발견한</b> 관련 게시물(설계 §4). 이 표면은 스냅샷·보강이
+	 * 없어(스펙 2026-08-11 §5 보류) 지표가 열거 관측값 그대로고 조회수 자체가 없다 — views는
+	 * 항상 null로 내려 합산 규칙(릴스만 조회수)과 자연히 정합한다.
+	 *
+	 * <p>2026-08-28 품질 리뷰 I3: {@link #findTaggedPostsDiscoveredBetween}와 같은 이유로
+	 * DISTINCT ON을 (brand_id, short_code)로 건다 — brandIds가 이제 전 유저 배치 호출의 합집합이다.
+	 */
+	public List<WeeklyPostMetrics> findHashtagPostsDiscoveredBetween(Collection<Long> brandIds,
+			OffsetDateTime from, OffsetDateTime toExclusive) {
+		if (brandIds.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT DISTINCT ON (brand_id, short_code) brand_id, short_code, author_username, content_type,
+				       NULL::bigint AS views, likes, comments
+				FROM brand_hashtag_post
+				WHERE brand_id IN (:brandIds) AND verdict = 'RELEVANT'
+				  AND first_seen_at >= :from AND first_seen_at < :toExclusive
+				ORDER BY brand_id, short_code, first_seen_at DESC
+				""")
+				.param("brandIds", brandIds)
+				.param("from", from)
+				.param("toExclusive", toExclusive)
+				.query(WeeklyPostMetrics.class)
+				.list();
+	}
+
+	/**
+	 * 지난주 <b>광고 미표기</b>로 판정된 shortcode 전체(설계 §4 광고 미표기, 2026-08-28 재리뷰
+	 * nit로 술어 역전) — brand_post_meta 전체에서 창 하나로만 걸러 읽는다. 등록 원장(app
+	 * 스키마의 그 유저가 등록한 게시물)과의 교집합은 <b>호출부(was 코드)가 자바에서</b> 계산한다 —
+	 * monitoring DB와 app 스키마를 SQL로 조인하지 않는다는 시스템 경계는 그대로다.
+	 *
+	 * <p>이전에는 반대로 shortcode 후보 목록을 {@code IN (:shortCodes)}로 통째로 바인드했는데,
+	 * 유저 수만큼 왕복하지 않는 배치 조회(품질 리뷰 I3)로 바뀌면서 그 목록이 "전 유저의 등록
+	 * shortcode 합집합"이 돼 바인드 파라미터 상한에 걸릴 수 있었다. ad_verdict·창 조건만으로
+	 * 걸러 읽는 편이 원본 SQL 파라미터 없이 인덱스를 태우기도 더 쉽다. 판정 컬럼의 실제 위치는
+	 * brand_post_meta다(V20260817160000).
+	 */
+	public List<String> findNotDisclosedJudgedBetween(OffsetDateTime from, OffsetDateTime toExclusive) {
+		return jdbc.sql("""
+				SELECT short_code FROM brand_post_meta
+				WHERE ad_verdict = 'NOT_DISCLOSED' AND ad_judged_at >= :from AND ad_judged_at < :toExclusive
+				ORDER BY short_code
+				""")
+				.param("from", from)
+				.param("toExclusive", toExclusive)
+				.query(String.class)
+				.list();
+	}
+
+	/**
+	 * 해시태그 발견 게시물의 shortcode만(2026-08-27 서버 필터·패싯 설계) — counts와 tagged 풀과의
+	 * 교차 중복 제거처럼 <b>코드만</b>이면 되는 경로용. {@link #findHashtagPosts}와 WHERE·ORDER·LIMIT가
+	 * 동형이어야 한다(어긋나면 counts가 목록 모수와 갈라진다) — 캡션·썸네일 등 표시 컬럼 전송만 뺀 것이
+	 * 유일한 차이다.
+	 */
+	public List<String> findHashtagPostCodes(long brandId, OffsetDateTime cutoff, int limit) {
+		return jdbc.sql("""
+				SELECT short_code
+				FROM brand_hashtag_post
+				WHERE brand_id = :brandId AND verdict = 'RELEVANT' AND taken_at >= :cutoff
+				ORDER BY taken_at DESC
+				LIMIT :limit
+				""")
+				.param("brandId", brandId).param("cutoff", cutoff).param("limit", limit)
+				.query(String.class).list();
+	}
+
+	/**
+	 * 통합 풀 게시물의 매칭 태그 전체(2026-08-19 신설 → <b>2026-08-27 산지 교체</b>) —
+	 * {@code brand_post_matched_tag}(스윕이 게시물당 매칭된 활성 태그 전부를 기록하는 M:N 테이블).
+	 * 구 산지 {@code brand_hashtag_post_matched_tags}는 감지 구조 폐기와 함께 읽기를 중단했다
+	 * (테이블 DROP은 다음 릴리스 — expand-contract).
+	 *
+	 * <p>조회자 본인의 태그 원장({@code app.brand_hashtag_tags})과의 교집합 판정은 was 코드
+	 * ({@code BrandPostAssembler.filterVisibleToUser}·{@code BrandHashtagPostAssembler})가 한다 —
+	 * 여기서는 monitoring DB만 읽는다(시스템 경계, app 스키마와 SQL 조인 금지).
 	 */
 	public List<MatchedTagRow> findMatchedTags(long brandId, Collection<String> shortCodes) {
 		if (shortCodes.isEmpty()) {
 			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
 		}
 		return jdbc.sql("""
-				SELECT short_code, tag FROM brand_hashtag_post_matched_tags
+				SELECT short_code, tag FROM brand_post_matched_tag
 				WHERE brand_id = :brandId AND short_code IN (:shortCodes)
 				""")
 				.param("brandId", brandId).param("shortCodes", shortCodes)
@@ -481,11 +674,16 @@ public class BrandReadRepository {
 	 *
 	 * <p>{@code unavailableAt}(야간 스윕 단건 콜이 404를 받은 시각, null이면 정상 — 값이 있으면
 	 * trackingStatus가 hidden으로 내려간다, 2026-08-25 설계).
+	 *
+	 * <p>{@code hashtagDetectedAt}(2026-08-27 해시태그 직접 수집 설계 §1) — 해시태그 열거가 이
+	 * 게시물을 처음 편입한 시각. 세 타임스탬프가 모두 null이 아닐 수 있고(3성분 겹침), tag·direct가
+	 * 둘 다 null이면 hashtag-only 행이다. {@code source} 3원화와 사용자 격리 필터의 입력이다
+	 * ({@code BrandPostAssembler.resolveSource}·{@code filterVisibleToUser}).
 	 */
 	public record BrandTaggedPostRow(String shortCode, String authorUsername, String authorIgUserId,
 			OffsetDateTime takenAt, OffsetDateTime firstSeenAt, long commentsCollectedCount,
 			OffsetDateTime lastCrawledAt, OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
-			OffsetDateTime unavailableAt) {
+			OffsetDateTime unavailableAt, OffsetDateTime hashtagDetectedAt) {
 	}
 
 	/**
@@ -501,21 +699,42 @@ public class BrandReadRepository {
 	}
 
 	/**
-	 * 브랜드 게시물 인덱스 1행({@link #findBrandPostIndex}) — isPaidPartnership·caption null은
-	 * "메타 미보강(LEFT JOIN 미스)"과 "키 부재" 둘 다일 수 있고 어느 쪽이든 판정은 unknown이라
-	 * 구분하지 않는다. tagDetectedAt·directRegisteredAt은 source 파생·노출 필터 입력이다.
+	 * 브랜드 게시물 인덱스 1행({@link #findBrandPostIndex}) — isPaidPartnership null은 "메타
+	 * 미보강(LEFT JOIN 미스)"과 "키 부재" 둘 다일 수 있고 어느 쪽이든 판정은 unknown이라 구분하지
+	 * 않는다. tagDetectedAt·directRegisteredAt·hashtagDetectedAt은 source 3원화·노출 필터 입력이다
+	 * (2026-08-27 해시태그 직접 수집 설계 §3 — {@code BrandTaggedPostRow}의 같은 세 필드와 동형,
+	 * {@code BrandPostAssembler.indexForBrand}가 소비한다).
 	 *
-	 * @param contentType    m.content_type(LEFT JOIN 미스면 null) — AI scope의 mediaType 필터 입력
-	 *                       (2026-08-30, {@code BrandPostAssembler#contentTypeOf}로 정규화해 씀).
-	 * @param authorUsername t.author_username — AI scope의 작성자 검색(q)·팔로워 필터 입력.
+	 * <p>{@code captionMarker}는 캡션 원문 대신 SQL이 계산한 협찬 마커 매치 결과다(항상 non-null —
+	 * 메타 행이 없으면 false). {@code rawAuthorUsername}은 brand_tagged_post의 원시 관측값이고,
+	 * {@code author*} 5필드는 author_profile 조인 결과라 조인 미스면 전부 null이다 — username 폴백
+	 * 해소는 호출부(어셈블러) 몫이라는 뜻이다.
+	 *
+	 * <p>{@code unavailableAt}·{@code authorIgUserId}는 성과 대시보드 인덱스(2026-08-27 목록 최적화
+	 * 설계)의 상태(hidden)·작성자 판정 입력이다 — 브랜드 표면은 쓰지 않는다.
+	 *
+	 * <p>{@code caption}(2026-08-31 캡션 해시태그 탑재)은 {@code findBrandPostIndex}의
+	 * {@code withCaptions} 인자가 true일 때만 값이 있다 — false로 호출한 경로(성과 대시보드)는 항상
+	 * null이고, 이건 "메타 미보강"과 구분되지 않는 값이니 caption null을 "캡션이 원래 없다"는 판정에
+	 * 쓰면 안 된다(그 판정은 captionMarker가 이미 SQL에서 끝냈다).
+	 *
+	 * <p>contentType·authorUsername·authorFollowers는 AI 어시스턴트 scope 필터(mediaType·작성자
+	 * 검색·팔로워 필터, 2026-08-30 FE 계약 개편)의 입력이기도 하다 —
+	 * {@code com.celfit.was.v1.brandmonitoring.ai.BrandAiToolbox}가 {@code indexForBrand} 경유로 소비한다.
 	 */
 	public record BrandPostIndexRow(String shortCode, OffsetDateTime takenAt, OffsetDateTime tagDetectedAt,
-			OffsetDateTime directRegisteredAt, Boolean isPaidPartnership, String caption, String contentType,
-			String authorUsername) {
+			OffsetDateTime directRegisteredAt, OffsetDateTime hashtagDetectedAt, OffsetDateTime unavailableAt,
+			String rawAuthorUsername, String authorIgUserId, Boolean isPaidPartnership, boolean captionMarker,
+			String contentType, String adVerdict, String authorUsername, String authorFullName,
+			String authorProfilePicUrl, String authorImageObjectPath, Long authorFollowers, String caption) {
 	}
 
-	/** 게시물별 최신 스냅샷 views({@link #findLatestViewsForBrand}) — contentType은 피드 views null 규칙용. */
-	public record LatestViewsRow(String shortCode, String contentType, Long views) {
+	/**
+	 * 게시물별 최신 스냅샷 지표 1행({@link #findLatestSnapshotsForBrand}) — contentType은 피드 views
+	 * null 규칙용, likesHidden은 "0"과 "숨김"을 구분하는 플래그다(숨김이면 likes는 null).
+	 */
+	public record LatestSnapshotRow(String shortCode, LocalDate capturedOn, String contentType,
+			Long views, Long likes, boolean likesHidden, Long comments) {
 	}
 
 	/** 게시물별 최신 스냅샷 좋아요·댓글·조회수({@link #findLatestMetricsByShortCodes}) — aggregate_posts 전용. */
@@ -554,7 +773,7 @@ public class BrandReadRepository {
 			OffsetDateTime firstSeenAt, String imageObjectPath, String authorImageObjectPath) {
 	}
 
-	/** brand_hashtag_post_matched_tags 1행({@link #findMatchedTags}) — shortcode 1건에 매칭 태그 1건. */
+	/** brand_post_matched_tag 1행({@link #findMatchedTags}) — shortcode 1건에 매칭 태그 1건. */
 	public record MatchedTagRow(String shortCode, String tag) {
 	}
 

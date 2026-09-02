@@ -114,9 +114,10 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 	private BrandAiToolbox newToolbox(JdbcClient monitoringJdbc, boolean exposeAdDisclosure) {
 		BrandReadRepository brandReadRepository = new BrandReadRepository(monitoringJdbc);
 		BrandPostAssembler postAssembler = new BrandPostAssembler(brandReadRepository, postCampaignRepository,
-				directPostRepository, trackingItemAssembler, monitoringItemRepository, exposeAdDisclosure);
-		BrandHashtagPostAssembler hashtagPostAssembler = new BrandHashtagPostAssembler(brandReadRepository,
-				directPostRepository, hashtagTagRepository);
+				directPostRepository, trackingItemAssembler, monitoringItemRepository, hashtagTagRepository,
+				exposeAdDisclosure);
+		BrandHashtagPostAssembler hashtagPostAssembler = new BrandHashtagPostAssembler(postAssembler,
+				brandReadRepository);
 		return new BrandAiToolbox(linkRepository, brandReadRepository, postAssembler, hashtagPostAssembler,
 				objectMapper, Clock.fixed(NOW, ZoneOffset.UTC));
 	}

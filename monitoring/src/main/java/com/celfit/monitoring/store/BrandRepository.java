@@ -1,7 +1,7 @@
 package com.celfit.monitoring.store;
 
+import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.ProfileInfo;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -146,18 +146,6 @@ public class BrandRepository {
 				capped, coveredUntil == null ? null : Timestamp.from(coveredUntil), brandId);
 	}
 
-	/**
-	 * 브랜드 소개 — 해시태그 판정기(BrandMentionJudge)의 이름 충돌 방어 컨텍스트(스펙 §4-6).
-	 * BrandRow는 조회 단면(콜 파라미터)이라 biography까지 넣으면 스윕 경로 전역에 파급되므로,
-	 * 스윕 진입 시 1회(콜 0, DB만)만 별도로 뽑는다. 행이 없으면 null(브랜드 조회 자체가 이미
-	 * 앞단에서 검증됐다는 전제라 이 경로에서 예외로 승격하지 않는다).
-	 */
-	public String findBiography(long brandId) {
-		return db.query("SELECT biography FROM brand_account WHERE id = ?",
-				(rs, i) -> rs.getString("biography"), brandId)
-				.stream().findFirst().orElse(null);
-	}
-
 	public Optional<BrandRow> findByUsername(String username) {
 		return db.query("""
 				SELECT id, username, ig_user_id, status, last_swept_on, collection_months, has_own_link
@@ -196,12 +184,15 @@ public class BrandRepository {
 	 * 전량 수집(스윕·백필) 완주 기록 — last_swept_on이 null이면 "수집 준비 중"(백필 상태 판별,
 	 * 08-06 결정). last_swept_at은 시각 공급(was의 lastDetectedAt·lastTrackedAt),
 	 * backfill_completed_at은 <b>최초</b> 완주 시각이라 COALESCE로 첫 값을 보존한다.
+	 * sweep_completed_at은 <b>마지막</b> 완주 시각 — touchProgress가 last_swept_at을 진행
+	 * 워터마크로 넓힌 뒤(08-31) 완주 시각을 재는 소비자(Grafana 수집 소요·신선도 패널)용
+	 * 전용 컬럼으로, 여기서만 찍는다(09-02).
 	 * 성공했으니 직전 백필 오류도 여기서 클리어한다 — 다음 스윕 성공이 오류 기록의 유일한 해제 지점.
 	 */
 	public void touchSwept(long brandId, LocalDate on) {
 		db.update("""
 				UPDATE brand_account
-				SET last_swept_on = ?, last_swept_at = now(),
+				SET last_swept_on = ?, last_swept_at = now(), sweep_completed_at = now(),
 				    backfill_completed_at = COALESCE(backfill_completed_at, now()),
 				    backfill_error = NULL
 				WHERE id = ?""", on, brandId);
@@ -218,6 +209,22 @@ public class BrandRepository {
 	public void markServing(long brandId) {
 		db.update("UPDATE brand_account SET last_swept_at = now() WHERE id = ? AND last_swept_at IS NULL",
 				brandId);
+	}
+
+	/**
+	 * 진행 워터마크(2026-08-31 등록 백필 캐시 고착 수리) — 페이지 정산(markEnriched)마다
+	 * last_swept_at을 전진시킨다. was 버전키(DashboardVersion.brandWatermarks)의 브랜드 입력이
+	 * 이 컬럼이라, 안 움직이면 백필 도중(첫 페이지 markServing ~ 완주 touchSwept 사이 수 분)
+	 * 폴링이 전부 캐시에 붙어 게시물이 완주 시점에 한꺼번에 나타난다(08-31 skinfood 실측).
+	 * markServing과 달리 가드 없이 무조건 전진한다 — 재가입·기간 확장 재백필(last_swept_at이
+	 * 이미 찬 상태)도 같은 고착에 걸리기 때문. last_swept_at의 의미는 이 개정으로 "완주 시각"에서
+	 * "마지막 수집 활동 시각"으로 넓어졌다(완주 판정은 원래부터 last_swept_on·backfill_completed_at
+	 * 몫이라 판정 로직 영향 없음, was lastCollectedAt 표기는 오히려 정확해진다).
+	 * 완주 <b>시각</b>이 필요한 소비자(Grafana 수집 소요·신선도 패널)는 touchSwept 전용
+	 * sweep_completed_at을 본다(09-02 분리) — 이 메서드는 그 컬럼을 건드리지 않는다.
+	 */
+	public void touchProgress(long brandId) {
+		db.update("UPDATE brand_account SET last_swept_at = now() WHERE id = ?", brandId);
 	}
 
 	/**

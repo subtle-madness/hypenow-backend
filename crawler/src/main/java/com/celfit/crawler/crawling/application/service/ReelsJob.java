@@ -86,7 +86,7 @@ public class ReelsJob {
         ReelsSource source = reelsSource.current();   // 실행당 1회 — 토글 변경은 다음 실행부터
         Instant revisitBefore = RevisitCutoff.boundary(clock, settings.revisitIntervalDays());
         List<Influencer> targets = influencers.findReelsTargets(
-                revisitBefore, settings.fnbPipelineEnabled(),
+                revisitBefore, settings.fnbPipelineEnabled(), settings.homeLivingPipelineEnabled(),
                 PageRequest.of(0, settings.reelsBatchLimit()));
         int visited = 0, upserted = 0, skippedNoPk = 0, failed = 0;
         progress.start(JobName.REELS, targets.size());

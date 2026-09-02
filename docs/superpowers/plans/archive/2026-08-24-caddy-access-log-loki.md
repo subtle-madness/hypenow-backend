@@ -10,7 +10,7 @@
 
 **Tech Stack:** Grafana Alloy v1.8.2(River 설정), Loki 3.5, docker compose, Grafana 대시보드 JSON.
 
-**스펙:** [docs/superpowers/specs/2026-08-24-caddy-access-log-loki-design.md](../specs/2026-08-24-caddy-access-log-loki-design.md)
+**스펙:** [docs/superpowers/specs/2026-08-24-caddy-access-log-loki-design.md](../../specs/2026-08-24-caddy-access-log-loki-design.md)
 
 ## Global Constraints
 
@@ -345,7 +345,7 @@ blakshave 500 조사에서 확인: 상태코드 전수 기록처는 caddy 액세
 엣지 5xx(롤링 배포 순단 502 등)가 어떤 대시보드에도 안 잡혔다. alloy `loki.source.file`로
 `access.log`만 테일링(`service="caddy-access"`, 5xx만 `level=ERROR` 승격 — 기존 ERROR 패널
 자동 편입), 홈 대시보드에 "엣지 5xx" 패널 추가. 운영만 수집(test-access.log 제외), 알림
-rule은 빈도 실측 후 후속. [설계](docs/superpowers/specs/2026-08-24-caddy-access-log-loki-design.md)
+rule은 빈도 실측 후 후속. [설계](../../specs/2026-08-24-caddy-access-log-loki-design.md)
 ```
 
 (기존 항목 형식과 다르면 파일 상단의 실제 형식에 맞춘다.)

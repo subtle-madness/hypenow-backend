@@ -1,7 +1,7 @@
 {
   "uid": "hypenow-ops-metrics",
   "title": "운영 / 메트릭",
-  "description": "JVM·HTTP·외부 호출 — $module 필터. 주의: 프로메테우스 스크레이프는 was·monitoring만(crawler·analytics는 지표 없음)",
+  "description": "JVM·HTTP·외부 호출 — $module 필터. 4모듈(was·monitoring·crawler·analytics) 전부 스크레이프(2026-08-31 확장)",
   "tags": [
     "hypenow",
     "hypenow-ops"
@@ -93,7 +93,7 @@
         "defaults": {
           "unit": "reqps",
           "min": 0,
-          "noValue": "데이터 없음 (crawler·analytics는 스크레이프 미설정)",
+          "noValue": "데이터 없음",
           "color": {
             "mode": "palette-classic"
           },
@@ -154,7 +154,7 @@
         "defaults": {
           "unit": "s",
           "min": 0,
-          "noValue": "데이터 없음 (crawler·analytics는 스크레이프 미설정)",
+          "noValue": "데이터 없음",
           "color": {
             "mode": "palette-classic"
           },
@@ -295,7 +295,7 @@
         "defaults": {
           "unit": "percent",
           "min": 0,
-          "noValue": "데이터 없음 (crawler·analytics는 스크레이프 미설정)",
+          "noValue": "데이터 없음",
           "color": {
             "mode": "palette-classic"
           },
@@ -378,7 +378,7 @@
           "decimals": 1,
           "min": 0,
           "max": 100,
-          "noValue": "데이터 없음 (crawler·analytics는 스크레이프 미설정)",
+          "noValue": "데이터 없음",
           "color": {
             "mode": "palette-classic"
           },
@@ -440,7 +440,7 @@
           "unit": "short",
           "decimals": 3,
           "min": 0,
-          "noValue": "데이터 없음 (crawler·analytics는 스크레이프 미설정)",
+          "noValue": "데이터 없음",
           "color": {
             "mode": "palette-classic"
           },
@@ -502,7 +502,7 @@
           "unit": "short",
           "decimals": 0,
           "min": 0,
-          "noValue": "데이터 없음 (crawler·analytics는 스크레이프 미설정)",
+          "noValue": "데이터 없음",
           "color": {
             "mode": "palette-classic"
           },
@@ -575,7 +575,7 @@
           "unit": "short",
           "decimals": 0,
           "min": 0,
-          "noValue": "데이터 없음 (crawler·analytics는 스크레이프 미설정)",
+          "noValue": "데이터 없음",
           "color": {
             "mode": "palette-classic"
           },
@@ -670,7 +670,7 @@
           "unit": "percent",
           "decimals": 1,
           "min": 0,
-          "noValue": "데이터 없음 (crawler·analytics는 스크레이프 미설정)",
+          "noValue": "데이터 없음",
           "color": {
             "mode": "palette-classic"
           },
@@ -733,7 +733,7 @@
           "unit": "percentunit",
           "decimals": 1,
           "min": 0,
-          "noValue": "데이터 없음 (crawler·analytics는 스크레이프 미설정)",
+          "noValue": "데이터 없음",
           "color": {
             "mode": "palette-classic"
           },

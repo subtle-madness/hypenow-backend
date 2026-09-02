@@ -9,6 +9,9 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 	implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
 	implementation 'org.flywaydb:flyway-core'
+	// JVM 지표 노출(2026-08-31, 08-22 monitoring 스펙의 이연분) — /actuator/prometheus. was·monitoring과 같은 패턴
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 	implementation 'com.anthropic:anthropic-java:2.34.0'
 	implementation 'com.google.auth:google-auth-library-oauth2-http:1.49.0'
 	implementation 'com.google.cloud:google-cloud-storage:2.48.0'

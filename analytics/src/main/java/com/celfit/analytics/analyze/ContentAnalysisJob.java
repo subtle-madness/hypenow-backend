@@ -52,8 +52,14 @@ public class ContentAnalysisJob {
 	// late_backfill로 새던 원인이라 제거 — 수식은 뷰 한 곳에만 둔다.
 	// '이미 분석됨'·댓글 게이트 제외는 analysis DB 상태라 SQL 조인이 불가 — Java 셋 대조(diff)로
 	// 뺀다(뷰 주석의 원 설계: "'이미 분석됨' 제외·정렬 정책은 Java 몫").
+	// 재료(캡션·지표·핸들)도 이 뷰에서 함께 읽는다(2026-08-31) — 구 버전은 analysis DB의 미러
+	// 테이블 contents에서 다시 읽었는데, 미러는 뷰티 서빙 모수라 F&B 후보가 전부 "미러 부재"로
+	// 스킵됐다(04 모수를 넓혀도 로그만 남기고 사라지는 구조). 뷰가 이미 같은 컬럼을 들고 있어
+	// 콘텐츠당 조회 1회가 줄고, 미러 지연으로 뷰티 후보가 하루 밀리던 스킵도 함께 사라진다.
+	// 컬럼 이름은 구 contents 조회와 1:1로 맞춘다 — GeminiBatchLines가 이 키 계약에 의존한다.
 	private static final String CANDIDATES_SQL = """
-			SELECT short_code
+			SELECT short_code, account_handle, caption, content_type, thumbnail_url,
+			       views, likes, comments, ad_marked
 			FROM v_analysis_candidates
 			WHERE timely = ?
 			ORDER BY metric_captured_at DESC NULLS LAST, short_code""";
@@ -128,7 +134,7 @@ public class ContentAnalysisJob {
 
 	private JobResult runQuery(boolean timely, ProgressReporter progress) {
 		Baselines baselines = loadBaselines();
-		List<String> targets = resolveTargets(timely);
+		List<Map<String, Object>> targets = resolveTargets(timely);
 
 		if (settings.batchTransportEnabled()) {
 			if (thumbnailEnabled) {
@@ -150,14 +156,27 @@ public class ContentAnalysisJob {
 	}
 
 	/**
-	 * 후보 뷰 조회 + 3종 제외 게이트(이미 분석됨·댓글 미분류·미러 미도달) — 온라인·배치 제출 양쪽이
+	 * 후보 뷰 조회(재료 포함) + 2종 제외 게이트(이미 분석됨·댓글 미분류) — 온라인·배치 제출 양쪽이
 	 * 공유한다(2026-08-11). 자격(캘린더일 timely·성숙·윈도우)은 뷰 소관, 제외는 여기 Java diff 소관
-	 * (클래스 상단 주석 참조).
+	 * (클래스 상단 주석 참조). 구 3번째 게이트(미러 미도달)는 08-31 미러 의존 제거로 불필요해졌다.
+	 *
+	 * @return 후보 행 목록. 키는 short_code·account_handle·caption·content_type·thumbnail_url·
+	 *         views·likes·comments·ad_marked (구 contents 조회 결과와 같은 이름 — 하위 조립이 의존).
 	 */
-	private List<String> resolveTargets(boolean timely) {
-		List<String> candidates = new ArrayList<>();
+	private List<Map<String, Object>> resolveTargets(boolean timely) {
+		List<Map<String, Object>> candidates = new ArrayList<>();
 		raw.query(CANDIDATES_SQL, rs -> {
-			candidates.add(rs.getString(1));
+			Map<String, Object> row = new LinkedHashMap<>();
+			row.put("short_code", rs.getString("short_code"));
+			row.put("account_handle", rs.getString("account_handle"));
+			row.put("caption", rs.getString("caption"));
+			row.put("content_type", rs.getString("content_type"));
+			row.put("thumbnail_url", rs.getString("thumbnail_url"));
+			row.put("views", rs.getObject("views"));
+			row.put("likes", rs.getObject("likes"));
+			row.put("comments", rs.getObject("comments"));
+			row.put("ad_marked", rs.getObject("ad_marked"));
+			candidates.add(row);
 		}, timely);
 		// analysis 쪽 제외 셋 3종 — 후보 수만·분석 누적 8만 스케일이라 통짜 로드가 충분히 싸다.
 		Set<String> analyzed = new HashSet<>(
@@ -167,24 +186,15 @@ public class ContentAnalysisJob {
 				SELECT DISTINCT m.short_code FROM content_comments m
 				WHERE NOT EXISTS (SELECT 1 FROM comment_classifications k WHERE k.short_code = m.short_code)""",
 				String.class));
-		// 라이브 후보 뷰와 미러(전날 19:30 스냅샷) 간극 가드 — 미러에 아직 없는 후보를 analyzeOne이
-		// 조회 실패(실패 카운트 오염)로 만들지 않고 스킵한다. 다음 미러 후 자연 재대상.
-		Set<String> mirrored = new HashSet<>(
-				analysis.queryForList("SELECT short_code FROM contents", String.class));
-		List<String> targets = new ArrayList<>();
-		int mirrorMissing = 0;
-		for (String shortCode : candidates) {
+		// 미러 미도달 게이트는 제거했다(2026-08-31) — 재료를 미러가 아니라 후보 뷰에서 읽으므로
+		// analyzeOne의 조회 실패가 구조적으로 발생하지 않는다(그 실패 방지가 구 게이트의 목적이었다).
+		List<Map<String, Object>> targets = new ArrayList<>();
+		for (Map<String, Object> row : candidates) {
+			String shortCode = (String) row.get("short_code");
 			if (analyzed.contains(shortCode) || commentBlocked.contains(shortCode)) {
 				continue;
 			}
-			if (!mirrored.contains(shortCode)) {
-				mirrorMissing++;
-				continue;
-			}
-			targets.add(shortCode);
-		}
-		if (mirrorMissing > 0) {
-			log.info("미러 부재 후보 {}건 스킵 — 다음 미러 후 자연 재대상", mirrorMissing);
+			targets.add(row);
 		}
 		return targets;
 	}
@@ -194,7 +204,8 @@ public class ContentAnalysisJob {
 	 * 재사용. 제출 전 pending 잔여를 먼저 수거해 중복 제출을 완화한다(전날 미수거분 회수 — 이미
 	 * 분석됨 diff·ON CONFLICT DO NOTHING이 이중 안전장치라 설령 겹쳐도 무해).
 	 */
-	private JobResult submitBatch(boolean timely, List<String> targets, Baselines baselines) {
+	private JobResult submitBatch(boolean timely, List<Map<String, Object>> targets,
+			Baselines baselines) {
 		JobResult swept = collectJob.run();
 		if (swept.processed() > 0 || swept.failed() > 0) {
 			log.info("배치 제출 전 pending 수거 — {}건 저장, {}건 실패", swept.processed(), swept.failed());
@@ -203,15 +214,44 @@ public class ContentAnalysisJob {
 			log.info("배치 제출 대상 없음 — 제출 생략 (timely={})", timely);
 			return new JobResult(0, 0, false);
 		}
+		// 청크 분할(2026-08-31): 대상 전량을 배치 1건으로 밀면 sidecar_jsonl 한 컬럼에 수십 MB가
+		// 들어가고 Vertex 배치 파일 한도에도 걸린다(백로그 일괄 개방 대비). 수거는 배치 행 단위라
+		// ContentBatchCollectJob은 무변경이다.
+		int chunkSize = settings.batchChunkSize();
+		int submitted = 0;
+		int chunks = 0;
+		for (int from = 0; from < targets.size(); from += chunkSize) {
+			List<Map<String, Object>> chunk =
+					targets.subList(from, Math.min(from + chunkSize, targets.size()));
+			// 업로드 이름을 청크마다 유일하게 — 실구현(VertexHttpApi)의 GCS 객체 경로가
+			// displayName 그대로라, 같은 이름이면 뒤 청크 업로드가 앞 청크 입력 파일을 덮어쓰고
+			// Vertex 배치는 실행 시점에 GCS를 읽어 두 배치가 같은(마지막) 입력을 돌린다
+			// (2026-08-31 운영 실발생 — 3,000건 배치가 795건 결과·전원 사이드카 매칭 실패).
+			submitOneChunk(timely, chunk, baselines,
+					"hypenow-analyze-%d-c%d".formatted(System.currentTimeMillis(), chunks));
+			submitted += chunk.size();
+			chunks++;
+		}
+		log.info("분석 배치 제출 완료 — 총 {}건, 청크 {}개(상한 {}), timely={}",
+				submitted, chunks, chunkSize, timely);
+		return new JobResult(submitted, 0, false);
+	}
+
+	/**
+	 * 청크 1개를 배치 1건으로 제출하고 content_batch_jobs에 pending 행을 남긴다.
+	 * @param uploadName 업로드·배치 표시 이름 — GCS 객체 경로가 이 이름에서 나오므로 청크마다
+	 *                   유일해야 한다(호출자가 타임스탬프+청크 번호로 보장).
+	 */
+	private void submitOneChunk(boolean timely, List<Map<String, Object>> targets,
+			Baselines baselines, String uploadName) {
 		BeautyTaxonomy taxonomy = taxonomyLoader.get();
 		String system = GeminiContentAnalyzer.instructions(taxonomy);
 		String model = settings.activeLlmModel();
 		StringBuilder jsonl = new StringBuilder();
 		StringBuilder sidecar = new StringBuilder();
-		for (String shortCode : targets) {
-			Map<String, Object> content = analysis.queryForMap("""
-					SELECT account_handle, caption, content_type, views, likes, comments, ad_marked
-					FROM contents WHERE short_code = ?""", shortCode);
+		for (Map<String, Object> content : targets) {
+			// 재료는 후보 뷰가 준 행 그대로 — 미러(contents) 재조회 없음(2026-08-31).
+			String shortCode = (String) content.get("short_code");
 			Baseline b = baselines.withBaseline().get(shortCode);
 			if (b == null) {
 				Baseline accountAvg = baselines.accountBaseline().get((String) content.get("account_handle"));
@@ -232,6 +272,9 @@ public class ContentAnalysisJob {
 			// (백필 러너의 raw 뷰 조인 행과 같은 키 이름 계약). 캡션 단독(백필과 동일 — 썸네일 서명 URL은
 			// 익일 수거 시점엔 대부분 만료라 애초에 첨부하지 않는다).
 			Map<String, Object> row = new LinkedHashMap<>(content);
+			// 구 contents 조회 결과에 없던 키 — 프롬프트/사이드카 입력 계약을 그대로 보존한다.
+			row.remove("short_code");
+			row.remove("thumbnail_url");
 			row.put("recent_reels_avg_views", b.recentReelsAvgViews());
 			row.put("rank_in_recent_reels", b.rankInRecentReels());
 			row.put("recent_reels_count", b.recentReelsCount());
@@ -249,8 +292,8 @@ public class ContentAnalysisJob {
 			sidecar.append(json.writeValueAsString(GeminiBatchLines.sidecarLine(json, shortCode, row)))
 					.append('\n');
 		}
-		String fileName = batchApi.uploadFile(jsonl.toString().getBytes(StandardCharsets.UTF_8), "hypenow-analyze");
-		String batchName = batchApi.createBatch(model, fileName, "hypenow-analyze");
+		String fileName = batchApi.uploadFile(jsonl.toString().getBytes(StandardCharsets.UTF_8), uploadName);
+		String batchName = batchApi.createBatch(model, fileName, uploadName);
 		// 사이드카는 로컬 파일이 아니라 DB 컬럼에 보관한다 — analytics 컨테이너에는 쓰기 가능한
 		// 볼륨이 없어(deploy/compose.yaml), 제출~수거 사이에 배포·컨테이너 교체가 끼면 로컬 파일은
 		// 유실되고 pending 행이 영원히 pending으로 남는 좀비가 된다(리뷰 지적, 08-11). 백필 CLI
@@ -259,11 +302,10 @@ public class ContentAnalysisJob {
 		analysis.update("""
 				INSERT INTO content_batch_jobs (batch_name, timely, submitted_count, status, sidecar_jsonl)
 				VALUES (?, ?, ?, 'pending', ?)""", batchName, timely, targets.size(), sidecar.toString());
-		log.info("분석 배치 제출 완료 — batch={}, {}건, timely={}", batchName, targets.size(), timely);
-		return new JobResult(targets.size(), 0, false);
+		log.info("분석 배치 청크 제출 — batch={}, {}건, timely={}", batchName, targets.size(), timely);
 	}
 
-	private JobResult runOnline(boolean timely, List<String> targets, Baselines baselines,
+	private JobResult runOnline(boolean timely, List<Map<String, Object>> targets, Baselines baselines,
 			ProgressReporter progress) {
 		String model = settings.activeLlmModel();
 		AtomicInteger processedCount = new AtomicInteger();
@@ -276,13 +318,14 @@ public class ContentAnalysisJob {
 		// 순서만 동시성 때문에 섞인다. 병렬도는 app_setting(analytics.analyze-concurrency,
 		// 기본 8)으로 재배포 없이 조정 가능 — Vertex는 RPM 페이싱이 없어(DSQ) 여유가 있다.
 		List<Callable<Void>> tasks = new ArrayList<>();
-		for (String shortCode : targets) {
+		for (Map<String, Object> content : targets) {
+			String shortCode = (String) content.get("short_code");
 			tasks.add(() -> {
 				if (quotaExhausted.get()) {
 					return null; // 이미 쿼타 소진 — 남은 큐는 추가 429를 만들지 않도록 LLM 호출 없이 스킵
 				}
 				try {
-					analyzeOne(shortCode, model, baselines.withBaseline(), baselines.accountBaseline(), timely);
+					analyzeOne(content, model, baselines.withBaseline(), baselines.accountBaseline(), timely);
 					int p = processedCount.incrementAndGet();
 					progress.report(p, failedCount.get(), targets.size());
 				} catch (com.celfit.analytics.llm.LlmQuotaExhaustedException e) {
@@ -356,12 +399,10 @@ public class ContentAnalysisJob {
 		return new Baselines(accountBaseline, withBaseline);
 	}
 
-	private void analyzeOne(String shortCode, String model,
+	/** content는 후보 뷰가 준 행 — 미러(contents) 재조회 없음(2026-08-31 미러 의존 제거). */
+	private void analyzeOne(Map<String, Object> content, String model,
 			Map<String, Baseline> withBaseline, Map<String, Baseline> accountBaseline, boolean timely) {
-		Map<String, Object> content = analysis.queryForMap("""
-				SELECT account_handle, caption, content_type, thumbnail_url, views, likes, comments,
-				       ad_marked
-				FROM contents WHERE short_code = ?""", shortCode);
+		String shortCode = (String) content.get("short_code");
 		// 최근창 안이면 콘텐츠 키 기준선(rank 포함), 밖이면 계정 평균(rank null) 폴백 (07-20 스코프 확장).
 		// 계정 집계도 없는 이례적 경우(원본 스키마 스큐 등)엔 전부 null — 프롬프트가 앵커 없이 절제 처리.
 		Baseline b = withBaseline.get(shortCode);
@@ -400,15 +441,16 @@ public class ContentAnalysisJob {
 		if (s.aiContentSummary() == null || s.aiContentSummary().isBlank()) {
 			throw new IllegalStateException("종합 텍스트가 비어 있음: " + shortCode);
 		}
-		// 뷰티로 판정됐으나 복구 후에도 대분류를 못 얻은 경우: 분석은 temperature 0 결정론이라 같은
-		// 입력을 재실행해도 동일 결과 → 옛 self-heal(행 미기록·재대상)은 무한 재시도로 영영 완료되지
-		// 않고 매 실행 LLM 호출만 태웠다(운영 실측 재대상 루프). is_beauty=false로 **종결 저장**해
-		// 루프를 끊는다 — 불변식 'main_category null ⇒ 서빙에서 비뷰티'는 그대로 보존(is_beauty=false라
+		// 분류 대상으로 판정됐으나 복구 후에도 대분류를 못 얻은 경우: 분석은 temperature 0 결정론이라
+		// 같은 입력을 재실행해도 동일 결과 → 옛 self-heal(행 미기록·재대상)은 무한 재시도로 영영
+		// 완료되지 않고 매 실행 LLM 호출만 태웠다(운영 실측 재대상 루프). 미분류로 **종결 저장**해
+		// 루프를 끊는다 — 불변식 'main_category null ⇒ 서빙에서 제외'는 그대로 보존(is_beauty=false라
 		// 랭킹·인플루언서 상세에서 제외), 서빙 계층 무변경. 진짜 일시 실패(빈 종합·파싱 오류)는 위에서
-		// 여전히 throw→재대상으로 self-heal한다. (설계 2026-07-20 §3-3 개정: 결정론 케이스는 종결)
-		if (attrs != null && Boolean.TRUE.equals(attrs.isBeauty()) && attrs.mainCategory() == null) {
-			log.info("뷰티 판정이나 대분류 미도출 — is_beauty=false로 종결 저장(재시도 루프 방지): {}", shortCode);
-			attrs = attrs.asNonBeauty();
+		// 여전히 throw→재대상으로 self-heal한다. (설계 2026-07-20 §3-3 개정: 결정론 케이스는 종결.
+		// 2026-08-31 축 일반화로 조건을 isBeauty→isRelevant로 옮겼다 — F&B도 같은 처방이 필요하다.)
+		if (attrs != null && Boolean.TRUE.equals(attrs.isRelevant()) && attrs.mainCategory() == null) {
+			log.info("분류 대상이나 대분류 미도출 — 미분류로 종결 저장(재시도 루프 방지): {}", shortCode);
+			attrs = attrs.asUnclassified();
 		}
 		// V33 마킹 분기(07-20 개정): 제때 가드를 충족하면 timely, 윈도우 경로로만 들어온 늦크롤은 late_backfill.
 		ContentAnalysisWriter.insert(analysis, json, shortCode, model, b, attrs, s, false,

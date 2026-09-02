@@ -10,15 +10,11 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
-@Testcontainers
 class MirrorJobTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	JdbcTemplate db;
 	MirrorJob job;
@@ -66,6 +62,30 @@ class MirrorJobTest {
 
 		List<Long> ids = db.queryForList("SELECT id FROM fixture_row ORDER BY id", Long.class);
 		assertEquals(List.of(2L, 3L), ids);
+	}
+
+	@Test
+	void 배치_경계를_넘는_대량_행도_자투리까지_전부_복사한다() {
+		// 배치 500 기준 500+500+205 — 마지막 자투리 플러시 누락을 잡는다
+		db.update("INSERT INTO fixture_src SELECT g, 'n' || g, g * 2 FROM generate_series(3, 1205) g");
+
+		int copied = job.mirror(SPEC);
+
+		assertEquals(1205, copied);
+		assertEquals(1205, db.queryForObject("SELECT count(*) FROM fixture_row", Long.class));
+	}
+
+	@Test
+	void 뒷배치에서_실패하면_앞배치_포함_전부_롤백되고_기존_데이터가_남는다() {
+		job.mirror(SPEC);   // 기존 데이터 2행 적재
+		db.update("ALTER TABLE fixture_row ADD CONSTRAINT no_999 CHECK (id <> 999)");
+		// 999는 두 번째 배치(501~1000번째 행) 소속 — 첫 배치가 이미 INSERT된 뒤 실패한다
+		db.update("INSERT INTO fixture_src SELECT g, 'n' || g, g * 2 FROM generate_series(3, 1205) g");
+
+		assertThrows(RuntimeException.class, () -> job.mirror(SPEC));
+
+		List<Long> ids = db.queryForList("SELECT id FROM fixture_row ORDER BY id", Long.class);
+		assertEquals(List.of(1L, 2L), ids);
 	}
 
 	@Test

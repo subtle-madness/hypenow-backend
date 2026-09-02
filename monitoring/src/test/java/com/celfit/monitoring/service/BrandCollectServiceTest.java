@@ -3,26 +3,26 @@ package com.celfit.monitoring.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.HikerBackend;
+import com.celfit.instagram.source.HikerFetchException;
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.ProfileInfo;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.ad.AdDisclosureJudgeService;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.AuthorInfo;
 import com.celfit.monitoring.hiker.BrandCallContext;
-import com.celfit.monitoring.hiker.CommentInfo;
 import com.celfit.monitoring.hiker.CountingHikerHttp;
-import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.HikerFetchException;
-import com.celfit.monitoring.hiker.PostInfo;
-import com.celfit.monitoring.hiker.ProfileInfo;
-import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCallCountRepository;
-import com.celfit.monitoring.store.TargetCallCountRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.BrandSnapshotRepository;
 import com.celfit.monitoring.store.TaggedPostRepository;
+import com.celfit.monitoring.store.TargetCallCountRepository;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -114,9 +114,23 @@ class BrandCollectServiceTest {
 	private static final class RecordingBrands extends BrandRepository {
 		BrandRepository.Coverage coverage = new BrandRepository.Coverage(false, null);
 		final List<String> coverageWrites = new ArrayList<>();
+		/** 진행 워터마크 touch 관찰(08-31 백필 캐시 고착 수리) — enrich 워커에서 나가므로 동기화. */
+		final List<Long> progressTouches = Collections.synchronizedList(new ArrayList<>());
+		/** 정산 마킹과의 호출 순서 검증용 — 기본은 격리된 리스트. */
+		private List<String> callOrder = new ArrayList<>();
 
 		RecordingBrands() {
 			super(null);
+		}
+
+		void useSharedCallOrder(List<String> shared) {
+			this.callOrder = shared;
+		}
+
+		@Override
+		public void touchProgress(long brandId) {
+			progressTouches.add(brandId);
+			callOrder.add("progress");
 		}
 
 		@Override
@@ -220,9 +234,15 @@ class BrandCollectServiceTest {
 		// 댓글 게이트 첫머리의 배치 조회 실패 대역(커넥션 blip) — 건별 격리가 닿지 않는 지점이다.
 		boolean commentsCountsFails = false;
 		int depthCalls = 0;
+		/** 진행 워터마크 touch와의 호출 순서 검증용(08-31) — 기본은 격리된 리스트. */
+		private List<String> callOrder = new ArrayList<>();
 
 		InMemoryTagged() {
 			super(null);
+		}
+
+		void useSharedCallOrder(List<String> shared) {
+			this.callOrder = shared;
 		}
 
 		@Override
@@ -304,6 +324,7 @@ class BrandCollectServiceTest {
 				throw new IllegalStateException("정산 마킹 실패(DB 일시 오류)");
 			}
 			enriched.addAll(codes);
+			callOrder.add("enriched");
 		}
 
 		@Override
@@ -349,9 +370,9 @@ class BrandCollectServiceTest {
 
 	// ── fake HikerHttp — 경로별 라우팅 ───────────────────────────────────────
 
-	private HikerClient client() {
+	private HikerBackend client() {
 		// 운영 조립(HikerConfig)과 동형으로 콜 집계 데코레이터를 끼운다 — 스코프 전파까지 함께 검증.
-		return new HikerClient(new CountingHikerHttp(path -> {
+		return new HikerBackend(new CountingHikerHttp(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/by/username")) {
 				if (brandProfileFails) {
@@ -380,7 +401,7 @@ class BrandCollectServiceTest {
 				return body;
 			}
 			if (path.startsWith("/v2/user/by/id")) {
-				// 쿼리 파라미터명은 id(08-07 실측 교정 — HikerClient.fetchAuthorProfile 주석 참조)
+				// 쿼리 파라미터명은 id(08-07 실측 교정 — HikerBackend.fetchAuthorProfile 주석 참조)
 				String id = path.substring(path.indexOf("?id=") + "?id=".length());
 				if (failingAuthorIds.contains(id)) {
 					throw new HikerFetchException("게시자 프로필 500");
@@ -417,7 +438,7 @@ class BrandCollectServiceTest {
 	}
 
 	private BrandCollectService service(int maxPostsPerSweep, int collectionPostLimit) {
-		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
+		return new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments, tagged, authors,
 				brands, new FakeAdJudge(), Runnable::run, maxPostsPerSweep, collectionPostLimit, 3, 30, true);
 	}
 
@@ -831,7 +852,7 @@ class BrandCollectServiceTest {
 
 	@Test
 	void 수집_상한_0은_무제한이다() {
-		// 0 이하 = 무제한(backfill-max-per-run 관용 일치) — 0이 "1페이지 후 전체 동결"로 오독되면
+		// 0 이하 = 무제한 — 0이 "1페이지 후 전체 동결"로 오독되면
 		// 브랜드 전체가 티어 주기 동안 조용히 얼어붙는 풋건이라 가드한다.
 		tagPages.add(page("p2", reel("A", RECENT, 0, 101, ""), reel("B", RECENT, 0, 102, "")));
 		tagPages.add(page(null, reel("C", RECENT, 0, 103, "")));
@@ -1023,7 +1044,7 @@ class BrandCollectServiceTest {
 	/** 태그 0건 브랜드도 콜백을 1회 받는다 — 안 부르면 그 브랜드가 collecting에 영구히 갇힌다. */
 	@Test
 	void 태그가_0건이면_빈_페이지로_콜백을_1회_부른다() {
-		tagNotFound = true;   // 404 → 빈 페이지(HikerClient 변환) — 처리할 페이지가 없는 경로
+		tagNotFound = true;   // 404 → 빈 페이지(HikerBackend 변환) — 처리할 페이지가 없는 경로
 		List<Integer> sizes = new ArrayList<>();
 
 		service(2000).sweepCore(brand, pageItems -> sizes.add(pageItems.size()));
@@ -1282,7 +1303,7 @@ class BrandCollectServiceTest {
 		AtomicInteger inFlight = new AtomicInteger();
 		AtomicInteger maxInFlight = new AtomicInteger();
 		CyclicBarrier trio = new CyclicBarrier(3);   // 3콜이 "동시에" 모여야 통과 — 순차면 못 모인다
-		HikerClient latched = new HikerClient(path -> {
+		HikerBackend latched = new HikerBackend(path -> {
 			if (path.startsWith("/v2/user/by/username")) {
 				return BRAND_PROFILE_JSON;
 			}
@@ -1305,7 +1326,7 @@ class BrandCollectServiceTest {
 		});
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
-			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
+			BrandCollectService svc = new BrandCollectService(latched, latched, latched, callContext, writer, snapshots,
 					comments, tagged, authors, brands, new FakeAdJudge(), pool, 2000, 10000, 3, 30, true);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
@@ -1474,6 +1495,64 @@ class BrandCollectServiceTest {
 		assertThat(tagged.enriched).contains("A");          // 정산도 기존 규칙대로 찍힌다(무변경)
 	}
 
+	// ---------- 진행 워터마크(touchProgress, 2026-08-31 등록 백필 캐시 고착 수리) ----------
+
+	/**
+	 * 페이지 보강이 끝나면 브랜드 진행 워터마크(last_swept_at)를 전진시킨다 — was 인덱스 캐시
+	 * (BrandIndexCache)의 버전키가 brand_account 워터마크만 보므로, 페이지마다 안 움직이면 백필
+	 * 도중 폴링이 전부 캐시에 붙어 게시물이 완주 시점에 한꺼번에 나타난다(08-31 skinfood 실측:
+	 * 90초간 21건 동결 후 247건 일괄 노출).
+	 */
+	@Test
+	void 보강이_끝나면_브랜드_워터마크를_전진시킨다() {
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(brands.progressTouches).containsExactly(1L);
+	}
+
+	/**
+	 * 전진은 정산 마킹(markEnriched) 뒤여야 한다 — 앞이면 새 버전키로 재계산된 인덱스가 아직
+	 * 정산 안 된 단면을 캐시해, 그 페이지가 다음 전진까지 다시 안 보인다.
+	 */
+	@Test
+	void 워터마크_전진은_정산_마킹_후에_발생한다() {
+		List<String> order = new ArrayList<>();
+		tagged.useSharedCallOrder(order);
+		brands.useSharedCallOrder(order);
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+
+		service(2000).sweep(brand);
+
+		assertThat(order).containsExactly("enriched", "progress");
+	}
+
+	/** 빈 배치는 데이터 변화가 없다 — 전진하면 폴링마다 헛 재계산만 유발한다. */
+	@Test
+	void 빈_배치에는_워터마크를_전진시키지_않는다() {
+		service(2000).enrich(brand, List.of(), () -> { });
+
+		assertThat(brands.progressTouches).isEmpty();
+	}
+
+	/**
+	 * 게시자 보강 하드 실패에도 전진한다 — markEnriched와 같은 finally 보장. 정산이 찍힌 이상
+	 * (게이트 통과) 워터마크가 안 움직이면 그 페이지는 완주까지 캐시 뒤에 숨는다.
+	 */
+	@Test
+	void 게시자_보강_하드_실패에도_워터마크는_전진한다() {
+		authors.freshLookupFails = true;
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+		BrandCollectService svc = service(2000);
+		List<PostInfo> posts = svc.sweepCore(brand);
+
+		assertThatThrownBy(() -> svc.enrich(brand, posts, null))
+				.isInstanceOf(IllegalStateException.class);
+
+		assertThat(brands.progressTouches).containsExactly(1L);
+	}
+
 	/** 태그 0건(빈 배치)도 onVisible을 1회 받는다 — 못 받으면 그 브랜드가 collecting에 영구히 갇힌다. */
 	@Test
 	void onVisible은_빈_배치에도_발생한다() {
@@ -1498,12 +1577,144 @@ class BrandCollectServiceTest {
 		assertThat(comments.upserted).contains("A");
 	}
 
+	// ---------- 동기(direct 등록)·비동기(스윕) 소스 분리 — 사용자 대면 동기 경로 self 트러블 원천 차단 ----------
+
+	/**
+	 * {@link BrandCollectService#enrichSync}(direct 게시물 동기 등록 전용, {@link BrandDirectCollectService}
+	 * 참조)는 생성자 2번째 인자(syncHiker)로, {@link BrandCollectService#enrich(BrandRow, List)}(2인자 —
+	 * 야간 스윕·백필 등 비동기 경로가 쓴다)는 1번째 인자(hiker)로 게시자·댓글 콜을 각자 라우팅한다.
+	 * 서로 다른 fake 백엔드로 갈아 끼워 콜이 각자의 리스트로만 들어오는지 본다 — 실서비스에서는 이
+	 * 두 InstagramSource가 서로 다른 정책(배치=자체 1순위+Hiker 폴백, 등록=Hiker 1순위+장애시 self
+	 * 구조)이라 이 분리가 곧 direct 게시물 동기 등록 요청이 self 트러블의 지연을 절대 물려받지
+	 * 않는다는 구조적 보장이다(HikerConfig 참조).
+	 */
+	@Test
+	void enrichSync은_syncHiker로_2인자_enrich는_hiker로_게시자_댓글_콜이_각자_라우팅된다() {
+		List<String> hikerOnlyCalls = new ArrayList<>();
+		List<String> syncOnlyCalls = new ArrayList<>();
+		HikerBackend hikerBackend = new HikerBackend(new CountingHikerHttp(path -> {
+			hikerOnlyCalls.add(path);
+			return authorOrCommentResponse(path);
+		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
+		HikerBackend syncBackend = new HikerBackend(new CountingHikerHttp(path -> {
+			syncOnlyCalls.add(path);
+			return authorOrCommentResponse(path);
+		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
+		BrandCollectService svc = new BrandCollectService(hikerBackend, syncBackend, hikerBackend, callContext, writer, snapshots,
+				comments, tagged, authors, brands, new FakeAdJudge(), Runnable::run, 10000, 10000, 3, 30, false);
+		PostInfo p = post("AAA", RECENT, "111", 3L);
+
+		svc.enrichSync(brand, List.of(p));
+
+		assertThat(hikerOnlyCalls).isEmpty();
+		assertThat(syncOnlyCalls).isNotEmpty();
+
+		syncOnlyCalls.clear();
+		svc.enrich(brand, List.of(p));
+
+		assertThat(syncOnlyCalls).isEmpty();
+		assertThat(hikerOnlyCalls).isNotEmpty();
+	}
+
+	/**
+	 * {@link BrandCollectService#enrichUserTriggered}(등록 백필 전용, 2026-09 사용자 트리거 도입 시점
+	 * 토글)는 생성자 3번째 인자(userTriggeredHiker)로, {@link BrandCollectService#enrich(BrandRow, List)}·
+	 * {@link BrandCollectService#enrich(BrandRow, List, Runnable)}(스케줄 스윕 전용)는 1번째 인자
+	 * (hiker)로 게시자·댓글 콜을 각자 라우팅한다 — 위 syncHiker 분리 테스트와 같은 관용구.
+	 */
+	@Test
+	void enrichUserTriggered은_userTriggeredHiker로_enrich는_hiker로_게시자_댓글_콜이_각자_라우팅된다() {
+		List<String> hikerOnlyCalls = new ArrayList<>();
+		List<String> userTriggeredOnlyCalls = new ArrayList<>();
+		HikerBackend hikerBackend = new HikerBackend(new CountingHikerHttp(path -> {
+			hikerOnlyCalls.add(path);
+			return authorOrCommentResponse(path);
+		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
+		HikerBackend userTriggeredBackend = new HikerBackend(new CountingHikerHttp(path -> {
+			userTriggeredOnlyCalls.add(path);
+			return authorOrCommentResponse(path);
+		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
+		BrandCollectService svc = new BrandCollectService(hikerBackend, hikerBackend, userTriggeredBackend,
+				callContext, writer, snapshots, comments, tagged, authors, brands, new FakeAdJudge(),
+				Runnable::run, 10000, 10000, 3, 30, false);
+		PostInfo p = post("AAA", RECENT, "111", 3L);
+
+		svc.enrichUserTriggered(brand, List.of(p), null);
+
+		assertThat(hikerOnlyCalls).isEmpty();
+		assertThat(userTriggeredOnlyCalls).isNotEmpty();
+
+		userTriggeredOnlyCalls.clear();
+		svc.enrich(brand, List.of(p));
+
+		assertThat(userTriggeredOnlyCalls).isEmpty();
+		assertThat(hikerOnlyCalls).isNotEmpty();
+	}
+
+	/**
+	 * {@link BrandCollectService#sweepCoreUserTriggered}(등록 백필 열거 전용)도 같은 규칙 —
+	 * {@link BrandCollectService#sweepCore(BrandRow, java.util.function.Consumer)}(스케줄 스윕)는
+	 * hiker로, 백필 전용은 userTriggeredHiker로 태그 열거·브랜드 프로필 갱신 콜이 각자 라우팅된다.
+	 */
+	@Test
+	void sweepCoreUserTriggered은_userTriggeredHiker로_sweepCore는_hiker로_열거_콜이_각자_라우팅된다() {
+		List<String> hikerOnlyCalls = new ArrayList<>();
+		List<String> userTriggeredOnlyCalls = new ArrayList<>();
+		HikerBackend hikerBackend = new HikerBackend(path -> {
+			hikerOnlyCalls.add(path);
+			return enumerationResponse(path);
+		});
+		HikerBackend userTriggeredBackend = new HikerBackend(path -> {
+			userTriggeredOnlyCalls.add(path);
+			return enumerationResponse(path);
+		});
+		BrandCollectService svc = new BrandCollectService(hikerBackend, hikerBackend, userTriggeredBackend,
+				callContext, writer, snapshots, comments, tagged, authors, brands, new FakeAdJudge(),
+				Runnable::run, 10000, 10000, 3, 30, false);
+
+		svc.sweepCoreUserTriggered(brand, page -> { });
+
+		assertThat(hikerOnlyCalls).isEmpty();
+		assertThat(userTriggeredOnlyCalls).isNotEmpty();
+
+		userTriggeredOnlyCalls.clear();
+		svc.sweepCore(brand, page -> { });
+
+		assertThat(userTriggeredOnlyCalls).isEmpty();
+		assertThat(hikerOnlyCalls).isNotEmpty();
+	}
+
+	/** 브랜드 프로필·빈 태그 열거만 응답하는 최소 대역 — 위 열거 소스 분리 테스트 전용. */
+	private static String enumerationResponse(String path) {
+		if (path.startsWith("/v2/user/by/username")) {
+			return BRAND_PROFILE_JSON;
+		}
+		if (path.startsWith("/v2/user/tag/medias")) {
+			return page(null);   // 빈 페이지 — 태그 0건, 자연 종료
+		}
+		throw new IllegalStateException("예상 밖 콜: " + path);
+	}
+
+	/** 게시자 프로필·댓글 콜만 응답하는 최소 대역 — 위 소스 분리 테스트 전용. */
+	private static String authorOrCommentResponse(String path) {
+		if (path.startsWith("/v2/user/by/id")) {
+			String id = path.substring(path.indexOf("?id=") + "?id=".length());
+			return "{\"user\":{\"pk\":%s,\"username\":\"author_%s\",\"follower_count\":100,\"is_private\":false}}"
+					.formatted(id, id);
+		}
+		if (path.startsWith("/v2/media/comments")) {
+			return """
+					{"response":{"comments":[]},"next_page_id":null}""";
+		}
+		throw new IllegalStateException("예상 밖 콜: " + path);
+	}
+
 	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge) {
 		return serviceWithAdJudge(adJudge, true);
 	}
 
 	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge, boolean adDisclosureEnabled) {
-		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
+		return new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments, tagged, authors,
 				brands, adJudge, Runnable::run, 10000, 10000, 3, 30, adDisclosureEnabled);
 	}
 

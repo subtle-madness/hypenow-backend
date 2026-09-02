@@ -1,10 +1,11 @@
 package com.celfit.monitoring.web;
 
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.PostShapeUnsupportedException;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.PostInfo;
-import com.celfit.monitoring.hiker.PostShapeUnsupportedException;
-import com.celfit.monitoring.hiker.SubjectNotFoundException;
 import com.celfit.monitoring.service.BrandDirectCollectService;
+import com.celfit.monitoring.service.BrandHashtagRunStateResolver;
 import com.celfit.monitoring.service.BrandHashtagTags;
 import com.celfit.monitoring.service.BrandRegistrationService;
 import com.celfit.monitoring.service.ValidationException;
@@ -36,7 +37,8 @@ import org.springframework.web.bind.annotation.RestController;
  * 브랜드 태그 모니터링 등록/탈퇴 + 태그 셋 관리 API(수집 파이프라인 진입점 — was 조회 API·FE 계약은
  * 범위 밖). 태그는 GET(조회)·PUT(전체 교체)·POST(단건·다건 추가)·DELETE {item}(단건 삭제)·
  * DELETE(전체 삭제) 표준 REST 5종을 제공한다(2026-08-12 확장 — 유저 결정: 표준 REST 단건 조작
- * 추가). 저장은 전부 tombstone(deleted_at) — 하드 삭제하면 등록 replay의 자동 시드가 되살리기 때문.
+ * 추가). 저장은 전부 tombstone(deleted_at) — 하드 삭제하면 새 사용자 등록의 유도 태그 push(was
+ * 책임, 2026-08-28~)가 그 자리를 재활성으로 되살리기 때문.
  * <b>제외 문자열 관리 API는 2026-08-17 FE 협의로 폐기됐다</b>(프론트는 이미 UI·호출 제거) — 이
  * 컨트롤러에서 5종 엔드포인트를 걷어냈다({@code brand_hashtag_exclusion} 테이블 자체는
  * expand-contract 원칙상 DROP하지 않고 남아 있다).
@@ -73,10 +75,20 @@ public class BrandController {
 	/**
 	 * 태그 셋(유저 관리 API, 2026-08-12) — GET 응답·PUT 요청 바디 공용. tags는 정규화(trim·선행 #
 	 * 제거·소문자·blank 제거·중복 제거) 후 저장하되, 무효 문자를 포함한 항목은 절삭하지 않고
-	 * 통째로 거부한다(자동 유도 BrandHashtagTags.derive와 의도적으로 다른 규칙 — 유저 입력이라
-	 * 잘라내면 유저가 입력한 문자열과 실제 저장된 태그가 어긋난다).
+	 * 통째로 거부한다(was의 자동 유도와 의도적으로 다른 규칙 — 유저 입력이라 잘라내면 유저가
+	 * 입력한 문자열과 실제 저장된 태그가 어긋난다).
 	 */
 	public record HashtagTagsBody(List<String> tags) {}
+
+	/**
+	 * 태그별 스윕 실행 상태(FE 요청, 2026-08-31) — GET run-state 응답 원소. status는
+	 * {@link BrandHashtagRunStateResolver}가 조회 시점에 계산한 값(collecting|done|failed, 저장
+	 * 안 함), lastRunAt·lastFoundCount는 직전 완료 실행의 값(status가 collecting이어도 노출).
+	 */
+	public record TagRunState(String tag, String status, OffsetDateTime lastRunAt, Integer lastFoundCount) {}
+
+	/** run-state 응답 바디 — was가 사용자 장부 태그와 병합해 FE 계약(tags: 객체 배열)을 만든다. */
+	public record HashtagRunStateBody(List<TagRunState> tags) {}
 
 	/**
 	 * direct 등록 요청(2026-08-18 direct 통합 §2-2·§4-2). registeredAt·importLegacyHistory는 이관
@@ -245,12 +257,36 @@ public class BrandController {
 	}
 
 	/**
+	 * 태그별 스윕 실행 상태(FE 요청, 2026-08-31, was GET hashtag-tags 병합 재료) — 브랜드 미존재·
+	 * 비ACTIVE는 404(태그 GET과 동형). 활성 태그 전체를 돌려준다(deleted_at 있는 태그는 빠진다 —
+	 * was는 이걸 "monitoring에 없음"으로 보고 collecting/lastRunAt=null로 접는다).
+	 */
+	@GetMapping("/{username}/hashtag-tags/run-state")
+	public ResponseEntity<?> hashtagRunState(@PathVariable String username) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		OffsetDateTime now = OffsetDateTime.now();
+		List<TagRunState> states = hashtags.findRunStates(row.get().id()).stream()
+				.map(r -> {
+					BrandHashtagRunStateResolver.RunState resolved = BrandHashtagRunStateResolver.resolve(
+							r.lastRunStartedAt(), r.lastRunFinishedAt(), r.lastRunFoundCount(), r.lastRunFailed(),
+							now);
+					return new TagRunState(r.tag(), resolved.status(), resolved.lastRunAt(),
+							resolved.lastFoundCount());
+				})
+				.toList();
+		return ResponseEntity.ok(new HashtagRunStateBody(states));
+	}
+
+	/**
 	 * 태그 셋 전체 교체(유저 관리 API, 2026-08-12) — 정규화 후 저장(tombstone 의미론은
 	 * {@link BrandHashtagRepository#replaceTags} 참조). 브랜드 미존재·비ACTIVE는 404가 이 가드보다
 	 * 우선한다.
 	 *
-	 * <p>유효 문자 검증은 유저 입력이므로 자동 유도(BrandHashtagTags.derive)처럼 절삭하지 않고
-	 * 통째로 거부한다 — 무효 문자 포함 항목이 하나라도 있으면 422(문제 태그를 메시지에 명시).
+	 * <p>유효 문자 검증은 유저 입력이므로 was의 자동 유도처럼 절삭하지 않고 통째로 거부한다 —
+	 * 무효 문자 포함 항목이 하나라도 있으면 422(문제 태그를 메시지에 명시).
 	 * 빈 목록은 허용한다(2026-08-12 — 전체 삭제 API가 생겨 "전부 지우기"가 정당한 상태이므로 구
 	 * 하한 가드는 폐지, {@link #deleteAllHashtagTags} 참조. 브랜드 태그 감지가 전부 꺼지는 셈이다).
 	 *

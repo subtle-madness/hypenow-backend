@@ -1,0 +1,15 @@
+{
+  "name": "docid-refresher",
+  "version": "1.0.0",
+  "private": true,
+  "description": "인스타 댓글 doc_id 자동 갱신자 (헤드리스 Playwright 사이드카, one-shot)",
+  "type": "commonjs",
+  "main": "refresh-docid.js",
+  "scripts": {
+    "start": "node refresh-docid.js"
+  },
+  "dependencies": {
+    "playwright": "1.62.1",
+    "pg": "^8.13.1"
+  }
+}

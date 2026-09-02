@@ -1,6 +1,7 @@
 package com.celfit.was.v1.brandmonitoring;
 
 import com.celfit.was.monitoring.BrandDirectPostRepository;
+import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandPostCampaignRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.AuthorRow;
@@ -9,6 +10,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandCommentRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandPostMetaRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandSnapshotRow;
 import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
+import com.celfit.was.monitoring.BrandReadRepository.MatchedTagRow;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.monitoring.AuthorMask;
@@ -17,6 +19,8 @@ import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -60,6 +64,8 @@ public class BrandPostAssembler {
 	 * 밖에서 링크 창 판정(direct 면제)에 이 값을 그대로 참조한다. 리터럴을 그쪽에 복제해두면 이 값이
 	 * 바뀌어도 컴파일 에러 없이 조용히 드리프트한다. */
 	public static final String SOURCE_DIRECT = "direct";
+	/** 해시태그 열거로만 편입된 행(2026-08-27 설계 §3) — 사용자 격리 필터가 걸리는 유일한 source. */
+	static final String SOURCE_HASHTAG = "hashtag";
 
 	private static final Logger log = LoggerFactory.getLogger(BrandPostAssembler.class);
 
@@ -74,9 +80,15 @@ public class BrandPostAssembler {
 	/** 댓글 서빙 상한 — monitoring 수집 상한(3페이지 45건)과 같은 수로 맞춘다(레거시 COMMENT_LIMIT 동형). */
 	private static final int COMMENT_LIMIT = 45;
 
+	/**
+	 * 협찬 마커 Postgres 정규식 — 마커 상수에서 파생된 불변값이라 요청마다 다시 빌드하지 않는다
+	 * (슬림 인덱스 쿼리 파라미터, 2026-08-27 P0).
+	 */
+	private static final String MARKER_REGEX = BrandSponsorshipClassifier.postgresMarkerRegex();
+
 	/** public(N6, 2026-08-28) - {@code com.celfit.was.v1.brandmonitoring.ai.BrandAiToolbox}가
 	 * aggregate_posts 집계에서 브랜드 스냅샷 원시 content_type을 이 값과 같은 규칙(대소문자 무시
-	 * 비교)으로 릴스/피드를 가른다({@link #snapshotOf}·{@link BrandReadRepository#findLatestViewsForBrand}
+	 * 비교)으로 릴스/피드를 가른다({@link #snapshotOf}·{@link BrandReadRepository#findLatestSnapshotsForBrand}
 	 * 동형 판정) - 리터럴을 그쪽에 복제하면 이 값이 바뀌어도 조용히 드리프트한다(SOURCE_DIRECT와 같은 이유). */
 	public static final String CONTENT_TYPE_REELS = "REELS";
 	private static final String REELS = "reels";
@@ -93,6 +105,8 @@ public class BrandPostAssembler {
 	/** 과도기 폴백 전용 — TODO(contract) C 단계에서 제거. */
 	private final TrackingItemAssembler trackingItemAssembler;
 	private final MonitoringItemRepository monitoringItemRepository;
+	/** 해시태그 격리 필터(2026-08-27 설계 §3) — 조회자 본인의 태그 원장. */
+	private final BrandHashtagTagRepository hashtagTagRepository;
 	/** 광고 표기 판정 노출 게이트(스펙 §10-2 드라이런 후 개통) — 기본 false, was 문서화(Task 18)에서 개통 절차 안내. */
 	private final boolean exposeAdDisclosure;
 	private static final ObjectMapper OM = new ObjectMapper();
@@ -100,12 +114,14 @@ public class BrandPostAssembler {
 	public BrandPostAssembler(BrandReadRepository brandReadRepository,
 			BrandPostCampaignRepository postCampaignRepository, BrandDirectPostRepository directPostRepository,
 			TrackingItemAssembler trackingItemAssembler, MonitoringItemRepository monitoringItemRepository,
+			BrandHashtagTagRepository hashtagTagRepository,
 			@Value("${monitoring.brand.ad-disclosure.expose:false}") boolean exposeAdDisclosure) {
 		this.brandReadRepository = brandReadRepository;
 		this.postCampaignRepository = postCampaignRepository;
 		this.directPostRepository = directPostRepository;
 		this.trackingItemAssembler = trackingItemAssembler;
 		this.monitoringItemRepository = monitoringItemRepository;
+		this.hashtagTagRepository = hashtagTagRepository;
 		this.exposeAdDisclosure = exposeAdDisclosure;
 	}
 
@@ -120,14 +136,34 @@ public class BrandPostAssembler {
 	 * 판정 산지는 풀 조립과 동일 함수({@code resolveSource}·{@code BrandSponsorshipClassifier.classify}·
 	 * KST 달력일)라 ref 기반 counts는 전량 풀 조립 counts와 정의상 일치한다.
 	 *
+	 * <p>2026-08-27 서버 필터·패싯 설계로 매체·광고 판정·게시자 표시값이 얹혔다 — 필터·패싯이 카드
+	 * 조립을 거치지 않고 ref만으로 판정하기 위한 것이라, 값은 전부 카드와 같은 산지 규칙을 태운 뒤
+	 * 실린다({@code contentTypeOf} 폴드·{@code resolveImageUrl} 아카이브 우선·KST ISO 문자열).
+	 *
 	 * @param latestViews performance 정렬 키(피드는 null — {@link #snapshotOf} 서빙 규칙 동형).
 	 *                    {@code withViews=false} 인덱스에서는 항상 null이다.
-	 * @param contentType "reels"/"feed"(2026-08-30, AI scope 필터 전용) — 카드 조립과 같은 함수
-	 *                    ({@link #contentTypeOf})로 정규화해 화면 판정과 어긋나지 않는다.
-	 * @param authorUsername 게시자 계정명(2026-08-30, AI scope 작성자 검색·팔로워 필터 전용) — 미상이면 null.
+	 * @param contentType "reels"/"feed" — 불명은 피드로 접는다(카드 {@code contentType}과 동형).
+	 *                    AI scope의 mediaType 필터 입력이기도 하다(2026-08-30 —
+	 *                    authorUsername·authorFollowers도 AI scope 작성자 검색·팔로워 필터가 함께 쓴다).
+	 * @param adVerdict 광고 표기 판정 원값(노출 게이트 미적용 — 게이트는 {@link #adDisclosureExposed}가
+	 *                  호출부에서 적용한다). 과도기 폴백(레거시 direct)은 산지가 없어 항상 null.
+	 * @param takenAtKst 카드 {@code takenAt}과 같은 KST ISO 문자열(미상이면 null).
+	 * @param hashtags 캡션 추출 태그(등장 순, 정규화 키 dedup — BrandCaptionHashtags). 캡션은 인덱스
+	 *                 SQL({@code withCaptions=true})로 실어 와 추출 직후 버린다 — ref에는 태그만 남는다.
 	 */
 	public record PostRef(String shortcode, String source, String sponsorship, LocalDate uploadedOn,
-			Long latestViews, String contentType, String authorUsername) {
+			Long latestViews, String contentType, String adVerdict, String authorUsername,
+			String authorFullName, String authorProfilePicUrl, Long authorFollowers, String takenAtKst,
+			List<String> hashtags) {
+	}
+
+	/**
+	 * 광고 표기 판정 노출 게이트(스펙 §10-2 토글 + 2026-08-19 경쟁사 제외) — {@link #brandPost}가 쓰는
+	 * 것과 <b>같은</b> 판정이다. 서버 필터·패싯이 이 값을 보고 광고 판정 필터를 적용할지 결정한다:
+	 * 비노출 조회자에게 화면에 없는 값으로 필터가 걸리면 "빈 목록"이 정답처럼 보인다.
+	 */
+	public boolean adDisclosureExposed(String viewerAccountType) {
+		return exposeAdDisclosure && !BrandAccountType.COMPETITOR.equals(viewerAccountType);
 	}
 
 	/**
@@ -136,13 +172,26 @@ public class BrandPostAssembler {
 	 * 과도기 폴백 카드(풀과 겹치는 shortcode는 이미 제외 — 풀 우선 병합 규칙), ownedShortCodes는
 	 * 이 유저의 direct 등록 원장(source 파생에 썼던 값을 하이드레이트가 다시 조회하지 않게 실어
 	 * 나른다).
+	 *
+	 * <p>{@code hashtagMatchedTags}(2026-08-31, matchedTags 배지 통합)는 노출 필터를 통과한
+	 * hashtag-only 후보 shortcode → (조회자 장부 ∩ 게시물 매칭 태그) 교집합이다 — 이 인덱스 패스가
+	 * 이미 그 판정에 쓴 {@code myTags}·{@code matchedTagsByCode}(격리 필터 계산의 부산물)를 그대로
+	 * 재사용한 것이라 별도 조회가 없다. tagged·direct 성분 shortcode는 이 맵에 없다(하이드레이트가
+	 * source=hashtag로 확정된 카드에만 조회한다).
+	 *
+	 * <p><b>캐시 정합성</b>({@link BrandIndexCache}가 이 레코드를 (버전키·유저·브랜드) 단위로 캐싱한다):
+	 * 이 필드는 조회자 장부(myTags)에 좌우되는 유저 스코프 파생값이다 — 캐시 키에 이미 userId가 있어
+	 * 유저 간 혼선이 없고, 조회자가 자기 장부를 고치면(태그 추가·삭제) {@link
+	 * com.celfit.was.v1.perfdashboard.DashboardVersion#compute}의 지문에 {@code brand_hashtag_tags}가
+	 * 들어 있어 버전키가 바뀌어 새로 계산된다 — 캐싱해도 낡은 교집합이 서빙되지 않는다.
 	 */
 	public record BrandPostIndex(List<PostRef> refs, Set<String> poolCodes,
-			Map<String, BrandPostResponse> legacyByCode, Set<String> ownedShortCodes) {
+			Map<String, BrandPostResponse> legacyByCode, Set<String> ownedShortCodes,
+			Map<String, List<String>> hashtagMatchedTags) {
 	}
 
 	/**
-	 * 인덱스 패스(경량) — 브랜드 풀의 판정 입력 6컬럼 <b>단일 조인 쿼리</b>({@link
+	 * 인덱스 패스(경량) — 브랜드 풀의 판정 입력 슬림 컬럼 <b>단일 조인 쿼리</b>({@link
 	 * BrandReadRepository#findBrandPostIndex}) + (withViews면) 최신 스냅샷 1행 프로젝션만 읽어
 	 * {@link PostRef}를 만든다. 스냅샷 시계열·댓글·게시자·표시 메타 배치 조회가 전혀 없고, 무거운
 	 * 조립은 {@link #hydrate}가 페이지 코드에만 수행한다. 표시 표면 전용이라 scope는 항상
@@ -156,17 +205,45 @@ public class BrandPostAssembler {
 	 *                  최신 스냅샷 조회 자체를 생략한다(withComments 관용구와 같은 이유).
 	 */
 	public BrandPostIndex indexForBrand(long userId, BrandAccountRow account, boolean withViews) {
+		// withCaptions=true — 이 경로만 hashtags(BrandCaptionHashtags.extract)를 PostRef에 태우고,
+		// BrandIndexCache가 결과를 캐싱해 캡션 전송 비용(perf119)은 캐시 미스 시에만 지불한다.
 		List<BrandReadRepository.BrandPostIndexRow> allRows = brandReadRepository.findBrandPostIndex(
-				account.id(), windowCutoff(), true);
+				account.id(), windowCutoff(), true, MARKER_REGEX, true);
 		boolean hasDirectRegistration = allRows.stream().anyMatch(r -> r.directRegisteredAt() != null);
 		Set<String> ownedShortCodes = hasDirectRegistration ? directPostRepository.shortCodesByUser(userId)
 				: Set.of();
 
-		// 노출 필터(등록자 전용 노출, 08-19 — filterVisibleToUser 동형) + shortcode 중복 방어.
+		// 해시태그 격리 보조 조회(2026-08-27 설계 §3, filterVisibleToUser 동형) — 격리 대상은 tagged
+		// 성분도 없고 이 유저 소유도 아닌 hashtag-only 행뿐이라, 그 후보가 하나도 없으면 조회 자체를
+		// 생략한다(exposeAdDisclosure 토글과 같은 관용구).
+		Set<String> hashtagOnlyCandidates = allRows.stream()
+				.filter(r -> r.tagDetectedAt() == null && r.hashtagDetectedAt() != null
+						&& !ownedShortCodes.contains(r.shortCode()))
+				.map(BrandReadRepository.BrandPostIndexRow::shortCode)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		Set<String> myTags = hashtagOnlyCandidates.isEmpty() ? Set.of()
+				: hashtagTagRepository.findByUserAndBrand(userId, account.id());
+		Map<String, Set<String>> matchedTagsByCode = hashtagOnlyCandidates.isEmpty() ? Map.of()
+				: brandReadRepository.findMatchedTags(account.id(), hashtagOnlyCandidates).stream()
+						.collect(Collectors.groupingBy(MatchedTagRow::shortCode,
+								Collectors.mapping(MatchedTagRow::tag, Collectors.toSet())));
+
+		// 노출 필터(등록자 전용 노출 08-19 + 해시태그 격리 2026-08-27 설계 §3 — isVisible 동형,
+		// filterVisibleToUser와 같은 판정 코어를 공유한다) + shortcode 중복 방어.
 		Map<String, BrandReadRepository.BrandPostIndexRow> poolByCode = new LinkedHashMap<>();
 		for (BrandReadRepository.BrandPostIndexRow row : allRows) {
-			if (row.tagDetectedAt() != null || ownedShortCodes.contains(row.shortCode())) {
+			if (isVisible(row.tagDetectedAt(), row.hashtagDetectedAt(), ownedShortCodes.contains(row.shortCode()),
+					row.shortCode(), myTags, matchedTagsByCode)) {
 				poolByCode.putIfAbsent(row.shortCode(), row);
+			}
+		}
+
+		// matchedTags 배지(2026-08-31) — 노출을 통과한 hashtag-only 후보만, 이미 격리 판정에 쓴
+		// myTags·matchedTagsByCode를 재사용해 교집합을 뽑는다(별도 조회 없음, BrandPostIndex 주석 참조).
+		Map<String, List<String>> hashtagMatchedTags = new LinkedHashMap<>();
+		for (String code : hashtagOnlyCandidates) {
+			if (poolByCode.containsKey(code)) {
+				hashtagMatchedTags.put(code, intersectTags(myTags, matchedTagsByCode.get(code)));
 			}
 		}
 
@@ -174,12 +251,16 @@ public class BrandPostAssembler {
 		// null 값(피드)을 담기 위해서다(Collectors.toMap은 null 값에서 NPE).
 		Map<String, Long> viewsByCode = new LinkedHashMap<>();
 		if (withViews && !poolByCode.isEmpty()) {
-			for (BrandReadRepository.LatestViewsRow row : brandReadRepository.findLatestViewsForBrand(
+			for (BrandReadRepository.LatestSnapshotRow row : brandReadRepository.findLatestSnapshotsForBrand(
 					account.id(), windowCutoff(), true)) {
 				viewsByCode.put(row.shortCode(),
 						CONTENT_TYPE_REELS.equalsIgnoreCase(row.contentType()) ? row.views() : null);
 			}
 		}
+
+		// 게시자 조인 미스(author_ig_user_id 부재)만 모아 username으로 한 번 더 찾는다 — 풀 조립
+		// resolveAuthors의 2차 SQL 관용구와 같다(미해결이 없으면 조회 자체를 생략).
+		Map<String, AuthorRow> fallbackAuthors = resolveIndexAuthorFallback(poolByCode.values());
 
 		Map<String, BrandPostResponse> legacyByCode = new LinkedHashMap<>();
 		for (BrandPostResponse legacy : assembleLegacyPending(userId, account.id())) {
@@ -190,21 +271,77 @@ public class BrandPostAssembler {
 
 		List<PostRef> refs = new ArrayList<>(poolByCode.size() + legacyByCode.size());
 		for (BrandReadRepository.BrandPostIndexRow row : poolByCode.values()) {
+			IndexAuthor author = indexAuthor(row, fallbackAuthors);
 			refs.add(new PostRef(row.shortCode(),
-					resolveSource(row.tagDetectedAt(), row.directRegisteredAt(),
+					resolveSource(row.tagDetectedAt(), row.directRegisteredAt(), row.hashtagDetectedAt(),
 							ownedShortCodes.contains(row.shortCode())),
-					BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.caption()),
+					BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.captionMarker()),
 					KstTimestamps.toKstDate(row.takenAt()),
 					viewsByCode.get(row.shortCode()),
 					contentTypeOf(row.contentType()),
-					row.authorUsername()));
+					row.adVerdict(),
+					author.username(), author.fullName(),
+					resolveImageUrl(author.imageObjectPath(), author.profilePicUrl()),
+					author.followers(),
+					KstTimestamps.toKstIso(row.takenAt()),
+					BrandCaptionHashtags.extract(row.caption())));
 		}
 		for (BrandPostResponse legacy : legacyByCode.values()) {
 			TrackingItemResponse.SnapshotResponse latest = legacy.latestSnapshot();
+			// 레거시 ref의 산지는 이미 조립된 카드다 — 같은 값을 두 번 파생시키지 않는다(카드와 ref가
+			// 어긋나면 서버 필터가 레거시 카드만 조용히 떨군다). 광고 판정은 direct 산지에 없어 null.
 			refs.add(new PostRef(legacy.shortcode(), legacy.source(), legacy.sponsorship(), uploadedOn(legacy),
-					latest == null ? null : latest.views(), legacy.contentType(), legacy.authorUsername()));
+					latest == null ? null : latest.views(),
+					contentTypeOf(legacy.contentType()), null,
+					legacy.authorUsername(), legacy.authorFullName(), legacy.authorProfilePicUrl(),
+					legacy.authorFollowers(), legacy.takenAt(),
+					BrandCaptionHashtags.extract(legacy.caption())));
 		}
-		return new BrandPostIndex(List.copyOf(refs), poolByCode.keySet(), legacyByCode, ownedShortCodes);
+		// poolCodes는 keySet() 뷰가 아니라 복사본이다(2026-08-28 힙 실측) — 뷰를 넘기면 원시 행 맵
+		// (BrandPostIndexRow 전량)이 인덱스에 딸려 살아남는다. 인덱스가 요청마다 버려지던 시절엔
+		// 무해했지만 BrandIndexCache가 장기 보관하면서 그 원시 행까지 장기 상주가 됐다.
+		return new BrandPostIndex(List.copyOf(refs), Set.copyOf(poolByCode.keySet()), legacyByCode,
+				ownedShortCodes, hashtagMatchedTags);
+	}
+
+	/**
+	 * 인덱스 행의 게시자 표시값 — 조인 해결값이 있으면 그대로, 없으면 원시 관측 username으로 찾은
+	 * 폴백 프로필, 그것도 없으면 username만(나머지 null — 거짓 표시를 만들지 않는다). 풀 조립의
+	 * {@code resolveAuthors} + {@link #brandPost} 폴백 규칙과 같은 방향이다.
+	 */
+	private record IndexAuthor(String username, String fullName, String profilePicUrl, String imageObjectPath,
+			Long followers) {
+	}
+
+	private static IndexAuthor indexAuthor(BrandReadRepository.BrandPostIndexRow row,
+			Map<String, AuthorRow> fallbackAuthors) {
+		if (row.authorUsername() != null) {
+			return new IndexAuthor(row.authorUsername(), row.authorFullName(), row.authorProfilePicUrl(),
+					row.authorImageObjectPath(), row.authorFollowers());
+		}
+		AuthorRow fallback = row.rawAuthorUsername() == null ? null
+				: fallbackAuthors.get(row.rawAuthorUsername());
+		if (fallback != null) {
+			return new IndexAuthor(fallback.username(), fallback.fullName(), fallback.profilePicUrl(),
+					fallback.imageObjectPath(), fallback.followers());
+		}
+		return new IndexAuthor(row.rawAuthorUsername(), null, null, null, null);
+	}
+
+	/** 조인 미스 행의 username → 프로필 1회 배치. 미해결 username이 없으면 조회 자체를 생략한다. */
+	private Map<String, AuthorRow> resolveIndexAuthorFallback(
+			Collection<BrandReadRepository.BrandPostIndexRow> rows) {
+		Set<String> pendingUsernames = new LinkedHashSet<>();
+		for (BrandReadRepository.BrandPostIndexRow row : rows) {
+			if (row.authorUsername() == null && row.rawAuthorUsername() != null) {
+				pendingUsernames.add(row.rawAuthorUsername());
+			}
+		}
+		if (pendingUsernames.isEmpty()) {
+			return Map.of();
+		}
+		return brandReadRepository.findAuthorsByUsername(pendingUsernames).stream()
+				.collect(Collectors.toMap(AuthorRow::username, Function.identity(), (a, b) -> a));
 	}
 
 	/**
@@ -239,12 +376,19 @@ public class BrandPostAssembler {
 			Map<String, List<String>> campaignIdsByCode = campaignIdsByCode(account.id(), poolCodes);
 			Set<String> seededUsernames = !exposeAdDisclosure ? Set.of() : resolveSeededUsernames(userId);
 			for (BrandTaggedPostRow post : posts) {
-				poolCards.put(post.shortCode(), brandPost(account.id(), post, metaByCode.get(post.shortCode()),
+				BrandPostResponse card = brandPost(account.id(), post, metaByCode.get(post.shortCode()),
 						authorsByPost.get(post.shortCode()),
 						snapshotsByCode.getOrDefault(post.shortCode(), List.of()),
 						commentsByCode.getOrDefault(post.shortCode(), List.of()), account.lastSweptAt(),
 						campaignIdsByCode.getOrDefault(post.shortCode(), List.of()), exposeAdDisclosure,
-						seededUsernames, index.ownedShortCodes().contains(post.shortCode()), viewerAccountType));
+						seededUsernames, index.ownedShortCodes().contains(post.shortCode()), viewerAccountType);
+				// matchedTags 배지(2026-08-31) — source=hashtag로 확정된 카드에만, 인덱스 패스가 이미
+				// 계산해 둔 조회자 장부 교집합을 얹는다(재조회 없음, BrandPostIndex#hashtagMatchedTags 주석 참조).
+				if (SOURCE_HASHTAG.equals(card.source())) {
+					card = card.withMatchedTags(
+							index.hashtagMatchedTags().getOrDefault(post.shortCode(), List.of()));
+				}
+				poolCards.put(post.shortCode(), card);
 			}
 		}
 
@@ -264,8 +408,13 @@ public class BrandPostAssembler {
 
 	// ---------- 브랜드 풀 ----------
 
-	/** 컷은 KST 달력일 기준이다 — 인스턴트에서 365일을 빼면 요청 시각에 따라 경계일이 들쭉날쭉해진다. */
-	static OffsetDateTime windowCutoff() {
+	/**
+	 * 컷은 KST 달력일 기준이다 — 인스턴트에서 365일을 빼면 요청 시각에 따라 경계일이 들쭉날쭉해진다.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 창을 봐야 한다 — 패키지 밖에서 식을
+	 * 재계산하면 창 정책이 이원화된다(진단 하니스의 복사본도 이 정본 호출로 정리했다).
+	 */
+	public static OffsetDateTime windowCutoff() {
 		return LocalDate.now(KstTimestamps.KST).minusDays(WINDOW_DAYS)
 				.atStartOfDay(KstTimestamps.KST).toOffsetDateTime();
 	}
@@ -284,9 +433,19 @@ public class BrandPostAssembler {
 
 	/**
 	 * 브랜드 풀(tagged ∪ direct) 조립 — {@code brand_tagged_post} 한 산지에서 통째로 읽는다(설계
-	 * §결정 1). 공개 이유: 성과 대시보드는 레거시 전량을 이미 자기가 조립해 두고 브랜드 풀만 얹으면
-	 * 되므로 과도기 폴백이 붙는 경로를 태우면 유저 전량 배치 조회가 통째로 중복된다. 브랜드 화면의
-	 * 진입점은 {@link #indexForBrand} + {@link #hydrate}다(2026-08-27 2단 조립).
+	 * §결정 1).
+	 *
+	 * <p><b>공개 이유(2026-08-27 갱신)</b>: 더 이상 성과 대시보드가 아니다. 대시보드는 2단 조립
+	 * (인덱스+하이드레이트)으로 전환돼 프로덕션에서 이 메서드를 타지 않고, 브랜드 화면의 진입점도
+	 * {@link #indexForBrand} + {@link #hydrate}다. 지금 남은 사용처는 둘뿐이다:
+	 * <ol>
+	 *   <li><b>프로덕션</b> — {@code V2CampaignContentService}의 캠페인 태그 <b>존재 판정</b>
+	 *       (userId 스코프·scope=ALL·클램프 off). 유저의 전 브랜드를 한 번에 훑어야 해서 브랜드
+	 *       단위 2단 조립이 맞지 않는다.</li>
+	 *   <li><b>테스트 전용</b> — {@code PerformanceContentAssembler.assembleSlim}(구 전량 조립)이
+	 *       2단 조립의 <b>동치성 기준선</b>으로 남아 이 메서드를 경유한다. 기준선이 은퇴해도 위 1번이
+	 *       남으므로 이 메서드 자체는 그때도 삭제 대상이 아니다.</li>
+	 * </ol>
 	 *
 	 * <p>{@code withComments=false}면 댓글 배치 조회를 아예 돌리지 않는다(08-12 성과 대시보드 고정
 	 * 지연 대응). 08-12 운영 덤프 실측에서 브랜드 1계정 조립 415ms 중 237ms(57%)가 댓글 윈도우 쿼리 +
@@ -329,13 +488,26 @@ public class BrandPostAssembler {
 			return List.of();
 		}
 
-		// 노출 필터(등록자 전용 노출 요구사항, 08-19) — direct-only(tag_detected_at IS NULL)는 등록한
-		// 유저에게만 보인다. 원장 조회는 direct 등록 행이 하나도 없으면 생략한다(불필요한 조회 방지 —
+		// 노출 필터(등록자 전용 노출 요구사항 08-19 + 해시태그 격리 2026-08-27 설계 §3) —
+		// direct-only는 등록한 유저에게만, hashtag-only는 "내 장부 태그 ∩ 게시물 매칭 태그 ≠ ∅"일
+		// 때만 보인다. 두 보조 조회 모두 해당 성분의 행이 하나도 없으면 생략한다(불필요한 조회 방지 —
 		// exposeAdDisclosure 토글과 같은 관용구).
 		boolean hasDirectRegistration = allPosts.stream().anyMatch(p -> p.directRegisteredAt() != null);
 		Set<String> ownedShortCodes = hasDirectRegistration ? directPostRepository.shortCodesByUser(userId)
 				: Set.of();
-		List<BrandTaggedPostRow> posts = filterVisibleToUser(allPosts, ownedShortCodes);
+		// 격리 대상은 tagged 성분이 없는 hashtag 행뿐이다 — tagged가 붙은 행은 브랜드 공유(기존 규칙).
+		Set<String> isolatedCodes = allPosts.stream()
+				.filter(p -> p.tagDetectedAt() == null && p.hashtagDetectedAt() != null)
+				.map(BrandTaggedPostRow::shortCode)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		Set<String> myTags = isolatedCodes.isEmpty() ? Set.of()
+				: hashtagTagRepository.findByUserAndBrand(userId, account.id());
+		Map<String, Set<String>> matchedTagsByCode = isolatedCodes.isEmpty() ? Map.of()
+				: brandReadRepository.findMatchedTags(account.id(), isolatedCodes).stream()
+						.collect(Collectors.groupingBy(MatchedTagRow::shortCode,
+								Collectors.mapping(MatchedTagRow::tag, Collectors.toSet())));
+		List<BrandTaggedPostRow> posts =
+				filterVisibleToUser(allPosts, ownedShortCodes, myTags, matchedTagsByCode);
 		if (posts.isEmpty()) {
 			return List.of();
 		}
@@ -355,31 +527,94 @@ public class BrandPostAssembler {
 		Set<String> seededUsernames = !exposeAdDisclosure ? Set.of() : resolveSeededUsernames(userId);
 
 		return posts.stream()
-				.map(p -> brandPost(account.id(), p, metaByCode.get(p.shortCode()), authorsByPost.get(p.shortCode()),
-						snapshotsByCode.getOrDefault(p.shortCode(), List.of()),
-						commentsByCode.getOrDefault(p.shortCode(), List.of()), account.lastSweptAt(),
-						campaignIdsByCode.getOrDefault(p.shortCode(), List.of()), exposeAdDisclosure, seededUsernames,
-						ownedShortCodes.contains(p.shortCode()), viewerAccountType))
+				.map(p -> {
+					BrandPostResponse card = brandPost(account.id(), p, metaByCode.get(p.shortCode()),
+							authorsByPost.get(p.shortCode()),
+							snapshotsByCode.getOrDefault(p.shortCode(), List.of()),
+							commentsByCode.getOrDefault(p.shortCode(), List.of()), account.lastSweptAt(),
+							campaignIdsByCode.getOrDefault(p.shortCode(), List.of()), exposeAdDisclosure,
+							seededUsernames, ownedShortCodes.contains(p.shortCode()), viewerAccountType);
+					// matchedTags 배지(2026-08-31) — 이 메서드가 격리 판정에 이미 쓴 myTags·
+					// matchedTagsByCode를 재사용해 source=hashtag 카드에만 조회자 장부 교집합을 얹는다.
+					return SOURCE_HASHTAG.equals(card.source())
+							? card.withMatchedTags(intersectTags(myTags, matchedTagsByCode.get(p.shortCode())))
+							: card;
+				})
 				.toList();
 	}
 
 	/**
-	 * 노출 필터(요구사항 §2, 08-19) — 해시태그로 감지된 게시물({@code tag_detected_at IS NOT NULL})은
-	 * 전원 노출, 직접 등록 전용 게시물({@code tag_detected_at IS NULL && direct_registered_at IS NOT
-	 * NULL})은 등록한 유저에게만 노출한다. 등록자 원장은 {@code app.brand_direct_posts}
-	 * ({@link BrandDirectPostRepository#shortCodesByUser}) — 2026-08-18 direct 통합 이후 신규 등록·
-	 * 이관 전 레거시 등록을 모두 아우르는 유저 귀속 원장이다. monitoring DB({@code brand_tagged_post})와
-	 * SQL 조인하지 않고 이 자바 코드에서 조합한다(시스템 경계 — was는 monitoring·app 스키마를 조인하지 않는다).
+	 * 노출 필터(요구사항 §2 08-19 + 해시태그 격리 2026-08-27 설계 §3) — 세 갈래다:
+	 *
+	 * <ol>
+	 *   <li><b>tagged 성분이 있는 행</b>({@code tag_detected_at IS NOT NULL}) — 전원 노출. 브랜드에
+	 *       연결된 사용자가 공유하는 자산이다(기존 규칙 불변).</li>
+	 *   <li><b>내가 등록한 direct 행</b> — 등록자 원장 {@code app.brand_direct_posts}
+	 *       ({@link BrandDirectPostRepository#shortCodesByUser})에 있으면 노출.</li>
+	 *   <li><b>hashtag-only 행</b> — 조회자의 장부 태그({@code app.brand_hashtag_tags})와 게시물의
+	 *       매칭 태그({@code brand_post_matched_tag})의 <b>교집합이 있을 때만</b> 노출.</li>
+	 * </ol>
+	 *
+	 * <p><b>fail-open은 폐기됐다</b>(구 감지 목록은 "매칭 기록이 없거나 장부가 비면 전원 노출"이었다) —
+	 * 태그 장부 시딩·백필(2026-08-27 설계 §4)로 모든 사용자에게 최소 자동 태그가 생겨 완화가 필요
+	 * 없어졌고, 남겨 두면 남의 태그로 잡힌 게시물이 브랜드 전원에게 새어 나간다.
+	 *
+	 * <p>monitoring DB와 app DB는 물리적으로 분리돼 SQL 조인이 불가능하다 — 조합은 이 자바 코드에서
+	 * 한다(시스템 경계).
 	 */
 	private static List<BrandTaggedPostRow> filterVisibleToUser(List<BrandTaggedPostRow> posts,
-			Set<String> ownedShortCodes) {
+			Set<String> ownedShortCodes, Set<String> myTags, Map<String, Set<String>> matchedTagsByCode) {
 		return posts.stream()
-				.filter(p -> p.tagDetectedAt() != null || ownedShortCodes.contains(p.shortCode()))
+				.filter(p -> visibleToUser(p, ownedShortCodes, myTags, matchedTagsByCode))
 				.toList();
 	}
 
-	/** campaignIds 배치 조회(설계 §결정 3) — shortcode당 다건일 수 있어(N:M) 그룹핑한다. */
-	private Map<String, List<String>> campaignIdsByCode(long brandId, Set<String> codes) {
+	private static boolean visibleToUser(BrandTaggedPostRow post, Set<String> ownedShortCodes,
+			Set<String> myTags, Map<String, Set<String>> matchedTagsByCode) {
+		return isVisible(post.tagDetectedAt(), post.hashtagDetectedAt(), ownedShortCodes.contains(post.shortCode()),
+				post.shortCode(), myTags, matchedTagsByCode);
+	}
+
+	/**
+	 * 노출 판정 코어(위 세 갈래 규칙의 단일 산지) — 풀 조립({@link #visibleToUser})과 인덱스 패스
+	 * ({@link #indexForBrand})가 행 타입만 다르고(각각 {@code BrandTaggedPostRow}·
+	 * {@code BrandPostIndexRow}) 판정 로직은 동형이라 여기 한 곳에서만 정의한다.
+	 */
+	private static boolean isVisible(OffsetDateTime tagDetectedAt, OffsetDateTime hashtagDetectedAt, boolean owned,
+			String shortCode, Set<String> myTags, Map<String, Set<String>> matchedTagsByCode) {
+		if (tagDetectedAt != null) {
+			return true;
+		}
+		if (owned) {
+			return true;
+		}
+		if (hashtagDetectedAt == null) {
+			return false;   // 남이 등록한 direct-only
+		}
+		Set<String> matched = matchedTagsByCode.get(shortCode);
+		return matched != null && !Collections.disjoint(matched, myTags);
+	}
+
+	/**
+	 * matchedTags 배지 값(2026-08-31) — 조회자 장부(myTags)와 게시물의 매칭 태그 교집합, myTags의
+	 * 정렬 순서(태그명 ASC — {@link com.celfit.was.monitoring.BrandHashtagTagRepository#findByUserAndBrand})를
+	 * 그대로 물려받아 결정적이다. {@code isVisible}이 이미 강제하는 전제(hashtag 게시물이 노출됐다면
+	 * 이 교집합은 구조적으로 비지 않는다)를 이 헬퍼는 재확인하지 않는다 — 방어적으로 빈 교집합이 와도
+	 * 그냥 빈 목록을 돌려줄 뿐이다.
+	 */
+	private static List<String> intersectTags(Set<String> myTags, Set<String> matchedTags) {
+		if (matchedTags == null || matchedTags.isEmpty()) {
+			return List.of();
+		}
+		return myTags.stream().filter(matchedTags::contains).toList();
+	}
+
+	/**
+	 * campaignIds 배치 조회(설계 §결정 3) — shortcode당 다건일 수 있어(N:M) 그룹핑한다.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 판정을 공유한다 — 판정 함수 이원화 금지.
+	 */
+	public Map<String, List<String>> campaignIdsByCode(long brandId, Set<String> codes) {
 		Map<String, List<String>> byCode = new LinkedHashMap<>();
 		for (BrandPostCampaignRepository.Link link : postCampaignRepository.findByBrandAndShortCodes(brandId, codes)) {
 			byCode.computeIfAbsent(link.shortCode(), k -> new ArrayList<>()).add(String.valueOf(link.campaignId()));
@@ -428,24 +663,52 @@ public class BrandPostAssembler {
 	}
 
 	/**
+	 * 이 유저가 직접 등록한 게시물 원장(노출 필터·source 파생 입력) — {@code app.brand_direct_posts}.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 원장을 봐야 한다. 리포지토리를 그쪽에
+	 * 직접 주입하는 대신 이 경유로 노출한다 — 원장의 해석(무엇이 "내 등록인가")은 브랜드 조립의
+	 * 책임이고, 대시보드는 그 판정을 빌려 쓸 뿐이다.
+	 *
+	 * <p>호출 관용구도 그대로 승계한다: direct 등록 행이 하나도 없으면 <b>호출하지 않는다</b>
+	 * (불필요한 조회 방지 — {@link #assembleBrandPosts}·{@link #indexForBrand}와 동형).
+	 */
+	public Set<String> directRegisteredShortCodes(long userId) {
+		return directPostRepository.shortCodesByUser(userId);
+	}
+
+	/**
+	 * 게시자 해석 입력 키 — 산지(풀 행·성과 대시보드 인덱스 행)가 달라도 해석에 필요한 값은 이 셋뿐이다.
+	 */
+	public record AuthorKey(String shortCode, String igUserId, String username) {
+	}
+
+	/** 풀 행용 어댑터 — 해석 로직은 {@link #resolveAuthorsByKeys}가 단일 산지다. */
+	private Map<String, AuthorRow> resolveAuthors(List<BrandTaggedPostRow> posts) {
+		return resolveAuthorsByKeys(posts.stream()
+				.map(p -> new AuthorKey(p.shortCode(), p.authorIgUserId(), p.authorUsername())).toList());
+	}
+
+	/**
 	 * 게시자 프로필 해석 — 기본은 ig_user_id, 못 찾은 건만 username으로 한 번 더 찾는다(2차 SQL은
 	 * 전부 해석되면 아예 돌지 않는다). 열거 셰이프에 따라 author_ig_user_id가 비는 행이 있어
 	 * 폴백 경로가 필요하다({@code findAuthorsByUsername}은 계정당 최신 1행만 준다).
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 판정을 공유한다 — 판정 함수 이원화 금지.
 	 */
-	private Map<String, AuthorRow> resolveAuthors(List<BrandTaggedPostRow> posts) {
-		Set<String> igUserIds = posts.stream().map(BrandTaggedPostRow::authorIgUserId)
+	public Map<String, AuthorRow> resolveAuthorsByKeys(List<AuthorKey> keys) {
+		Set<String> igUserIds = keys.stream().map(AuthorKey::igUserId)
 				.filter(Objects::nonNull).collect(Collectors.toCollection(LinkedHashSet::new));
 		Map<String, AuthorRow> byIgUserId = brandReadRepository.findAuthors(igUserIds).stream()
 				.collect(Collectors.toMap(AuthorRow::igUserId, Function.identity(), (a, b) -> a));
 
 		Map<String, AuthorRow> byPost = new LinkedHashMap<>();
 		Set<String> pendingUsernames = new LinkedHashSet<>();
-		for (BrandTaggedPostRow post : posts) {
-			AuthorRow row = post.authorIgUserId() == null ? null : byIgUserId.get(post.authorIgUserId());
+		for (AuthorKey key : keys) {
+			AuthorRow row = key.igUserId() == null ? null : byIgUserId.get(key.igUserId());
 			if (row != null) {
-				byPost.put(post.shortCode(), row);
-			} else if (post.authorUsername() != null) {
-				pendingUsernames.add(post.authorUsername());
+				byPost.put(key.shortCode(), row);
+			} else if (key.username() != null) {
+				pendingUsernames.add(key.username());
 			}
 		}
 		if (pendingUsernames.isEmpty()) {
@@ -454,11 +717,11 @@ public class BrandPostAssembler {
 
 		Map<String, AuthorRow> byUsername = brandReadRepository.findAuthorsByUsername(pendingUsernames).stream()
 				.collect(Collectors.toMap(AuthorRow::username, Function.identity(), (a, b) -> a));
-		for (BrandTaggedPostRow post : posts) {
-			if (!byPost.containsKey(post.shortCode()) && post.authorUsername() != null) {
-				AuthorRow row = byUsername.get(post.authorUsername());
+		for (AuthorKey key : keys) {
+			if (!byPost.containsKey(key.shortCode()) && key.username() != null) {
+				AuthorRow row = byUsername.get(key.username());
 				if (row != null) {
-					byPost.put(post.shortCode(), row);
+					byPost.put(key.shortCode(), row);
 				}
 			}
 		}
@@ -496,7 +759,8 @@ public class BrandPostAssembler {
 				snapshotRows.stream().map(BrandPostAssembler::snapshotOf).toList();
 		List<TrackingItemResponse.PostCommentResponse> comments = commentRows.stream()
 				.map(BrandPostAssembler::commentOf).filter(Objects::nonNull).toList();
-		String username = author != null ? author.username() : post.authorUsername();
+		// author 행이 있어도 username이 비어 있으면 열거 관측으로 폴백한다(동치 계약 — refOfPoolRow와 같은 폴백).
+		String username = author != null && author.username() != null ? author.username() : post.authorUsername();
 		String source = resolveSource(post, registeredByUser);
 		OffsetDateTime trackingStarted = post.directRegisteredAt() != null ? post.directRegisteredAt()
 				: post.firstSeenAt();
@@ -526,6 +790,10 @@ public class BrandPostAssembler {
 				post.shortCode(),
 				String.valueOf(brandId),
 				source,
+				// 순수 판정 함수라 조회자의 태그 장부(유저 스코프 입력)를 모른다 — matchedTags는 항상 null로
+				// 만들고, source=hashtag로 확정된 뒤 호출부(indexForBrand·assembleBrandPosts)가
+				// BrandPostResponse#withMatchedTags로 교집합을 얹는다.
+				null,
 				postUrl(contentType, post.shortCode()),
 				post.shortCode(),
 				contentType,
@@ -562,29 +830,52 @@ public class BrandPostAssembler {
 				adDisclosure,
 				adViolations,
 				adEvidence,
+				meta == null ? List.of() : BrandCaptionHashtags.extract(meta.caption()),
 				seededAuthor);
 	}
 
 	/**
-	 * source 파생(등록자 전용 노출 요구사항, 08-19) — tagged-only는 항상 "tagged". direct-only
-	 * ({@code tag_detected_at IS NULL})는 항상 "direct"다: {@link #filterVisibleToUser}를 통과한
-	 * 시점에 이미 이 유저가 등록자임이 보장된다. 겹침 행(둘 다 값이 있음, 전원 노출 대상)만 조회자
-	 * 관점으로 갈린다 — 등록자에겐 "direct", 그 외 유저에겐 "tagged"(요구사항 §3).
+	 * source 파생(등록자 전용 노출 요구사항 08-19 + 3원화 2026-08-27 설계 §3) — 우선순위는
+	 * <b>direct(등록자 관점) &gt; tagged &gt; hashtag</b>다.
+	 *
+	 * <ol>
+	 *   <li>이 유저가 직접 등록한 행이면 "direct" — 겹침이어도 등록자 관점이 이긴다.</li>
+	 *   <li>tagged 성분이 있으면 "tagged" — 남이 등록한 direct 성분은 이 유저에게 direct가 아니다.</li>
+	 *   <li>남은 direct 성분(남이 등록)은 hashtag 성분이 함께 있을 때 "hashtag"다 — 이 행이 이
+	 *       유저에게 보이는 이유가 그것이기 때문이다. hashtag 성분마저 없으면
+	 *       {@link #filterVisibleToUser}가 이미 걸렀으므로 도달 불가지만, 안전값으로 "direct"를 둔다.</li>
+	 *   <li>그 외(성분이 hashtag뿐)는 "hashtag".</li>
+	 * </ol>
+	 *
+	 * <p>풀 조립·인덱스 패스({@link #indexForBrand}) 둘 다 이 우선순위를 아래 4인자 코어 하나로
+	 * 공유한다 — 이 메서드는 {@code BrandTaggedPostRow} 필드를 코어에 그대로 위임하는 얇은 오버로드다.
 	 */
 	private static String resolveSource(BrandTaggedPostRow post, boolean registeredByUser) {
-		return resolveSource(post.tagDetectedAt(), post.directRegisteredAt(), registeredByUser);
+		return resolveSource(post.tagDetectedAt(), post.directRegisteredAt(), post.hashtagDetectedAt(),
+				registeredByUser);
 	}
 
-	/** 판정 코어 — 풀 행({@code BrandTaggedPostRow})과 인덱스 행이 같은 파생 규칙을 공유한다. */
-	private static String resolveSource(OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
-			boolean registeredByUser) {
-		if (directRegisteredAt == null) {
-			return SOURCE_TAGGED;
-		}
-		if (tagDetectedAt == null) {
+	/**
+	 * source 파생 코어(2026-08-27 3원화 설계 §3, 위 우선순위 규칙의 단일 산지) — 풀 조립
+	 * ({@link #resolveSource(BrandTaggedPostRow, boolean)})과 인덱스 패스({@link #indexForBrand})가
+	 * 행 타입만 다르고 파생 로직은 동형이라 여기 한 곳에서만 정의한다.
+	 *
+	 * <p>공개 이유: 성과 대시보드 인덱스(2026-08-27)가 같은 판정을 공유한다 — 판정 함수 이원화 금지
+	 * (hashtagDetectedAt까지 받는 4인자가 정본이다 — 3인자로 줄이면 대시보드가 hashtag-only 게시물을
+	 * 항상 direct로 오판한다).
+	 */
+	public static String resolveSource(OffsetDateTime tagDetectedAt, OffsetDateTime directRegisteredAt,
+			OffsetDateTime hashtagDetectedAt, boolean registeredByUser) {
+		if (directRegisteredAt != null && registeredByUser) {
 			return SOURCE_DIRECT;
 		}
-		return registeredByUser ? SOURCE_DIRECT : SOURCE_TAGGED;
+		if (tagDetectedAt != null) {
+			return SOURCE_TAGGED;
+		}
+		if (directRegisteredAt != null) {
+			return hashtagDetectedAt != null ? SOURCE_HASHTAG : SOURCE_DIRECT;
+		}
+		return SOURCE_HASHTAG;
 	}
 
 	/**
@@ -722,6 +1013,8 @@ public class BrandPostAssembler {
 				shortCode,
 				String.valueOf(brandId),
 				SOURCE_DIRECT,
+				// 과도기 폴백은 항상 SOURCE_DIRECT다 — hashtag 성분 자체가 없다(레거시 direct 등록 전용).
+				null,
 				// 게시물 미확정(collecting)이면 매체를 모른다 — 피드 경로로 접는다(IG가 /p/를 리다이렉트).
 				post != null ? post.url() : postUrl(FEED, shortCode),
 				shortCode,
@@ -756,7 +1049,7 @@ public class BrandPostAssembler {
 				item.registeredAt(),
 				KstTimestamps.toKstIso(legacyLastCollectedAt),
 				// direct 산지는 광고 판정 정보가 없다(tagged 전용 — brand_post_meta 유래).
-				null, List.of(), List.of(), false);
+				null, List.of(), List.of(), BrandCaptionHashtags.extract(caption), false);
 	}
 
 	// 풀 우선 병합(mergeWithLegacyPending)은 indexForBrand의 legacyByCode 구성(풀 코드와 겹치면
@@ -831,8 +1124,12 @@ public class BrandPostAssembler {
 	 * 폴백한다(sanitizeImageUrl 가드는 폴백 경로에 그대로 유지). 원본은 인스타 서명 URL이라 며칠~2주면
 	 * 만료된다 — 아카이브 사본이 서빙 정본이다. {@code /img/}는 was 엔드포인트가 아니라 celfit-front의
 	 * Vercel rewrite({@code /img/:path*} 글롭)라서 프론트 변경이 필요 없다.
+	 *
+	 * <p>공개 이유: 성과 대시보드의 경량 ref({@code PerformanceContentAssembler.refOfPoolRow})가 카드를
+	 * 조립하지 않고도 같은 아카이브 우선 규칙을 공유해야 한다 — 판정 함수를 이원화하면 ref와 카드의
+	 * 프로필 이미지가 갈린다.
 	 */
-	static String resolveImageUrl(String imageObjectPath, String originalUrl) {
+	public static String resolveImageUrl(String imageObjectPath, String originalUrl) {
 		if (imageObjectPath != null) {
 			return "/img/" + imageObjectPath;
 		}

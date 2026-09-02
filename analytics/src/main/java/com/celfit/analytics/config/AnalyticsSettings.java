@@ -47,6 +47,11 @@ public class AnalyticsSettings {
 	 * 병렬화 여유가 있고, Gemini로 되돌려도 GeminiHttpApi.pace()가 synchronized라 안전하게
 	 * 감속된다. 429 빈도를 보며 재배포 없이 조정할 수 있게 app_setting으로 뺀다. */
 	public static final String KEY_ANALYZE_CONCURRENCY = "analytics.analyze-concurrency";
+	/** 배치 1건당 제출 상한 (2026-08-31). 구 버전은 대상 전량을 배치 1건으로 제출했는데,
+	 * sidecar_jsonl이 한 컬럼에 들어가고(설계 주석 전제: ~450행 × 수백 바이트) Vertex 배치
+	 * 파일 한도도 있어 백로그 일괄 개방(F&B 6만여 건) 시 터진다. 기본값은 실측 최대 제출량
+	 * (3,063건)에 맞췄다 — 백로그 소진 중 재배포 없이 조정할 수 있게 app_setting으로 뺀다. */
+	public static final String KEY_BATCH_CHUNK_SIZE = "analytics.batch-chunk-size";
 	/** 콘텐츠 분석 전송 방식 — online(기본, 동기 즉시 호출) | batch(Vertex 배치 50% 할인, 익일 수거).
 	 * 2026-08-11: 콘텐츠 분석(ANALYZE·LATE_BACKFILL_ANALYZE)에만 적용, 계정 카피는 대상 아님.
 	 * 잡 실행 시점마다 매번 읽으므로 재기동 없이 전환된다. 롤백은 값을 online으로 되돌리는 UPDATE 한 줄. */
@@ -72,6 +77,7 @@ public class AnalyticsSettings {
 	static final String DEFAULT_VERTEX_LOCATION = "global";
 	static final int DEFAULT_RECENT_WINDOW = 12;
 	static final int DEFAULT_ANALYZE_CONCURRENCY = 8;
+	static final int DEFAULT_BATCH_CHUNK_SIZE = 3000;
 	static final String DEFAULT_ANALYZE_TRANSPORT = "online";
 	static final String DEFAULT_ACCOUNT_ANALYZE_TRANSPORT = "online";
 
@@ -153,6 +159,12 @@ public class AnalyticsSettings {
 
 	public int analyzeConcurrency() {
 		return read(KEY_ANALYZE_CONCURRENCY).map(Integer::parseInt).orElse(DEFAULT_ANALYZE_CONCURRENCY);
+	}
+
+	/** 배치 1건당 제출 상한 — 0 이하 값은 기본값으로 되돌린다(잘못된 운영 UPDATE 방어). */
+	public int batchChunkSize() {
+		int v = read(KEY_BATCH_CHUNK_SIZE).map(Integer::parseInt).orElse(DEFAULT_BATCH_CHUNK_SIZE);
+		return v > 0 ? v : DEFAULT_BATCH_CHUNK_SIZE;
 	}
 
 	/** 잡 실행 시점마다 매번 읽는다(캐시 없음) — 재기동 없이 online↔batch 전환. */

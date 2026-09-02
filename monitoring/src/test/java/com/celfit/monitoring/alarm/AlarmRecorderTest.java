@@ -3,13 +3,14 @@ package com.celfit.monitoring.alarm;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.domain.KeywordRule;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
-import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.store.SnapshotRepository;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.testsupport.TestDb;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -79,27 +80,23 @@ class AlarmRecorderTest {
 				contentType, likes, views, saves);
 	}
 
+	/**
+	 * 즉시 레인 폐지(2026-08-27 주간 개편 §2) — 직접 등록발이든 스윕 자동 전환이든 진입점이
+	 * 하나이고 레인도 아침 하나다. 구 테스트 2개(즉시/자동 전환)를 이 하나가 대체한다.
+	 */
 	@Test
-	void 수집_시작_즉시_레인은_발송_시각이_발생_시각과_같다() {
+	void 수집_시작은_아침_레인으로_적재된다() {
 		long id = tracking(7L, "SC1", "rk-1");
 
-		recorder.collectionStartedImmediate(id, 7L, "acct_a", "SC1");
+		recorder.collectionStarted(id, 7L, "acct_a", "SC1");
 
 		var row = allEvents().getFirst();
 		assertThat(row.get("event_type")).isEqualTo("COLLECTION_STARTED");
 		assertThat(row.get("user_id")).isEqualTo(7L);
 		assertThat(row.get("email_status")).isEqualTo("PENDING");
-		assertThat(row.get("dispatch_after")).isEqualTo(row.get("occurred_at"));
-	}
-
-	@Test
-	void 자동_전환은_아침_레인이라_발송_시각이_발생_시각과_다르다() {
-		long id = tracking(7L, "SC1", "rk-1");
-
-		recorder.collectionStartedScheduled(id, 7L, "acct_a", "SC1");
-
-		var row = allEvents().getFirst();
-		assertThat(row.get("dispatch_after")).isNotEqualTo(row.get("occurred_at"));
+		Timestamp occurredAt = (Timestamp) row.get("occurred_at");
+		assertThat(row.get("dispatch_after"))
+				.isEqualTo(Timestamp.from(DispatchLane.morning(occurredAt.toInstant())));
 	}
 
 	/** user_id가 없는 기존 캠페인은 수신자를 알 수 없다 — 적재하면 영원히 못 보내는 행이 쌓인다. */
@@ -107,7 +104,7 @@ class AlarmRecorderTest {
 	void 수신자_없는_캠페인은_적재하지_않는다() {
 		long id = tracking(null, "SC1", "rk-1");
 
-		recorder.collectionStartedImmediate(id, null, "acct_a", "SC1");
+		recorder.collectionStarted(id, null, "acct_a", "SC1");
 		recorder.collectionEnded(id, null, "acct_a", "SC1");
 		recorder.contentUnavailable(id, null, "acct_a", "SC1", "SUBJECT_NOT_FOUND");
 
@@ -151,7 +148,7 @@ class AlarmRecorderTest {
 		assertThat(allEvents()).isEmpty();
 	}
 
-	/** 좋아요 숨김은 파서가 likes를 null로 내린다(HikerClient) — 그 전이가 알람까지 이어져야 한다. */
+	/** 좋아요 숨김은 파서가 likes를 null로 내린다(HikerBackend) — 그 전이가 알람까지 이어져야 한다. */
 	@Test
 	void 좋아요가_값에서_null로_바뀌면_비공개_이벤트를_남긴다() {
 		tracking(7L, "SC1", "rk-1");
@@ -231,7 +228,7 @@ class AlarmRecorderTest {
 	}
 
 	/**
-	 * 격리 정책의 핵심 단언 — 적재(insert)가 매번 던져도 4개 단순 진입점은 예외를 밖으로 내지 않는다.
+	 * 격리 정책의 핵심 단언 — 적재(insert)가 매번 던져도 3개 단순 진입점은 예외를 밖으로 내지 않는다.
 	 * 알람은 부가 기능이라 실패가 등록·스윕·종결 같은 본 작업을 막으면 안 된다(재시도 없이 유실 수용).
 	 */
 	@Test
@@ -240,8 +237,7 @@ class AlarmRecorderTest {
 		var throwingRecorder = new AlarmRecorder(new ThrowingEventRepository(), targets, snapshots);
 
 		assertThatCode(() -> {
-			throwingRecorder.collectionStartedImmediate(id, 7L, "acct_a", "SC1");
-			throwingRecorder.collectionStartedScheduled(id, 7L, "acct_a", "SC1");
+			throwingRecorder.collectionStarted(id, 7L, "acct_a", "SC1");
 			throwingRecorder.collectionEnded(id, 7L, "acct_a", "SC1");
 			throwingRecorder.contentUnavailable(id, 7L, "acct_a", "SC1", "PRIVATE_ACCOUNT");
 		}).doesNotThrowAnyException();

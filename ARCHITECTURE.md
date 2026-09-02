@@ -41,6 +41,7 @@ MVP 범위 (07-14 정정 — 댓글 제외):
 | `was` | 분석 결과 읽기 + 서비스 데이터 읽기/쓰기 | REST API 서빙 + 서비스 기능(로그인·후보 관리 등) | Spring Boot, JdbcClient |
 | `contract-analysis` *(신설 예정)* | — | 분석 결과의 record·enum — 순수 JDK 계약 타입 (§4-4). analytics·was가 의존, crawler 무관 | Java record |
 | `common-llm` *(2026-08-18 신설)* | — | LLM 전송 계층만 — Vertex AI HTTP 호출·SA 토큰 발급·재시도/백오프 (§4-4). monitoring·was가 의존(was는 2026-08-27 브랜드 모니터링 AI 어시스턴트 PoC부터), analytics 편입은 후속 트랙. 프롬프트·툴 정의·에이전트 루프는 소비 모듈 소관 — common-llm은 전송만 | 순수 JDK + slf4j + google-auth-library |
+| `instagram-source` *(2026-08-31 신설)* | — | 인스타 수집 어댑터(공유) — IG/HikerAPI HTTP 수집·DTO 정규화·에러 매핑 (§4-4). Phase 1은 monitoring이 소비, crawler 이관은 Phase 2 | 순수 JDK + slf4j + Jackson 3 |
 | `monitoring` *(07-29 구현, 07-30 알람 이관)* | 사설 monitoring DB 읽기/쓰기 (raw·analysis DB 무권한. was는 `public` 조회 표면만 읽기 전용) + analysis DB `app` 스키마 두 객체만 읽기 전용(`alarm_reader`, 계약 v2 §6) | 시딩 캠페인 모니터링 — 계정 키워드 감시→후보 감지→**첫 감지 자동 추적**→게시물 추적 상태 기계(target=캠페인 단위), Hiker-only 일일 수집·추이 적재. **was 명령은 내부 HTTP API(DB-only 원칙의 명시적 예외 — §7 07-28), 조회는 was가 읽기 전용 SELECT**. **알람(이벤트 대장·이메일 발송)도 monitoring 소유** — was는 앱 내 알림 서빙만 | Spring Boot (8083) |
 
 **데이터 배치**: 저장 영역은 세 가지 — raw(크롤링 원본) / 분석 결과(미러 테이블) / **서비스 데이터**(was가
@@ -74,6 +75,10 @@ tier 경계다. 방식은 명시적·타입 기반(§4-3). ※ 과거의 `Materi
 `analytics/views/NN_*.sql` 번호순 적용 컨벤션. 2026-07-18 신 crawler 스키마(V15) 기준으로
 전면 재구축 — base 층(00)이 raw 접촉을 격리하고, 서빙 모수는 뷰티 인플루언서
 (QUALIFIED ∧ beauty ∧ ¬beauty_company). 04는 LLM 캡션 선분석 후보 뷰(미러 안 함).
+**분석 모수와 서빙 모수는 서로 독립이다**(2026-08-31): 04는 서빙 뷰(02)가 아니라 자체
+소스 뷰 `v_analysis_source`(뷰티 ∪ F&B) 위에 얹힌다 — 미러가 `SELECT * FROM v_contents`라
+02를 넓히면 랭킹 API가 즉시 열리기 때문이다. 카테고리 축 소속은 어휘 테이블
+(`beauty_taxonomy.axis`)이 알고, `content_analyses.is_beauty`는 그 파생값이다.
 
 ### analysis DB
 
@@ -153,7 +158,7 @@ N을 포함한 숫자 경계값·임계값은 `app_setting`(key-value)이 단일
 
 ### 4-4. 모듈 공유 원칙
 
-- **모듈은 서로 import 하지 않는다.** 예외는 공유 모듈 두 개뿐:
+- **모듈은 서로 import 하지 않는다.** 예외는 공유 모듈 세 개뿐:
   - **`contract-analysis`** — 분석 결과의 record·enum만 담고(순수 JDK, Spring/JPA 의존 금지),
     생산자 analytics와 소비자 was가 의존한다. crawler와는 무관.
     수록 기준: **"동일 형태를 다루는 Java 생산자+소비자 쌍"이 성립하는 타입만.** 한 모듈만 쓰는
@@ -165,6 +170,10 @@ N을 포함한 숫자 경계값·임계값은 `app_setting`(key-value)이 단일
     아직 자체 Vertex 구현을 유지한다(편입은 후속 트랙 — DECISIONS.md 08-18 항목 참조).
     **프롬프트·툴 정의·에이전트 루프·판정 로직·도메인 스키마는 절대 반입하지 않는다** — 그건
     소비 모듈(analytics·monitoring·was) 소관이고, common-llm은 전송만 한다.
+  - **`instagram-source`**(2026-08-31 신설) — 인스타그램 수집 어댑터만(IG/HikerAPI HTTP
+    수집·DTO 정규화·에러 매핑·프록시 로테이션). Spring·DB 의존 금지, 빈 배선은 소비 모듈 몫.
+    Phase 1은 monitoring이 소비하며, crawler 이관은 Phase 2(팀 승인 후). 두 백엔드(자체크롤·
+    Hiker)를 한 인터페이스 뒤에 두고 장애 시 상호 폴백을 모듈 안에 가둔다.
 - **모듈 간 계약은 전부 데이터 계약이다:**
 
   | 경계 | 계약 | 정의하는 쪽 |
@@ -208,7 +217,8 @@ Java는 Testcontainers/MockMvc. LLM 호출은 테스트에서 실 API를 때리�
 > (`docs/tracks/<트랙문자>-<슬러그>.md`). 새 트랙은 다음 미사용 문자로 파일을 새로 만든다
 > (파일 존재 여부가 곧 문자 선점 대장 — 여러 세션이 동시에 새 트랙을 만들어도 서로 다른
 > 파일이라 머지 충돌이 나지 않는다). 상태가 바뀌면 해당 트랙 파일만 갱신한다.
-> 상태 기호: ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류.
+> 상태 기호: ✅ 완료 · 🔨 진행 중 · ⬜ 대기 · ⏸ 보류. 완결·제거 트랙은 `docs/tracks/archive/`에 있다
+> (재개 시 다시 `docs/tracks/`로 꺼낸다) — 아래 목록·트랙군 설명은 활성 트랙 기준이다.
 
 **운영 중**: crawler 파이프라인(discover→qualify→beauty→collect·reels — 07-22부터 qualify·beauty·collect·reels는
 새벽 윈도우 반복 크론 자동 실행, discover·similar만 어드민 수동 트리거. 어드민은 대시보드 단일

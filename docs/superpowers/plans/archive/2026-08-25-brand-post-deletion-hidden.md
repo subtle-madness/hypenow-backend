@@ -6,7 +6,7 @@
 
 **Goal:** 야간 스윕이 direct 게시물 404를 만나면 `brand_tagged_post.unavailable_at`에 영속화하고, was가 그 행을 `trackingStatus: "hidden"`으로 내려 FE의 기존 "삭제·비공개" 칩이 작동하게 한다.
 
-**Architecture:** monitoring이 감지(404 → 마킹)·해제(재관측 → NULL)를 쓰고, was는 읽어서 조립 시 상태만 바꾼다. 계약(FE) 변경 없음 — `TrackingStatus` 어휘에 `hidden`이 이미 있다. 스펙: [2026-08-25-brand-post-deletion-hidden-design.md](../specs/2026-08-25-brand-post-deletion-hidden-design.md)
+**Architecture:** monitoring이 감지(404 → 마킹)·해제(재관측 → NULL)를 쓰고, was는 읽어서 조립 시 상태만 바꾼다. 계약(FE) 변경 없음 — `TrackingStatus` 어휘에 `hidden`이 이미 있다. 스펙: [2026-08-25-brand-post-deletion-hidden-design.md](../../specs/2026-08-25-brand-post-deletion-hidden-design.md)
 
 **Tech Stack:** Java 21, Spring Boot 4.1, Flyway(monitoring DB), JdbcTemplate(monitoring)/JdbcClient(was), JUnit + AssertJ(DB 없는 스텁 관용구)
 
@@ -382,7 +382,7 @@ Expected: BUILD SUCCESSFUL (Docker Desktop 기동 필요 — Testcontainers. `DO
 "브랜드 파이프라인은 상태 전이를 하지 않는다"의 유일한 예외지만, 재관측(touchCrawled)이
 해제하는 가역 마킹이라 종결 전이가 아니다. tagged-only 행은 단건 콜이 없고(열거 부재는 태그
 해제와 구분 불가·검증 콜은 404도 과금) 감지 대상 외 — 항상 tracking.
-[설계](docs/superpowers/specs/2026-08-25-brand-post-deletion-hidden-design.md)
+[설계](../../specs/2026-08-25-brand-post-deletion-hidden-design.md)
 ```
 
 - [ ] **Step 3: plan 아카이브 + 커밋**

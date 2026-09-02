@@ -13,8 +13,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
@@ -25,11 +23,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * ⑦ oe(CDN 서명 만료) 지난 URL은 시도 없이 제외 ⑧ 만료 임박 순 처리
  * ⑨ 영구 무효 URL(비http 스킴·IG 플레이스홀더)은 시도 없이 제외하고 실패로 세지 않는다.
  */
-@Testcontainers
 class ImageArchiveJobTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	JdbcTemplate db;
 	DataSource ds;
@@ -245,6 +241,28 @@ class ImageArchiveJobTest {
 		Integer rows = db.queryForObject(
 				"SELECT count(*) FROM image_assets WHERE key IN ('sentinel','gone1','gone2')", Integer.class);
 		assertThat(rows).isZero();
+	}
+
+	/**
+	 * 메모리 계약(2026-09-01): 대상 선정은 v_contents 전량을 자바 리스트로 적재하지 않는다 —
+	 * 커서 스트리밍(읽기전용 트랜잭션 + fetchSize) + 상한 크기 후보만 유지한다. 전량 적재 구현은
+	 * 드라이버 버퍼와 Target 리스트가 행 수에 비례해 이중으로 쌓인다(미러 08-31 OOM과 같은 패턴).
+	 * 시드는 3000행 × 100KB URL ≈ 300MB — Gradle 테스트 JVM 기본 힙(512m) 전제에서 전량
+	 * 적재(버퍼+UTF-16 문자열 ≈ 2배)면 OOM, 스트리밍이면 fetch 창(500행)+상한(5건)만 남는다.
+	 */
+	@Test
+	void 대상이_힙보다_커도_상한만큼만_유지한다() {
+		db.execute("""
+				INSERT INTO analytics.v_contents
+				SELECT 'c' || i, 'https://cdn.example/v/' || repeat('x', 100000) || i || '_n.jpg'
+				FROM generate_series(1, 3000) i
+				""");
+
+		JobResult result = job(5).run();
+
+		assertThat(result.processed()).isEqualTo(5);
+		assertThat(result.failed()).isZero();
+		assertThat(result.carriedOver()).isTrue();
 	}
 
 	@Test

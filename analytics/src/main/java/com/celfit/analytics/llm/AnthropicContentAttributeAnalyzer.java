@@ -49,26 +49,34 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 
 	static String instructions(BeautyTaxonomy taxonomy) {
 		return """
-				당신은 뷰티 콘텐츠 분석가다. 캡션(과 썸네일이 주어지면 썸네일)을 보고 다음을 추출하라.
+				당신은 브랜드 콘텐츠 분석가다. 캡션(과 썸네일이 주어지면 썸네일)을 보고 다음을 추출하라.
 				확신이 없는 항목은 null 또는 빈 배열로 두고 지어내지 마라. 한국어로.
 
-				- isBeauty: 이 콘텐츠가 뷰티 콘텐츠인가 (true/false). 뷰티 제품·시술·루틴·리뷰 등이면 true,
-				  뷰티 인플루언서라도 일상·여행·음식 등 뷰티와 무관하면 false. mainCategory와 독립적으로 반드시 판정하라.
+				- isRelevant: 이 콘텐츠가 분류표의 대분류 중 하나에 해당하는가 (true/false).
+				  제품·시술·루틴·리뷰·요리 등이면 true, 인플루언서가 뷰티·F&B라도 무관한
+				  일상·여행·반려동물 등이면 false. mainCategory와 독립적으로 반드시 판정하라.
 				- detectedBrands: 캡션·화면에서 확인되는 브랜드 {name, evidence(근거)} —
 				  브랜드를 특정할 수 없는 제품은 목록에서 제외하라 ("미상"/"불명확" 같은 표기 금지)
 				- sponsoredSignalLevel: 광고성 high|mid|low, sponsoredSignalReasons: 근거 나열
 				- adDisclosure: 광고 고지 여부 (예: "캡션 #협찬 표기 있음", 없으면 "표기 없음")
-				- mainCategory: 아래 분류표의 대분류 영문 값 중 하나
-				- subCategories: 이 콘텐츠에 해당하는 중분류·소분류 라벨 전부 — 분류표의 표기 그대로
-				  (예: 립틴트 콘텐츠면 ["립메이크업","립틴트"])
+				- mainCategory: 아래 분류표의 대분류 영문 값 중 하나. 분류표는 [축] 표기로 계열을 밝힌다.
+				  ※ 섭취하는 제품(건강기능식품·단백질·다이어트 식품·이너뷰티 포함)은 뷰티 목적이어도
+				    fnb 축으로 분류하라 — 제형이 아니라 섭취 여부가 기준이다.
+				- subCategories: 이 콘텐츠에 해당하는 중분류·소분류 라벨 전부 — 분류표의 표기 그대로.
+				  중분류만 적고 끝내지 마라 — 해당하는 소분류(각 중분류의 대괄호 안 라벨)까지 반드시
+				  포함하라. 소분류를 하나도 특정할 수 없을 때만 중분류 단독을 허용한다.
+				  (예: 립틴트 콘텐츠면 ["립메이크업","립틴트"], 밀키트 소개면 ["가공/간편식","밀키트"])
 				- detectedProductCategories: 확인되는 제품들의 소분류 라벨 — 분류표의 표기 그대로
 				- detectedProducts: 확인되는 제품명 {name(상품명), brand(그 제품의 브랜드, 미상이면 null)}
-				- detectedDistributors: 확인되는 유통 채널 — %s 만, 그 외 상호는 제외
+				- detectedDistributors: 확인되는 유통 채널 — %s 만, 그 외 상호는 제외.
+				  괄호 안은 그 유통사가 속한 축이다 — mainCategory와 같은 축의 유통사만 답하라.
 				- vlmAttributes: {label, value} — 노출 제품 / 제품 노출 비중 / 후킹 요소 / 전환 장치 /
 				  콘텐츠 유형 / 무드 / 편집 스타일 순 (썸네일 없이 판단 불가한 항목은 제외)
 				- adType: organic|sponsored (캡션 표기+화면 종합 판정)
+				  ※ 공동구매(공구)는 인플루언서가 대가를 받고 판매하는 상업 콘텐츠다 —
+				    sponsored로 판정하라.
 
-				[분류표 — 대분류(한글): 중분류[소분류, …]]
+				[분류표 — [축] 대분류(한글): 중분류[소분류, …]]
 				%s""".formatted(taxonomy.distributorsPrompt(), taxonomy.promptTable());
 	}
 
@@ -137,7 +145,8 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 	 * LLM이 어휘 밖 값을 지어낸 경우 제거한다 — 스칼라는 null로, 배열은 어휘 밖 원소만 걸러낸다
 	 * (was가 verbatim 매칭하므로 어휘 밖 라벨은 필터에 안 잡히는 노이즈).
 	 * 단 mainCategory는 어휘 밖이면 유효 서브라벨로 역유도 복구한다(드랍 아님).
-	 * 비뷰티(isBeauty≠true)면 대분류를 확정하지 않는다(생산자 불변식).
+	 * 분류 대상이 아니면(isRelevant≠true) 대분류를 확정하지 않는다(생산자 불변식).
+	 * 확정된 대분류의 축에서 is_beauty를 파생하고, 유통사도 그 축의 것만 남긴다(2026-08-31).
 	 * detectedBrands·detectedProducts는 자유 텍스트라 통과. Synthesis의 등급 방어와 대칭.
 	 */
 	static ContentAttributes sanitize(ContentAttributes raw, BeautyTaxonomy taxonomy) {
@@ -155,12 +164,29 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 			}
 			main = taxonomy.deriveMain(signal);
 		}
-		// 비뷰티(isBeauty≠true)는 대분류를 확정하지 않는다 — "main_category 있음 ⇒ 뷰티" 불변식을
-		// 생산자에서 보장해, main_category만 읽는 소비처(카테고리 믹스 등)가 별도 필터 없이 비뷰티를
-		// 자동 제외하게 한다. (설계 §3-4)
-		if (!Boolean.TRUE.equals(raw.isBeauty())) {
+		// 분류표 어느 대분류에도 해당하지 않는 콘텐츠(일상·여행 등)는 대분류를 확정하지 않는다.
+		// 축이 늘어도 이 규칙은 그대로다 — "main_category 있음 ⇒ 어떤 축엔가 속함"이 생산자 불변식.
+		if (!Boolean.TRUE.equals(raw.isRelevant())) {
 			main = null;
 		}
+		// 대분류 확정 후 서브 라벨을 그 대분류 소속으로 좁힌다 (2026-09-01 FE #6 — 축·대분류가
+		// 다른 라벨은 필터 확장 매칭(t.main_value=:main AND jsonb_exists)에 안 걸리는 노이즈이자,
+		// F&B 중분류가 뷰티 게시물에 붙는 교차 오염의 원인이었다). 역유도(deriveMain)는 전역
+		// 필터 결과를 재료로 이미 끝난 뒤라 순서 안전. main 미확정(무관 콘텐츠)은 기존대로 전역만.
+		if (main != null) {
+			subs = filterToVocabulary(subs, taxonomy.midAndSubLabelsOf(main));
+			prodCats = filterToVocabulary(prodCats, taxonomy.subLabelsOf(main));
+		}
+		String axis = taxonomy.axisOf(main);
+		// is_beauty는 파생 (2026-08-31 축 일반화) — was 소비처(랭킹·카테고리 믹스·발굴 게이트)가
+		// 이 컬럼 하나로 비뷰티를 걸러내므로, 축이 beauty일 때만 true여야 F&B가 서빙에 새지 않는다.
+		boolean isBeauty = "beauty".equals(axis);
+		// 유통사는 그 콘텐츠 축의 것만 남긴다 — 뷰티 게시물에 붙은 'GS25'는 드랍.
+		// 축을 판정 못 한 콘텐츠(main=null)는 어느 축 필터에도 안 걸리는 고아 값이 되므로 비운다.
+		List<String> dists = raw.detectedDistributors() == null ? null
+				: raw.detectedDistributors().stream()
+						.filter(d -> axis != null && axis.equals(taxonomy.distributorAxisOf(d)))
+						.toList();
 		return new ContentAttributes(
 				raw.detectedBrands(),
 				keepIfIn(raw.sponsoredSignalLevel(), SIGNAL_LEVELS),
@@ -171,9 +197,10 @@ public final class AnthropicContentAttributeAnalyzer implements ContentAttribute
 				raw.vlmAttributes(),
 				main,
 				subs,
-				filterToVocabulary(raw.detectedDistributors(), taxonomy.distributors()),
+				dists,
 				keepIfIn(raw.adType(), AD_TYPES),
-				raw.isBeauty());
+				raw.isRelevant(),
+				isBeauty);
 	}
 
 	private static String keepIfIn(String value, Set<String> vocabulary) {

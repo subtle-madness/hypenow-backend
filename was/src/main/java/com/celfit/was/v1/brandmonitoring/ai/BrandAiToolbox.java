@@ -1251,7 +1251,15 @@ public class BrandAiToolbox {
 			return error("그 브랜드는 이 사용자의 모니터링 목록에 없거나 접근 권한이 없습니다. list_brands로 확인하세요.");
 		}
 		BrandLinkRow link = linkOpt.get();
-		List<BrandHashtagPostResponse> all = hashtagPostAssembler.assembleForBrand(userId, link.brandId());
+		Optional<BrandAccountRow> accountOpt = brandReadRepository.findAccount(link.brandId());
+		if (accountOpt.isEmpty()) {
+			return error("그 브랜드의 계정 정보가 아직 수집되지 않았습니다.");
+		}
+		// 링크 창 하한은 컨트롤러 hashtagPosts와 같은 산식(today.minusMonths — linkWindowStart 동형).
+		LocalDate windowStart = LocalDate.ofInstant(clock.instant(), KstTimestamps.KST)
+				.minusMonths(link.collectionMonths());
+		List<BrandHashtagPostResponse> all = hashtagPostAssembler.assembleForBrand(userId, accountOpt.get(),
+				link.accountType(), windowStart);
 
 		LocalDate cutoff = cutoffDateFor(link, args);
 		AiScope scope = session.scope();

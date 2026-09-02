@@ -17,8 +17,13 @@
 #  rclone 스텁의 rcat은 stdin을 끝까지 읽는다 — 안 읽으면 실제 rclone과 달리 파이프
 #  업스트림(tee)이 SIGPIPE로 죽는 레이스가 생겨 성공 케이스가 간헐 실패한다(실측).
 #  ⑦은 CPU 상한 자기 래핑(systemd-run 재실행) 검증 — 08-26 밤 cpu-high 알람 대응.)
+# (09-02: 오프사이트 age 암호화 도입에 맞춰 정비 — analysis·monitoring 업로드가 copy→rcat으로
+#  바뀌어 실패 주입 지점을 rcat+대상명 매치로 재편. rcat 스텁이 대상 경로를 기록해 성공
+#  케이스에서 세 계열 모두 `.sql.zst.age`로 올라가는지 검증한다. age 실물 필요 — zstd처럼
+#  하니스 전제 조건.)
 set -uo pipefail
 SCRIPT="$1"
+command -v age >/dev/null 2>&1 || { echo "age 필요(오프사이트 암호화) — sudo apt-get install -y age"; exit 1; }
 
 pass=0; fail=0
 run_case() {
@@ -41,15 +46,17 @@ EOF
   cat > "$SB/bin/rclone" <<'EOF'
 #!/usr/bin/env bash
 sub="$1"
+# rcat은 분기 무관 stdin을 먼저 소진(실제 rclone 동작) — 안 읽으면 tee가 SIGPIPE로 죽는 레이스.
+# 대상 경로를 기록해 하니스가 암호화 업로드명(.sql.zst.age)을 검증한다(09-02).
+if [ "$sub" = rcat ]; then cat >/dev/null; printf '%s\n' "$*" >> "${RCLONE_LOG:-/dev/null}"; fi
 case "$FAILMODE:$sub" in
-  stream:rcat)      cat >/dev/null; exit 1 ;;       # crawler 직스트리밍 업로드 실패
-  upload:copy)      exit 1 ;;                       # analysis 업로드 실패(캡 초과)
-  monitoring:copy)  [[ "$*" == *monitoring* ]] && exit 1 ;;   # monitoring만 실패
-  trim:lsf)         exit 1 ;;                       # crawler 개수 트리밍 실패
-  rolling:delete)   exit 1 ;;                       # 기간 롤링 실패
+  stream:rcat)      [[ "$*" == *crawler* ]] && exit 1 ;;      # crawler 직스트리밍 업로드 실패
+  upload:rcat)      [[ "$*" == *analysis* ]] && exit 1 ;;     # analysis 업로드 실패(캡 초과)
+  monitoring:rcat)  [[ "$*" == *monitoring* ]] && exit 1 ;;   # monitoring만 실패
+  trim:lsf)         exit 1 ;;                                 # crawler 개수 트리밍 실패
+  rolling:delete)   exit 1 ;;                                 # 기간 롤링 실패
 esac
 case "$sub" in
-  rcat)        cat >/dev/null ;;
   listremotes) echo "b2:" ;;
   lsf)         echo "crawler-20260701-000000.sql.gz"; echo "crawler-20260702-000000.sql.gz" ;;
 esac
@@ -66,7 +73,7 @@ EOF
   local out rc
   # BACKUP_CPU_CAPPED=1: CPU 상한 자기 래핑(systemd-run 재실행)을 건너뛰고 본문만 검증 —
   # 래핑 자체는 케이스 ⑦이 sudo 스텁으로 따로 검증한다
-  out="$(HOME="$SB" FAILMODE="$failmode" BACKUP_CPU_CAPPED=1 PATH="$SB/bin:$PATH" bash "$SCRIPT" 2>&1)"; rc=$?
+  out="$(HOME="$SB" FAILMODE="$failmode" RCLONE_LOG="$SB/rclone.log" BACKUP_CPU_CAPPED=1 PATH="$SB/bin:$PATH" bash "$SCRIPT" 2>&1)"; rc=$?
   local n_local n_pre
   n_local="$(find "$SB/backups" -name 'crawler-[0-9]*.sql.*' | wc -l | tr -d ' ')"
   n_pre="$(find "$SB/backups" -name 'crawler-pre-*' | wc -l | tr -d ' ')"
@@ -75,6 +82,11 @@ EOF
   [ "$n_local" = "$expect_local" ] || verdict="FAIL(로컬 $n_local != 기대 $expect_local)"
   [ "$rc" = "$expect_exit" ]       || verdict="$verdict FAIL(종료코드 $rc != 기대 $expect_exit)"
   [ "$n_pre" = "1" ]               || verdict="$verdict FAIL(수동 스냅샷 유실!)"
+  if [ "$failmode" = none ]; then
+    # 전부 성공 케이스: 세 계열(crawler·analysis·monitoring) 모두 암호화 이름으로 올라가야 한다(09-02)
+    local n_age; n_age="$(grep -c '\.sql\.zst\.age' "$SB/rclone.log" 2>/dev/null || true)"
+    [ "${n_age:-0}" = "3" ] || verdict="$verdict FAIL(암호화 업로드 ${n_age:-0} != 3)"
+  fi
   if [ "$verdict" = OK ]; then pass=$((pass+1)); else fail=$((fail+1)); fi
   printf '%-46s → %s\n' "$name" "$verdict"
   [ "$verdict" = OK ] || { echo "---- 출력 ----"; echo "$out"; echo "--------------"; }
