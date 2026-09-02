@@ -60,7 +60,10 @@ import tools.jackson.databind.ObjectMapper;
 public class BrandPostAssembler {
 
 	static final String SOURCE_TAGGED = "tagged";
-	static final String SOURCE_DIRECT = "direct";
+	/** public(N4, 2026-08-28) - {@code com.celfit.was.v1.brandmonitoring.ai.BrandAiToolbox}가 패키지
+	 * 밖에서 링크 창 판정(direct 면제)에 이 값을 그대로 참조한다. 리터럴을 그쪽에 복제해두면 이 값이
+	 * 바뀌어도 컴파일 에러 없이 조용히 드리프트한다. */
+	public static final String SOURCE_DIRECT = "direct";
 	/** 해시태그 열거로만 편입된 행(2026-08-27 설계 §3) — 사용자 격리 필터가 걸리는 유일한 source. */
 	static final String SOURCE_HASHTAG = "hashtag";
 
@@ -83,7 +86,11 @@ public class BrandPostAssembler {
 	 */
 	private static final String MARKER_REGEX = BrandSponsorshipClassifier.postgresMarkerRegex();
 
-	private static final String CONTENT_TYPE_REELS = "REELS";
+	/** public(N6, 2026-08-28) - {@code com.celfit.was.v1.brandmonitoring.ai.BrandAiToolbox}가
+	 * aggregate_posts 집계에서 브랜드 스냅샷 원시 content_type을 이 값과 같은 규칙(대소문자 무시
+	 * 비교)으로 릴스/피드를 가른다({@link #snapshotOf}·{@link BrandReadRepository#findLatestSnapshotsForBrand}
+	 * 동형 판정) - 리터럴을 그쪽에 복제하면 이 값이 바뀌어도 조용히 드리프트한다(SOURCE_DIRECT와 같은 이유). */
+	public static final String CONTENT_TYPE_REELS = "REELS";
 	private static final String REELS = "reels";
 	private static final String FEED = "feed";
 	private static final String PROFILE_URL_PREFIX = "https://www.instagram.com/";
@@ -136,6 +143,8 @@ public class BrandPostAssembler {
 	 * @param latestViews performance 정렬 키(피드는 null — {@link #snapshotOf} 서빙 규칙 동형).
 	 *                    {@code withViews=false} 인덱스에서는 항상 null이다.
 	 * @param contentType "reels"/"feed" — 불명은 피드로 접는다(카드 {@code contentType}과 동형).
+	 *                    AI scope의 mediaType 필터 입력이기도 하다(2026-08-30 —
+	 *                    authorUsername·authorFollowers도 AI scope 작성자 검색·팔로워 필터가 함께 쓴다).
 	 * @param adVerdict 광고 표기 판정 원값(노출 게이트 미적용 — 게이트는 {@link #adDisclosureExposed}가
 	 *                  호출부에서 적용한다). 과도기 폴백(레거시 direct)은 산지가 없어 항상 null.
 	 * @param takenAtKst 카드 {@code takenAt}과 같은 KST ISO 문자열(미상이면 null).
