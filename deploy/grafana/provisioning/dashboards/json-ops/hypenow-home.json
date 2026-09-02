@@ -651,7 +651,7 @@
       "id": 301,
       "type": "stat",
       "title": "브랜드 일일 수집 신선도",
-      "description": "활성 브랜드 last_swept_at의 중앙값 기준 경과 시간(등록 백필 오염 회피 — 08-25 실측, [흐름] 브랜드 모니터링 ① 수집과 같은 쿼리). 야간 일일 수집은 KST 02:00라 26시간을 넘으면 어젯밤 수집 불발이다. 클릭 → [흐름] 브랜드 모니터링.",
+      "description": "활성 브랜드 sweep_completed_at(완주 도장 — 09-02 진행 워터마크 분리)의 중앙값 기준 경과 시간(등록 백필 오염 회피 — 08-25 실측, [흐름] 브랜드 모니터링 ① 수집과 같은 쿼리). 야간 일일 수집은 KST 02:00라 26시간을 넘으면 어젯밤 수집 불발이다. 클릭 → [흐름] 브랜드 모니터링.",
       "gridPos": {
         "x": 4,
         "y": 7,
@@ -726,7 +726,7 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT (EXTRACT(EPOCH FROM now()) - percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM last_swept_at)))/3600 AS value FROM brand_account WHERE closed_at IS NULL AND last_swept_at IS NOT NULL"
+          "rawSql": "SELECT (EXTRACT(EPOCH FROM now()) - percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM sweep_completed_at)))/3600 AS value FROM brand_account WHERE closed_at IS NULL AND sweep_completed_at IS NOT NULL"
         }
       ]
     },

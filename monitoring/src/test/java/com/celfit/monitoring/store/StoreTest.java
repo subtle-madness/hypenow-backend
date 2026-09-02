@@ -2,13 +2,13 @@ package com.celfit.monitoring.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.monitoring.domain.CandidateStatus;
 import com.celfit.monitoring.domain.KeywordRule;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
-import com.celfit.monitoring.hiker.CommentInfo;
-import com.celfit.monitoring.hiker.PostInfo;
-import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.time.Instant;
 import java.time.LocalDate;

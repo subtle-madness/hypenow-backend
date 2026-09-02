@@ -22,8 +22,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -36,11 +34,9 @@ import tools.jackson.databind.ObjectMapper;
  * 플래그 소비·마킹만. 골격은 CommentClassificationJobTest 패턴 재사용.
  * 포트는 ②속성+③종합 통합 1콜(ContentInsightPort — 07-18 확정).
  */
-@Testcontainers
 class ContentAnalysisJobTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	JdbcTemplate db;
 	DataSource ds;

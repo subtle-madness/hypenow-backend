@@ -1,7 +1,7 @@
 package com.celfit.monitoring.store;
 
+import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.ProfileInfo;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -184,12 +184,15 @@ public class BrandRepository {
 	 * 전량 수집(스윕·백필) 완주 기록 — last_swept_on이 null이면 "수집 준비 중"(백필 상태 판별,
 	 * 08-06 결정). last_swept_at은 시각 공급(was의 lastDetectedAt·lastTrackedAt),
 	 * backfill_completed_at은 <b>최초</b> 완주 시각이라 COALESCE로 첫 값을 보존한다.
+	 * sweep_completed_at은 <b>마지막</b> 완주 시각 — touchProgress가 last_swept_at을 진행
+	 * 워터마크로 넓힌 뒤(08-31) 완주 시각을 재는 소비자(Grafana 수집 소요·신선도 패널)용
+	 * 전용 컬럼으로, 여기서만 찍는다(09-02).
 	 * 성공했으니 직전 백필 오류도 여기서 클리어한다 — 다음 스윕 성공이 오류 기록의 유일한 해제 지점.
 	 */
 	public void touchSwept(long brandId, LocalDate on) {
 		db.update("""
 				UPDATE brand_account
-				SET last_swept_on = ?, last_swept_at = now(),
+				SET last_swept_on = ?, last_swept_at = now(), sweep_completed_at = now(),
 				    backfill_completed_at = COALESCE(backfill_completed_at, now()),
 				    backfill_error = NULL
 				WHERE id = ?""", on, brandId);
@@ -217,6 +220,8 @@ public class BrandRepository {
 	 * 이미 찬 상태)도 같은 고착에 걸리기 때문. last_swept_at의 의미는 이 개정으로 "완주 시각"에서
 	 * "마지막 수집 활동 시각"으로 넓어졌다(완주 판정은 원래부터 last_swept_on·backfill_completed_at
 	 * 몫이라 판정 로직 영향 없음, was lastCollectedAt 표기는 오히려 정확해진다).
+	 * 완주 <b>시각</b>이 필요한 소비자(Grafana 수집 소요·신선도 패널)는 touchSwept 전용
+	 * sweep_completed_at을 본다(09-02 분리) — 이 메서드는 그 컬럼을 건드리지 않는다.
 	 */
 	public void touchProgress(long brandId) {
 		db.update("UPDATE brand_account SET last_swept_at = now() WHERE id = ?", brandId);

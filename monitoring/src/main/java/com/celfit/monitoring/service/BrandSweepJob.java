@@ -30,7 +30,7 @@ import org.springframework.stereotype.Service;
  *
  * <p>계정 삭제·비공개 전환(SubjectNotFound·PrivateAccount)도 상태 전이 없이 격리만 한다 —
  * 브랜드 추적은 탈퇴(CLOSED)까지가 정본이라(스펙 §8) 캠페인의 hidden 전이를 승계하지 않는다.
- * 태그 열거 404(태그 0건)는 HikerClient.fetchTaggedPage가 이미 빈 페이지로 삼킨다.
+ * 태그 열거 404(태그 0건)는 HikerBackend.fetchTaggedPage가 이미 빈 페이지로 삼킨다.
  */
 @Service
 public class BrandSweepJob {

@@ -3,11 +3,11 @@ package com.celfit.monitoring.store;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.AuthorInfo;
-import com.celfit.monitoring.hiker.CommentInfo;
-import com.celfit.monitoring.hiker.PostInfo;
-import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -111,6 +111,34 @@ class BrandStoreTest {
 		assertThat(brands.findByUsername("brandx").orElseThrow().lastSweptOn())
 				.isEqualTo(LocalDate.of(2026, 8, 6));                            // 완주 컬럼 불변
 		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNotNull();
+	}
+
+	/**
+	 * 완주 시각 분리(2026-09-02) — touchProgress가 last_swept_at을 진행 워터마크로 넓힌 뒤(08-31),
+	 * "완주 시각"을 재는 소비자(Grafana 수집 소요·신선도 패널)를 위해 touchSwept 전용
+	 * sweep_completed_at을 둔다. 워터마크(캐시 버전키)와 계측이 같은 컬럼을 쓰면 해시태그 스윕의
+	 * 페이지 정산이 완주 시각을 오염시킨다(09-02 실측 — 야간 4.4h가 9h로 표시).
+	 */
+	@Test
+	void touchSwept는_완주_시각_sweep_completed_at을_함께_찍는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
+		assertThat(column(id, "sweep_completed_at", Timestamp.class)).isNull();
+
+		brands.touchSwept(id, LocalDate.of(2026, 9, 2));
+
+		assertThat(column(id, "sweep_completed_at", Timestamp.class)).isNotNull();
+	}
+
+	@Test
+	void touchProgress는_sweep_completed_at을_건드리지_않는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
+		brands.touchSwept(id, LocalDate.of(2026, 9, 2));
+		Timestamp completed = column(id, "sweep_completed_at", Timestamp.class);
+
+		brands.touchProgress(id);
+
+		assertThat(column(id, "sweep_completed_at", Timestamp.class)).isEqualTo(completed);
+		assertThat(column(id, "last_swept_at", Timestamp.class)).isAfter(completed);   // 워터마크만 전진
 	}
 
 	@Test

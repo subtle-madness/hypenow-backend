@@ -14,15 +14,11 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
-@Testcontainers
 class CommentClassificationJobTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	JdbcTemplate db;
 	CommentClassificationJob job;

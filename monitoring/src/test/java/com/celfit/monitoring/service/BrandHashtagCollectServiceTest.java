@@ -2,11 +2,11 @@ package com.celfit.monitoring.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.HikerBackend;
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.AuthorInfo;
 import com.celfit.monitoring.hiker.BrandCallContext;
-import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
 import com.celfit.monitoring.store.BrandHashtagRepository;
@@ -34,7 +34,8 @@ import org.junit.jupiter.api.Test;
  * 인메모리 스텁 서브클래스, DB 없음)를 그대로 쓴다.
  *
  * <p>고정하는 것: 브랜드 본인 게시물 규칙 제외 · 브랜드 수집 창(collectionMonths) 사후 컷 ·
- * 통합 풀 편입과 보강 정산 · 겹침 병기(상한 밖) · 브랜드당 편입 상한 · 조기 종료(이전부터 있던
+ * 통합 풀 편입과 보강 정산 · 겹침 병기(상한 밖) · 백필 예산(태그 간 공유) · 롤링 편입(세트 바닥보다
+ * 최신이면 예산 소진 후에도 편입, 2026-09-02 감시 세트 설계 §2) · 조기 종료(이전부터 있던
  * 코드에만 반응) · 매칭 태그 누적.
  */
 class BrandHashtagCollectServiceTest {
@@ -100,6 +101,8 @@ class BrandHashtagCollectServiceTest {
 		final Map<String, LinkedHashSet<String>> matchedTags = new HashMap<>();
 		final List<String> touched = new ArrayList<>();
 		final List<String> enriched = new ArrayList<>();
+		/** 감시 세트 바닥 스텁(2026-09-02 설계 §2) — null이면 세트 미포화. */
+		Instant nthNewestHashtag;
 
 		InMemoryTagged() {
 			super(null);
@@ -113,6 +116,11 @@ class BrandHashtagCollectServiceTest {
 		@Override
 		public Set<String> hashtagCodes(long brandId) {
 			return new HashSet<>(hashtag);
+		}
+
+		@Override
+		public java.util.Optional<Instant> nthNewestHashtagTakenAt(long brandId, int n) {
+			return java.util.Optional.ofNullable(nthNewestHashtag);
 		}
 
 		@Override
@@ -236,8 +244,8 @@ class BrandHashtagCollectServiceTest {
 
 	// ── fake HikerHttp — 태그별 페이지 큐 + 게시자 프로필 ─────────────────────
 
-	private HikerClient client() {
-		return new HikerClient(path -> {
+	private HikerBackend client() {
+		return new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/by/id")) {
 				String id = path.substring(path.indexOf("?id=") + "?id=".length());
@@ -278,7 +286,7 @@ class BrandHashtagCollectServiceTest {
 	private BrandHashtagCollectService service(int maxPages, int postLimit) {
 		// adDisclosureEnabled=false — 광고 판정은 이 테스트의 관심사가 아니고, 꺼져 있으면
 		// judgeAdDisclosuresSafely가 adJudge를 아예 부르지 않아 null을 넘겨도 안전하다.
-		BrandCollectService collect = new BrandCollectService(client(), callContext, writer, snapshots, comments,
+		BrandCollectService collect = new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments,
 				tagged, authors, new InertBrands(), null, Runnable::run, 10000, 2000, 3, 30, false);
 		return new BrandHashtagCollectService(client(), callContext, tags, tagged, writer, collect,
 				maxPages, postLimit);
@@ -306,6 +314,60 @@ class BrandHashtagCollectServiceTest {
 				 "user":{"username":"%s","pk":9001,"full_name":"작가","profile_pic_url":"https://p"},
 				 "like_count":10,"comment_count":2,"usertags":{"in":[]}}}"""
 				.formatted(code, takenAt, username);
+	}
+
+	// ── 사용자 트리거 비동기 흐름 도입 시점 토글(2026-09) — 편입 보강의 소스 라우팅 ─────────
+
+	/**
+	 * {@link BrandHashtagCollectService#sweepUserTriggered}(등록 직후 즉시 스윕, 사용자 트리거 비동기)는
+	 * 편입 게시물 보강을 {@link BrandCollectService#enrichUserTriggered}로, {@link BrandHashtagCollectService#sweep}
+	 * (매일 스케줄 스윕)은 {@link BrandCollectService#enrich(BrandRow, List)}로 위임한다 — 게시자 프로필
+	 * 콜(ensureAuthors)이 각자 다른 InstagramSource 인스턴스로 가는지로 구분한다(BrandCollectServiceTest의
+	 * enrichUserTriggered 라우팅 테스트와 같은 관용구).
+	 */
+	@Test
+	void sweepUserTriggered은_enrichUserTriggered로_sweep은_enrich로_보강_콜이_각자_라우팅된다() {
+		tags.tags = List.of("cclime");
+		pagesByTag.put("cclime", List.of(sectionsBody(null, media("NEW1", RECENT, "poster1"))));
+		List<String> hikerOnlyCalls = new ArrayList<>();
+		List<String> userTriggeredOnlyCalls = new ArrayList<>();
+		HikerBackend hikerBackend = new HikerBackend(path -> {
+			hikerOnlyCalls.add(path);
+			return authorResponse(path);
+		});
+		HikerBackend userTriggeredBackend = new HikerBackend(path -> {
+			userTriggeredOnlyCalls.add(path);
+			return authorResponse(path);
+		});
+		BrandCollectService collect = new BrandCollectService(hikerBackend, hikerBackend, userTriggeredBackend,
+				callContext, writer, snapshots, comments, tagged, authors, new InertBrands(), null,
+				Runnable::run, 10000, 2000, 3, 30, false);
+		BrandHashtagCollectService hashtag = new BrandHashtagCollectService(client(), callContext, tags, tagged,
+				writer, collect, 4, 1000);
+
+		hashtag.sweepUserTriggered(brand);
+		assertThat(hikerOnlyCalls).isEmpty();
+		assertThat(userTriggeredOnlyCalls).isNotEmpty();
+
+		tagged.known.clear();
+		tagged.hashtag.clear();
+		userTriggeredOnlyCalls.clear();
+		pageIndexByTag.clear();
+		pagesByTag.put("cclime", List.of(sectionsBody(null, media("NEW2", RECENT, "poster1"))));
+		hashtag.sweep(brand);
+		assertThat(userTriggeredOnlyCalls).isEmpty();
+		assertThat(hikerOnlyCalls).isNotEmpty();
+	}
+
+	/** 게시자 프로필 콜만 응답하는 최소 대역 — 위 소스 분리 테스트 전용(BrandCollectServiceTest
+	 * authorOrCommentResponse와 동형). */
+	private static String authorResponse(String path) {
+		if (path.startsWith("/v2/user/by/id")) {
+			String id = path.substring(path.indexOf("?id=") + "?id=".length());
+			return "{\"user\":{\"pk\":%s,\"username\":\"author_%s\",\"follower_count\":100,\"is_private\":false}}"
+					.formatted(id, id);
+		}
+		throw new IllegalStateException("예상 밖 콜: " + path);
 	}
 
 	// ── 규칙 컷 ─────────────────────────────────────────────────────────────
@@ -395,6 +457,92 @@ class BrandHashtagCollectServiceTest {
 		assertThat(tagged.upsertedHashtag).containsExactlyInAnyOrder("OVERLAP1", "OVERLAP2", "N1");
 		assertThat(tagged.matchedTagsOf("OVERLAP1")).containsExactly("cclime");
 		assertThat(tagged.matchedTagsOf("OVERLAP2")).containsExactly("cclime");
+	}
+
+	// ── 롤링 편입(2026-09-02 감시 세트 2,000 설계 §2 — 구 하드스톱 폐기) ───────
+
+	/** 예산 0이어도 세트 바닥보다 최신 게시물은 편입된다(구 하드스톱 폐기). */
+	@Test
+	void 예산_소진_후에도_바닥보다_최신_게시물은_편입된다() {
+		tagged.hashtag.add("OLD1");   // 기존 hashtag 행 1개 → postLimit 1이면 예산 0
+		tagged.known.add("OLD1");
+		tagged.nthNewestHashtag = Instant.ofEpochSecond(RECENT - 86400);   // 바닥 = RECENT-1일
+		tags.tags = List.of("t1");
+		pagesByTag.put("t1", List.of(sectionsBody(null,
+				media("NEWEST", RECENT, "poster1"),                    // 바닥보다 최신 → 편입
+				media("DEEPER", RECENT - 3 * 86400, "poster2"))));      // 바닥 이하 → 스킵
+
+		service(4, 1).sweep(brand);   // postLimit 1
+
+		assertThat(tagged.upsertedHashtag).containsExactly("NEWEST");
+	}
+
+	/** 낭비 가드 — 예산 0 + 페이지 전체가 바닥 이하 + 편입 0이면 다음 페이지로 안 내려간다. */
+	@Test
+	void 예산_소진_후_바닥_이하만_남은_페이지에서_열거를_끊는다() {
+		tagged.hashtag.add("OLD1");
+		tagged.known.add("OLD1");
+		tagged.nthNewestHashtag = Instant.ofEpochSecond(RECENT);
+		tags.tags = List.of("t1");
+		pagesByTag.put("t1", List.of(
+				sectionsBody("cur2", media("DEEP1", RECENT - 5 * 86400, "poster1")),
+				sectionsBody(null, media("DEEP2", RECENT - 6 * 86400, "poster2"))));
+
+		service(4, 1).sweep(brand);
+
+		assertThat(tagged.upsertedHashtag).isEmpty();
+		assertThat(tagCalls()).isEqualTo(1);   // 2페이지째 콜이 없어야 한다
+	}
+
+	/**
+	 * 낭비 가드(F4, 2026-09-02 최종 리뷰) — 예산이 남아 있어도(budget > 0) 이 페이지 소득이 완전
+	 * 0(신규·겹침·매칭 태그 갱신 전부 없음)이면 다음 페이지로 안 내려간다. 수집 창 밖 게시물만
+	 * 실린 꼬리 페이지가 대표 사례(eligible()의 cutoff에 전원 걸려 fresh가 애초에 비므로).
+	 */
+	@Test
+	void 이_페이지_소득이_0이면_예산이_남아도_열거를_끊는다() {
+		tags.tags = List.of("cclime");
+		pagesByTag.put("cclime", List.of(
+				sectionsBody("p2", media("OLD1", OUT_OF_WINDOW, "poster1")),
+				sectionsBody(null, media("OLD2", OUT_OF_WINDOW, "poster2"))));
+
+		service(4, 1000).sweep(brand);   // 예산 1000 — 소진과 무관하게 끊겨야 한다
+
+		assertThat(tagged.upsertedHashtag).isEmpty();
+		assertThat(tagCalls()).isEqualTo(1);   // 2페이지째 콜이 없어야 한다
+	}
+
+	/** 백필 예산은 태그 간 공유 유지 — 태그1이 예산을 다 쓰면 태그2의 옛 게시물은 편입 안 된다. */
+	@Test
+	void 백필_예산은_태그_간_공유다() {
+		tags.tags = List.of("t1", "t2");
+		tagged.nthNewestHashtag = null;   // 세트 미포화 — 롤링 편입 경로 없음, 예산만 적용
+		pagesByTag.put("t1", List.of(sectionsBody(null,
+				media("A1", RECENT, "poster1"), media("A2", RECENT, "poster2"))));
+		pagesByTag.put("t2", List.of(sectionsBody(null, media("B1", RECENT, "poster3"))));
+
+		service(4, 2).sweep(brand);   // postLimit 2 → t1이 소진
+
+		assertThat(tagged.upsertedHashtag).containsExactly("A1", "A2");
+	}
+
+	/**
+	 * 롤링 편입(2026-09-02 감시 세트 설계 §2) — 구 하드스톱 폐기: 예산이 소진돼도 태그 열거 자체는
+	 * 멈추지 않는다(각 태그의 최신 유입은 편입해야 하므로). 세트가 미포화(floor 없음)라 예산 소진
+	 * 이후의 게시물은 편입되지 않지만, 태그는 끝까지 열거되고 실행 기록도 정상 남는다.
+	 */
+	@Test
+	void 예산_소진_후에도_다음_태그가_열거되고_실행_기록이_남는다() {
+		tags.tags = List.of("cclime", "끌리메");
+		pagesByTag.put("cclime", List.of(sectionsBody(null,
+				media("N1", RECENT, "poster1"), media("N2", RECENT, "poster2"))));
+		pagesByTag.put("끌리메", List.of(sectionsBody(null, media("N3", RECENT, "poster3"))));
+
+		service(4, 2).sweep(brand);
+
+		assertThat(tags.runStarted).containsExactly("cclime", "끌리메");
+		assertThat(tags.runFinished).containsExactly("cclime", "끌리메");
+		assertThat(tagged.upsertedHashtag).containsExactly("N1", "N2");
 	}
 
 	// ── 조기 종료 ───────────────────────────────────────────────────────────
@@ -533,16 +681,42 @@ class BrandHashtagCollectServiceTest {
 		assertThat(tags.runFoundCounts).containsEntry("실패", 0).containsEntry("cclime", 1);
 	}
 
-	/** 편입 상한으로 아예 열거되지 않은 태그는 시작·종료 기록 자체가 없다(열거 자체가 없었으므로). */
+	/**
+	 * 하트비트(F1, 2026-09-02 최종 리뷰) — max-pages 100 전환으로 대형 태그 스윕이
+	 * {@link BrandHashtagRunStateResolver}의 STALE_THRESHOLD(10분)를 넘을 수 있게 됐다. 페이지마다
+	 * markRunStarted를 다시 찍어야 진행 중인 장기 스윕이 stale로 오판돼 FAILED로 폴백하지 않는다.
+	 * 2페이지짜리 스윕이면 하트비트가 2회 이상 찍혀야 한다.
+	 */
 	@Test
-	void 편입_상한으로_열거되지_않은_태그는_실행_기록이_없다() {
-		tags.tags = List.of("cclime", "끌리메");
-		pagesByTag.put("cclime", List.of(sectionsBody(null,
-				media("N1", RECENT, "poster1"), media("N2", RECENT, "poster2"))));
+	void 페이지마다_실행_시작_하트비트가_찍힌다() {
+		tags.tags = List.of("cclime");
+		pagesByTag.put("cclime", List.of(
+				sectionsBody("p2", media("P1", RECENT, "poster1")),
+				sectionsBody(null, media("P2", RECENT, "poster2"))));
 
-		service(4, 2).sweep(brand);
+		service(4, 1000).sweep(brand);
 
-		assertThat(tags.runStarted).containsExactly("cclime");
-		assertThat(tags.runFinished).containsExactly("cclime");
+		assertThat(tags.runStarted.size()).isGreaterThanOrEqualTo(2);
+		assertThat(tags.runStarted).allMatch("cclime"::equals);
 	}
+
+	// ── 딥 재백필(2026-09-02 설계 §2) ──────────────────────────────────────
+
+	/** 딥 재백필(설계 §2) — dedup 조기 종료를 무시하고 예산까지 내려가 하드스톱 기간 유실분을 줍는다. */
+	@Test
+	void 딥_재백필은_기존_행을_만나도_다음_페이지로_내려간다() {
+		tagged.hashtag.add("KNOWN1");
+		tagged.known.add("KNOWN1");
+		tagged.nthNewestHashtag = null;
+		tags.tags = List.of("t1");
+		pagesByTag.put("t1", List.of(
+				sectionsBody("cur2", media("KNOWN1", RECENT, "poster1")),
+				sectionsBody(null, media("LOST1", RECENT - 86400, "poster2"))));
+
+		service(2000, 2000).deepResweep(brand);
+
+		assertThat(tagged.upsertedHashtag).containsExactly("LOST1");
+		assertThat(tagCalls()).isEqualTo(2);
+	}
+
 }

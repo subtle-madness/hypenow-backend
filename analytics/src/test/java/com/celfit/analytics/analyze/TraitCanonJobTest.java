@@ -14,19 +14,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
  * 배치 매핑(2026-07-29 스펙 §3-3): DRY=LLM 매핑→canon_log 기록만, APPLY=traits in-place UPDATE.
  * 1:N 분해·어휘 밖 캐노니컬 방어·매핑 불가('' 센티널)·재실행 시 canon_log 재사용을 고정한다.
  */
-@Testcontainers
 class TraitCanonJobTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	static DataSource ds;
 	static JdbcTemplate db;

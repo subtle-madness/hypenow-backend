@@ -64,7 +64,7 @@
       "id": 1,
       "type": "stat",
       "title": "일일 수집 신선도",
-      "description": "활성 브랜드 last_swept_at의 중앙값 기준 경과 시간. 야간 일일 수집(KST 02:00)은 전 브랜드에 도장을 찍으므로 중앙값은 어젯밤 수집 시각을 따른다(정상 ~19h대에서 오르내림). max가 아니라 중앙값인 이유: 등록 백필 완료도 last_swept_at을 찍어(touchSwept·markServing) 낮에 브랜드 하나만 등록돼도 max는 리셋돼 보인다 — 08-25 실측 max 2.8h vs 중앙값 19.2h. 26h 초과 = 어젯밤 02:00 일일 수집 불발(08-10 Hiker 402 고착 같은 사고). 클릭 → 없음(이 장이 착지).",
+      "description": "활성 브랜드 sweep_completed_at(완주 도장, touchSwept 전용 — 09-02 진행 워터마크 last_swept_at에서 분리)의 중앙값 기준 경과 시간. 야간 일일 수집(KST 02:00)은 전 브랜드에 도장을 찍으므로 중앙값은 어젯밤 수집 시각을 따른다(정상 ~19h대에서 오르내림). max가 아니라 중앙값인 이유: 등록 백필 완료도 완주 도장을 찍어(touchSwept) 낮에 브랜드 하나만 등록돼도 max는 리셋돼 보인다 — 08-25 실측 max 2.8h vs 중앙값 19.2h. 26h 초과 = 어젯밤 02:00 일일 수집 불발(08-10 Hiker 402 고착 같은 사고). 클릭 → 없음(이 장이 착지).",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -133,7 +133,7 @@
           "format": "table",
           "rawQuery": true,
           "refId": "A",
-          "rawSql": "SELECT (EXTRACT(EPOCH FROM now()) - percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM last_swept_at)))/3600 AS value FROM brand_account WHERE closed_at IS NULL AND last_swept_at IS NOT NULL"
+          "rawSql": "SELECT (EXTRACT(EPOCH FROM now()) - percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM sweep_completed_at)))/3600 AS value FROM brand_account WHERE closed_at IS NULL AND sweep_completed_at IS NOT NULL"
         }
       ]
     },
@@ -203,7 +203,7 @@
       "id": 3,
       "type": "stat",
       "title": "오늘 수집 소요",
-      "description": "오늘 일일 수집의 첫 브랜드~마지막 브랜드 처리 시각 차이(분). 런 단위 기록 테이블이 없어 브랜드별 성공 시각에서 유도한 근사값. 오늘 등록된 브랜드는 제외 — 등록 백필 완료도 last_swept_at을 찍어서(touchSwept) 포함하면 새벽 스윕~저녁 등록 간격을 재게 된다(08-25 실측 17h로 오염).",
+      "description": "오늘 일일 수집의 첫 브랜드~마지막 브랜드 완주 도장(sweep_completed_at, touchSwept 전용) 시각 차이(분). 런 단위 기록 테이블이 없어 브랜드별 완주 시각에서 유도한 근사값 — 첫 브랜드의 시작~완주 구간은 빠진다. 진행 워터마크(last_swept_at)를 쓰지 않는 이유: 08-31부터 페이지 정산(touchProgress)마다 전진해 오전 해시태그 스윕 정산 1건이 max를 끌어올린다(09-02 실측 — 실제 야간 02:00~06:24 ≈ 4.4h가 9h로 표시, 09-02 워터마크 분리로 수리). 오늘 등록된 브랜드는 제외 — 등록 백필 완료도 완주 도장을 찍어서(touchSwept) 포함하면 새벽 스윕~저녁 등록 간격을 재게 된다(08-25 실측 17h로 오염).",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -257,7 +257,7 @@
           "format": "table",
           "rawQuery": true,
           "refId": "A",
-          "rawSql": "SELECT round((EXTRACT(EPOCH FROM (max(last_swept_at) - min(last_swept_at)))/60)::numeric,1) AS value FROM brand_account WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date AND (registered_at AT TIME ZONE 'Asia/Seoul')::date < (now() AT TIME ZONE 'Asia/Seoul')::date"
+          "rawSql": "SELECT round((EXTRACT(EPOCH FROM (max(sweep_completed_at) - min(sweep_completed_at)))/60)::numeric,1) AS value FROM brand_account WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date AND (registered_at AT TIME ZONE 'Asia/Seoul')::date < (now() AT TIME ZONE 'Asia/Seoul')::date"
         }
       ]
     },
@@ -358,7 +358,7 @@
       "id": 5,
       "type": "table",
       "title": "오늘 게시물 갱신 — 티어별",
-      "description": "'오늘 게시물 갱신' 스탯의 티어별 분해 — 행은 게시물 나이 티어(BrandCrawlPolicy: 14일 이내 매일, 30일 이내 3일마다, 90일 이내 7일마다, 180일 이내 30일마다, 180일 초과는 추적 종료·영구 제외), 열은 보유 = 오늘 처리 + 미처리 + 대기 분할. '오늘 처리'는 last_crawled_at이 KST 오늘, '미처리'는 지금 기준 갱신 기한(due)인데 오늘 안 돈 것, '대기'는 아직 주기가 안 지난 것(매일 티어는 정의상 0). **일일 수집(KST 02:00) 완료 후 미처리 > 0은 진짜 이상이다** — 스윕 슬롯이 직전 touch보다 몇 분 일러 하루 밀리던 경계 레이스(08-23 실측 262건)는 BrandCrawlPolicy의 주기 여유 12h(08-23~)로 제거됐다. 어느 브랜드가 왜 남았는지는 아래 '미처리 브랜드별' 테이블이 가른다(브랜드 스윕 실패 vs 스윕 성공인데 미커버). KST 00~02시(그날 수집 전)에는 그날 대상이 전부 미처리로 보이는 게 정상.",
+      "description": "'오늘 게시물 갱신' 스탯의 티어별 분해 — 행은 게시물 나이 티어(BrandCrawlPolicy: 14일 이내 매일, 30일 이내 3일마다, 90일 이내 7일마다, 180일 이내 30일마다, 180일 초과는 추적 종료·영구 제외), 열은 보유 = 오늘 처리 + 미처리 + 대기 분할. '오늘 처리'는 last_crawled_at이 KST 오늘, '미처리'는 지금 기준 갱신 기한(due)인데 오늘 안 돈 것, '대기'는 아직 주기가 안 지난 것(매일 티어는 정의상 0). **일일 수집(KST 02:00) 완료 후 미처리 > 0은 진짜 이상이다(2026-09-02~ 해시태그·직접 행 포함 — 출처별 소관은 아래 '미처리 브랜드별'의 2열이 가른다)** — 스윕 슬롯이 직전 touch보다 몇 분 일러 하루 밀리던 경계 레이스(08-23 실측 262건)는 BrandCrawlPolicy의 주기 여유 12h(08-23~)로 제거됐다. 어느 브랜드가 왜 남았는지는 아래 '미처리 브랜드별' 테이블이 가른다(브랜드 스윕 실패 vs 스윕 성공인데 미커버). KST 00~02시(그날 수집 전)에는 그날 대상이 전부 미처리로 보이는 게 정상. '오늘 처리'에는 감시 세트 밖 동결 touch분(실수집 0)이 포함된다 — 세트 크기(2,000)를 넘는 브랜드는 이 수치가 실수집보다 크다.",
       "gridPos": {
         "h": 8,
         "w": 24,
@@ -444,7 +444,7 @@
       "id": 6,
       "type": "table",
       "title": "미처리 브랜드별",
-      "description": "'오늘 게시물 갱신 — 티어별'의 미처리를 브랜드 단위로 쪼개 원인을 가른다 — 미처리가 0이면 비어 있는 게 정상이고, 행이 뜨면 전부 살펴볼 대상이다. **안 돌음** = 오늘 이 브랜드 차례가 끝까지 돌지 않음(brand_account.last_swept_on ≠ 오늘) — 예외로 실패했거나(Hiker 402·타임아웃 등, 로그 WARN '브랜드 일일 수집 실패') 새벽 2~3시 수집 중이라 아직 순서 전. '오늘 브랜드별 처리 현황'에도 그 브랜드 행이 없다. **돌았으나 미달** = 브랜드 차례는 끝까지 돌았는데(last_swept_on = 오늘) 피드 훑기가 기한 게시물 깊이까지 못 내려가 갱신 도장(last_crawled_at)이 안 찍힘 — 원인은 커서 미전진(WARN '태그 커서 미전진 의심')·안전 상한(ERROR '태그 열거 안전 상한 도달'). 이때도 last_swept_on은 일부러 찍는다: 비워 두면 프론트가 '준비 중'으로 숨기고 다음 날 12개월 전체 재백필(Hiker 콜 폭증)이 돌기 때문. 기존 데이터는 그대로 서빙되고 다음 날 스윕이 같은 깊이를 다시 열어 수습된다 — **이틀 연속이면 이상**. 정책 여유 12h(08-23~) 배포 전에는 스윕 슬롯이 기한보다 몇 분 일찍 지나간 경계 레이스도 '돌았으나 미달'로 잡힌다(배포 후 소멸). due 판정 SQL은 티어별 테이블과 동일(정확 주기 기준).",
+      "description": "'오늘 게시물 갱신 — 티어별'의 미처리를 브랜드 단위로 쪼개 원인을 가른다 — 미처리가 0이면 비어 있는 게 정상이고, 행이 뜨면 전부 살펴볼 대상이다. **안 돌음** = 오늘 이 브랜드 차례가 끝까지 돌지 않음(brand_account.last_swept_on ≠ 오늘) — 예외로 실패했거나(Hiker 402·타임아웃 등, 로그 WARN '브랜드 일일 수집 실패') 새벽 2~3시 수집 중이라 아직 순서 전. '오늘 브랜드별 처리 현황'에도 그 브랜드 행이 없다. **돌았으나 미달** = 브랜드 차례는 끝까지 돌았는데(last_swept_on = 오늘) 피드 훑기가 기한 게시물 깊이까지 못 내려가 갱신 도장(last_crawled_at)이 안 찍힘 — 원인은 커서 미전진(WARN '태그 커서 미전진 의심')·안전 상한(ERROR '태그 열거 안전 상한 도달'). 이때도 last_swept_on은 일부러 찍는다: 비워 두면 프론트가 '준비 중'으로 숨기고 다음 날 12개월 전체 재백필(Hiker 콜 폭증)이 돌기 때문. 기존 데이터는 그대로 서빙되고 다음 날 스윕이 같은 깊이를 다시 열어 수습된다 — **이틀 연속이면 이상**. 정책 여유 12h(08-23~) 배포 전에는 스윕 슬롯이 기한보다 몇 분 일찍 지나간 경계 레이스도 '돌았으나 미달'로 잡힌다(배포 후 소멸). due 판정 SQL은 티어별 테이블과 동일(정확 주기 기준).\n\n미처리는 출처 2열로 갈린다: **미처리(태그)** = 순수 태그 행(피드 열거·깊이 touch 소관 — 기존 판독 그대로), **미처리(해시·직접)** = 2단계 단건 재수집 소관(2026-09-02 감시 세트 설계: 세트 안은 상한 2,000으로 매일 갱신, 세트 밖 행은 2단계 모수에서 floor 필터로 제외되고, 동결 touch로 done_today가 돼 미처리에서 빠지므로 이 열이 지속되면 상한 컷 로그나 동결 touch 누락을 본다). '오늘 처리'에는 감시 세트 밖 동결 touch분(실수집 0)이 포함된다 — 세트 크기(2,000)를 넘는 브랜드는 이 수치가 실수집보다 크다.",
       "gridPos": {
         "h": 7,
         "w": 24,
@@ -476,7 +476,55 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "미처리"
+              "options": "미처리(태그)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "미처리(해시·직접)"
             },
             "properties": [
               {
@@ -616,7 +664,7 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH posts AS (SELECT t.brand_id, coalesce((t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date, false) AS done_today, (t.taken_at >= now() - interval '180 days' AND (t.last_crawled_at IS NULL OR t.taken_at >= now() - interval '14 days' OR (t.taken_at >= now() - interval '30 days' AND t.last_crawled_at <= now() - interval '3 days') OR (t.taken_at >= now() - interval '90 days' AND t.last_crawled_at <= now() - interval '7 days') OR t.last_crawled_at <= now() - interval '30 days')) AS due_now FROM brand_tagged_post t WHERE t.taken_at IS NOT NULL), agg AS (SELECT brand_id, count(*) FILTER (WHERE NOT done_today AND due_now) AS pending, count(*) FILTER (WHERE done_today) AS done FROM posts GROUP BY brand_id) SELECT b.username AS \"브랜드\", a.pending AS \"미처리\", a.done AS \"오늘 처리\", CASE WHEN b.last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date THEN '돌았으나 미달' ELSE '안 돌음' END AS \"상태\", b.last_swept_at AS \"마지막 성공\", CASE WHEN b.last_swept_on IS DISTINCT FROM (now() AT TIME ZONE 'Asia/Seoul')::date THEN '브랜드 수집 실패·미실행 — 새벽 2~3시면 순서 대기일 수 있음' ELSE '피드 훑기가 중간에 끊김 — 다음 날 자동 재시도, 반복되면 로그 확인' END AS \"판독\" FROM agg a JOIN brand_account b ON b.id = a.brand_id AND b.closed_at IS NULL WHERE a.pending > 0 ORDER BY a.pending DESC, b.username"
+          "rawSql": "WITH posts AS (SELECT t.brand_id, (t.tag_detected_at IS NOT NULL AND t.hashtag_detected_at IS NULL AND t.direct_registered_at IS NULL) AS pure_tagged, coalesce((t.last_crawled_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date, false) AS done_today, (t.taken_at >= now() - interval '180 days' AND (t.last_crawled_at IS NULL OR t.taken_at >= now() - interval '14 days' OR (t.taken_at >= now() - interval '30 days' AND t.last_crawled_at <= now() - interval '3 days') OR (t.taken_at >= now() - interval '90 days' AND t.last_crawled_at <= now() - interval '7 days') OR t.last_crawled_at <= now() - interval '30 days')) AS due_now FROM brand_tagged_post t WHERE t.taken_at IS NOT NULL), agg AS (SELECT brand_id, count(*) FILTER (WHERE NOT done_today AND due_now AND pure_tagged) AS pending_tagged, count(*) FILTER (WHERE NOT done_today AND due_now AND NOT pure_tagged) AS pending_other, count(*) FILTER (WHERE done_today) AS done FROM posts GROUP BY brand_id) SELECT b.username AS \"브랜드\", a.pending_tagged AS \"미처리(태그)\", a.pending_other AS \"미처리(해시·직접)\", a.done AS \"오늘 처리\", CASE WHEN b.last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date THEN '돌았으나 미달' ELSE '안 돌음' END AS \"상태\", b.sweep_completed_at AS \"마지막 성공\", CASE WHEN b.last_swept_on IS DISTINCT FROM (now() AT TIME ZONE 'Asia/Seoul')::date THEN '브랜드 수집 실패·미실행 — 새벽 2~3시면 순서 대기일 수 있음' WHEN a.pending_tagged > 0 THEN '태그 피드 훑기가 중간에 끊김 — 다음 날 자동 재시도, 반복되면 로그 확인' ELSE '2단계 단건 재수집 잔여 — 로그 \"2단계 단건 수집 상한\" 확인, 이틀 연속이면 감시 세트 동결 touch 누락 의심' END AS \"판독\" FROM agg a JOIN brand_account b ON b.id = a.brand_id AND b.closed_at IS NULL WHERE a.pending_tagged + a.pending_other > 0 ORDER BY a.pending_tagged + a.pending_other DESC, b.username"
         }
       ]
     },
@@ -624,7 +672,7 @@
       "id": 7,
       "type": "table",
       "title": "오늘 브랜드별 처리 현황",
-      "description": "브랜드 일일 수집은 순차 처리 — 직전 브랜드와의 성공 시각 간격 ≈ 해당 브랜드 처리 시간(근사). 첫 행은 기준이 없어 공란. 특정 브랜드만 간격이 튀면 그 계정의 수집이 무거워진 것. 간격과 함께 브랜드별 수집량도 본다 — 오늘 Hiker 콜(과금 규모), 오늘 신규 게시물(그날 실제 유입), 누적 게시물(자산 규모). 콜만 많고 신규가 0이면 변화 없는 브랜드를 재확인만 한 것이라 정상일 수 있지만, 전 브랜드가 그러면 수집이 헛돌고 있는 것.",
+      "description": "브랜드 일일 수집은 순차 처리 — 직전 브랜드와의 성공 시각 간격 ≈ 해당 브랜드 처리 시간(근사). 첫 행은 기준이 없어 공란. 특정 브랜드만 간격이 튀면 그 계정의 수집이 무거워진 것. 간격과 함께 브랜드별 수집량도 본다 — 오늘 Hiker 콜(과금 규모), 오늘 신규 게시물(그날 실제 유입), 누적 게시물(자산 규모). 콜만 많고 신규가 0이면 변화 없는 브랜드를 재확인만 한 것이라 정상일 수 있지만, 전 브랜드가 그러면 수집이 헛돌고 있는 것. 성공 시각은 완주 도장(sweep_completed_at, touchSwept 전용) 기준 — 진행 워터마크(last_swept_at)는 해시태그 스윕 정산마다 전진해 간격을 오염시킨다(09-02 분리).",
       "gridPos": {
         "h": 9,
         "w": 24,
@@ -688,7 +736,7 @@
           "format": "table",
           "rawQuery": true,
           "refId": "A",
-          "rawSql": "SELECT b.username AS \"브랜드\", b.last_swept_at AS \"성공 시각\", round(EXTRACT(EPOCH FROM (b.last_swept_at - lag(b.last_swept_at) OVER (ORDER BY b.last_swept_at)))::numeric,1) AS \"간격(초)\", c.calls AS \"오늘 콜\", coalesce(t.today_posts, 0) AS \"오늘 신규 게시물\", coalesce(t.total_posts, 0) AS \"누적 게시물\" FROM brand_account b LEFT JOIN brand_call_count c ON c.brand_id = b.id AND c.called_on = (now() AT TIME ZONE 'Asia/Seoul')::date LEFT JOIN (SELECT brand_id, count(*) FILTER (WHERE (first_seen_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date) AS today_posts, count(*) AS total_posts FROM brand_tagged_post GROUP BY brand_id) t ON t.brand_id = b.id WHERE b.last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date ORDER BY b.last_swept_at"
+          "rawSql": "SELECT b.username AS \"브랜드\", b.sweep_completed_at AS \"성공 시각\", round(EXTRACT(EPOCH FROM (b.sweep_completed_at - lag(b.sweep_completed_at) OVER (ORDER BY b.sweep_completed_at)))::numeric,1) AS \"간격(초)\", c.calls AS \"오늘 콜\", coalesce(t.today_posts, 0) AS \"오늘 신규 게시물\", coalesce(t.total_posts, 0) AS \"누적 게시물\" FROM brand_account b LEFT JOIN brand_call_count c ON c.brand_id = b.id AND c.called_on = (now() AT TIME ZONE 'Asia/Seoul')::date LEFT JOIN (SELECT brand_id, count(*) FILTER (WHERE (first_seen_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date) AS today_posts, count(*) AS total_posts FROM brand_tagged_post GROUP BY brand_id) t ON t.brand_id = b.id WHERE b.last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date ORDER BY b.sweep_completed_at"
         }
       ]
     },
@@ -1421,7 +1469,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms",
+          "unit": "suffix: ms",
           "decimals": 0,
           "min": 0,
           "noValue": "기간 내 등록 없음",
@@ -1470,7 +1518,7 @@
       "id": 16,
       "type": "table",
       "title": "최근 등록 15건 — 총 소요",
-      "description": "최근 등록 브랜드의 등록 시각부터 백필(과거 게시물 소급 수집) 완료까지 총 소요. '진행 중'이 오래 머물거나 에러 컬럼이 차 있으면 백필이 멈춘 것 — 상세는 위 '적재 결과' row의 '백필 미완 브랜드'와 monitoring 로그로. 등록 순간의 초기 응답 속도는 브랜드별로 저장되지 않아 이 표엔 없다 — 분포는 위 '수신 처리 p95'의 POST /api/brands 선으로 본다. 시간 필터를 타지 않는 상태 스냅샷.",
+      "description": "최근 등록 브랜드의 등록 시각부터 백필(과거 게시물 소급 수집) 완료까지 총 소요. 상태: 완료 / 수집 실패(백필 에러 기록, 다음 스윕 백스톱 대기) / 삭제됨(사용자 탈퇴 — 스윕 대상 아님, 재시도 없음) / 진행 중. '진행 중'이 오래 머물면 백필이 멈춘 것 — 상세는 위 '적재 결과' row의 '백필 미완 브랜드'와 monitoring 로그로. 등록 순간의 초기 응답 속도는 브랜드별로 저장되지 않아 이 표엔 없다 — 분포는 위 '수신 처리 p95'의 POST /api/brands 선으로 본다. 시간 필터를 타지 않는 상태 스냅샷.",
       "gridPos": {
         "h": 9,
         "w": 24,
@@ -1490,7 +1538,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "총 소요(분)"
+              "options": "총 소요(ms)"
             },
             "properties": [
               {
@@ -1533,7 +1581,7 @@
             "uid": "hypenow-monitoring-pg"
           },
           "format": "table",
-          "rawSql": "SELECT username AS \"브랜드\", registered_at AS \"등록 시각\", round((EXTRACT(EPOCH FROM (backfill_completed_at - registered_at))/60)::numeric, 0) AS \"총 소요(분)\", CASE WHEN backfill_completed_at IS NOT NULL THEN '완료' ELSE '진행 중' END AS \"상태\", backfill_error AS \"에러\" FROM brand_account ORDER BY registered_at DESC LIMIT 15"
+          "rawSql": "SELECT username AS \"브랜드\", registered_at AS \"등록 시각\", round((EXTRACT(EPOCH FROM (backfill_completed_at - registered_at))*1000)::numeric, 0) AS \"총 소요(ms)\", CASE WHEN closed_at IS NOT NULL THEN '삭제됨' WHEN backfill_completed_at IS NOT NULL THEN '완료' WHEN backfill_error IS NOT NULL THEN '수집 실패' ELSE '진행 중' END AS \"상태\", backfill_error AS \"에러\" FROM brand_account ORDER BY registered_at DESC LIMIT 15"
         }
       ]
     },

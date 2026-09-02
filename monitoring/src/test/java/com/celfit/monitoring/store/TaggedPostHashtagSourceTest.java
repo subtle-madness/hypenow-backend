@@ -2,7 +2,7 @@ package com.celfit.monitoring.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.celfit.monitoring.hiker.PostInfo;
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.time.Instant;
 import java.util.List;
@@ -247,5 +247,76 @@ class TaggedPostHashtagSourceTest {
 				Boolean.class, brandId)).isTrue();
 		assertThat(db.queryForObject("SELECT count(*) FROM brand_tagged_post WHERE brand_id = ?",
 				Integer.class, brandId)).isEqualTo(1);
+	}
+
+	// ── 감시 세트 경계(2026-09-02 감시 세트 2,000 설계 §1·§3) ──────────────────
+
+	@Test
+	void nthNewestHashtagTakenAt은_해시태그_성분_행만_센다() {
+		repo.insert(brandId, post("TAGONLY", "poster1", NOW.minusSeconds(100)));  // tagged-only — 순위 밖
+		repo.upsertHashtag(brandId, post("H1", "poster1", NOW.minusSeconds(1000)), NOW);
+		repo.upsertHashtag(brandId, post("H2", "poster1", NOW.minusSeconds(2000)), NOW);
+		repo.upsertHashtag(brandId, post("H3", "poster1", NOW.minusSeconds(3000)), NOW);
+
+		assertThat(repo.nthNewestHashtagTakenAt(brandId, 2)).contains(NOW.minusSeconds(2000));
+		assertThat(repo.nthNewestHashtagTakenAt(brandId, 4)).isEmpty();   // 3행뿐 — 세트 미포화
+		assertThat(repo.nthNewestHashtagTakenAt(brandId, 0)).isEmpty();
+	}
+
+	@Test
+	void unenumeratedDuePosts_floor는_해시태그만_자르고_direct는_남긴다() {
+		repo.upsertHashtag(brandId, post("H_IN", "poster1", NOW.minusSeconds(1000)), NOW);
+		repo.upsertHashtag(brandId, post("H_OUT", "poster1", NOW.minusSeconds(5000)), NOW);
+		repo.upsertDirect(brandId, post("D_OLD", "poster1", NOW.minusSeconds(9000)), NOW);
+
+		assertThat(repo.unenumeratedDuePosts(brandId, NOW.minusSeconds(86400), NOW.minusSeconds(2000))
+				.stream().map(TaggedPostRepository.TrackedPost::shortCode))
+				.containsExactly("H_IN", "D_OLD");   // 미보강 우선 동순위 → taken_at DESC
+		// null floor = 기존 동작(전부)
+		assertThat(repo.unenumeratedDuePosts(brandId, NOW.minusSeconds(86400), null))
+				.hasSize(3);
+	}
+
+	@Test
+	void touchFrozenHashtag은_floor_밖_해시태그_행만_동결_touch한다() {
+		repo.upsertHashtag(brandId, post("H_IN", "poster1", NOW.minusSeconds(1000)), NOW);
+		repo.upsertHashtag(brandId, post("H_OUT", "poster1", NOW.minusSeconds(5000)), NOW);
+		repo.upsertDirect(brandId, post("D_OLD", "poster1", NOW.minusSeconds(9000)), NOW);
+		repo.insert(brandId, post("TAGOLD", "poster1", NOW.minusSeconds(9000)));   // tagged-only — 대상 밖
+
+		repo.touchFrozenHashtag(brandId, NOW.minusSeconds(10000), NOW.minusSeconds(2000), NOW);
+
+		assertThat(db.queryForObject("SELECT last_crawled_at FROM brand_tagged_post"
+				+ " WHERE brand_id = ? AND short_code = 'H_OUT'", java.sql.Timestamp.class, brandId)
+				.toInstant()).isEqualTo(NOW);
+		for (String untouched : List.of("H_IN", "D_OLD", "TAGOLD")) {
+			assertThat(db.queryForObject("SELECT last_crawled_at IS NULL FROM brand_tagged_post"
+					+ " WHERE brand_id = ? AND short_code = ?", Boolean.class, brandId, untouched))
+					.as(untouched).isTrue();
+		}
+		// 되감기 금지 — 더 이른 at으로 재호출해도 유지
+		repo.touchFrozenHashtag(brandId, NOW.minusSeconds(10000), NOW.minusSeconds(2000), NOW.minusSeconds(100));
+		assertThat(db.queryForObject("SELECT last_crawled_at FROM brand_tagged_post"
+				+ " WHERE brand_id = ? AND short_code = 'H_OUT'", java.sql.Timestamp.class, brandId)
+				.toInstant()).isEqualTo(NOW);
+	}
+
+	/**
+	 * minTakenAt 하한(F3, 2026-09-02 최종 리뷰 — touchCrawledDepth의 동형 짝과 같은 유계) — 하한보다
+	 * 오래된 hashtag 행은 floor 밖이어도 동결 touch 대상이 아니다(이미 추적 창을 넘어 영구 제외됐다).
+	 */
+	@Test
+	void touchFrozenHashtag은_하한보다_오래된_행은_touch하지_않는다() {
+		repo.upsertHashtag(brandId, post("H_OUT", "poster1", NOW.minusSeconds(5000)), NOW);          // 하한 안, floor 밖
+		repo.upsertHashtag(brandId, post("H_TOO_OLD", "poster1", NOW.minusSeconds(9000)), NOW);      // 하한보다 오래됨
+
+		repo.touchFrozenHashtag(brandId, NOW.minusSeconds(7000), NOW.minusSeconds(2000), NOW);
+
+		assertThat(db.queryForObject("SELECT last_crawled_at FROM brand_tagged_post"
+				+ " WHERE brand_id = ? AND short_code = 'H_OUT'", java.sql.Timestamp.class, brandId)
+				.toInstant()).isEqualTo(NOW);
+		assertThat(db.queryForObject("SELECT last_crawled_at IS NULL FROM brand_tagged_post"
+				+ " WHERE brand_id = ? AND short_code = 'H_TOO_OLD'", Boolean.class, brandId))
+				.isTrue();
 	}
 }

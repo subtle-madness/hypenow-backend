@@ -1,9 +1,9 @@
 package com.celfit.monitoring.web;
 
-import com.celfit.monitoring.hiker.HikerFetchException;
-import com.celfit.monitoring.hiker.PrivateAccountException;
-import com.celfit.monitoring.hiker.ShareLinkUnresolvedException;
-import com.celfit.monitoring.hiker.SubjectNotFoundException;
+import com.celfit.instagram.source.HikerFetchException;
+import com.celfit.instagram.source.PrivateAccountException;
+import com.celfit.instagram.source.ShareLinkUnresolvedException;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.service.AuthorImageBackfillAlreadyRunningException;
 import com.celfit.monitoring.service.InvalidStateException;
 import com.celfit.monitoring.service.SweepAlreadyRunningException;

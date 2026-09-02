@@ -8,7 +8,7 @@
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · Gradle 멀티모듈(analytics/was/contract-analysis) · PostgreSQL(뷰 + Flyway) · JdbcClient/JdbcTemplate · JUnit 5 + AssertJ + Mockito · Testcontainers · SQL 하니스(psql)
 
-설계 정본: [docs/superpowers/specs/2026-08-13-admin-global-crawling-cost-design.md](../specs/2026-08-13-admin-global-crawling-cost-design.md)
+설계 정본: [docs/superpowers/specs/2026-08-13-admin-global-crawling-cost-design.md](../../specs/2026-08-13-admin-global-crawling-cost-design.md)
 
 ## Global Constraints
 
@@ -1626,7 +1626,7 @@ PUT 한 번이 두 화면에 동시에 반영된다."
 `| 날짜 | 결정 | 근거/상세 |` 헤더 바로 다음 줄(기존 2026-08-13 ETag 행 **위**)에 삽입:
 
 ```markdown
-| 2026-08-13 | **전역 크롤링 비용은 콜 원본 축에서 합산하고, 크롤러 몫은 analytics 미러로 건너온다** — 유저별 카드(08-12)의 전역판. ① 전사 합계를 유저별 값의 합으로 만들면 공유 브랜드가 유저마다 계상돼 실제 지출보다 커진다 → `brand_call_count`를 브랜드 축에서 직접 합산(유저별 카드 합 > 이 합계가 정상). ② 크롤러 파이프라인 몫(`crawl_run.request_count`)은 was가 raw DB를 못 읽으므로 `v_crawl_call_daily` → `crawl_call_daily` 미러로 옮긴다 — crawler 내부 HTTP API는 3-tier "DB로만" 원칙을 깨는 데다 **스테이징에 test-crawler가 없어 dev-api에서 영구 부분 응답**이 된다. 대가인 신선도(04:30 미러)는 `sources[].latestCallOn`으로 드러낸다. ③ 유료 공급자는 Hiker 단일로 접어 공급자 축·신규 단가 PUT 없이 기존 키를 쓴다 — Apify(결과 건당 과금)·무료 소스는 `request_count IS NOT NULL`(>0) 한 조건으로 제외 | [설계](docs/superpowers/specs/2026-08-13-admin-global-crawling-cost-design.md) · 신규 `GET /v1/admin/crawling-cost/summary` · 미러 record가 `LocalDate`를 갖는 첫 사례라 왕복을 `CrawlCallDailyMirrorTest`로 실증 |
+| 2026-08-13 | **전역 크롤링 비용은 콜 원본 축에서 합산하고, 크롤러 몫은 analytics 미러로 건너온다** — 유저별 카드(08-12)의 전역판. ① 전사 합계를 유저별 값의 합으로 만들면 공유 브랜드가 유저마다 계상돼 실제 지출보다 커진다 → `brand_call_count`를 브랜드 축에서 직접 합산(유저별 카드 합 > 이 합계가 정상). ② 크롤러 파이프라인 몫(`crawl_run.request_count`)은 was가 raw DB를 못 읽으므로 `v_crawl_call_daily` → `crawl_call_daily` 미러로 옮긴다 — crawler 내부 HTTP API는 3-tier "DB로만" 원칙을 깨는 데다 **스테이징에 test-crawler가 없어 dev-api에서 영구 부분 응답**이 된다. 대가인 신선도(04:30 미러)는 `sources[].latestCallOn`으로 드러낸다. ③ 유료 공급자는 Hiker 단일로 접어 공급자 축·신규 단가 PUT 없이 기존 키를 쓴다 — Apify(결과 건당 과금)·무료 소스는 `request_count IS NOT NULL`(>0) 한 조건으로 제외 | [설계](../../specs/2026-08-13-admin-global-crawling-cost-design.md) · 신규 `GET /v1/admin/crawling-cost/summary` · 미러 record가 `LocalDate`를 갖는 첫 사례라 왕복을 `CrawlCallDailyMirrorTest`로 실증 |
 ```
 
 - [ ] **Step 3: 전체 테스트를 돌린다 (PR 직전 1회)**

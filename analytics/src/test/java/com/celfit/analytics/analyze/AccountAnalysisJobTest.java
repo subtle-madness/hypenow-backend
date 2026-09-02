@@ -23,8 +23,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import tools.jackson.databind.ObjectMapper;
 
@@ -35,11 +33,9 @@ import tools.jackson.databind.ObjectMapper;
  * ④ stale+쿨다운 경과 재분석 — 이력 2행 ⑤ 배치 상한 ⑥ 빈 카피 실패 격리 ⑦ traits 5개 절단
  * ⑧ 구 스키마 행(perf_summary NULL)은 입력 동일해도 자연 재대상(07-27 개편 백필).
  */
-@Testcontainers
 class AccountAnalysisJobTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	JdbcTemplate db;
 	DataSource ds;
