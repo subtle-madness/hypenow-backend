@@ -55,6 +55,10 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 1536m
+    # 병렬 쿼리 DSM(/dev/shm)은 도커 기본 64MB로는 부족하다 — 09-01 유사 추천 신규 쿼리가
+    # "could not resize shared memory segment ... No space left on device"로 전면 500(94% 포화 실측).
+    # mem_limit 안쪽이라 페이지 캐시처럼 cgroup에 과금될 뿐 추가 예산 아님.
+    shm_size: 256m
     oom_score_adj: -800
     networks: [prod]
     # 쿼리 성능 측정(스펙 2026-08-10) — pg_stat_statements는 preload 필수라 command로 주입.
@@ -88,6 +92,7 @@ services:
     restart: unless-stopped
     logging: *logging
     mem_limit: 2g   # raw 대용량(덤프 11GiB급) — 미러 잡 페이지 캐시 몫을 analysis보다 여유 있게
+    shm_size: 256m   # 병렬 쿼리 DSM — postgres(analysis)와 동일 사유(위 주석), 예방 동반 적용
     oom_score_adj: -800
     networks: [prod, test]   # test-analytics가 analytics_dev 계정으로 raw를 읽는다 — 의도된 공유 접점
     environment:
@@ -146,6 +151,9 @@ services:
       # OOM 자동 힙 덤프(08-27 스펙) — HotSpot은 기존 파일을 덮어쓰지 않아 첫 OOM분 1개만
       # 남는다(크래시루프에도 디스크 안전). 분석 후 수동 삭제. cgroup OOM kill은 덤프 불가.
       JAVA_OPTS: "-Xms256m -Xmx768m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/analytics.hprof"
+      # 액추에이터 관리 포트 분리(2026-08-31, 08-22 스펙 이연분) — prod 네트워크 내부(prometheus 스크레이프) 전용.
+      # monitoring 9083과 같은 관용구(env 주입), 번호는 앱 포트 +1000.
+      MANAGEMENT_SERVER_PORT: "9082"
     volumes:
       - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
       - ./secrets/gcs-image-archiver.json:/run/secrets/gcs-image-archiver.json:ro
@@ -203,6 +211,9 @@ services:
       CRAWLER_SCHEDULE_DISCOVER_CRON: "-"
       # OOM 자동 힙 덤프 — analytics 주석 참조(첫 OOM분 1개만 보존)
       JAVA_OPTS: "-Xmx1g -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/crawler.hprof"
+      # 액추에이터 관리 포트 분리(2026-08-31, 08-22 스펙 이연분) — prod 네트워크 내부(prometheus 스크레이프) 전용.
+      # monitoring 9083과 같은 관용구(env 주입), 번호는 앱 포트 +1000.
+      MANAGEMENT_SERVER_PORT: "9080"
     volumes:
       - ./dumps:/dumps
     ports:
@@ -243,6 +254,12 @@ services:
       REDIS_HOST: redis
       # 이메일 인증 발송(Resend) — 서버 .env에 등록. 미설정 시 로깅 폴백(기동 WARN, 실발송 없음)
       RESEND_API_KEY: ${RESEND_API_KEY:-}
+      WEB_BASE_URL: ${WEB_BASE_URL:-https://www.hypenow.io}   # 주간 리포트 메일 딥링크 기준 주소
+      # 주간 다이제스트 생성·발송 크론(README §13-5-3) — 기본 매주 월요일 09:00 KST + 따라잡기
+      # 09:10~23:50 10분 간격. 임시 중단은 둘 다 "-"로 덮어 재기동(README 참조, 하나만 끄면
+      # 따라잡기가 10분 안에 되살린다).
+      MONITORING_DIGEST_WEEKLY_CRON: "${MONITORING_DIGEST_WEEKLY_CRON:-0 0 9 * * MON}"
+      MONITORING_DIGEST_WEEKLY_CATCHUP_CRON: "${MONITORING_DIGEST_WEEKLY_CATCHUP_CRON:-0 10,20,30,40,50 9-23 * * *}"
       # 어드민 가입 코드 일괄 적재(POST /admin/signup-codes) 정적 토큰 — 서버 .env에 등록. 미설정 시 엔드포인트 fail-closed(503)
       CODES_API_KEY: ${CODES_API_KEY:-}
       # 모니터링 v3 조회 개통(was 계약 §1) — 기본 off. 개통은 .env의 MONITORING_ENABLED=true +
@@ -306,7 +323,7 @@ services:
       # 전용 SA 키(IMAGE_GCS_KEY)를 코드가 직접 읽으므로 이 값과 충돌하지 않는다(analytics
       # compose 주석과 동일 사유 — ADC는 JVM당 하나뿐이라 GcsImageStore가 여길 덮으면 Vertex가 403).
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
-      MONITORING_LLM_VERTEX_PROJECT: ${MONITORING_LLM_VERTEX_PROJECT:-hypenow-llm-prod}
+      MONITORING_LLM_VERTEX_PROJECT: ${MONITORING_LLM_VERTEX_PROJECT:-project-00d0f3bd-bdef-4b0a-9eb}
       MONITORING_LLM_VERTEX_LOCATION: ${MONITORING_LLM_VERTEX_LOCATION:-global}
       # 프로필 이미지 아카이브(설계 스펙 §3-1) — analytics와 같은 버킷·같은 쓰기 PAR을 재사용
       MONITORING_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}
@@ -324,16 +341,7 @@ services:
       # 서버 override가 02:00으로 운영돼 왔고 08-12에 02:00을 정본으로 수용(캠페인 스윕과 동시 실행).
       # was.brand.sweep-hour-kst(nextScheduledAt 표기)와 반드시 함께 움직일 것.
       MONITORING_BRAND_SCHEDULE_SWEEP_CRON: "0 0 17 * * *"
-      # 알람 발송(07-31 개통) — 5분 간격. 개통 절차는 README §13-5
-      # 수신자는 .env의 ALARM_ALLOWED_RECIPIENTS 허용목록으로 제한한다(fail-OPEN이므로 비우면 전원 발송).
-      MONITORING_ALARM_DISPATCH_CRON: "0 */5 * * * *"
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
-      # 수신자 해석용 analysis DB 읽기 전용(두 객체만 GRANT — 계약 v2 §6)
-      MONITORING_ALARM_READER_URL: jdbc:postgresql://postgres:5432/analysis
-      MONITORING_ALARM_READER_USERNAME: alarm_reader
-      MONITORING_ALARM_READER_PASSWORD: ${ALARM_READER_PASSWORD:-}
-      # 수신자 허용목록 안전판(비어있으면 무제한 — 운영 기본). 07-30 test 스택 검증용으로 추가, 운영은 미사용 전제
-      MONITORING_ALARM_ALLOWED_RECIPIENTS: ${ALARM_ALLOWED_RECIPIENTS:-}
+      # 알람 메일 발송은 2026-08-27 주간 개편으로 was(주간 리포트)로 이관됐다 - monitoring은 alarm_event 적재만 한다.
       # 힙 512m(08-12 OOM 후속): 백필 core 2병렬 대비 — 힙 예산은 동시 콜 13 × ~10MB + 상주분
       # (08-13 보강 워커 6→10 상향 반영: 워커 10 + 스윕 core 1 + 등록 core 2가 최악값).
       # ExitOnOOM: OOM 후 반쯤 죽은 채 버티지 않고 즉시 종료 → restart 정책으로 깨끗하게 복귀.

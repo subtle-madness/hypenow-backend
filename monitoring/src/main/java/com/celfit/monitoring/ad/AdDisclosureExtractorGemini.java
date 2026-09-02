@@ -14,7 +14,7 @@ import tools.jackson.databind.node.ObjectNode;
  * 사전·정규식이 못 잡는 표기 변형·신조어·부정 문맥(`광고 아니고 내돈내산`)의 문구를 찾아 그대로
  * 인용하고 카테고리만 분류한다 — 최종 verdict는 {@link AdVerdictCombiner}가 결정적으로 계산한다.
  *
- * <p>{@link com.celfit.monitoring.llm.BrandMentionJudge}와 달리 api-key 미설정·응답 파싱 실패를
+ * <p>구 해시태그 관련성 판정기(2026-08-27 폐기)와 달리 api-key 미설정·응답 파싱 실패를
  * fail-closed(UNCERTAIN)로 접지 않고 예외를 던진다 — 여기서 접으면 판정 컬럼에 잘못된 UNCERTAIN이
  * 영속화된다. 호출부({@link AdDisclosureJudgeService})가 예외를 잡아 verdict NULL을 유지하고
  * 다음 스윕이 재시도한다(스펙 §5).

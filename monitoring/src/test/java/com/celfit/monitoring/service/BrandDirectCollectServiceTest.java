@@ -72,6 +72,11 @@ class BrandDirectCollectServiceTest {
 		}
 
 		@Override
+		public void touchProgress(long brandId) {
+			// 진행 워터마크(08-31) — 이 테스트의 관심 밖, DB 없는 fake라 no-op.
+		}
+
+		@Override
 		public void updateCoverage(long brandId, boolean capped, Instant coveredUntil) {
 			// no-op
 		}
@@ -142,6 +147,7 @@ class BrandDirectCollectServiceTest {
 		final Map<String, Instant> touched = new HashMap<>();
 		final List<String> enriched = java.util.Collections.synchronizedList(new ArrayList<>());
 		final List<TrackedPost> due = new ArrayList<>();
+		final List<TrackedPost> unenrichedDue = new ArrayList<>();
 		final List<String> unavailable = new ArrayList<>();
 
 		InMemoryTagged() {
@@ -180,8 +186,13 @@ class BrandDirectCollectServiceTest {
 		}
 
 		@Override
-		public List<TrackedPost> directDuePosts(long brandId, Instant minTakenAt) {
+		public List<TrackedPost> unenumeratedDuePosts(long brandId, Instant minTakenAt) {
 			return due.stream().filter(t -> !t.takenAt().isBefore(minTakenAt)).toList();
+		}
+
+		@Override
+		public List<TrackedPost> unenrichedUnenumeratedPosts(long brandId, Instant minTakenAt) {
+			return unenrichedDue.stream().filter(t -> !t.takenAt().isBefore(minTakenAt)).toList();
 		}
 	}
 
@@ -235,6 +246,10 @@ class BrandDirectCollectServiceTest {
 	}
 
 	private BrandDirectCollectService service() {
+		return serviceWithLimit(300);
+	}
+
+	private BrandDirectCollectService serviceWithLimit(int sweepLimit) {
 		// adDisclosureEnabled=false — 이 테스트는 direct 단건 수집 경로만 검증한다. 킬 스위치가
 		// 꺼져 있으면 judgeAdDisclosuresSafely가 adJudge를 아예 호출하지 않으므로(BrandCollectService
 		// 클래스 주석) null을 넘겨도 안전하다.
@@ -242,7 +257,7 @@ class BrandDirectCollectServiceTest {
 		// 커버리지 조회·기록 지점에 닿지 않는다(collect는 adjustLotteryMetrics 재사용 목적).
 		BrandCollectService collect = new BrandCollectService(client(), callContext, writer, snapshots, comments,
 				tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
-		return new BrandDirectCollectService(client(), callContext, writer, tagged, collect);
+		return new BrandDirectCollectService(client(), callContext, writer, tagged, collect, sweepLimit);
 	}
 
 	/** service()가 collect·direct 각자 별도 HikerClient(별도 fake 인스턴스)를 갖지만 같은 calls 리스트를 공유한다. */
@@ -305,7 +320,7 @@ class BrandDirectCollectServiceTest {
 		assertThat(tagged.upsertedDirect).isEmpty();
 	}
 
-	// ── sweepDirect — 격리 ───────────────────────────────────────────────────
+	// ── sweepUnenumerated — 격리 ───────────────────────────────────────────────────
 
 	@Test
 	void 부재_게시물은_삼키고_나머지는_계속_수집된다() {
@@ -314,7 +329,7 @@ class BrandDirectCollectServiceTest {
 		notFoundCodes.add("Gone");
 		postResponses.put("Alive", postJson("Alive", RECENT, 102));
 
-		service().sweepDirect(brand);   // 예외가 새면 여기서 터진다
+		service().sweepUnenumerated(brand);   // 예외가 새면 여기서 터진다
 
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("Alive");
 		assertThat(tagged.enriched).containsExactly("Alive");
@@ -325,7 +340,7 @@ class BrandDirectCollectServiceTest {
 		tagged.due.add(new TaggedPostRepository.TrackedPost("Ancient", Instant.ofEpochSecond(AGE_200D),
 				Instant.ofEpochSecond(NOW - 40L * 86400)));
 
-		service().sweepDirect(brand);
+		service().sweepUnenumerated(brand);
 
 		assertThat(postCalls()).isZero();
 		assertThat(writer.saved).isEmpty();
@@ -340,7 +355,7 @@ class BrandDirectCollectServiceTest {
 		notFoundCodes.add("Gone");
 		postResponses.put("Alive", postJson("Alive", RECENT, 105));
 
-		service().sweepDirect(brand);
+		service().sweepUnenumerated(brand);
 
 		// 404 게시물: 마킹만, 저장·touch 없음(마지막 수집값 보존)
 		assertThat(tagged.unavailable).containsExactly("Gone");
@@ -357,7 +372,7 @@ class BrandDirectCollectServiceTest {
 				Instant.now().minusSeconds(86400)));
 		postResponses.put("Recent", postJson("Recent", RECENT, 103));
 
-		service().sweepDirect(brand);
+		service().sweepUnenumerated(brand);
 
 		assertThat(postCalls()).isEqualTo(1);
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("Recent");
@@ -369,7 +384,7 @@ class BrandDirectCollectServiceTest {
 		tagged.due.add(new TaggedPostRepository.TrackedPost("Tier2Fresh", Instant.ofEpochSecond(AGE_25D),
 				Instant.now().minusSeconds(86400)));
 
-		service().sweepDirect(brand);
+		service().sweepUnenumerated(brand);
 
 		assertThat(postCalls()).isZero();
 
@@ -379,8 +394,144 @@ class BrandDirectCollectServiceTest {
 				Instant.now().minusSeconds(4L * 86400)));
 		postResponses.put("Tier2Due", postJson("Tier2Due", AGE_25D, 104));
 
-		service().sweepDirect(brand);
+		service().sweepUnenumerated(brand);
 
 		assertThat(postCalls()).isEqualTo(1);
+	}
+
+	// ── 스윕당 상한(2026-08-27 해시태그 직접 수집 설계 §5) ─────────────────────
+
+	/**
+	 * 이관분은 last_crawled_at이 NULL이라 전부 즉시 due다 — 상한이 없으면 첫 스윕이 브랜드당
+	 * 수백~1,000건의 단건 콜을 한 번에 쏟아내 전역 콜 예산을 넘긴다. 잔여는 다음 스윕이 이어받는다
+	 * (모수 정렬이 미보강 우선이라 이관분부터 충전된다).
+	 */
+	@Test
+	void 스윕당_상한을_넘는_due는_잘리고_다음_스윕으로_넘어간다() {
+		for (int i = 0; i < 5; i++) {
+			String code = "M" + i;
+			tagged.due.add(new TaggedPostRepository.TrackedPost(code, Instant.ofEpochSecond(RECENT), null));
+			postResponses.put(code, postJson(code, RECENT, 200 + i));
+		}
+
+		serviceWithLimit(2).sweepUnenumerated(brand);
+
+		assertThat(postCalls()).isEqualTo(2);
+		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("M0", "M1");
+	}
+
+	/**
+	 * fetch는 성공했지만 게시일 미상이라 저장 불가한 행(collectOne)은 touchCrawled로 커버 처리해야
+	 * 한다 — 안 그러면 unenumeratedDuePosts 정렬이 미보강 우선이라 이 행이 계속 상한 창 맨 앞을
+	 * 점유해 나머지 행이 영구 굶는다(2026-08-27 리뷰 지적).
+	 */
+	@Test
+	void taken_at_없는_게시물은_커버_처리되어_상한_창을_점유하지_않는다() {
+		tagged.due.add(new TaggedPostRepository.TrackedPost("NoDate", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("NoDate", postJsonNoTakenAt("NoDate", 106));
+		tagged.due.add(new TaggedPostRepository.TrackedPost("After", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("After", postJson("After", RECENT, 107));
+
+		service().sweepUnenumerated(brand);
+
+		assertThat(tagged.touched).containsKey("NoDate");   // 커버 처리 — 즉시-due 창에서 빠진다
+		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("After");
+	}
+
+	// ── backfillUnenriched — 기동 즉시 백필(2026-08-28 사용자 지시) ─────────────
+
+	/**
+	 * 스윕당 상한(sweepLimit)이 걸려 있어도 기동 백필은 무시하고 전량 소진한다 — 점진 소진은
+	 * 야간 스윕 전용 정책이고, 기동 백필의 목적 자체가 그 점진성을 깨는 것이다.
+	 */
+	@Test
+	void 스윕_상한을_무시하고_미보강_전량을_소진한다() {
+		for (int i = 0; i < 5; i++) {
+			String code = "U" + i;
+			tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost(code, Instant.ofEpochSecond(RECENT), null));
+			postResponses.put(code, postJson(code, RECENT, 300 + i));
+		}
+
+		int backfilled = serviceWithLimit(2).backfillUnenriched(brand);
+
+		assertThat(backfilled).isEqualTo(5);
+		assertThat(postCalls()).isEqualTo(5);
+		assertThat(tagged.enriched).containsExactlyInAnyOrder("U0", "U1", "U2", "U3", "U4");
+	}
+
+	/**
+	 * BrandCrawlPolicy.due 나이 티어를 적용하지 않는다 — last_crawled_at이 방금(0초 전)이라 정상
+	 * sweepUnenumerated였다면 due 아닌 행도 기동 백필은 건너뛰지 않는다.
+	 */
+	@Test
+	void 나이_티어_due_판정과_무관하게_전량_수집한다() {
+		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("JustCrawled", Instant.ofEpochSecond(RECENT),
+				Instant.now()));   // 방금 크롤됨 — sweepUnenumerated였다면 due=false로 걸러졌을 행
+		postResponses.put("JustCrawled", postJson("JustCrawled", RECENT, 401));
+
+		int backfilled = service().backfillUnenriched(brand);
+
+		assertThat(backfilled).isEqualTo(1);
+		assertThat(postCalls()).isEqualTo(1);
+		assertThat(tagged.enriched).containsExactly("JustCrawled");
+	}
+
+	/** 미보강 재고가 없으면 콜 없이 0을 돌려준다 — 러너가 매 기동마다 값싸게 no-op으로 지나가야 한다. */
+	@Test
+	void 미보강_재고가_없으면_콜_없이_0을_돌려준다() {
+		int backfilled = service().backfillUnenriched(brand);
+
+		assertThat(backfilled).isZero();
+		assertThat(postCalls()).isZero();
+	}
+
+	/** 부재 게시물은 격리되고 나머지는 계속 보강된다 — sweepUnenumerated와 같은 실패 격리 규율. */
+	@Test
+	void 백필_중_부재_게시물은_격리되고_나머지는_계속_보강된다() {
+		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("Gone", Instant.ofEpochSecond(RECENT), null));
+		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("Alive", Instant.ofEpochSecond(RECENT), null));
+		notFoundCodes.add("Gone");
+		postResponses.put("Alive", postJson("Alive", RECENT, 402));
+
+		int backfilled = service().backfillUnenriched(brand);
+
+		assertThat(backfilled).isEqualTo(2);   // 시도한 행 수(부재 포함)
+		assertThat(tagged.unavailable).containsExactly("Gone");
+		assertThat(tagged.enriched).containsExactly("Alive");
+	}
+
+	// ── unenumeratedBusy 동시 실행 가드(2026-08-28 리뷰 지적) ───────────────────
+
+	/**
+	 * sweepUnenumerated(야간 스윕 2단계)가 처리 중일 때 기동 백필이 같은 게시물을 겹쳐 Hiker에
+	 * 이중 과금하지 않도록, 겹침이면 backfillUnenriched는 즉시 0을 반환하고 콜을 내지 않는다.
+	 * 실제 스레드 경합 대신 package-private 필드로 겹침 상태를 결정적으로 주입한다.
+	 */
+	@Test
+	void 겹침_상태에서는_backfillUnenriched가_콜_없이_0을_반환한다() {
+		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("Busy", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("Busy", postJson("Busy", RECENT, 403));
+		BrandDirectCollectService svc = service();
+		svc.unenumeratedBusy.set(true);   // sweepUnenumerated가 다른 브랜드를 처리 중이라고 가정
+
+		int backfilled = svc.backfillUnenriched(brand);
+
+		assertThat(backfilled).isZero();
+		assertThat(postCalls()).isZero();
+		assertThat(tagged.enriched).isEmpty();
+	}
+
+	/** 겹침이 없으면(플래그 false) 평소대로 동작 — 가드가 정상 경로를 막지 않는다는 회귀 방지. */
+	@Test
+	void 겹침이_없으면_backfillUnenriched는_평소대로_동작한다() {
+		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("Free", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("Free", postJson("Free", RECENT, 404));
+		BrandDirectCollectService svc = service();
+
+		int backfilled = svc.backfillUnenriched(brand);
+
+		assertThat(backfilled).isEqualTo(1);
+		assertThat(tagged.enriched).containsExactly("Free");
+		assertThat(svc.unenumeratedBusy.get()).isFalse();   // 처리 후 해제됨 — 다음 호출을 막지 않는다
 	}
 }

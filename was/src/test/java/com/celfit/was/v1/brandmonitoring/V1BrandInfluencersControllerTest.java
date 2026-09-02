@@ -14,6 +14,7 @@ import com.celfit.was.auth.AppUser;
 import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.config.SecurityConfig;
 import com.celfit.was.monitoring.BrandDirectPostRepository;
+import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandPostCampaignRepository;
@@ -70,6 +71,13 @@ class V1BrandInfluencersControllerTest {
 	/** 과도기 폴백 전용. */
 	@MockitoBean
 	TrackingItemAssembler trackingItemAssembler;
+	/**
+	 * 해시태그 격리 필터(2026-08-27 해시태그 직접 수집 설계 §3) — 이 표면의 시드는 전부
+	 * tagDetectedAt이 채워진 행이라 hashtag-only 후보가 없고, indexForBrand가 조회 자체를
+	 * 생략한다(지연 조회 관용구) — DI 충족 목적으로만 mock한다.
+	 */
+	@MockitoBean
+	BrandHashtagTagRepository hashtagTagRepository;
 	@MockitoBean
 	MonitoringItemRepository monitoringItemRepository;
 	@MockitoBean
@@ -496,7 +504,7 @@ class V1BrandInfluencersControllerTest {
 	}
 
 	private void givenIndex(long brandId, BrandPostIndexRow... rows) {
-		given(brandReadRepository.findBrandPostIndex(eq(brandId), any(), anyBoolean(), any()))
+		given(brandReadRepository.findBrandPostIndex(eq(brandId), any(), anyBoolean(), any(), anyBoolean()))
 				.willReturn(List.of(rows));
 	}
 
@@ -527,9 +535,9 @@ class V1BrandInfluencersControllerTest {
 	private static BrandPostIndexRow indexRow(String code, String takenAt, String username, String fullName,
 			Long followers, boolean paid) {
 		OffsetDateTime detectedAt = OffsetDateTime.parse("2026-08-06T02:00:00Z");
-		return new BrandPostIndexRow(code, OffsetDateTime.parse(takenAt), detectedAt, null, null,
+		return new BrandPostIndexRow(code, OffsetDateTime.parse(takenAt), detectedAt, null, null, null,
 				username, null, paid, false, "REELS", null, username, fullName,
-				"https://cdn/" + username + ".jpg", null, followers);
+				"https://cdn/" + username + ".jpg", null, followers, null);
 	}
 
 	private static LatestSnapshotRow metrics(String code, Long views, Long likes) {

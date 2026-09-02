@@ -332,13 +332,15 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				       ('SHORT9', 'influencer_b', 'FEED', '2026-08-02', '', NULL, NULL, NULL, true)
 				""").update();
 
+		// withCaptions=true — 이 테스트가 caption 자체까지 함께 검증한다(아래 assertion).
 		List<BrandReadRepository.BrandPostIndexRow> rows = repository.findBrandPostIndex(
 				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), true,
-				BrandSponsorshipClassifier.postgresMarkerRegex());
+				BrandSponsorshipClassifier.postgresMarkerRegex(), true);
 
 		assertThat(rows).hasSize(2);
 		BrandReadRepository.BrandPostIndexRow enriched = byCode(rows, "SHORT1");
 		assertThat(enriched.captionMarker()).isTrue();       // 캡션 원문 대신 SQL 마커 매치 결과
+		assertThat(enriched.caption()).isEqualTo("#협찬 후기");   // withCaptions=true — 캡션 원문도 함께 옴
 		assertThat(enriched.isPaidPartnership()).isNull();   // null = 키 부재(판정 unknown) 보존
 		assertThat(enriched.tagDetectedAt()).isNotNull();
 		assertThat(enriched.directRegisteredAt()).isNull();
@@ -348,6 +350,7 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(enriched.authorIgUserId()).isEqualTo("IG_A");
 		BrandReadRepository.BrandPostIndexRow noMeta = byCode(rows, "NOMETA");
 		assertThat(noMeta.captionMarker()).isFalse();        // 메타 없음 → 마커 매치 false(판정은 unknown)
+		assertThat(noMeta.caption()).isNull();               // LEFT JOIN 미스 — caption도 null
 		assertThat(noMeta.isPaidPartnership()).isNull();
 		assertThat(noMeta.contentType()).isNull();
 		assertThat(noMeta.adVerdict()).isNull();
@@ -364,13 +367,49 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				VALUES ('OLDDIRECT', 'influencer_a', 'REELS', '2024-01-01', '', NULL, NULL, NULL, true)
 				""").update();
 
+		// withCaptions=false — 성과 대시보드 경로 동형(캡션 미전송 확인은 아래 assertion).
 		List<BrandReadRepository.BrandPostIndexRow> rows = repository.findBrandPostIndex(
 				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), false,
-				BrandSponsorshipClassifier.postgresMarkerRegex());
+				BrandSponsorshipClassifier.postgresMarkerRegex(), false);
 
 		assertThat(rows).hasSize(1);
 		assertThat(rows.get(0).isPaidPartnership()).isTrue();
 		assertThat(rows.get(0).directRegisteredAt()).isNotNull();
+		assertThat(rows.get(0).caption()).isNull();   // withCaptions=false — NULL AS caption
+	}
+
+	/**
+	 * 인덱스 행의 타임스탬프 5컬럼(taken/tag/direct/hashtag/unavailable)은 값까지 못박는다 —
+	 * 전부 OffsetDateTime이라 매핑 컴포넌트가 자리를 바꿔도(예: hashtagDetectedAt↔unavailableAt)
+	 * isNotNull 핀으로는 못 잡는다. 서로 다른 값을 시드하고 컬럼별 값 자체를 비교한다.
+	 */
+	@Test
+	void 인덱스_프로젝션은_타임스탬프_컬럼을_자리_그대로_돌려준다() {
+		long brandId = seedBrand("brand");
+		// 3성분 겹침(tag+direct+hashtag) + unavailable까지 전부 non-null인 행 — 값은 전부 다르게.
+		jdbc.sql("""
+				INSERT INTO brand_tagged_post (brand_id, short_code, author_username, author_ig_user_id,
+				                               taken_at, comments_collected_count, enriched_at,
+				                               tag_detected_at, direct_registered_at, hashtag_detected_at,
+				                               unavailable_at)
+				VALUES (:brandId, 'TSPIN', 'influencer_a', 'IG_A', '2026-08-01T12:00:00+09:00', 0, now(),
+				        '2026-08-02T12:00:00+09:00', '2026-08-03T12:00:00+09:00',
+				        '2026-08-04T12:00:00+09:00', '2026-08-05T12:00:00+09:00')
+				""")
+				.param("brandId", brandId).update();
+
+		List<BrandReadRepository.BrandPostIndexRow> rows = repository.findBrandPostIndex(
+				brandId, OffsetDateTime.parse("2025-08-27T00:00:00+09:00"), true,
+				BrandSponsorshipClassifier.postgresMarkerRegex(), false);
+
+		assertThat(rows).hasSize(1);
+		BrandReadRepository.BrandPostIndexRow row = rows.get(0);
+		// 드라이버가 돌려주는 오프셋(UTC/세션 존)에 흔들리지 않게 순간(Instant)으로 비교한다.
+		assertThat(row.takenAt().toInstant()).isEqualTo(Instant.parse("2026-08-01T03:00:00Z"));
+		assertThat(row.tagDetectedAt().toInstant()).isEqualTo(Instant.parse("2026-08-02T03:00:00Z"));
+		assertThat(row.directRegisteredAt().toInstant()).isEqualTo(Instant.parse("2026-08-03T03:00:00Z"));
+		assertThat(row.hashtagDetectedAt().toInstant()).isEqualTo(Instant.parse("2026-08-04T03:00:00Z"));
+		assertThat(row.unavailableAt().toInstant()).isEqualTo(Instant.parse("2026-08-05T03:00:00Z"));
 	}
 
 	/**
@@ -402,12 +441,14 @@ class BrandReadRepositoryTest extends IntegrationTest {
 				        'monitor-author/author1.jpg')
 				""").update();
 
+		// withCaptions=false — 이 테스트 취지(슬림 인덱스는 캡션 원문을 전송하지 않는다)를 그대로 겨눈다.
 		List<BrandReadRepository.BrandPostIndexRow> rows = repository.findBrandPostIndex(
 				brandId, OffsetDateTime.now().minusDays(365), true,
-				BrandSponsorshipClassifier.postgresMarkerRegex());
+				BrandSponsorshipClassifier.postgresMarkerRegex(), false);
 
 		BrandReadRepository.BrandPostIndexRow ad = byCode(rows, "CODE1");
 		assertThat(ad.captionMarker()).isTrue();
+		assertThat(ad.caption()).isNull();   // withCaptions=false — 캡션 원문 미전송
 		assertThat(ad.contentType()).isEqualTo("REELS");
 		assertThat(ad.adVerdict()).isEqualTo("NOT_DISCLOSED");
 		assertThat(ad.authorUsername()).isEqualTo("author1");
@@ -575,9 +616,10 @@ class BrandReadRepositoryTest extends IntegrationTest {
 	void 게시자_프로필은_id와_username_두_경로로_조회된다() {
 		jdbc.sql("""
 				INSERT INTO author_profile (ig_user_id, username, full_name, followers, profile_pic_url,
-				                            is_verified, fetched_at)
-				VALUES ('IG_A', 'influencer_a', '인플루언서 A', 5000, 'http://cdn/a.jpg', true, now()),
-				       ('IG_B', 'influencer_b', NULL, NULL, NULL, NULL, now())
+				                            is_verified, fetched_at, image_object_path)
+				VALUES ('IG_A', 'influencer_a', '인플루언서 A', 5000, 'http://cdn/a.jpg', true, now(),
+				        'monitor-author/influencer_a.jpg'),
+				       ('IG_B', 'influencer_b', NULL, NULL, NULL, NULL, now(), NULL)
 				""").update();
 
 		List<AuthorRow> byId = repository.findAuthors(List.of("IG_A", "IG_MISSING"));
@@ -586,6 +628,20 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(byId.get(0).fullName()).isEqualTo("인플루언서 A");
 		assertThat(byId.get(0).followers()).isEqualTo(5000L);
 		assertThat(byId.get(0).isVerified()).isTrue();
+		// String 컴포넌트 스왑(profilePicUrl↔imageObjectPath) 대비 — 둘 다 값으로 못박는다.
+		assertThat(byId.get(0).profilePicUrl()).isEqualTo("http://cdn/a.jpg");
+		assertThat(byId.get(0).imageObjectPath()).isEqualTo("monitor-author/influencer_a.jpg");
+
+		// 널 필드 행도 findAuthors 경로로 못박는다(2026-08-31 수동 매퍼 교체 대비) — 박싱 타입
+		// 전부 null 보존, 원시형 없음.
+		List<AuthorRow> nullFields = repository.findAuthors(List.of("IG_B"));
+		assertThat(nullFields).hasSize(1);
+		assertThat(nullFields.get(0).igUserId()).isEqualTo("IG_B");
+		assertThat(nullFields.get(0).fullName()).isNull();
+		assertThat(nullFields.get(0).followers()).isNull();
+		assertThat(nullFields.get(0).profilePicUrl()).isNull();
+		assertThat(nullFields.get(0).isVerified()).isNull();
+		assertThat(nullFields.get(0).imageObjectPath()).isNull();
 
 		List<AuthorRow> byUsername = repository.findAuthorsByUsername(List.of("influencer_b"));
 		assertThat(byUsername).hasSize(1);
@@ -764,9 +820,11 @@ class BrandReadRepositoryTest extends IntegrationTest {
 	void findMatchedTags는_shortcode당_매칭된_태그_전부를_돌려준다() {
 		long brandId = seedBrand("brand_official");
 		OffsetDateTime now = OffsetDateTime.now();
-		seedHashtagPost(brandId, "MULTI", "RELEVANT", now.minusDays(1).toString());
+		// brand_post_matched_tag의 FK는 통합 풀(brand_tagged_post)을 향한다(2026-08-27 산지 교체) — 매칭 태그를
+		// 붙이려면 먼저 그 short_code가 풀에 있어야 한다.
+		seedTaggedPost(brandId, "MULTI", now.minusDays(1).toString());
 		jdbc.sql("""
-				INSERT INTO brand_hashtag_post_matched_tags (brand_id, short_code, tag)
+				INSERT INTO brand_post_matched_tag (brand_id, short_code, tag)
 				VALUES (:brandId, 'MULTI', 'cclime'), (:brandId, 'MULTI', '끌리메')
 				""")
 				.param("brandId", brandId).update();
@@ -782,9 +840,9 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		long mine = seedBrand("brand_mine");
 		long other = seedBrand("brand_other");
 		OffsetDateTime now = OffsetDateTime.now();
-		seedHashtagPost(mine, "SAME", "RELEVANT", now.minusDays(1).toString());
-		seedHashtagPost(other, "SAME", "RELEVANT", now.minusDays(1).toString());
-		jdbc.sql("INSERT INTO brand_hashtag_post_matched_tags (brand_id, short_code, tag) VALUES (:brandId, 'SAME', 'other')")
+		// brand_post_matched_tag의 FK는 통합 풀(brand_tagged_post)을 향한다(2026-08-27 산지 교체).
+		seedTaggedPost(other, "SAME", now.minusDays(1).toString());
+		jdbc.sql("INSERT INTO brand_post_matched_tag (brand_id, short_code, tag) VALUES (:brandId, 'SAME', 'other')")
 				.param("brandId", other).update();
 
 		List<BrandReadRepository.MatchedTagRow> rows = repository.findMatchedTags(mine, List.of("SAME"));

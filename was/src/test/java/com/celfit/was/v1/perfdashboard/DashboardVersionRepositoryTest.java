@@ -15,9 +15,11 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * mock하므로 <b>SQL 자체가 도는지·행이 바뀌면 값이 바뀌는지</b>는 여기서만 확인된다.
  *
  * <p>모든 컬럼 조합을 여기서 다 흔들지는 않는다 — 컬럼 대응표의 최종 게이트는 스테이징 검증
- * (설계 §5-⑥, 각 쓰기 직후 200)이다. 여기서 고정하는 것은 (a) 5개 쿼리가 실제 스키마에서 문법·타입
+ * (설계 §5-⑥, 각 쓰기 직후 200)이다. 여기서 고정하는 것은 (a) 6개 쿼리가 실제 스키마에서 문법·타입
  * 오류 없이 돌고, (b) 행이 없어도 md5를 돌려주며, (c) 대표 변경 하나가 값을 실제로 바꾼다는 것,
- * 그리고 (d) 부착 지문의 <b>브랜드 스코프</b> 계약이다(유저 스코프로 좁히면 조용히 낡은 카드를 준다).
+ * 그리고 (d) 부착 지문의 <b>브랜드 스코프</b> 계약(유저 스코프로 좁히면 조용히 낡은 카드를 준다)과
+ * 해시태그 장부 지문의 <b>유저 스코프</b> 계약(2026-08-28 추가 — 남의 장부 변경에 안 흔들려야 한다,
+ * 부착 지문과 정반대 스코프인 이유는 격리 판정 자체가 조회자 개인 소유라서다)이다.
  */
 class DashboardVersionRepositoryTest extends IntegrationTest {
 
@@ -49,12 +51,13 @@ class DashboardVersionRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 다섯_쿼리_모두_md5_hex_32자를_돌려준다() {
+	void 여섯_쿼리_모두_md5_hex_32자를_돌려준다() {
 		assertThat(repository.monitoringItemsFingerprint(userId)).matches("[0-9a-f]{32}");
 		assertThat(repository.brandLinksFingerprint(userId)).matches("[0-9a-f]{32}");
 		assertThat(repository.directPostsFingerprint(userId)).matches("[0-9a-f]{32}");
 		assertThat(repository.campaignsFingerprint(userId)).matches("[0-9a-f]{32}");
 		assertThat(repository.postCampaignLinksFingerprint(userId)).matches("[0-9a-f]{32}");
+		assertThat(repository.hashtagTagsFingerprint(userId)).matches("[0-9a-f]{32}");
 	}
 
 	@Test
@@ -65,6 +68,7 @@ class DashboardVersionRepositoryTest extends IntegrationTest {
 		assertThat(repository.directPostsFingerprint(empty)).matches("[0-9a-f]{32}");
 		assertThat(repository.campaignsFingerprint(empty)).matches("[0-9a-f]{32}");
 		assertThat(repository.postCampaignLinksFingerprint(empty)).matches("[0-9a-f]{32}");
+		assertThat(repository.hashtagTagsFingerprint(empty)).matches("[0-9a-f]{32}");
 	}
 
 	@Test
@@ -145,6 +149,40 @@ class DashboardVersionRepositoryTest extends IntegrationTest {
 		assertThat(repository.postCampaignLinksFingerprint(userId)).isEqualTo(before);
 	}
 
+	/**
+	 * 해시태그 장부 추가·삭제가 지문을 바꾼다(2026-08-28 추가) — 이 표면의 계약은 "장부 변경이 다음
+	 * GET에서 즉시 반영"이라, 지문이 안 바뀌면 {@code BrandIndexCache}가 옛 해시태그 격리 판정을
+	 * 계속 서빙한다(다른 "수용된 지연"과 달리 하루까지도 수용 불가 — DashboardVersion 클래스 javadoc).
+	 */
+	@Test
+	void 해시태그_장부_추가와_삭제가_지문을_바꾼다() {
+		String before = repository.hashtagTagsFingerprint(userId);
+
+		태그(userId, brandId, "끌리메");
+		String afterInsert = repository.hashtagTagsFingerprint(userId);
+		assertThat(afterInsert).isNotEqualTo(before);
+
+		jdbcClient.sql("DELETE FROM app.brand_hashtag_tags WHERE user_id = :u AND brand_id = :b AND tag = :t")
+				.param("u", userId).param("b", brandId).param("t", "끌리메").update();
+		assertThat(repository.hashtagTagsFingerprint(userId)).isEqualTo(before);
+	}
+
+	/**
+	 * 해시태그 장부 지문은 <b>유저 스코프</b>다 — 남이 같은 브랜드에 자기 태그를 추가·삭제해도 내
+	 * 지문은 흔들리지 않는다(부착 지문의 브랜드 스코프와 정반대 — 격리 판정 자체가 조회자 개인 소유라
+	 * app.brand_hashtag_tags 원장 조회가 항상 user_id로 스코프된다, {@code
+	 * BrandHashtagTagRepository.findByUserAndBrand} 동형).
+	 */
+	@Test
+	void 해시태그_장부_지문은_다른_유저의_같은_브랜드_태그에는_흔들리지_않는다() {
+		long other = 유저();
+		String before = repository.hashtagTagsFingerprint(userId);
+
+		태그(other, brandId, "남의태그");
+
+		assertThat(repository.hashtagTagsFingerprint(userId)).isEqualTo(before);
+	}
+
 	// ---------- 시드 헬퍼 ----------
 
 	private long 유저() {
@@ -185,5 +223,10 @@ class DashboardVersionRepositoryTest extends IntegrationTest {
 				VALUES (:b, :s, :c, :u)
 				""")
 				.param("b", brandId).param("s", shortCode).param("c", campaign).param("u", owner).update();
+	}
+
+	private void 태그(long owner, long brandId, String tag) {
+		jdbcClient.sql("INSERT INTO app.brand_hashtag_tags (user_id, brand_id, tag) VALUES (:u, :b, :t)")
+				.param("u", owner).param("b", brandId).param("t", tag).update();
 	}
 }

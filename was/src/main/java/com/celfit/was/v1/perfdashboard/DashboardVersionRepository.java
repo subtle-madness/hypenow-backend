@@ -199,6 +199,38 @@ public class DashboardVersionRepository {
 				""", userId);
 	}
 
+	/**
+	 * 해시태그 태그 원장 지문(2026-08-28 추가, 해시태그 직접 수집 §3 격리 추적) — {@code
+	 * app.brand_hashtag_tags}, 유저 스코프({@code BrandHashtagTagRepository.findByUserAndBrand}과
+	 * 같은 근본 산지, 전 브랜드 합산).
+	 *
+	 * <table>
+	 *   <caption>해싱 컬럼 ↔ 응답 영향 지점</caption>
+	 *   <tr><th>컬럼</th><th>응답 영향</th></tr>
+	 *   <tr><td>{@code brand_id}</td><td>태그가 속한 브랜드 — 해시태그 격리 판정의 스코프
+	 *       ({@code BrandPostAssembler.indexForBrand}가 브랜드별로 이 원장을 다시 읽는다)</td></tr>
+	 *   <tr><td>{@code tag}</td><td>{@code BrandPostAssembler.isVisible}의 매칭 교집합 입력 — 추가·
+	 *       삭제가 hashtag-only 게시물의 노출 여부를 바꾼다({@code BrandIndexCache}가 캐시하는 인덱스가
+	 *       바로 그 판정 결과다)</td></tr>
+	 * </table>
+	 *
+	 * <p>이 지문이 빠지면 태그를 고쳐도 워터마크·다른 지문 5종이 전부 그대로라 버전키가 안 바뀌고,
+	 * {@code BrandIndexCache}가 옛 격리 판정을 최대 하루(다음 스윕까지) 계속 서빙한다 — 이 표면의
+	 * 계약("장부 변경 즉시 다음 GET에서 반영")상 그 지연은 다른 "수용된 지연"과 달리 수용 불가다.
+	 *
+	 * <p>제외: {@code created_at}(응답에 나가지 않고 판정 입력도 아니다). PK가
+	 * {@code (user_id, brand_id, tag)} 3중이라 같은 조합의 행이 유저별로 중복될 수 없다.
+	 */
+	public String hashtagTagsFingerprint(long userId) {
+		return fingerprint("""
+				SELECT md5(coalesce(string_agg(
+				         ROW(h.brand_id, h.tag)::text,
+				         ',' ORDER BY h.brand_id, h.tag COLLATE "C"), ''))
+				FROM app.brand_hashtag_tags h
+				WHERE h.user_id = :userId
+				""", userId);
+	}
+
 	/** 모든 지문 쿼리의 공통 실행부 — 결과는 항상 1행 1열({@code md5('')}이라도 비어 있지 않다). */
 	private String fingerprint(String sql, long userId) {
 		return jdbcClient.sql(sql).param("userId", userId).query(String.class).single();

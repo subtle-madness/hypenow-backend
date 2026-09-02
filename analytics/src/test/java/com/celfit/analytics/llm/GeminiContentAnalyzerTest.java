@@ -16,14 +16,17 @@ class GeminiContentAnalyzerTest {
 			 "sponsoredSignalLevel":"엉뚱값","sponsoredSignalReasons":["#협찬"],
 			 "adDisclosure":"표기 있음","detectedProductCategories":["클렌징폼","없는라벨"],
 			 "detectedProducts":[{"name":"딥클렌징폼","brand":null}],
-			 "vlmAttributes":[],"isBeauty":true,"mainCategory":"cleansing","subCategories":["클렌징폼/젤","클렌징폼"],
+			 "vlmAttributes":[],"isRelevant":true,"mainCategory":"cleansing","subCategories":["클렌징폼/젤","클렌징폼"],
 			 "detectedDistributors":["올리브영","쿠팡"],"adType":"sponsored",
 			 "aiContentSummary":"평균 대비 1.2배","contentsPattern":"클렌징 루틴형",
 			 "aiCommentInsight":"표본 부족","commentAuthenticityGrade":"이상값","commentAuthenticityNote":"근거"}""";
 
 	BeautyTaxonomy taxonomy = new BeautyTaxonomy(List.of(
-			new BeautyTaxonomy.Entry("cleansing", "클렌징", "클렌징폼/젤", "클렌징폼")),
-			List.of("올리브영", "다이소"));
+			new BeautyTaxonomy.Entry("cleansing", "클렌징", "클렌징폼/젤", "클렌징폼", "beauty"),
+			new BeautyTaxonomy.Entry("beverage", "음료", "음료", "탄산", "fnb")),
+			List.of(new BeautyTaxonomy.Distributor("올리브영", "beauty"),
+					new BeautyTaxonomy.Distributor("다이소", "beauty"),
+					new BeautyTaxonomy.Distributor("GS25", "fnb")));
 
 	record Call(String model, String system, String user, GeminiApi.InlineImage image, String schema) {}
 
@@ -114,7 +117,10 @@ class GeminiContentAnalyzerTest {
 		assertTrue(system.contains("detectedBrands"));
 		assertTrue(system.contains("aiContentSummary"));
 		assertTrue(system.contains("[파트 B 절제 규칙 — 반드시 지켜라]"));
-		assertTrue(system.contains("뷰티와 무관한 콘텐츠면 mainCategory는 null"));
+		assertTrue(system.contains("분류표의 어느 대분류에도 해당하지 않으면 mainCategory는 null"));
+		// 축 겹침·공구 규칙이 프롬프트에 실려야 F&B 분류가 흔들리지 않는다
+		assertTrue(system.contains("fnb 축으로 분류하라"));
+		assertTrue(system.contains("공동구매(공구)"));
 		assertTrue(system.contains("클렌징폼/젤"));
 		String user = calls.get(0).user();
 		assertTrue(user.contains("캡션A"));
@@ -159,19 +165,35 @@ class GeminiContentAnalyzerTest {
 	}
 
 	@Test
-	void isBeauty를_파싱해_속성에_싣는다() {
+	void isRelevant를_파싱해_축으로_is_beauty를_판정한다() {
+		// 응답은 "분류 대상인가"만 답하고, 뷰티 여부는 확정된 대분류(cleansing)의 축에서 파생된다.
 		ContentInsightPort.ContentInsight r = new GeminiContentAnalyzer(fakeApi(RESPONSE),
 				() -> "m", () -> taxonomy).analyze(content(), null);
+		assertEquals(Boolean.TRUE, r.attributes().isRelevant());
 		assertEquals(Boolean.TRUE, r.attributes().isBeauty());
 	}
 
 	@Test
-	void 스키마는_isBeauty를_요구하고_mainCategory_앞에서_생성한다() {
+	void FnB_대분류면_is_beauty가_false로_파생된다() {
+		String fnb = RESPONSE
+				.replace("\"mainCategory\":\"cleansing\"", "\"mainCategory\":\"beverage\"")
+				.replace("[\"클렌징폼/젤\",\"클렌징폼\"]", "[\"음료\",\"탄산\"]")
+				.replace("[\"클렌징폼\",\"없는라벨\"]", "[\"탄산\"]")
+				.replace("[\"올리브영\",\"쿠팡\"]", "[\"GS25\"]");
+		ContentInsightPort.ContentInsight r = new GeminiContentAnalyzer(fakeApi(fnb),
+				() -> "m", () -> taxonomy).analyze(content(), null);
+		assertEquals("beverage", r.attributes().mainCategory());
+		assertEquals(Boolean.FALSE, r.attributes().isBeauty());
+		assertEquals(List.of("GS25"), r.attributes().detectedDistributors());
+	}
+
+	@Test
+	void 스키마는_isRelevant를_요구하고_mainCategory_앞에서_생성한다() {
 		new GeminiContentAnalyzer(fakeApi(RESPONSE), () -> "m", () -> taxonomy).analyze(content(), null);
 		String schema = calls.get(0).schema();
-		assertTrue(schema.contains("\"isBeauty\""));
+		assertTrue(schema.contains("\"isRelevant\""));
 		// propertyOrdering 배열 안에서 isBeauty가 mainCategory보다 앞서 생성되는지(눈속임 방지: 구간 스코프)
 		String ordering = schema.substring(schema.indexOf("propertyOrdering"));
-		assertTrue(ordering.indexOf("\"isBeauty\"") < ordering.indexOf("\"mainCategory\""));
+		assertTrue(ordering.indexOf("\"isRelevant\"") < ordering.indexOf("\"mainCategory\""));
 	}
 }

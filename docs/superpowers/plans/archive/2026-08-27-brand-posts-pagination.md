@@ -4,7 +4,7 @@
 
 **Goal:** `GET /v1/brand-monitoring/accounts/{id}/posts`를 "경량 인덱스 패스(counts·정렬·슬라이스) + 페이지 코드만 풀 조립" 구조로 재편 — 목록 댓글 제외(P0), offset/limit 페이지네이션(P1), counts·total의 전량 풀 조립 제거.
 
-**Architecture:** [설계 스펙](../specs/archive/2026-08-27-brand-posts-pagination-design.md) 참조. `BrandPostAssembler`에 `indexForBrand`(경량 PostRef 목록)와 `hydrate`(지정 shortcode만 풀 카드 조립)를 신설, 컨트롤러는 ref 위에서 counts·필터·정렬·페이지를 계산한 뒤 페이지 코드만 하이드레이트한다. 상세도 같은 기계를 탄다.
+**Architecture:** [설계 스펙](../../specs/2026-08-27-brand-posts-pagination-design.md) 참조. `BrandPostAssembler`에 `indexForBrand`(경량 PostRef 목록)와 `hydrate`(지정 shortcode만 풀 카드 조립)를 신설, 컨트롤러는 ref 위에서 counts·필터·정렬·페이지를 계산한 뒤 페이지 코드만 하이드레이트한다. 상세도 같은 기계를 탄다.
 
 **Tech Stack:** Java 21, Spring Boot 4.1, JdbcClient, `@WebMvcTest`(실 어셈블러 + repo mock), Testcontainers 통합 테스트(`BrandReadRepositoryTest`).
 

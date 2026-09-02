@@ -10,7 +10,7 @@
 
 ## 배경·현황
 
-- 가입 트랜잭션은 [`SignupService.register`](../../../was/src/main/java/com/celfit/was/v1/account/SignupService.java)에서
+- 가입 트랜잭션은 [`SignupService.register`](../../../../was/src/main/java/com/celfit/was/v1/account/SignupService.java)에서
   `signupCodeRepository.claim(code, userId)`로 코드를 원자 선점하며, 이때
   `app.signup_codes.used_by`(=`users.id`)와 `used_at`을 스탬프한다. 즉 코드↔유저 매핑은 이미 정본으로 존재한다.
 - `app.signup_codes` 스키마(V8):

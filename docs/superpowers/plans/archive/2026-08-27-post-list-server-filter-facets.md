@@ -17,7 +17,7 @@ author 필드를 실어 신규 필터·패싯을 전부 Java 인메모리로 계
 `org.testcontainers.postgresql.PostgreSQLContainer`), `@WebMvcTest`
 (`org.springframework.boot.webmvc.test.autoconfigure`).
 
-**스펙:** [docs/superpowers/specs/2026-08-27-post-list-server-filter-facets-design.md](../specs/2026-08-27-post-list-server-filter-facets-design.md)
+**스펙:** [docs/superpowers/specs/2026-08-27-post-list-server-filter-facets-design.md](../../specs/2026-08-27-post-list-server-filter-facets-design.md)
 
 ## Global Constraints
 

@@ -355,8 +355,11 @@ public class BrandCollectService {
 	/**
 	 * 브랜드별 수집 창 컷 — KST 캘린더 개월(요청서 "게시물 taken_at 기준 최근 N개월").
 	 * 열거 깊이(백필)와 편입 필터가 같은 컷을 쓴다 — 창 밖 소급 태그가 편입되지 않게.
+	 *
+	 * <p>package-private인 이유(2026-08-27): 해시태그 수집({@link BrandHashtagCollectService})도
+	 * 같은 컷을 써야 한다(설계 §2-2 — 구 windowDays=90 고정 폐기). 사본을 두면 반드시 갈린다.
 	 */
-	private static Instant collectionCutoff(BrandRow brand, Instant now) {
+	static Instant collectionCutoff(BrandRow brand, Instant now) {
 		return ZonedDateTime.ofInstant(now, KST).minusMonths(brand.collectionMonths()).toInstant();
 	}
 
@@ -441,6 +444,10 @@ public class BrandCollectService {
 				// 좁혀졌다. finally인 이유는 기존과 동일(180일 초과 게시물엔 재열거 백스톱이 없다).
 				taggedPosts.markEnriched(brand.id(),
 						posts.stream().map(PostInfo::shortCode).toList(), Instant.now());
+				// 진행 워터마크(2026-08-31 백필 캐시 고착 수리) — 정산 직후 last_swept_at을 전진시켜
+				// was 인덱스 캐시(BrandIndexCache) 버전키를 움직인다. 반드시 markEnriched 뒤:
+				// 앞이면 새 키로 재계산된 인덱스가 미정산 단면을 캐시해 이 페이지가 다시 숨는다.
+				brands.touchProgress(brand.id());
 				// 계정 게이트 훅(2026-08-18) — markEnriched와 같은 보장(finally, 하드 실패 무관)으로
 				// 댓글·판정 시작 전에 1회 호출한다.
 				if (onVisible != null) {

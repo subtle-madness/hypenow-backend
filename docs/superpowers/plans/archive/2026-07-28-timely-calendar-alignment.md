@@ -7,7 +7,7 @@
 > `v_contents` 138,755행 추출(timely 10,651 / 비timely 128,104) → dry-run(a_승격 2,822 /
 > b_강등 4,423 / c_추출누락 6,343 미변경 / 랭킹모수 전 6,678) → COMMIT(UPDATE 2,822+4,423,
 > 항등식 mismatch=0 확인) → **랭킹 모수 6,678 → 5,755**. 상세는
-> [DECISIONS.md](../../../DECISIONS.md) · [docs/tracks/archive/O-timely-캘린더일-정합.md](../../tracks/archive/O-timely-캘린더일-정합.md)
+> [DECISIONS.md](../../../../DECISIONS.md) · [docs/tracks/O-timely-캘린더일-정합.md](../../../tracks/O-timely-캘린더일-정합.md)
 > 참조.
 
 **Goal:** `ContentAnalysisJob`의 timely 판정을 raw 후보 뷰(`analytics.v_analysis_candidates`, 캘린더일 KST 기준)로 단일화하고, 기존 `content_analyses.metric_timeliness` 마킹을 양방향 소급 정정한다.

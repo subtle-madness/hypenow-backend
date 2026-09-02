@@ -35,17 +35,6 @@ public class BrandHashtagRepository {
 	}
 
 	/**
-	 * 등록·replay 자동 시드 전용 — ON CONFLICT DO NOTHING이라 유저가 지운(tombstone, deleted_at
-	 * 채워짐) 태그는 되살아나지 않는다. 되살리려면 {@link #replaceTags}(재활성 UPSERT)를 쓸 것.
-	 */
-	public void insertTags(long brandId, Collection<String> tags) {
-		for (String tag : tags) {
-			db.update("INSERT INTO brand_hashtag (brand_id, tag) VALUES (?, ?) ON CONFLICT DO NOTHING",
-					brandId, tag);
-		}
-	}
-
-	/**
 	 * 태그 셋 전체 교체(유저 관리 API, 2026-08-12) — tombstone 의미론. 새 목록에 없는 기존 활성
 	 * 태그는 deleted_at을 채워 비활성화(행은 남아 자동 시드가 못 되살림), 새 목록의 태그는
 	 * UPSERT로 삽입하거나 tombstone을 해제(deleted_at = NULL)해 재활성한다. 빈 목록도 허용
@@ -147,5 +136,43 @@ public class BrandHashtagRepository {
 		for (String shortCode : shortCodes) {
 			recordTagMatch(brandId, shortCode, tag);
 		}
+	}
+
+	// ---------- 태그별 스윕 실행 상태(FE 요청, 2026-08-31) ----------
+
+	/** 태그별 실행 상태 조회 재료(활성 태그만) — findTags와 같은 정렬(등록순). */
+	public record RunStateRow(String tag, OffsetDateTime lastRunStartedAt, OffsetDateTime lastRunFinishedAt,
+			Integer lastRunFoundCount, boolean lastRunFailed) {
+	}
+
+	/** 이 브랜드의 활성 태그 전체 실행 상태 원본 — status 판정은 호출측(BrandHashtagRunStateResolver)이 한다. */
+	public List<RunStateRow> findRunStates(long brandId) {
+		return db.query("""
+				SELECT tag, last_run_started_at, last_run_finished_at, last_run_found_count, last_run_failed
+				FROM brand_hashtag WHERE brand_id = ? AND deleted_at IS NULL ORDER BY created_at, tag
+				""",
+				(rs, rowNum) -> new RunStateRow(rs.getString("tag"),
+						rs.getObject("last_run_started_at", OffsetDateTime.class),
+						rs.getObject("last_run_finished_at", OffsetDateTime.class),
+						rs.getObject("last_run_found_count", Integer.class),
+						rs.getBoolean("last_run_failed")),
+				brandId);
+	}
+
+	/** 태그 실행 시작 기록(BrandHashtagCollectService.doSweep이 sweepTag 호출 직전에 부른다). */
+	public void markRunStarted(long brandId, String tag) {
+		db.update("UPDATE brand_hashtag SET last_run_started_at = now() WHERE brand_id = ? AND tag = ?",
+				brandId, tag);
+	}
+
+	/**
+	 * 태그 실행 종료 기록 — 정상 종료(신규 편입 건수, failed=false)·예외(격리 후 failed=true, 건수는
+	 * 0으로 통일 — 부분 진행분을 추적하지 않아 일관성을 우선한다) 공용.
+	 */
+	public void markRunFinished(long brandId, String tag, int foundCount, boolean failed) {
+		db.update("""
+				UPDATE brand_hashtag SET last_run_finished_at = now(), last_run_found_count = ?, last_run_failed = ?
+				WHERE brand_id = ? AND tag = ?""",
+				foundCount, failed, brandId, tag);
 	}
 }

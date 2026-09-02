@@ -44,8 +44,9 @@ import org.springframework.web.bind.annotation.RestController;
  * 필터 적용 <b>전</b> 전량 기준이라 FE가 탭 뱃지를 그릴 때 자기 필터 때문에 숫자가 흔들리지 않는다.
  *
  * <p>필터는 서버가 전량을 보고 판정한다(2026-08-27 서버 필터·패싯) — FE가 페이지 슬라이스만 받고
- * 클라이언트에서 거르던 구조에선 필터 결과가 "현재 페이지 안에 있는 것"으로 잘렸다. 축 4종(source·
- * sponsorship·contentType·adRisk)과 축이 아닌 3종(follower·keyword·authorUsername)이 있고,
+ * 클라이언트에서 거르던 구조에선 필터 결과가 "현재 페이지 안에 있는 것"으로 잘렸다. 축 5종(source·
+ * sponsorship·contentType·adRisk·hashtag, hashtag는 2026-08-31 추가)과 축이 아닌 3종(follower·
+ * keyword·authorUsername)이 있고,
  * {@code meta.facets}는 각 축을 <b>자기만 해제</b>하고 센 칩 숫자다({@link #facets}). 기존
  * {@code meta.counts}(필터 전 전량·flat 6키)·{@code meta.total}(필터 후) 계약은 그대로다 —
  * 파라미터를 전부 생략하면 응답은 신설 키를 뺀 나머지가 종전과 완전히 같다(하위 호환).
@@ -60,9 +61,11 @@ import org.springframework.web.bind.annotation.RestController;
  * 이미 잘린 뒤다: 자산은 유저 간 max로 수집하므로 12개월치가 있어도 3개월 신청 유저에겐 3개월만
  * 보이고, counts도 그 창 기준이라 탭 뱃지가 실제 목록과 어긋나지 않는다. 상세도 같은 창이다.
  *
- * <p>해시태그 발견 게시물은 §6-1 목록에 <b>병합하지 않는다</b>(2026-08-12 결정 — 별도 탭) — 스냅샷·
- * 댓글·팔로워 보강이 없는 별개 성격의 데이터라 같은 필터·정렬·counts 계약에 억지로 끼워 맞추면
- * null 필드가 늘어난다. {@link #hashtagPosts} 참조.
+ * <p>해시태그 게시물은 2026-08-27 직접 수집 전환으로 <b>이 목록에 {@code source=hashtag}로 합류</b>한다
+ * (08-12 "별도 탭" 결정 폐기) — 이제 tagged·direct와 같은 풀에서 같은 보강·스냅샷·재수집을 받으므로
+ * "null 필드가 늘어난다"는 분리 근거가 사라졌다. 단 hashtag-only 행은 <b>조회자의 장부 태그와
+ * 겹칠 때만</b> 보인다({@code BrandPostAssembler.filterVisibleToUser}). 구 전용 API
+ * ({@link #hashtagPosts})는 전환 기간 동안 같은 풀에서 구 셰이프로 서빙된다.
  */
 @RestController
 @RequestMapping("/v1/brand-monitoring")
@@ -113,6 +116,7 @@ public class V1BrandPostsController {
 			@RequestParam(required = false) String contentType,
 			@RequestParam(required = false) String follower,
 			@RequestParam(required = false) String keyword,
+			@RequestParam(required = false) String hashtag,
 			@RequestParam(required = false) String adRisk,
 			@RequestParam(required = false) String authorUsername,
 			@RequestParam(required = false) String sort,
@@ -125,7 +129,7 @@ public class V1BrandPostsController {
 		BrandAccountRow account = findAccountOrThrow(brandId);
 
 		String sourceFilter = normalizeFilter(source, "source", BrandPostAssembler.SOURCE_TAGGED,
-				BrandPostAssembler.SOURCE_DIRECT);
+				BrandPostAssembler.SOURCE_DIRECT, BrandPostAssembler.SOURCE_HASHTAG);
 		String sponsorshipFilter = normalizeFilter(sponsorship, "sponsorship", BrandSponsorshipClassifier.SPONSORED,
 				BrandSponsorshipClassifier.ORGANIC, BrandSponsorshipClassifier.UNKNOWN);
 		String contentTypeFilter = normalizeFilter(contentType, "contentType", CONTENT_TYPE_REELS, CONTENT_TYPE_FEED);
@@ -136,7 +140,8 @@ public class V1BrandPostsController {
 		// 광고 표기 노출 게이트는 요청당 1회만 계산한다(조회자 관점 — 토글 && 비경쟁사).
 		PostFilters filters = new PostFilters(sourceFilter, sponsorshipFilter, contentTypeFilter,
 				parseFollower(follower), normalizeText(keyword, true), normalizeText(authorUsername, false),
-				parseAdRisk(adRisk), assembler.adDisclosureExposed(link.accountType()), from, to);
+				parseAdRisk(adRisk), assembler.adDisclosureExposed(link.accountType()), from, to,
+				BrandHashtagFacets.filterKey(hashtag));
 
 		// 유저 표시 창(2026-08-17) — 자산(brand_account)은 유저 간 max로 수집하므로 12개월치가
 		// 있어도, 이 유저가 신청한 기간까지만 서빙한다. counts·필터·정렬 전부 자른 전량 기준.
@@ -198,32 +203,38 @@ public class V1BrandPostsController {
 	}
 
 	/**
-	 * 해시태그 발견 게시물 전용 표면(스펙 §8, 별도 탭 결정 2026-08-12) — {@link #list}(tagged·direct)와
-	 * 완전히 분리된 API다. 병합·필터·정렬·counts가 없다 — {@link BrandHashtagPostAssembler}가 최신순
-	 * 전량(상한은 그쪽 정책)을 그대로 내려준다. 소유 검증은 목록과 같은 관용구(403·404).
+	 * 구 해시태그 전용 표면(스펙 §8) — <b>2026-08-27 직접 수집 전환 이후 리라우팅</b>이다: 응답
+	 * 셰이프는 그대로 두고 데이터는 {@link #list}와 같은 통합 풀에서 온다
+	 * ({@link BrandHashtagPostAssembler}). FE가 통합 목록으로 전환하기 전에도 화면이 낡지 않게 하는
+	 * 전환기 장치이고, <b>다음 릴리스에 제거</b>한다. 소유 검증은 목록과 같은 관용구(403·404)이고,
+	 * 서빙 창도 목록과 같은 링크 창을 쓴다(두 화면의 모수가 어긋나면 안 된다).
 	 */
 	@GetMapping("/accounts/{accountId}/hashtag-posts")
 	public ApiResponse<List<BrandHashtagPostResponse>> hashtagPosts(
 			@AuthenticationPrincipal AppUserDetails principal, @PathVariable String accountId) {
 		long brandId = parseAccountId(accountId);
-		requireOwnership(principal.getUserId(), brandId);
-		findAccountOrThrow(brandId);
-		return ApiResponse.ok(hashtagPostAssembler.assembleForBrand(principal.getUserId(), brandId));
+		BrandLinkRow link = requireOwnership(principal.getUserId(), brandId);
+		BrandAccountRow account = findAccountOrThrow(brandId);
+		LocalDate windowStart = BrandPostWindows.linkWindowStart(today(), link.collectionMonths());
+		return ApiResponse.ok(hashtagPostAssembler.assembleForBrand(principal.getUserId(), account,
+				link.accountType(), windowStart));
 	}
 
 	/**
 	 * 해시태그 발견 게시물 개수만(P2, 2026-08-27) — FE 탭 뱃지가 목록 본문 없이 숫자만 필요할 때 쓴다
-	 * (전량 조립·전송을 태우지 않는 슬림 경로). 판정은 {@link #hashtagPosts}와 완전히 같은 함수를
+	 * (전량 조립·전송을 태우지 않는 슬림 경로). 판정은 {@link #hashtagPosts}와 같은 인덱스 산지를
 	 * 공유하므로({@link BrandHashtagPostAssembler#countForBrand}) 이 숫자는 정의상 목록 길이와 같다.
-	 * 소유 검증도 목록과 같은 관용구(403·404)다.
+	 * 소유 검증·서빙 창(링크 창)도 목록과 같은 관용구다(두 화면의 모수가 어긋나면 안 된다).
 	 */
 	@GetMapping("/accounts/{accountId}/hashtag-posts/count")
 	public ApiResponse<Map<String, Object>> hashtagPostCount(
 			@AuthenticationPrincipal AppUserDetails principal, @PathVariable String accountId) {
 		long brandId = parseAccountId(accountId);
-		requireOwnership(principal.getUserId(), brandId);
-		findAccountOrThrow(brandId);
-		return ApiResponse.ok(Map.of("count", hashtagPostAssembler.countForBrand(principal.getUserId(), brandId)));
+		BrandLinkRow link = requireOwnership(principal.getUserId(), brandId);
+		BrandAccountRow account = findAccountOrThrow(brandId);
+		LocalDate windowStart = BrandPostWindows.linkWindowStart(today(), link.collectionMonths());
+		return ApiResponse.ok(Map.of("count",
+				hashtagPostAssembler.countForBrand(principal.getUserId(), account, windowStart)));
 	}
 
 	/**
@@ -331,6 +342,9 @@ public class V1BrandPostsController {
 				BrandPostAssembler.SOURCE_TAGGED));
 		counts.put(BrandPostAssembler.SOURCE_DIRECT, count(all, BrandPostAssembler.PostRef::source,
 				BrandPostAssembler.SOURCE_DIRECT));
+		// 해시태그 합류(2026-08-27 설계 §3) — 08-12 별도 탭 결정으로 빠졌던 키가 통합과 함께 돌아왔다.
+		counts.put(BrandPostAssembler.SOURCE_HASHTAG, count(all, BrandPostAssembler.PostRef::source,
+				BrandPostAssembler.SOURCE_HASHTAG));
 		counts.put(BrandSponsorshipClassifier.SPONSORED, count(all, BrandPostAssembler.PostRef::sponsorship,
 				BrandSponsorshipClassifier.SPONSORED));
 		counts.put(BrandSponsorshipClassifier.ORGANIC, count(all, BrandPostAssembler.PostRef::sponsorship,
@@ -376,12 +390,18 @@ public class V1BrandPostsController {
 		facets.put("sponsorship", axisMap(applyFilters(all, f, FacetAxis.SPONSORSHIP),
 				BrandPostAssembler.PostRef::sponsorship, BrandSponsorshipClassifier.SPONSORED,
 				BrandSponsorshipClassifier.ORGANIC, BrandSponsorshipClassifier.UNKNOWN));
+		// hashtag 버킷(2026-08-31 FE 리포트) — 해시태그 합류(2026-08-27 설계 §3) 당시 axisMap 값
+		// 목록이 갱신되지 않아, hashtag 게시물이 all엔 잡히는데 tagged·direct 어느 버킷에도 없어
+		// (computeIfPresent가 미등록 키를 조용히 떨굼) 버킷 합계가 all보다 작게 새고 있었다.
 		facets.put("source", axisMap(applyFilters(all, f, FacetAxis.SOURCE),
 				BrandPostAssembler.PostRef::source, BrandPostAssembler.SOURCE_TAGGED,
-				BrandPostAssembler.SOURCE_DIRECT));
+				BrandPostAssembler.SOURCE_DIRECT, BrandPostAssembler.SOURCE_HASHTAG));
 		// adRisk는 값이 아니라 불리언 축이라 맵이 아니라 "위험 건수" 하나다.
 		facets.put("adRisk", applyFilters(all, f, FacetAxis.AD_RISK).stream()
 				.filter(r -> isAdRisk(r, f.adGateOpen())).count());
+		// 해시태그 facet(스펙 2026-08-31) — 자기 축 해제(HASHTAG) 뒤 태그별 집계. 5번째 필터 축이라
+		// 다른 축과 동형: 태그 칩을 선택해도 이 목록 자체는 무너지지 않는다.
+		facets.put("hashtags", BrandHashtagFacets.of(applyFilters(all, f, FacetAxis.HASHTAG)));
 		return facets;
 	}
 
@@ -427,14 +447,14 @@ public class V1BrandPostsController {
 	 */
 	private record PostFilters(String source, String sponsorship, String contentType, FollowerBand follower,
 			String keyword, String authorUsername, boolean adRisk, boolean adGateOpen, LocalDate from,
-			LocalDate to) {
+			LocalDate to, String hashtagKey) {
 	}
 
 	/**
 	 * 패싯 축 — 패싯이 "그 축만 해제"를 계산할 때 쓴다. 축이 아닌 필터(기간·keyword·follower·
-	 * authorUsername)는 항상 적용된다(FE 칩 정의 — 칩은 4축뿐이다).
+	 * authorUsername)는 항상 적용된다(FE 칩 정의 — 칩은 5축(해시태그 포함)이다).
 	 */
-	private enum FacetAxis { SOURCE, SPONSORSHIP, CONTENT_TYPE, AD_RISK, NONE }
+	private enum FacetAxis { SOURCE, SPONSORSHIP, CONTENT_TYPE, AD_RISK, HASHTAG, NONE }
 
 	private static List<BrandPostAssembler.PostRef> applyFilters(List<BrandPostAssembler.PostRef> refs,
 			PostFilters f, FacetAxis released) {
@@ -446,6 +466,8 @@ public class V1BrandPostsController {
 				.filter(r -> released == FacetAxis.CONTENT_TYPE || f.contentType() == null
 						|| f.contentType().equals(r.contentType()))
 				.filter(r -> released == FacetAxis.AD_RISK || !f.adRisk() || isAdRisk(r, f.adGateOpen()))
+				.filter(r -> released == FacetAxis.HASHTAG || f.hashtagKey() == null
+						|| BrandHashtagFacets.matches(r, f.hashtagKey()))
 				.filter(r -> f.follower() == null || matchesFollower(r.authorFollowers(), f.follower()))
 				.filter(r -> f.keyword() == null || matchesKeyword(r, f.keyword()))
 				.filter(r -> f.authorUsername() == null

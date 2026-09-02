@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 판정 3축화 — 뷰티·F&B에 홈/리빙 축을 F&B 병렬 복제 패턴으로 추가한다
-([스펙](../specs/archive/2026-08-27-home-living-category-design.md)).
+([스펙](../../specs/2026-08-27-home-living-category-design.md)).
 
 **Architecture:** `influencer` 테이블에 `home_living_*` 병렬 컬럼 8개(expand만), 판정 프롬프트
 1콜 3축 동시 판정, 백필 경로 추가, 수집·시드는 `home-living.pipeline-enabled` 토글(기본 off),

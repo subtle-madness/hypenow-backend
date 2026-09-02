@@ -10,6 +10,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.MonitoringApiException;
 import com.celfit.was.monitoring.MonitoringCommandClient;
 import com.celfit.was.monitoring.MonitoringCommandClient.BrandRegisterResult;
+import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -132,11 +133,12 @@ public class V1BrandAccountService {
 			compensate(registered.brandId(), username);
 			throw e;
 		}
-		// 태그 장부 시딩(2026-08-27 해시태그 직접 수집 설계 §4) — 신규 링크에만 건다. 멱등 재-POST는
-		// 위 alreadyLinked 분기에서 이미 반환됐으므로 여기 도달하지 않는다(지운 태그 부활 방지). 개명
-		// 재등록(precheck가 옛 계정명 기준이라 미스 나고 위 link()가 기존 brandId로 접히는 경우, 128행
-		// 주석 참고)은 이 경로를 그대로 지나간다 — 새 계정명 유도 태그를 더할 뿐 기존 태그를 지우지
-		// 않으므로 "지운 태그 부활" 위험이 없어 의도적으로 허용한다.
+		// 태그 시딩(2026-08-27 해시태그 직접 수집 설계 §4, 2026-08-28 monitoring push 추가) — 신규
+		// 링크에만 건다. 멱등 재-POST는 위 alreadyLinked 분기에서 이미 반환됐으므로 여기 도달하지
+		// 않는다(지운 태그 부활 방지). 개명 재등록(precheck가 옛 계정명 기준이라 미스 나고 위
+		// link()가 기존 brandId로 접히는 경우, 128행 주석 참고)은 이 경로를 그대로 지나간다 — 새
+		// 계정명 유도 태그를 더할 뿐 기존 태그를 지우지 않으므로 "지운 태그 부활" 위험이 없어
+		// 의도적으로 허용한다.
 		seedLedgerTagsSafely(userId, registered.brandId(), username);
 		// 등록 응답의 status는 monitoring이 "ACTIVE"로 하드코딩해 보내므로 준비 상태 판정에 쓸 수 없다 —
 		// 상태는 항상 brand_account 조회가 정본이다(§5-2).
@@ -144,22 +146,41 @@ public class V1BrandAccountService {
 	}
 
 	/**
-	 * 신규 링크 장부 시딩(2026-08-27 해시태그 직접 수집 설계 §4) — monitoring
-	 * {@code BrandRegistrationService.seedHashtagsSafely}가 {@code brand_hashtag}에 심는 계정명 유도
-	 * 태그와 <b>같은 규칙</b>({@link BrandHashtagTags#derive})으로 이 사용자의 장부에도 같은 태그를
-	 * 남긴다. 자동 등록 태그가 장부에 기록되지 않아 해시태그 격리 필터가 빈 교집합을 보던 갭
-	 * (08-27 진단)의 수정이다. {@code addTags}는 ON CONFLICT DO NOTHING이라 재호출도 무해하다.
+	 * 신규 링크 태그 시딩(2026-08-27 해시태그 직접 수집 설계 §4, <b>2026-08-28 태그 생성 권한 was
+	 * 일원화</b>) — 계정명 유도 태그({@link BrandHashtagTags#derive})를 이 사용자의 장부에 남기고,
+	 * <b>monitoring에도 일반 태그 add로 push</b>한다. 과거엔 monitoring
+	 * {@code BrandRegistrationService.seedHashtagsSafely}가 등록·replay 양쪽에서 독립적으로
+	 * {@code brand_hashtag}에 같은 태그를 심었다 — 태그 생성 권한이 두 시스템에 분산돼 있었다는
+	 * 뜻이다. 그 자가 시드를 제거하고(monitoring 쪽 결정 기록 참조) was가 유일한 작성자가 되도록
+	 * 이 메서드가 두 쓰기를 모두 담당한다.
 	 *
-	 * <p>monitoring 쪽 시드와 같은 이유로 실패를 격리한다: 링크는 이미 커밋됐고, 여기서 던지면
-	 * 재시도가 멱등 경로(시딩 없음)로 접혀 그 사용자의 장부가 <b>영구히</b> 비어 버린다. 시딩 실패의
-	 * 실피해는 "이 사용자에게 해시태그 게시물이 안 보임"이고, 태그 관리 API로 직접 추가하면 복구된다.
+	 * <p>push는 <b>일반 태그 add와 완전히 같은 경로</b>({@link MonitoringCommandClient#addHashtagTags})
+	 * 다 — tombstone 재활성 의미론까지 포함한다. 즉 어떤 사용자가 이 브랜드에 새로 연결하면, 이전에
+	 * 다른 사용자가 지웠던 자동 태그라도 이 사용자의 연결 의도(장부에 태그가 있어야 한다)를 따라
+	 * 되살아난다 — 반면 그 태그를 지운 사용자 본인은 자기 장부에서 여전히 빠져 있으므로(사용자
+	 * 스코프 격리) 계속 보호된다.
+	 *
+	 * <p>두 쓰기 모두 best-effort로 격리한다(등록 자체를 절대 실패시키지 않는다): monitoring push를
+	 * 먼저 시도한다(태그 관리 API의 "monitoring 먼저" 관용구와 동형, {@link #putHashtagTags} 등
+	 * 참조) — push가 실패해도 장부 쓰기는 <b>그대로 진행</b>한다. 링크는 이미 커밋됐고, 여기서
+	 * 던지면 재시도가 멱등 경로(시딩 없음)로 접혀 그 사용자의 장부가 <b>영구히</b> 비어 버린다.
+	 * 장부만 채워진 상태(push 실패)는 다음 사용자의 등록이 같은 태그를 다시 push하거나, 태그 관리
+	 * API로 수동 추가하면 자연히 복구된다(장부 자체는 이미 정확하므로 "이 사용자에게 해시태그
+	 * 게시물이 안 보임" 피해는 없다 — monitoring 스윕 대상에서만 빠질 뿐).
 	 */
 	private void seedLedgerTagsSafely(long userId, long brandId, String username) {
+		List<String> derived = List.copyOf(BrandHashtagTags.derive(username));
+		if (derived.isEmpty()) {
+			return;
+		}
 		try {
-			List<String> derived = List.copyOf(BrandHashtagTags.derive(username));
-			if (!derived.isEmpty()) {
-				hashtagTagRepository.addTags(userId, brandId, derived);
-			}
+			commandClient.addHashtagTags(username, derived);
+		} catch (RuntimeException e) {
+			log.warn("해시태그 자동 시드 monitoring push 실패(격리) — userId={}, brandId={}, username={}",
+					userId, brandId, username, e);
+		}
+		try {
+			hashtagTagRepository.addTags(userId, brandId, derived);
 		} catch (RuntimeException e) {
 			log.warn("해시태그 태그 장부 시딩 실패(격리) — userId={}, brandId={}", userId, brandId, e);
 		}
@@ -229,17 +250,55 @@ public class V1BrandAccountService {
 	}
 
 	/**
-	 * 해시태그 태그 셋 조회(태그 관리 API, 2026-08-12 — <b>08-19 사용자 스코프 개정</b>) — 소유권은
-	 * 단건 폴링과 동일(남의 brandId는 403). <b>더 이상 monitoring을 호출하지 않는다</b> — 정본이
-	 * {@code app.brand_hashtag_tags}(이 유저가 이 브랜드에 등록한 태그)로 옮겨졌다: 남이 추가·삭제한
-	 * 태그가 내 목록에 나타나거나 사라지면 안 된다(요구사항 — 상호작용 상태는 사용자 스코프).
-	 * 감지 데이터(스윕) 자체는 여전히 연결 유저 전체 태그의 합집합으로 공유 돈다 — 그 동기화는
-	 * 쓰기 경로({@link #putHashtagTags} 등)가 담당한다.
+	 * 해시태그 태그 셋 조회(태그 관리 API, 2026-08-12 — 08-19 사용자 스코프 개정, <b>2026-08-31
+	 * 태그별 실행 상태 확장</b>) — 소유권은 단건 폴링과 동일(남의 brandId는 403). <b>태그 목록 자체의
+	 * 정본은 여전히</b> {@code app.brand_hashtag_tags}(이 유저가 이 브랜드에 등록한 태그, 08-19
+	 * 사용자 스코프 개정 그대로) — 남이 추가·삭제한 태그가 내 목록에 나타나거나 사라지면 안 된다.
+	 *
+	 * <p>다만 각 태그의 <b>실행 상태</b>(collecting|done|failed·lastRunAt·lastFoundCount)는 이
+	 * 유저의 원장이 알 수 없는 정보라 monitoring을 호출해 병합한다({@link
+	 * MonitoringCommandClient#getHashtagRunStates}) — "더 이상 monitoring을 호출하지 않는다"던 구
+	 * 계약이 실행 상태 조회 목적으로만 재도입됐다(태그 목록 자체는 여전히 원장이 정본). 원장에는
+	 * 있는데 monitoring 응답에 없는 태그(push 실패 드리프트, tombstone 등)는 collecting/lastRunAt=
+	 * null/lastFoundCount=null로 접는다 — "아직 monitoring에 반영 안 됨"과 "실행 전"을 FE 입장에서
+	 * 구분할 필요가 없다(둘 다 계속 폴링하면 된다).
+	 *
+	 * <p>monitoring 호출 자체가 실패해도(접속 불능 등) GET을 500/503으로 떨구지 않는다 — best-effort
+	 * 로 격리하고 전체를 collecting/null/null로 접는다(로그만 warn) — 폴링 화면이 monitoring 순단
+	 * 하나로 깨지면 안 된다(다른 monitoring best-effort push 관용구와 동형).
 	 */
-	public List<String> getHashtagTags(long userId, long brandId) {
+	public List<BrandHashtagTagsResponse.TagStatus> getHashtagTags(long userId, long brandId) {
 		requireOwnership(userId, brandId);
-		findAccountOrThrow(brandId);
-		return List.copyOf(hashtagTagRepository.findByUserAndBrand(userId, brandId));
+		List<String> ledgerTags = List.copyOf(hashtagTagRepository.findByUserAndBrand(userId, brandId));
+		if (ledgerTags.isEmpty()) {
+			findAccountOrThrow(brandId);   // 소유권 통과 후에도 브랜드 자체는 존재해야 한다(기존 계약 유지)
+			return List.of();
+		}
+		String username = findAccountOrThrow(brandId).username();
+		Map<String, MonitoringCommandClient.TagRunState> runStates = fetchRunStatesSafely(username);
+		List<BrandHashtagTagsResponse.TagStatus> result = new ArrayList<>();
+		for (String tag : ledgerTags) {
+			MonitoringCommandClient.TagRunState state = runStates.get(tag);
+			result.add(state == null
+					? new BrandHashtagTagsResponse.TagStatus(tag, "collecting", null, null)
+					: new BrandHashtagTagsResponse.TagStatus(tag, state.status(),
+							KstTimestamps.toKstIso(state.lastRunAt()), state.lastFoundCount()));
+		}
+		return result;
+	}
+
+	/** monitoring run-state 조회 best-effort 격리 — 실패하면 빈 맵(호출측이 전부 collecting으로 접는다). */
+	private Map<String, MonitoringCommandClient.TagRunState> fetchRunStatesSafely(String username) {
+		try {
+			Map<String, MonitoringCommandClient.TagRunState> map = new LinkedHashMap<>();
+			for (MonitoringCommandClient.TagRunState state : commandClient.getHashtagRunStates(username)) {
+				map.put(state.tag(), state);
+			}
+			return map;
+		} catch (RuntimeException e) {
+			log.warn("해시태그 실행 상태 조회 실패(격리, 전체 collecting으로 폴백) — username={}", username, e);
+			return Map.of();
+		}
 	}
 
 	/**

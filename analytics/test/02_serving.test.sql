@@ -2,16 +2,25 @@
 DO $$
 BEGIN
   -- v_accounts: 뷰티 인플루언서 ∩ 프로필 보유
-  ASSERT (SELECT count(*) FROM analytics.v_accounts WHERE handle LIKE 'dummy_%') = 2,
-    'v_accounts dummy rows != 2 (a·b만)';
+  -- 08-31 서빙 개방: F&B 단독 계정(fb)도 모수 — 2 → 3. 축 컬럼은 was 발굴 게이트의 재료.
+  ASSERT (SELECT count(*) FROM analytics.v_accounts WHERE handle LIKE 'dummy_%') = 3,
+    'v_accounts dummy rows != 3 (a·b·fb)';
+  -- 축은 nullable 계약 — 미판정(raw fnb NULL)은 NULL로 노출되고 was가 COALESCE로 읽는다
+  ASSERT (SELECT beauty AND fnb IS NOT TRUE FROM analytics.v_accounts WHERE handle = 'dummy_b'),
+    'v_accounts dummy_b 축 != (beauty ∧ fnb 미판정)';
+  ASSERT (SELECT fnb AND NOT beauty FROM analytics.v_accounts WHERE handle = 'dummy_fb'),
+    'v_accounts dummy_fb 축 != (fnb ∧ ¬beauty)';
+  ASSERT (SELECT beauty AND fnb FROM analytics.v_accounts WHERE handle = 'dummy_a'),
+    'v_accounts dummy_a(겸임) 축 != (beauty ∧ fnb)';
   ASSERT EXISTS (SELECT 1 FROM analytics.v_accounts WHERE handle = 'dummy_a' AND followers = 5500),
     'v_accounts dummy_a followers != 5500';
   ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_accounts WHERE handle IN ('dummy_co','dummy_x','dummy_e')),
     'v_accounts에 모수 제외 대상 존재';
 
   -- v_contents: +3일 고정(성숙 최이른) + 최신 메타 + 피드 NULL
-  ASSERT (SELECT count(*) FROM analytics.v_contents WHERE account_handle LIKE 'dummy_%') = 6,
-    'v_contents dummy rows != 6 (+ra1(액터))';
+  -- 08-31 서빙 개방: F&B 콘텐츠(fb1) 편입 — 6 → 7
+  ASSERT (SELECT count(*) FROM analytics.v_contents WHERE account_handle LIKE 'dummy_%') = 7,
+    'v_contents dummy rows != 7 (+ra1(액터) +fb1)';
   ASSERT (SELECT views FROM analytics.v_contents WHERE short_code = 'dummy_r1') = 11000,
     'v_contents r1 views != 11000 (06-05 성숙 최이른 스냅샷 고정)';
   ASSERT (SELECT likes FROM analytics.v_contents WHERE short_code = 'dummy_r1') = 520,

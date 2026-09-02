@@ -93,6 +93,54 @@ class BrandStoreTest {
 		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNull();
 	}
 
+	/**
+	 * 진행 워터마크(2026-08-31 등록 백필 캐시 고착 수리) — was 버전키의 브랜드 입력이 last_swept_at
+	 * 이라, 페이지 정산마다 이 값을 전진시켜야 백필 도중 폴링이 캐시를 뚫고 새 페이지를 본다.
+	 * markServing(IS NULL 가드)과 달리 완주·재가입 상태에서도 무조건 전진한다 — 기간 확장 재백필도
+	 * 같은 고착에 걸리기 때문. 완주 컬럼(last_swept_on·backfill_completed_at)은 건드리지 않는다.
+	 */
+	@Test
+	void touchProgress는_완주_상태에서도_last_swept_at을_전진시킨다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
+		brands.touchSwept(id, LocalDate.of(2026, 8, 6));   // 완주 — markServing 가드로는 못 움직이는 상태
+		Timestamp before = column(id, "last_swept_at", Timestamp.class);
+
+		brands.touchProgress(id);
+
+		assertThat(column(id, "last_swept_at", Timestamp.class)).isAfter(before);
+		assertThat(brands.findByUsername("brandx").orElseThrow().lastSweptOn())
+				.isEqualTo(LocalDate.of(2026, 8, 6));                            // 완주 컬럼 불변
+		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNotNull();
+	}
+
+	/**
+	 * 완주 시각 분리(2026-09-02) — touchProgress가 last_swept_at을 진행 워터마크로 넓힌 뒤(08-31),
+	 * "완주 시각"을 재는 소비자(Grafana 수집 소요·신선도 패널)를 위해 touchSwept 전용
+	 * sweep_completed_at을 둔다. 워터마크(캐시 버전키)와 계측이 같은 컬럼을 쓰면 해시태그 스윕의
+	 * 페이지 정산이 완주 시각을 오염시킨다(09-02 실측 — 야간 4.4h가 9h로 표시).
+	 */
+	@Test
+	void touchSwept는_완주_시각_sweep_completed_at을_함께_찍는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
+		assertThat(column(id, "sweep_completed_at", Timestamp.class)).isNull();
+
+		brands.touchSwept(id, LocalDate.of(2026, 9, 2));
+
+		assertThat(column(id, "sweep_completed_at", Timestamp.class)).isNotNull();
+	}
+
+	@Test
+	void touchProgress는_sweep_completed_at을_건드리지_않는다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
+		brands.touchSwept(id, LocalDate.of(2026, 9, 2));
+		Timestamp completed = column(id, "sweep_completed_at", Timestamp.class);
+
+		brands.touchProgress(id);
+
+		assertThat(column(id, "sweep_completed_at", Timestamp.class)).isEqualTo(completed);
+		assertThat(column(id, "last_swept_at", Timestamp.class)).isAfter(completed);   // 워터마크만 전진
+	}
+
 	@Test
 	void markServing은_이미_서빙_중이면_시각을_덮지_않는다() {
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
@@ -656,7 +704,7 @@ class BrandStoreTest {
 	}
 
 	@Test
-	void directDuePosts는_겹침_행도_포함한다() {
+	void unenumeratedDuePosts는_겹침_행도_포함한다() {
 		// §7-3 — 모든 direct 행이 2단계 모수다. 중복 콜 방지는 필터가 아니라 구조로 유지된다:
 		// 1단계 열거가 실제로 만난 겹침 행은 touchCrawled로 갱신돼 due 판정에서 빠진다.
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 12, true);
@@ -665,13 +713,13 @@ class BrandStoreTest {
 		taggedPosts.insert(id, post("Overlap", 1754000000L));
 		taggedPosts.upsertDirect(id, post("Overlap", 1754000000L), Instant.now());
 
-		assertThat(taggedPosts.directDuePosts(id, Instant.ofEpochSecond(1700000000L)))
+		assertThat(taggedPosts.unenumeratedDuePosts(id, Instant.ofEpochSecond(1700000000L)))
 				.extracting(TaggedPostRepository.TrackedPost::shortCode)
 				.containsExactlyInAnyOrder("DirectOnly", "Overlap");
 	}
 
 	@Test
-	void directDuePosts는_minTakenAt_이전_direct_행을_거른다() {
+	void unenumeratedDuePosts는_minTakenAt_이전_direct_행을_거른다() {
 		// minTakenAt 인자로 나이 컷이 걸린다 — 상한만 면제다(§7-3 첫 줄). 다만 런타임 호출자가
 		// 넘기는 값은 브랜드 창이 아니라 180일(BrandCrawlPolicy.TRACKED_MAX_AGE) 고정이다
 		// (trackedPosts와 같은 추적 범위 컷) — 여기 12개월 창은 시드 편의일 뿐 판정에 안 쓰인다.
@@ -679,7 +727,7 @@ class BrandStoreTest {
 		taggedPosts.upsertDirect(id, post("Recent", 1754000000L), Instant.now());
 		taggedPosts.upsertDirect(id, post("Ancient", 1700000000L), Instant.now());
 
-		assertThat(taggedPosts.directDuePosts(id, Instant.ofEpochSecond(1750000000L)))
+		assertThat(taggedPosts.unenumeratedDuePosts(id, Instant.ofEpochSecond(1750000000L)))
 				.extracting(TaggedPostRepository.TrackedPost::shortCode).containsExactly("Recent");
 	}
 

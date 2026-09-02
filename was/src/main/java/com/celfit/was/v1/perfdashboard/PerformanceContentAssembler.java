@@ -243,7 +243,8 @@ public class PerformanceContentAssembler {
 				.thenComparing(DashboardRef::contentKey));
 		return new DashboardIndex(userId, List.copyOf(refs),
 				lastCollectedAt(legacy.lastCollectedAt(), pool.lastSweptAt()), competitorIds,
-				Map.copyOf(legacyCards), Map.copyOf(brandByCode), pool.brandsById(), campaignsById);
+				Map.copyOf(legacyCards), Map.copyOf(brandByCode), pool.brandsById(),
+				Map.copyOf(campaignsById));
 	}
 
 	/**
@@ -281,9 +282,10 @@ public class PerformanceContentAssembler {
 		if (brandPostAssembler.isPresent()) {
 			for (Map.Entry<String, List<String>> entry : codesByBrand.entrySet()) {
 				DashboardIndex.BrandHydration brand = index.brandsById().get(entry.getKey());
-				// refs·legacyByCode는 대시보드가 쓰지 않는다(hydrateOverlaps와 같은 어댑터).
+				// refs·legacyByCode·hashtagMatchedTags는 대시보드가 쓰지 않는다(hydrateOverlaps와 같은
+				// 어댑터 — PerformanceContentResponse에 matchedTags 대응 필드가 없다).
 				BrandPostAssembler.BrandPostIndex adapter = new BrandPostAssembler.BrandPostIndex(
-						List.of(), Set.copyOf(entry.getValue()), Map.of(), brand.ownedShortCodes());
+						List.of(), Set.copyOf(entry.getValue()), Map.of(), brand.ownedShortCodes(), Map.of());
 				for (BrandPostResponse post : brandPostAssembler.get().hydrate(index.userId(), brand.account(),
 						brand.accountType(), adapter, entry.getValue(), false)) {
 					poolCards.putIfAbsent(post.shortcode(), fromBrandPost(post, index.campaignsById()));
@@ -326,9 +328,11 @@ public class PerformanceContentAssembler {
 			BrandAccountRow account = found.get();
 			String brandAccountId = String.valueOf(account.id());
 			// scope=ALL(enrichedOnly=false) — 지표 집계라 정산 전 게시물도 담는다(loadBrandPool 승계).
+			// withCaptions=false — 이 경로는 hashtags를 쓰지 않고 캐싱도 없어(매 요청 조회) perf119
+			// 캡션 전송 고정비를 계속 면제받는다(2026-08-31 캡션 해시태그 탑재 설계).
 			List<BrandReadRepository.BrandPostIndexRow> rows = brandReadRepository.get()
 					.findBrandPostIndex(account.id(), BrandPostAssembler.windowCutoff(), false,
-							BrandSponsorshipClassifier.postgresMarkerRegex());
+							BrandSponsorshipClassifier.postgresMarkerRegex(), false);
 			// 커버리지 클램프(수집 상한 v2 §7-1) — coveredUntil의 KST 달력일보다 앞선 tagged 행 제외,
 			// direct 등록 행은 상한 밖이라 면제. assembleBrandPosts의 현행 술어와 같은 식이다.
 			LocalDate coveredOn = KstTimestamps.toKstDate(account.coveredUntil());
@@ -353,7 +357,7 @@ public class PerformanceContentAssembler {
 			// 하이드레이트 재료는 게시물 0건인 브랜드도 실어 둔다 — 페이지 하이드레이트가 계정 행을
 			// 다시 읽지 않게 하는 것이 목적이고, lastSweptAt도 게시물 유무와 무관하다(현행과 동일).
 			brandsById.put(brandAccountId,
-					new DashboardIndex.BrandHydration(account, link.accountType(), ownedShortCodes));
+					new DashboardIndex.BrandHydration(account, link.accountType(), Set.copyOf(ownedShortCodes)));
 			lastSweptAt = lastCollectedAt(lastSweptAt, account.lastSweptAt());
 			if (visible.isEmpty()) {
 				continue;
@@ -387,8 +391,9 @@ public class PerformanceContentAssembler {
 		for (Map.Entry<String, Set<String>> entry : codesByBrand.entrySet()) {
 			DashboardIndex.BrandHydration brand = pool.brandsById().get(entry.getKey());
 			List<String> codes = List.copyOf(entry.getValue());
+			// refs·legacyByCode·hashtagMatchedTags는 대시보드가 쓰지 않는다(위 어댑터와 동형).
 			BrandPostAssembler.BrandPostIndex adapter = new BrandPostAssembler.BrandPostIndex(
-					List.of(), Set.copyOf(codes), Map.of(), brand.ownedShortCodes());
+					List.of(), Set.copyOf(codes), Map.of(), brand.ownedShortCodes(), Map.of());
 			for (BrandPostResponse post : brandPostAssembler.get()
 					.hydrate(userId, brand.account(), brand.accountType(), adapter, codes, false)) {
 				byCode.putIfAbsent(post.shortcode(), post);
@@ -469,7 +474,8 @@ public class PerformanceContentAssembler {
 				: BrandPostAssembler.resolveImageUrl(author.imageObjectPath(), author.profilePicUrl());
 		boolean reels = snap != null && CONTENT_TYPE_REELS.equalsIgnoreCase(snap.contentType());
 		return new DashboardRef(SYNTHETIC_ID_PREFIX + row.shortCode(), row.shortCode(),
-				BrandPostAssembler.resolveSource(row.tagDetectedAt(), row.directRegisteredAt(), registeredByUser),
+				BrandPostAssembler.resolveSource(row.tagDetectedAt(), row.directRegisteredAt(),
+						row.hashtagDetectedAt(), registeredByUser),
 				// 협찬 판정 입력은 캡션 원문이 아니라 SQL 마커 매치다(2026-08-27 P0 슬림 인덱스) —
 				// 브랜드 표면과 같은 caption_marker를 쓴다(동치성은 골든 코퍼스가 봉인).
 				BrandSponsorshipClassifier.classify(row.isPaidPartnership(), row.captionMarker()),
@@ -899,6 +905,12 @@ public class PerformanceContentAssembler {
 	/**
 	 * 인덱스 패스 결과({@link #index}) — refs 외 나머지는 페이지 하이드레이트가 재사용하는 재료다.
 	 * 인덱스가 이미 읽은 것(레거시 카드·계정 행·등록 원장·캠페인)을 다시 읽지 않게 실어 나른다.
+	 *
+	 * <p>인스턴스는 {@link DashboardIndexCoalescer}가 여러 요청 스레드에 <b>같은 것을 나눠 준다</b> —
+	 * <b>이 레코드의 컬렉션 필드 7개</b>는 생성 시점에 불변으로 굳힌다(2026-08-31). 다만 그 안에 실린
+	 * 값 객체({@link PerformanceContentResponse}의 {@code snapshots}·{@code matchedKeywords}·
+	 * {@code recentComments}·{@code additionalSources})까지 깊게 굳히지는 않는다 — 어셈블러가 만든
+	 * 리스트가 그대로 실린다. 조립 이후 그 값들을 변형하는 코드가 없다는 것이 안전의 근거다.
 	 *
 	 * @param legacyCards contentKey(=item.id) → 조립 완료 카드. 겹침 병합분이 이미 반영돼 있다.
 	 * @param brandByCode 풀 전용 shortcode → brandAccountId(겹침 코드는 레거시 카드가 정본이라 없다).

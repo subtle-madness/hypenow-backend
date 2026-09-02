@@ -53,10 +53,11 @@ public class V1ContentController {
 			@RequestParam(required = false) String distributorId,
 			@RequestParam(required = false) String sort,
 			@RequestParam(required = false) Integer limit,
-			@RequestParam(required = false) Integer offset) {
+			@RequestParam(required = false) Integer offset,
+			@RequestParam(required = false) String vertical) {
 		V1ContentQuery query = V1ContentQuery.of(startDate, endDate, contentType, mainCategory,
 				midCategory, subCategory, follower, keyword, adType, distributorId, sort, limit,
-				offset);
+				offset, vertical);
 		ContentPage page = pageService.page(query);
 		// 로그인 시에만 저장 셋을 1회 조회해 각 카드를 마킹, 비로그인이면 saved=null(필드 부재).
 		Set<String> savedCodes = principal == null ? null : savedLookup.savedShortCodes(principal.getUserId());
@@ -71,7 +72,8 @@ public class V1ContentController {
 		meta.put("total", page.total());
 		meta.put("limit", query.limit());
 		meta.put("offset", query.offset());
-		meta.put("distributors", pageService.distributorOptions());
+		// 유통사 옵션도 요청 축을 따른다(2026-09-01 — FE 피드백 #5: F&B 화면에 뷰티 유통사가 떴다).
+		meta.put("distributors", pageService.distributorOptions(query.distributorAxis()));
 		return ApiResponse.ok(cards, meta);
 	}
 }

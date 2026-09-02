@@ -9,6 +9,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -65,6 +66,9 @@ class V1PerformanceDashboardControllerTest {
 	PerformanceContentAssembler assembler;
 
 	@MockitoBean
+	DashboardIndexCoalescer coalescer;
+
+	@MockitoBean
 	PerformanceComparisonAssembler comparisonAssembler;
 
 	@MockitoBean
@@ -118,7 +122,7 @@ class V1PerformanceDashboardControllerTest {
 				Arrays.stream(contents).map(V1PerformanceDashboardControllerTest::refOf).toList(),
 				Arrays.stream(contents).collect(Collectors.toMap(c -> c.item().id(), Function.identity(),
 						(a, b) -> a, LinkedHashMap::new)));
-		lenient().when(assembler.index(7L)).thenReturn(index);
+		lenient().when(coalescer.index(VERSION, 7L)).thenReturn(index);
 		lenient().when(assembler.hydratePage(eq(index), anyList())).thenAnswer(invocation -> {
 			List<DashboardRef> page = invocation.getArgument(1);
 			return page.stream().map(r -> index.legacyCards().get(r.contentKey())).toList();
@@ -150,7 +154,7 @@ class V1PerformanceDashboardControllerTest {
 		Map<String, PerformanceContentAssembler.DashboardIndex.BrandHydration> brandsById = new LinkedHashMap<>();
 		brandAccountIds.forEach(id -> brandsById.put(id,
 				new PerformanceContentAssembler.DashboardIndex.BrandHydration(null, null, Set.of())));
-		lenient().when(assembler.index(7L)).thenReturn(new DashboardIndex(
+		lenient().when(coalescer.index(VERSION, 7L)).thenReturn(new DashboardIndex(
 				7L, List.of(refs), OffsetDateTime.parse("2026-08-07T18:00:00Z"), competitorBrandAccountIds,
 				Map.of(), Map.of(), brandsById, Map.of()));
 	}
@@ -198,7 +202,7 @@ class V1PerformanceDashboardControllerTest {
 	void 상태_7종_키가_항상_전부_존재한다() throws Exception {
 		// 0건 + 수집 이력 없음(브랜드 연동 전 신규 유저) — 가장 빈 응답에서도 키셋이 온전해야 한다.
 		DashboardIndex empty = index(null, Set.of(), List.of(), Map.of());
-		given(assembler.index(7L)).willReturn(empty);
+		given(coalescer.index(VERSION, 7L)).willReturn(empty);
 		given(assembler.hydratePage(eq(empty), anyList())).willReturn(List.of());
 
 		mockMvc.perform(get(CONTENTS).with(user(principal())))
@@ -458,7 +462,7 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 
 		then(assembler).should(never()).assemble(anyLong());
-		then(assembler).should(never()).index(anyLong());
+		then(coalescer).should(never()).index(any(), anyLong());
 	}
 
 	// ---------- 검증 ----------
@@ -471,7 +475,7 @@ class V1PerformanceDashboardControllerTest {
 
 		// 검증은 인덱스 조립(두 DB·SQL 다회)보다 먼저다.
 		then(assembler).should(never()).assemble(anyLong());
-		then(assembler).should(never()).index(anyLong());
+		then(coalescer).should(never()).index(any(), anyLong());
 	}
 
 	@Test
@@ -524,7 +528,7 @@ class V1PerformanceDashboardControllerTest {
 		mockMvc.perform(get(CONTENTS + "/SC1").with(user(principal()))).andExpect(status().isOk());
 
 		// 단건은 댓글 포함 계약(§7-1) — 목록의 2단 조립(댓글 없음)으로 바뀌면 상세 패널 댓글이 조용히 빈다.
-		then(assembler).should(never()).index(anyLong());
+		then(coalescer).should(never()).index(any(), anyLong());
 	}
 
 	// ---------- 단건 ----------
@@ -770,7 +774,7 @@ class V1PerformanceDashboardControllerTest {
 					.andExpect(status().isBadRequest())
 					.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 		}
-		then(assembler).should(never()).index(anyLong());
+		then(coalescer).should(never()).index(any(), anyLong());
 	}
 
 	// ---------- 신규 필터(2026-08-27 §2) ----------
@@ -834,7 +838,7 @@ class V1PerformanceDashboardControllerTest {
 					.andExpect(status().isBadRequest())
 					.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 		}
-		then(assembler).should(never()).index(anyLong());
+		then(coalescer).should(never()).index(any(), anyLong());
 	}
 
 	// ---------- 인플루언서 집계(2026-08-27 §4) ----------
@@ -1002,7 +1006,7 @@ class V1PerformanceDashboardControllerTest {
 					.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 		}
 		// 검증은 인덱스 패스보다 앞이다 — 400으로 끝날 요청이 DB를 건드리면 안 된다.
-		then(assembler).should(never()).index(anyLong());
+		then(coalescer).should(never()).index(any(), anyLong());
 	}
 
 	@Test
@@ -1124,7 +1128,7 @@ class V1PerformanceDashboardControllerTest {
 					.andExpect(status().isBadRequest())
 					.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 		}
-		then(assembler).should(never()).index(anyLong());
+		then(coalescer).should(never()).index(any(), anyLong());
 	}
 
 	@Test
@@ -1135,7 +1139,7 @@ class V1PerformanceDashboardControllerTest {
 						.with(user(principal())))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
-		then(assembler).should(never()).index(anyLong());
+		then(coalescer).should(never()).index(any(), anyLong());
 
 		givenIndexedRefs(Set.of(), List.of(),
 				influencerRef("1", "glowdeep_92", "2026-08-05", "sponsored", "12", 1000L, 200L, 20L, 7L));
@@ -1159,7 +1163,7 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 		// 축 크기를 알려면 인덱스가 필요하다 — 이 판정은 index() 뒤다(딱 1회, 그 뒤로 진행 없음).
-		then(assembler).should().index(7L);
+		then(coalescer).should().index(VERSION, 7L);
 		then(assembler).should(never()).hydratePage(any(), anyList());
 
 		// 같은 구간·같은 granularity라도 축이 작으면 통과한다(60 × 2 = 120) — 회귀 방지.
@@ -1190,7 +1194,7 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.error.code").value("VALIDATION_FAILED"));
 		// 유효 범위를 알려면 인덱스가 필요하다 — 이 판정만은 index() 뒤다(딱 1회, 그 뒤로 진행 없음).
-		then(assembler).should().index(7L);
+		then(coalescer).should().index(VERSION, 7L);
 		then(assembler).should(never()).hydratePage(any(), anyList());
 	}
 
@@ -1284,7 +1288,7 @@ class V1PerformanceDashboardControllerTest {
 				.andExpect(header().doesNotExist("Content-Length"));
 
 		// 이 설계의 이득 자체 — 조립·직렬화를 통째로 건너뛴다(응답 후 해싱 방식과 갈리는 지점, §3).
-		then(assembler).should(never()).index(anyLong());
+		then(coalescer).should(never()).index(any(), anyLong());
 		then(assembler).should(never()).assemble(anyLong());
 	}
 
@@ -1325,7 +1329,7 @@ class V1PerformanceDashboardControllerTest {
 					.andExpect(header().string("ETag", ETAG))
 					.andExpect(header().string("Cache-Control", CACHE_CONTROL));
 		}
-		then(assembler).should(never()).index(anyLong());
+		then(coalescer).should(never()).index(any(), anyLong());
 
 		// 단건은 제외(설계 §1) — 응답이 작고 호출이 드물다. If-None-Match를 보내도 그대로 200이고
 		// ETag도 없다(조건부 표면이 아니라는 뜻).
@@ -1333,6 +1337,21 @@ class V1PerformanceDashboardControllerTest {
 		mockMvc.perform(get(CONTENTS + "/SC1").header("If-None-Match", ETAG).with(user(principal())))
 				.andExpect(status().isOk())
 				.andExpect(header().doesNotExist("ETag"));
+	}
+
+	@Test
+	void 한_요청에서_버전키는_한_번만_계산된다() throws Exception {
+		DashboardIndex empty = new DashboardIndex(7L, List.of(), null, Set.of(),
+				Map.of(), Map.of(), Map.of(), Map.of());
+		given(coalescer.index(VERSION, 7L)).willReturn(empty);
+		given(assembler.hydratePage(eq(empty), anyList())).willReturn(List.of());
+
+		mockMvc.perform(get(CONTENTS).with(user(principal())))
+				.andExpect(status().isOk());
+
+		// 조건부 판정과 합류 키가 같은 값을 써야 한다 — 두 번 계산하면 자정 경계에서 갈린다.
+		then(dashboardVersion).should(times(1)).compute(7L);
+		then(coalescer).should().index(VERSION, 7L);
 	}
 
 	// ---------- 픽스처 ----------
