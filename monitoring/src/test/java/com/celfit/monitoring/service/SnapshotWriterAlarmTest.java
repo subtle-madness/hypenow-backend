@@ -2,13 +2,13 @@ package com.celfit.monitoring.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.monitoring.alarm.AlarmEventRepository;
 import com.celfit.monitoring.alarm.AlarmRecorder;
 import com.celfit.monitoring.domain.KeywordRule;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
-import com.celfit.monitoring.hiker.PostInfo;
-import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.store.PostMetaRepository;
 import com.celfit.monitoring.store.ProfileMetaRepository;
 import com.celfit.monitoring.store.SnapshotRepository;

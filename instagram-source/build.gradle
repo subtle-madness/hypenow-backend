@@ -1,0 +1,25 @@
+// 인스타그램 수집 어댑터 모듈(2026-08-31 신설 — 스펙 2026-08-31-instagram-hiker-selfcrawl-hybrid-design.md).
+// 순수 fetch+DTO: IG/HikerAPI에서 수집해 DTO로 정규화만 한다. DB 쓰기·Spring 의존 절대 금지 —
+// 빈 배선(전송·과금·메트릭)은 소비 모듈(monitoring) 몫. contract-analysis·common-llm과 같은
+// java-library 공유 예외(ARCHITECTURE.md §4-4).
+plugins {
+	id 'java-library'
+}
+
+dependencies {
+	implementation 'org.slf4j:slf4j-api:2.0.18'
+	// Jackson 3(tools.jackson.*) — Spring BOM이 없는 순수 JDK 모듈이라 명시 채번한다.
+	// monitoring runtimeClasspath가 해석하는 값과 동일하게 고정(Spring Boot 4.1 정렬, 실측 3.1.4).
+	// 파싱은 모듈 내부 전용 — 공개 시그니처(InstagramSource)엔 Jackson 타입이 노출되지 않으므로
+	// implementation으로 충분(소비 모듈 컴파일 클래스패스 미오염).
+	implementation 'tools.jackson.core:jackson-databind:3.1.4'
+
+	testImplementation platform('org.junit:junit-bom:6.0.3')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testImplementation 'org.assertj:assertj-core:3.27.7'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}

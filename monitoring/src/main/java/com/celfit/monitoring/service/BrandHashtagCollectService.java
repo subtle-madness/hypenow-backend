@@ -1,8 +1,10 @@
 package com.celfit.monitoring.service;
 
+import com.celfit.instagram.source.HashtagPage;
+import com.celfit.instagram.source.HashtagPost;
+import com.celfit.instagram.source.InstagramSource;
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.hiker.BrandCallContext;
-import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.store.BrandHashtagRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.TaggedPostRepository;
@@ -16,6 +18,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -63,7 +66,7 @@ public class BrandHashtagCollectService {
 	private static final Logger log = LoggerFactory.getLogger(BrandHashtagCollectService.class);
 	private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
-	private final HikerClient hiker;
+	private final InstagramSource hiker;
 	private final BrandCallContext callContext;
 	private final BrandHashtagRepository tags;
 	private final TaggedPostRepository taggedPosts;
@@ -72,7 +75,7 @@ public class BrandHashtagCollectService {
 	private final int maxPages;
 	private final int postLimit;
 
-	public BrandHashtagCollectService(HikerClient hiker, BrandCallContext callContext,
+	public BrandHashtagCollectService(InstagramSource hiker, BrandCallContext callContext,
 			BrandHashtagRepository tags, TaggedPostRepository taggedPosts, BrandSnapshotWriter writer,
 			BrandCollectService collect, int maxPages, int postLimit) {
 		this.hiker = hiker;
@@ -114,10 +117,23 @@ public class BrandHashtagCollectService {
 		}
 	}
 
-	/** 브랜드 1개분 해시태그 수집 — 태그가 없으면 콜 0으로 즉시 반환한다. */
+	/** 브랜드 1개분 해시태그 수집(스케줄 트리거 — 매일 스윕) — 태그가 없으면 콜 0으로 즉시 반환한다.
+	 * 편입 게시물 보강은 {@link BrandCollectService#enrich(BrandRow, List)}(스케줄용, 자체 1순위 +
+	 * Hiker 폴백)로 간다. */
 	public void sweep(BrandRow brand) {
 		// 콜 집계 스코프(어드민 크롤링 비용) — 열거·보강 콜 전부 이 브랜드 몫으로 계상된다.
-		callContext.runScoped(brand.id(), () -> doSweep(brand, false));
+		callContext.runScoped(brand.id(), () -> doSweep(brand, collect::enrich, false));
+	}
+
+	/**
+	 * 사용자 트리거 비동기 흐름({@link BrandRegistrationService#triggerHashtagSweep}) 전용 진입점 —
+	 * 편입 게시물 보강을 {@link BrandCollectService#enrichUserTriggered(BrandRow, List)}(2026-09 도입
+	 * 시점 토글)로 라우팅한다(필드+진입점 분리 패턴, {@link BrandCollectService#enrichSync} 참조).
+	 * 열거 자체(fetchHashtagRecentPage)는 하드게이트라 self 백엔드가 없어 소스와 무관하게 항상
+	 * Hiker다 — 이 분리가 의미를 갖는 지점은 오직 {@link #collectPage}의 보강 호출뿐이다.
+	 */
+	public void sweepUserTriggered(BrandRow brand) {
+		callContext.runScoped(brand.id(), () -> doSweep(brand, collect::enrichUserTriggered, false));
 	}
 
 	/**
@@ -129,10 +145,10 @@ public class BrandHashtagCollectService {
 	 * (매 스윕 딥으로 돌면 태그당 페이지 콜이 상시 ~수십 배가 된다).
 	 */
 	public void deepResweep(BrandRow brand) {
-		callContext.runScoped(brand.id(), () -> doSweep(brand, true));
+		callContext.runScoped(brand.id(), () -> doSweep(brand, collect::enrich, true));
 	}
 
-	private void doSweep(BrandRow brand, boolean deep) {
+	private void doSweep(BrandRow brand, BiConsumer<BrandRow, List<PostInfo>> enrich, boolean deep) {
 		List<String> tagList = tags.findTags(brand.id());
 		if (tagList.isEmpty()) {
 			return;
@@ -163,7 +179,7 @@ public class BrandHashtagCollectService {
 			// 미처리분은 다음 스윕이 같은 순서로 재시도한다(별도 백스톱 불필요 — 열거 자체가 멱등).
 			try {
 				// deep 파라미터 전달 — deepResweep이 true로 호출하면 dedup 조기 종료를 무시한다.
-				int created = sweepTag(brand, tag, cutoff, now, state, deep);
+				int created = sweepTag(brand, tag, cutoff, now, state, enrich, deep);
 				savedTotal += created;
 				tags.markRunFinished(brand.id(), tag, created, false);
 			} catch (RuntimeException e) {
@@ -192,17 +208,18 @@ public class BrandHashtagCollectService {
 	 *
 	 * @return 이번 태그가 만든 <b>신규 행</b> 수(겹침 병기는 세지 않는다 — 상한 밖)
 	 */
-	private int sweepTag(BrandRow brand, String tag, Instant cutoff, Instant now, SweepState state, boolean deep) {
+	private int sweepTag(BrandRow brand, String tag, Instant cutoff, Instant now, SweepState state,
+			BiConsumer<BrandRow, List<PostInfo>> enrich, boolean deep) {
 		int created = 0;
 		String cursor = null;
 		for (int page = 0; page < maxPages; page++) {
 			tags.markRunStarted(brand.id(), tag);
-			HikerClient.HashtagPage result = hiker.fetchHashtagRecentPage(tag, cursor);
+			HashtagPage result = hiker.fetchHashtagRecentPage(tag, cursor);
 			if (result.posts().isEmpty()) {
 				break;
 			}
 			List<PostInfo> pagePosts = distinctByShortCode(result.posts().stream()
-					.map(HikerClient.HashtagPost::post).toList());
+					.map(HashtagPost::post).toList());
 			// 이 페이지에서 이미 hashtag 성분이 있는 코드 — 행이 있으니 매칭 태그는 남길 수 있다(FK 만족).
 			Set<String> alreadyHashtag = new LinkedHashSet<>();
 			for (PostInfo p : pagePosts) {
@@ -232,7 +249,7 @@ public class BrandHashtagCollectService {
 			}
 			List<PostInfo> toCollect = new ArrayList<>(overlap);
 			toCollect.addAll(brandNew);
-			collectPage(brand, tag, toCollect, now);
+			collectPage(brand, tag, toCollect, now, enrich);
 			created += brandNew.size();
 			for (PostInfo p : toCollect) {
 				state.insertedThisRun.add(p.shortCode());
@@ -290,7 +307,8 @@ public class BrandHashtagCollectService {
 	 * Hiker 콜을 지불하고 얻은 결과물이라, 보강 실패로 그날 열거를 통째로 버리면 손해가 크다.
 	 * 미보강분은 야간 스윕 2단계(미보강 우선 배치)가 백스톱한다.
 	 */
-	private void collectPage(BrandRow brand, String tag, List<PostInfo> posts, Instant now) {
+	private void collectPage(BrandRow brand, String tag, List<PostInfo> posts, Instant now,
+			BiConsumer<BrandRow, List<PostInfo>> enrich) {
 		if (posts.isEmpty()) {
 			return;
 		}
@@ -303,7 +321,7 @@ public class BrandHashtagCollectService {
 		}
 		taggedPosts.touchCrawled(brand.id(), adjusted.stream().map(PostInfo::shortCode).toList(), now);
 		try {
-			collect.enrich(brand, adjusted);
+			enrich.accept(brand, adjusted);
 		} catch (RuntimeException e) {
 			log.warn("해시태그 보강 실패(격리, 열거 계속) — {} 다음 스윕이 백스톱: {}",
 					brand.username(), e.toString());

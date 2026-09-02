@@ -2,11 +2,11 @@ package com.celfit.monitoring.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.HikerBackend;
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.AuthorInfo;
 import com.celfit.monitoring.hiker.BrandCallContext;
-import com.celfit.monitoring.hiker.HikerClient;
-import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
 import com.celfit.monitoring.store.BrandHashtagRepository;
@@ -244,8 +244,8 @@ class BrandHashtagCollectServiceTest {
 
 	// ── fake HikerHttp — 태그별 페이지 큐 + 게시자 프로필 ─────────────────────
 
-	private HikerClient client() {
-		return new HikerClient(path -> {
+	private HikerBackend client() {
+		return new HikerBackend(path -> {
 			calls.add(path);
 			if (path.startsWith("/v2/user/by/id")) {
 				String id = path.substring(path.indexOf("?id=") + "?id=".length());
@@ -286,7 +286,7 @@ class BrandHashtagCollectServiceTest {
 	private BrandHashtagCollectService service(int maxPages, int postLimit) {
 		// adDisclosureEnabled=false — 광고 판정은 이 테스트의 관심사가 아니고, 꺼져 있으면
 		// judgeAdDisclosuresSafely가 adJudge를 아예 부르지 않아 null을 넘겨도 안전하다.
-		BrandCollectService collect = new BrandCollectService(client(), callContext, writer, snapshots, comments,
+		BrandCollectService collect = new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments,
 				tagged, authors, new InertBrands(), null, Runnable::run, 10000, 2000, 3, 30, false);
 		return new BrandHashtagCollectService(client(), callContext, tags, tagged, writer, collect,
 				maxPages, postLimit);
@@ -314,6 +314,60 @@ class BrandHashtagCollectServiceTest {
 				 "user":{"username":"%s","pk":9001,"full_name":"작가","profile_pic_url":"https://p"},
 				 "like_count":10,"comment_count":2,"usertags":{"in":[]}}}"""
 				.formatted(code, takenAt, username);
+	}
+
+	// ── 사용자 트리거 비동기 흐름 도입 시점 토글(2026-09) — 편입 보강의 소스 라우팅 ─────────
+
+	/**
+	 * {@link BrandHashtagCollectService#sweepUserTriggered}(등록 직후 즉시 스윕, 사용자 트리거 비동기)는
+	 * 편입 게시물 보강을 {@link BrandCollectService#enrichUserTriggered}로, {@link BrandHashtagCollectService#sweep}
+	 * (매일 스케줄 스윕)은 {@link BrandCollectService#enrich(BrandRow, List)}로 위임한다 — 게시자 프로필
+	 * 콜(ensureAuthors)이 각자 다른 InstagramSource 인스턴스로 가는지로 구분한다(BrandCollectServiceTest의
+	 * enrichUserTriggered 라우팅 테스트와 같은 관용구).
+	 */
+	@Test
+	void sweepUserTriggered은_enrichUserTriggered로_sweep은_enrich로_보강_콜이_각자_라우팅된다() {
+		tags.tags = List.of("cclime");
+		pagesByTag.put("cclime", List.of(sectionsBody(null, media("NEW1", RECENT, "poster1"))));
+		List<String> hikerOnlyCalls = new ArrayList<>();
+		List<String> userTriggeredOnlyCalls = new ArrayList<>();
+		HikerBackend hikerBackend = new HikerBackend(path -> {
+			hikerOnlyCalls.add(path);
+			return authorResponse(path);
+		});
+		HikerBackend userTriggeredBackend = new HikerBackend(path -> {
+			userTriggeredOnlyCalls.add(path);
+			return authorResponse(path);
+		});
+		BrandCollectService collect = new BrandCollectService(hikerBackend, hikerBackend, userTriggeredBackend,
+				callContext, writer, snapshots, comments, tagged, authors, new InertBrands(), null,
+				Runnable::run, 10000, 2000, 3, 30, false);
+		BrandHashtagCollectService hashtag = new BrandHashtagCollectService(client(), callContext, tags, tagged,
+				writer, collect, 4, 1000);
+
+		hashtag.sweepUserTriggered(brand);
+		assertThat(hikerOnlyCalls).isEmpty();
+		assertThat(userTriggeredOnlyCalls).isNotEmpty();
+
+		tagged.known.clear();
+		tagged.hashtag.clear();
+		userTriggeredOnlyCalls.clear();
+		pageIndexByTag.clear();
+		pagesByTag.put("cclime", List.of(sectionsBody(null, media("NEW2", RECENT, "poster1"))));
+		hashtag.sweep(brand);
+		assertThat(userTriggeredOnlyCalls).isEmpty();
+		assertThat(hikerOnlyCalls).isNotEmpty();
+	}
+
+	/** 게시자 프로필 콜만 응답하는 최소 대역 — 위 소스 분리 테스트 전용(BrandCollectServiceTest
+	 * authorOrCommentResponse와 동형). */
+	private static String authorResponse(String path) {
+		if (path.startsWith("/v2/user/by/id")) {
+			String id = path.substring(path.indexOf("?id=") + "?id=".length());
+			return "{\"user\":{\"pk\":%s,\"username\":\"author_%s\",\"follower_count\":100,\"is_private\":false}}"
+					.formatted(id, id);
+		}
+		throw new IllegalStateException("예상 밖 콜: " + path);
 	}
 
 	// ── 규칙 컷 ─────────────────────────────────────────────────────────────

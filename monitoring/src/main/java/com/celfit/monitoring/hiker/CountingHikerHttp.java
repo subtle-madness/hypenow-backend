@@ -1,5 +1,6 @@
 package com.celfit.monitoring.hiker;
 
+import com.celfit.instagram.source.HikerHttp;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.TargetCallCountRepository;
 import java.time.LocalDate;
