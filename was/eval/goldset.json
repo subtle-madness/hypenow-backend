@@ -274,5 +274,33 @@
     "forbidTools": [],
     "expectAnswerContains": [],
     "groundTruthSql": null
+  },
+  {
+    "id": "vague-status",
+    "question": "요즘 우리 브랜드 반응 어때?",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {}
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "마케터 막연 질문(09-02 실측 체인 A) - 집계 툴로 현황을 잡는지"
+  },
+  {
+    "id": "competitor-compare",
+    "question": "경쟁사랑 비교하면 우리 어때?",
+    "presetId": null,
+    "expectTools": [],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "expectAnswerNotContains": [
+      "등록되어 있지 않"
+    ],
+    "groundTruthSql": null,
+    "_note": "마케터 막연 질문(09-02 실측 체인 F) - 세션 브랜드 고정 한계를 거짓 사유(경쟁사 미등록)로 설명하지 않는지"
   }
 ]
