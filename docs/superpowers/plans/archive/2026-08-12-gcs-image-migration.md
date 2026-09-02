@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 스펙: [2026-08-12-gcs-image-migration-design.md](../specs/2026-08-12-gcs-image-migration-design.md)
+> 상태: ✅ 구현됨 (아카이브 시점 2026-08-28 확인) · 스펙: [2026-08-12-gcs-image-migration-design.md](../../specs/2026-08-12-gcs-image-migration-design.md)
 > Task 4는 구현 중 ADC 충돌 발견으로 IMAGE_GCS_KEY 방식으로 변경(사용자 승인) — ADC는 JVM당 1개뿐이라 analytics의 Vertex LLM과 공유 불가.
 
 **Goal:** 서빙 이미지 아카이브를 OCI Object Storage(`hypenow-images`, 16.5GB)에서 GCS

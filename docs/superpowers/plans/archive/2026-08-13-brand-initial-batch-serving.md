@@ -15,7 +15,7 @@
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · Gradle 멀티모듈(monitoring/was) · Flyway · JdbcTemplate(monitoring) / JdbcClient(was) · JUnit 5 + AssertJ · Testcontainers PostgreSQL
 
-**설계 정본:** [specs/2026-08-13-brand-initial-batch-serving-design.md](../specs/2026-08-13-brand-initial-batch-serving-design.md)
+**설계 정본:** [specs/2026-08-13-brand-initial-batch-serving-design.md](../../specs/2026-08-13-brand-initial-batch-serving-design.md)
 
 ## Global Constraints
 

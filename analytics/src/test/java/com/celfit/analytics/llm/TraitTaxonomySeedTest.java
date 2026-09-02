@@ -9,19 +9,15 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
  * V41 시드 ↔ 스펙 부록 A(2026-07-29, 사용자 확정 172개·13축) 계약 검증.
  * V43(07-30) '메이크업 리뷰' 추가분 포함 — 총 173개·13축(축 개수는 불변, B. 리뷰 방식만 +1).
  */
-@Testcontainers
 class TraitTaxonomySeedTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	static JdbcTemplate db;
 	static TraitTaxonomy taxonomy;

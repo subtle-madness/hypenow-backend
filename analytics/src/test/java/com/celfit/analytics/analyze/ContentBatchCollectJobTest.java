@@ -14,8 +14,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -30,11 +28,9 @@ import tools.jackson.databind.node.ObjectNode;
  * 컨테이너에는 쓰기 가능한 볼륨이 없어 제출~수거 사이 배포가 끼면 파일이 유실돼 pending 좀비가
  * 남는다, 2026-08-11 리뷰 반영).
  */
-@Testcontainers
 class ContentBatchCollectJobTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	static final String INSIGHT_JSON = """
 			{"detectedBrands":null,"sponsoredSignalLevel":"low","sponsoredSignalReasons":null,

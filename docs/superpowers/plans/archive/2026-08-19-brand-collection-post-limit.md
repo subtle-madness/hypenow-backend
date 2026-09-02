@@ -6,7 +6,7 @@
 
 **Goal:** 브랜드 태그 열거에 전역 수집 개수 상한(기본 2,000)을 추가해, 상한 도달 시 의도된 자연 종료(INFO) + 목표 컷 전체 touch(컷 밖 지표 동결)로 백필·심층 스윕 비용을 좁힌다.
 
-**Architecture:** 변경은 `monitoring` 모듈 `BrandCollectService.doSweepCore` 열거 루프 한 곳 — 기존 안전 밸브(`max-posts-per-sweep` 10,000·ERROR·커버 미처리) **안쪽**에 새 컷(`collection-post-limit` 2,000·INFO·**커버 처리**)을 놓는다. 커버 처리(`coveredCutoff=true` → `touchCrawledDepth`를 목표 컷 전체로)가 컷 밖 due 루프 차단과 지표 동결을 동시에 구현한다. 스펙: [docs/superpowers/specs/2026-08-19-brand-collection-post-limit-design.md](../specs/2026-08-19-brand-collection-post-limit-design.md).
+**Architecture:** 변경은 `monitoring` 모듈 `BrandCollectService.doSweepCore` 열거 루프 한 곳 — 기존 안전 밸브(`max-posts-per-sweep` 10,000·ERROR·커버 미처리) **안쪽**에 새 컷(`collection-post-limit` 2,000·INFO·**커버 처리**)을 놓는다. 커버 처리(`coveredCutoff=true` → `touchCrawledDepth`를 목표 컷 전체로)가 컷 밖 due 루프 차단과 지표 동결을 동시에 구현한다. 스펙: [docs/superpowers/specs/2026-08-19-brand-collection-post-limit-design.md](../../specs/2026-08-19-brand-collection-post-limit-design.md).
 
 **Tech Stack:** Java 21, Spring Boot 4.1, JUnit 5 + AssertJ (fake HikerHttp 스텁 관용구, DB 없음)
 
@@ -235,7 +235,7 @@ marynmay_global 등록 백필이 12개월 창 전량을 걷다 1만 건·$10.6�
 재열거 루프를 차단하고 지표를 동결(계속 서빙)한다. 안전 밸브(max-posts-per-sweep 10,000·
 ERROR·커버 미처리)는 폭주 방어로 독립 유지. 기간(collection_months)이 아닌 개수인 이유:
 유입량이 브랜드마다 달라 기간으로는 개수를 표현할 수 없다(marynmay는 3개월도 ~3,400건).
-[스펙](docs/superpowers/specs/2026-08-19-brand-collection-post-limit-design.md)
+[스펙](../../specs/2026-08-19-brand-collection-post-limit-design.md)
 ```
 
 - [ ] **Step 2: monitoring 모듈 테스트 전체 실행**

@@ -2,6 +2,7 @@ package com.celfit.analytics.mirror;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.celfit.analytics.testsupport.TestDb;
 import com.celfit.contract.analysis.Account;
 import com.celfit.contract.analysis.AccountAnalysis;
 import com.celfit.contract.analysis.AccountCategoryStat;
@@ -16,32 +17,28 @@ import java.lang.reflect.RecordComponent;
 import java.util.Arrays;
 import java.util.List;
 import javax.sql.DataSource;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
  * Flyway DDL ↔ contract record 대조: 세 아티팩트(뷰/DDL/record) 중 "DDL=record" 경계를
  * 테스트 타임에 고정한다 ("뷰=record"는 MirrorJob 런타임 가드 담당).
  */
-@Testcontainers
 class FlywaySchemaTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	static JdbcTemplate db;
 
 	@BeforeAll
 	static void migrate() {
 		DataSource ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
-		Flyway.configure().dataSource(ds).locations("classpath:db/migration/analysis").load().migrate();
 		db = new JdbcTemplate(ds);
+		// 공유 컨테이너라 이전 클래스의 잔재 위에서 migrate하면 안 된다 — 리셋 후 전체 재생
+		TestDb.resetAndMigrate(db, ds);
 	}
 
 	@Test

@@ -1,6 +1,6 @@
 # Plan 2: 인플루언서 상세 API (비LLM) Implementation Plan
 
-> 상태: 🟢 활성 — 태스크 C1·E 참고 자료. 단 미러 방식·모듈 구조는 ARCHITECTURE §4가 우선
+> 상태: 🗄 폐기 (2026-08-28 — grep 검증 결과 기술된 산출물 미구현, 후속 설계로 대체된 미실행 계획. 사용자 지시로 폐기)
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 인플루언서 상세 v4의 비LLM 데이터 전부(헤더·정체성·성과·일관성·커머셜 기초 + 게시물별 조회수 시계열 + 협업 이력 골격)를 반환하는 `GET /api/influencers/{username}` 엔드포인트를 만든다.

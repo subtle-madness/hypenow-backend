@@ -6,7 +6,7 @@
 
 **Goal:** 수집 상한 v1의 정합 구멍(창 확장 no-op·direct 겹침 동결·티어 재장전 무익 딥 스윕)을 해소하고, "요청 창을 다 모았는지 / 상한에서 끊겼는지"를 영속화해 was API로 노출한다.
 
-**Architecture:** [스펙 §7](../specs/2026-08-19-brand-collection-post-limit-design.md) 참조. `brand_account`에 `collection_capped`/`covered_until` 2컬럼 추가(백필 시점 기록), 확장 요청은 저장 행 수 사전 체크로 스킵, direct 행은 3개 SQL(touchCrawledDepth·trackedPosts·directDuePosts)에서 상한 체계 밖으로 빼고, capped 브랜드의 일일 열거 목표 컷을 `covered_until`로 클램프한다. 전부 같은 브랜치(미머지 PR) 위 증분.
+**Architecture:** [스펙 §7](../../specs/2026-08-19-brand-collection-post-limit-design.md) 참조. `brand_account`에 `collection_capped`/`covered_until` 2컬럼 추가(백필 시점 기록), 확장 요청은 저장 행 수 사전 체크로 스킵, direct 행은 3개 SQL(touchCrawledDepth·trackedPosts·directDuePosts)에서 상한 체계 밖으로 빼고, capped 브랜드의 일일 열거 목표 컷을 `covered_until`로 클램프한다. 전부 같은 브랜치(미머지 PR) 위 증분.
 
 **Tech Stack:** Java 21, Spring Boot 4.1, Flyway(UTC 채번), JUnit 5 + AssertJ(fake 스텁 관용구)
 

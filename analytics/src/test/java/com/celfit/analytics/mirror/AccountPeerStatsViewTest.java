@@ -4,16 +4,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import com.celfit.analytics.testsupport.TestDb;
 import java.math.BigDecimal;
 import java.util.Map;
 import javax.sql.DataSource;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
@@ -22,19 +20,18 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * ③ NULL 지표(피드 전용 avg_views 등)는 순위에서 제외돼 NULL
  * ④ 광고 지표는 ad_type='sponsored' 정본 ⑤ 중앙값 ER(피어·전체) 노출.
  */
-@Testcontainers
 class AccountPeerStatsViewTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	static JdbcTemplate db;
 
 	@BeforeAll
 	static void migrate() {
 		DataSource ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
-		Flyway.configure().dataSource(ds).locations("classpath:db/migration/analysis").load().migrate();
 		db = new JdbcTemplate(ds);
+		// 공유 컨테이너라 이전 클래스의 잔재 위에서 migrate하면 안 된다 — 리셋 후 전체 재생
+		TestDb.resetAndMigrate(db, ds);
 		// 같은 버킷(1만-5만)·같은 카테고리(스킨케어) 4계정 — avg_views 50k/30k/10k/NULL.
 		db.update("""
 				INSERT INTO accounts (handle, display_name, profile_image_url, followers) VALUES

@@ -16,8 +16,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -27,11 +25,9 @@ import tools.jackson.databind.ObjectMapper;
  * export(미분석 후보·카피 대상 → 프롬프트 JSONL·사이드카) / collect(드라이버 결과 파싱·sanitize →
  * 멱등 INSERT). LLM 호출 자체는 외부 드라이버(claude -p 병렬)가 담당 — 러너는 DB·프롬프트·저장만.
  */
-@Testcontainers
 class ClaudeBurstRunnerTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	static final String INSIGHT_JSON = """
 			{"detectedBrands":null,"sponsoredSignalLevel":"low","sponsoredSignalReasons":null,
