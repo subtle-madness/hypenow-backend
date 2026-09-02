@@ -32,6 +32,13 @@ import org.springframework.stereotype.Service;
  * 그대로 재사용한다(fetchProfile·fetchRecentPosts·fetchPost·fetchComments — 별칭 매핑 없음). 위 4개
  * 전역 조건(self-enabled·force-hiker·proxy)을 모두 통과해도 path가 이 목록에 없으면 그 경로만 Hiker.
  * 빈 값·키 부재는 안전측(전 경로 비활성), 알 수 없는 토큰은 어떤 실제 경로와도 매치되지 않아 무해하다.
+ *
+ * <p>사용자 트리거 비동기 흐름 도입 시점 토글(ig-source.self-user-triggered, 2026-09 — 스펙 참조) —
+ * 새벽 스케줄 트리거(self 1순위 우선 개통)와 사용자 트리거 비동기(등록 백필·보강·해시태그 스윕·메트릭
+ * 백필)를 분리한다. 시드는 false(사용자 트리거는 Hiker 1순위 유지 — 새벽만 self 개통), true로 올리면
+ * 사용자 트리거도 self 1순위로 전환한다. monitoring HikerConfig의 userTriggeredInstagramSource 빈이
+ * 이 값으로 콜마다(≤TTL) instagramSource(self 1순위)와 syncInstagramSource(Hiker 1순위) 중 하나를
+ * 고른다 — 위 경로별·전역 게이트와 독립적인 별도 축이다(자체 폴백 로직 없음, 순수 라우팅).
  */
 @Service
 public class IgSourceSettings {
@@ -86,6 +93,13 @@ public class IgSourceSettings {
 		return true;
 	}
 
+	/** 사용자 트리거 비동기 흐름 전용 토글 — true면 그 흐름도 self 1순위로 라우팅한다(위 클래스 주석).
+	 * 전역 게이트(force-hiker·self-enabled·proxy)와 무관한 별도 축 — 그 게이트는 라우팅된 뒤
+	 * FailoverInstagramSource.route()가 다시 확인한다(이중 게이트, 의도된 중복). */
+	public boolean selfUserTriggered() {
+		return snapshot().selfUserTriggered();
+	}
+
 	public String profileSurface() {
 		return snapshot().profileSurface();
 	}
@@ -127,6 +141,7 @@ public class IgSourceSettings {
 	private Snapshot load(Instant now) {
 		boolean forceHiker = bool("ig-source.force-hiker", false);
 		boolean selfEnabledRaw = bool("ig-source.self-enabled", false);
+		boolean selfUserTriggered = bool("ig-source.self-user-triggered", false);
 		String surface = settings.find("ig-source.profile-surface").filter(v -> !v.isBlank()).orElse("wpi");
 		String docId = settings.find("ig-source.comment-doc-id")
 				.filter(v -> !v.isBlank())
@@ -135,7 +150,8 @@ public class IgSourceSettings {
 				.filter(v -> !v.isBlank())
 				.orElse(proxyProps.commentFriendlyName());
 		Set<String> selfPaths = parseSelfPaths(settings.find("ig-source.self-paths").orElse(""));
-		return new Snapshot(forceHiker, selfEnabledRaw, surface, docId, friendlyName, selfPaths, now.plus(ttl));
+		return new Snapshot(forceHiker, selfEnabledRaw, selfUserTriggered, surface, docId, friendlyName, selfPaths,
+				now.plus(ttl));
 	}
 
 	private boolean bool(String key, boolean dflt) {
@@ -154,18 +170,19 @@ public class IgSourceSettings {
 				.collect(Collectors.toUnmodifiableSet());
 	}
 
-	/** 캐시 스냅샷 — 6개 판정값 + 만료 시각. 성공 조회만 값을 갱신(실패는 withExpiry로 만료만 연장). */
-	private record Snapshot(boolean forceHiker, boolean selfEnabledRaw, String profileSurface,
-			String commentDocId, String commentFriendlyName, Set<String> selfPaths, Instant expiresAt) {
+	/** 캐시 스냅샷 — 7개 판정값 + 만료 시각. 성공 조회만 값을 갱신(실패는 withExpiry로 만료만 연장). */
+	private record Snapshot(boolean forceHiker, boolean selfEnabledRaw, boolean selfUserTriggered,
+			String profileSurface, String commentDocId, String commentFriendlyName, Set<String> selfPaths,
+			Instant expiresAt) {
 
 		Snapshot withExpiry(Instant newExpiresAt) {
-			return new Snapshot(forceHiker, selfEnabledRaw, profileSurface, commentDocId, commentFriendlyName,
-					selfPaths, newExpiresAt);
+			return new Snapshot(forceHiker, selfEnabledRaw, selfUserTriggered, profileSurface, commentDocId,
+					commentFriendlyName, selfPaths, newExpiresAt);
 		}
 
 		static Snapshot safeDefaults(InstagramProxyProperties proxyProps, Instant expiresAt) {
-			return new Snapshot(false, false, "wpi", proxyProps.commentDocId(), proxyProps.commentFriendlyName(),
-					Set.of(), expiresAt);
+			return new Snapshot(false, false, false, "wpi", proxyProps.commentDocId(),
+					proxyProps.commentFriendlyName(), Set.of(), expiresAt);
 		}
 	}
 }

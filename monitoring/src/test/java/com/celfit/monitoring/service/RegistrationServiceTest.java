@@ -110,7 +110,7 @@ class RegistrationServiceTest {
 		var snapshots = new SnapshotRepository(db);
 		var alarms = new AlarmRecorder(new AlarmEventRepository(db), targets, snapshots);
 		var writer = new SnapshotWriter(snapshots, new ProfileMetaRepository(db), new PostMetaRepository(db), alarms);
-		var collect = new CollectService(client, client, writer, new CommentRepository(db), snapshots,
+		var collect = new CollectService(client, client, client, writer, new CommentRepository(db), snapshots,
 				1, 1, 1, 6, Duration.ZERO);
 		// 동기 executor — 백필이 register() 리턴 전에 끝나 결과를 바로 단언할 수 있다.
 		registration = new RegistrationService(collect, targets, alarms, callContext, Runnable::run);

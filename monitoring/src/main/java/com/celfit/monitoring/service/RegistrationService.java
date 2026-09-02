@@ -154,7 +154,9 @@ public class RegistrationService {
 		// (TargetCallContext 주석 참조). 등록 스코프에 기대면 백필 콜이 조용히 미집계로 샌다.
 		metricsBackfill.execute(() -> callContext.runScoped(Set.of(userId), () -> {
 			try {
-				collect.retryReelsMetrics(post.ownerUserId(), List.of(post));
+				// 사용자 트리거 비동기 전용 라우팅(2026-09 도입 시점 토글) — DailySweepJob의
+				// retryReelsMetrics(자체 1순위 고정)와 달리 이 경로는 토글로 Hiker/자체를 오간다.
+				collect.retryReelsMetricsUserTriggered(post.ownerUserId(), List.of(post));
 			} catch (RuntimeException e) {
 				log.warn("등록 직후 저장·리포스트 백필 실패(격리) — {}: {}", post.shortCode(), e.toString());
 			}

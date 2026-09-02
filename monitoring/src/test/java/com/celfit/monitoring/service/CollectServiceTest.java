@@ -55,7 +55,7 @@ class CollectServiceTest {
 			return alwaysMorePage(calls.size());
 		});
 		// enumeratePages=1(이 테스트와 무관), commentPages=3(스윕), registrationCommentPages=1(등록)
-		var collect = new CollectService(client, client, null, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 3, 1, 0, java.time.Duration.ZERO);
+		var collect = new CollectService(client, client, client, null, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 3, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectComments("DbV7LgZsKG8", "rarebeauty");
 		assertThat(calls).hasSize(3);   // 응답이 계속 더 있다고 해도 설정된 3페이지에서 멈춘다
@@ -113,7 +113,7 @@ class CollectServiceTest {
 			}
 			return MEDIAS_ONE_REEL;
 		});
-		var collect = new CollectService(hiker, syncHiker, new RecordingWriter(), new NoopCommentRepository(),
+		var collect = new CollectService(hiker, syncHiker, hiker, new RecordingWriter(), new NoopCommentRepository(),
 				new FbRepo(Set.of("ReelA")), 1, 3, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectAccountForRegistration("acct");
@@ -143,6 +143,37 @@ class CollectServiceTest {
 		hikerCalls.clear();
 		collect.collectComments("Xx1", "acct");
 		assertThat(syncHikerCalls).isEmpty();
+		assertThat(hikerCalls).isNotEmpty();
+	}
+
+	/**
+	 * {@link CollectService#retryReelsMetricsUserTriggered}(등록 직후 백필, 2026-09 사용자 트리거
+	 * 도입 시점 토글)는 생성자 3번째 인자(userTriggeredHiker)로, {@link CollectService#retryReelsMetrics}
+	 * (DailySweepJob 스케줄 전용)는 1번째 인자(hiker)로 clips 재시도 콜이 각자 라우팅된다 — 위
+	 * syncHiker 분리 테스트와 같은 관용구.
+	 */
+	@Test
+	void retryReelsMetricsUserTriggered은_userTriggeredHiker로_retryReelsMetrics는_hiker로_각자_라우팅된다() {
+		List<String> hikerCalls = new ArrayList<>();
+		List<String> userTriggeredCalls = new ArrayList<>();
+		var hiker = new HikerBackend(path -> {
+			hikerCalls.add(path);
+			return CLIPS_HIT;
+		});
+		var userTriggeredHiker = new HikerBackend(path -> {
+			userTriggeredCalls.add(path);
+			return CLIPS_HIT;
+		});
+		var collect = new CollectService(hiker, hiker, userTriggeredHiker, new RecordingWriter(),
+				new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 6, java.time.Duration.ZERO);
+
+		collect.retryReelsMetricsUserTriggered("999", List.of(trackedReel("REELS")));
+		assertThat(hikerCalls).isEmpty();
+		assertThat(userTriggeredCalls).isNotEmpty();
+
+		userTriggeredCalls.clear();
+		collect.retryReelsMetrics("999", List.of(trackedReel("REELS")));
+		assertThat(userTriggeredCalls).isEmpty();
 		assertThat(hikerCalls).isNotEmpty();
 	}
 
@@ -237,7 +268,7 @@ class CollectServiceTest {
 			return MEDIAS_ONE_REEL;
 		});
 		var writer = new RecordingWriter();
-		var collect = new CollectService(client, client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
+		var collect = new CollectService(client, client, client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectAccountForRegistration("acct");
 
@@ -256,7 +287,7 @@ class CollectServiceTest {
 			if (path.startsWith("/v2/user/clips")) return clips(false);
 			return MEDIAS_ONE_REEL;
 		});
-		var collect = new CollectService(client, client, new RecordingWriter(), new NoopCommentRepository(),
+		var collect = new CollectService(client, client, client, new RecordingWriter(), new NoopCommentRepository(),
 				new FbRepo(Set.of("ReelA")), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectAccountForRegistration("acct");
@@ -273,7 +304,7 @@ class CollectServiceTest {
 			if (path.startsWith("/v2/user/clips")) return clips(true);
 			return MEDIAS_ONE_REEL;
 		});
-		var collect = new CollectService(client, client, new RecordingWriter(), new NoopCommentRepository(),
+		var collect = new CollectService(client, client, client, new RecordingWriter(), new NoopCommentRepository(),
 				new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectAccountForRegistration("acct");
@@ -299,7 +330,7 @@ class CollectServiceTest {
 			return singlePost(calls.size() >= 2);
 		});
 		var writer = new RecordingWriter();
-		var collect = new CollectService(client, client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
+		var collect = new CollectService(client, client, client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectPostForRegistration("Xx1");
 
@@ -315,7 +346,7 @@ class CollectServiceTest {
 			return singlePost(false);
 		});
 		var writer = new RecordingWriter();
-		var collect = new CollectService(client, client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
+		var collect = new CollectService(client, client, client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectPostForRegistration("Xx1");
 
@@ -332,7 +363,7 @@ class CollectServiceTest {
 			return singlePost(false);
 		});
 		var writer = new RecordingWriter();
-		var collect = new CollectService(client, client, writer, new NoopCommentRepository(),
+		var collect = new CollectService(client, client, client, writer, new NoopCommentRepository(),
 				new FbRepo(Set.of("Xx1")), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectPostForRegistration("Xx1");
@@ -354,7 +385,7 @@ class CollectServiceTest {
 			if (path.startsWith("/v2/user/clips")) return clips(false);
 			return MEDIAS_ONE_REEL;
 		});
-		var collect = new CollectService(client, client, new RecordingWriter(), new NoopCommentRepository(),
+		var collect = new CollectService(client, client, client, new RecordingWriter(), new NoopCommentRepository(),
 				new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectAccount("acct");
@@ -369,7 +400,7 @@ class CollectServiceTest {
 			calls.add(path);
 			return singlePost(false);
 		});
-		var collect = new CollectService(client, client, new RecordingWriter(), new NoopCommentRepository(),
+		var collect = new CollectService(client, client, client, new RecordingWriter(), new NoopCommentRepository(),
 				new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectPost("Xx1");
@@ -400,7 +431,7 @@ class CollectServiceTest {
 	}
 
 	private static CollectService retryingCollect(HikerBackend client, RecordingWriter writer, int retryMax) {
-		return new CollectService(client, client, writer, new NoopCommentRepository(), new FbRepo(Set.of()),
+		return new CollectService(client, client, client, writer, new NoopCommentRepository(), new FbRepo(Set.of()),
 				1, 1, 1, retryMax, java.time.Duration.ZERO);
 	}
 
@@ -771,7 +802,7 @@ class CollectServiceTest {
 
 	private static CollectService carryingCollect(HikerBackend client, RecordingWriter writer,
 			Set<String> repostsCarry, Set<String> sharesCarry) {
-		return new CollectService(client, client, writer, new NoopCommentRepository(),
+		return new CollectService(client, client, client, writer, new NoopCommentRepository(),
 				new FbRepo(Set.of(), repostsCarry, sharesCarry), 1, 1, 1, 6, java.time.Duration.ZERO);
 	}
 

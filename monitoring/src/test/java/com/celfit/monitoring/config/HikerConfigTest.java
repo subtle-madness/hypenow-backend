@@ -15,6 +15,10 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -45,6 +49,21 @@ class HikerConfigTest {
 		@Override
 		public Optional<String> find(String key) {
 			return Optional.empty();
+		}
+	}
+
+	/** DB 없는 설정 스텁 — 맵에 넣은 값만 반환(사용자 트리거 토글 테스트 전용). */
+	private static final class MapSettingsRepo extends AppSettingRepository {
+		private final Map<String, String> values;
+
+		MapSettingsRepo(Map<String, String> values) {
+			super(null);
+			this.values = values;
+		}
+
+		@Override
+		public Optional<String> find(String key) {
+			return Optional.ofNullable(values.get(key));
 		}
 	}
 
@@ -101,5 +120,66 @@ class HikerConfigTest {
 				.tags("path", "fetchProfile", "backend", "hiker", "outcome", "ok").counter();
 		assertThat(route).isNotNull();
 		assertThat(route.count()).isEqualTo(1.0);
+	}
+
+	// ── userTriggeredInstagramSource — 사용자 트리거 비동기 흐름 도입 시점 토글(2026-09) ──────
+	// 두 위임 대상(instagramSource·syncInstagramSource)을 각자 다른 fake 전송으로 조립해, 라우팅
+	// 빈이 실제로 어느 쪽으로 콜을 보내는지 콜 목록으로 구분한다(둘 다 self-enabled=false 상태라
+	// 내부적으로는 항상 자기 자신의 hiker로 가므로, "어느 리스트에 쌓였는가"가 곧 라우팅 결과다).
+
+	private InstagramSource assemble(HikerConfig config, List<String> calls, IgSourceSettings igSettings,
+			boolean sync) {
+		InstagramProxyProperties proxyProps = new InstagramProxyProperties("", "", null, false, "", "");
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		if (sync) {
+			return config.syncInstagramSource(path -> {
+				calls.add(path);
+				return "{\"user\":{\"pk\":1}}";
+			}, new NoopPayloadRepo(), new BrandCallContext(), new BrandCallCountRepository(null),
+					new TargetCallContext(), new TargetCallCountRepository(null), registry, proxyProps,
+					igSettings, Duration.ofSeconds(2));
+		}
+		return config.instagramSource(path -> {
+			calls.add(path);
+			return "{\"user\":{\"pk\":1}}";
+		}, new NoopPayloadRepo(), new BrandCallContext(), new BrandCallCountRepository(null),
+				new TargetCallContext(), new TargetCallCountRepository(null), registry, proxyProps,
+				igSettings, Duration.ofSeconds(8));
+	}
+
+	@Test
+	void 토글_off_시드값이면_사용자_트리거_라우팅_빈은_syncInstagramSource로만_간다() {
+		HikerConfig config = new HikerConfig();
+		IgSourceSettings igSettings = new IgSourceSettings(new MapSettingsRepo(new HashMap<>()),
+				new InstagramProxyProperties("", "", null, false, "", ""));
+		List<String> selfFirstCalls = new ArrayList<>();
+		List<String> hikerFirstCalls = new ArrayList<>();
+		InstagramSource selfFirst = assemble(config, selfFirstCalls, igSettings, false);
+		InstagramSource hikerFirst = assemble(config, hikerFirstCalls, igSettings, true);
+		InstagramSource routed = config.userTriggeredInstagramSource(selfFirst, hikerFirst, igSettings);
+
+		routed.fetchProfile("hypenow");
+
+		assertThat(hikerFirstCalls).isNotEmpty();
+		assertThat(selfFirstCalls).isEmpty();
+	}
+
+	@Test
+	void 토글_on이면_사용자_트리거_라우팅_빈은_instagramSource로만_간다() {
+		HikerConfig config = new HikerConfig();
+		Map<String, String> values = new HashMap<>();
+		values.put("ig-source.self-user-triggered", "true");
+		IgSourceSettings igSettings = new IgSourceSettings(new MapSettingsRepo(values),
+				new InstagramProxyProperties("", "", null, false, "", ""));
+		List<String> selfFirstCalls = new ArrayList<>();
+		List<String> hikerFirstCalls = new ArrayList<>();
+		InstagramSource selfFirst = assemble(config, selfFirstCalls, igSettings, false);
+		InstagramSource hikerFirst = assemble(config, hikerFirstCalls, igSettings, true);
+		InstagramSource routed = config.userTriggeredInstagramSource(selfFirst, hikerFirst, igSettings);
+
+		routed.fetchProfile("hypenow");
+
+		assertThat(selfFirstCalls).isNotEmpty();
+		assertThat(hikerFirstCalls).isEmpty();
 	}
 }

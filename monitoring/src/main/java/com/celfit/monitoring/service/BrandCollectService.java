@@ -68,12 +68,18 @@ public class BrandCollectService {
 	static final int MAX_ABSENCE_VERIFY_PER_SWEEP = 30;
 	static final Duration ABSENCE_RECHECK = Duration.ofDays(7);
 
-	/** 배치(스윕·백필) 전용 — 자체 1순위 + Hiker 폴백. sweepCore·refreshBrandProfileSafely·
-	 * verifyAbsentTagged와 async 전용 enrich 오버로드가 쓴다. */
+	/** 스케줄 트리거(새벽 스윕) 전용 — 자체 1순위 + Hiker 폴백. sweepCore(2-인자)·enrich(2·3-인자)의
+	 * 기본 오버로드가 쓴다. */
 	private final InstagramSource hiker;
 	/** direct 게시물 동기 등록 전용({@link #enrichSync} · {@link BrandDirectCollectService}) — Hiker
 	 * 1순위 + 장애 시에만 self 구조. 클래스 javadoc 및 {@link #enrichSync} 참조. */
 	private final InstagramSource syncHiker;
+	/** 사용자 트리거 비동기 흐름(등록 백필·보강 — {@link BrandRegistrationService#runBackfillSafely}·
+	 * {@link BrandRegistrationService#runEnrichSafely}) 전용 — 2026-09 도입 시점 토글
+	 * (userTriggeredInstagramSource, HikerConfig 참조). {@link #sweepCoreUserTriggered}·
+	 * {@link #enrichUserTriggered} 오버로드가 쓴다. 시드는 Hiker 1순위와 동형(행동 변화 0), 토글이
+	 * 켜지면 자체 1순위로 전환 — {@link #hiker}·{@link #syncHiker}와 달리 정책 자체가 런타임에 바뀐다. */
+	private final InstagramSource userTriggeredHiker;
 	private final BrandCallContext callContext;
 	private final BrandSnapshotWriter writer;
 	private final BrandSnapshotRepository snapshots;
@@ -90,6 +96,7 @@ public class BrandCollectService {
 	private final boolean adDisclosureEnabled;
 
 	public BrandCollectService(InstagramSource hiker, @Qualifier("syncInstagramSource") InstagramSource syncHiker,
+			@Qualifier("userTriggeredInstagramSource") InstagramSource userTriggeredHiker,
 			BrandCallContext callContext, BrandSnapshotWriter writer,
 			BrandSnapshotRepository snapshots, BrandCommentRepository comments,
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
@@ -102,6 +109,7 @@ public class BrandCollectService {
 			@Value("${monitoring.brand.ad-disclosure.enabled:true}") boolean adDisclosureEnabled) {
 		this.hiker = hiker;
 		this.syncHiker = syncHiker;
+		this.userTriggeredHiker = userTriggeredHiker;
 		this.callContext = callContext;
 		this.writer = writer;
 		this.snapshots = snapshots;
@@ -199,12 +207,21 @@ public class BrandCollectService {
 	 */
 	public List<PostInfo> sweepCore(BrandRow brand, Consumer<List<PostInfo>> onPageCollected) {
 		// 콜 집계 스코프(어드민 크롤링 비용) — 이 안의 Hiker 콜은 전부 이 브랜드 몫으로 계상된다.
-		// 등록 백필(두-인자 직접 호출)도 같은 진입점이라 함께 계상된다.
-		return callContext.scoped(brand.id(), () -> doSweepCore(brand, onPageCollected));
+		return callContext.scoped(brand.id(), () -> doSweepCore(brand, onPageCollected, hiker));
 	}
 
-	private List<PostInfo> doSweepCore(BrandRow brand, Consumer<List<PostInfo>> onPageCollected) {
-		refreshBrandProfileSafely(brand);
+	/**
+	 * 등록 백필({@link BrandRegistrationService#runBackfillSafely}) 전용 진입점 — {@link #userTriggeredHiker}로
+	 * 라우팅한다(필드+진입점 분리 패턴, {@link #enrichSync} 참조). 열거 로직(doSweepCore)은
+	 * {@link #sweepCore(BrandRow, Consumer)}와 완전히 동일 — 소스만 갈린다.
+	 */
+	public List<PostInfo> sweepCoreUserTriggered(BrandRow brand, Consumer<List<PostInfo>> onPageCollected) {
+		return callContext.scoped(brand.id(), () -> doSweepCore(brand, onPageCollected, userTriggeredHiker));
+	}
+
+	private List<PostInfo> doSweepCore(BrandRow brand, Consumer<List<PostInfo>> onPageCollected,
+			InstagramSource source) {
+		refreshBrandProfileSafely(brand, source);
 		Instant now = Instant.now();
 		Instant cutoff = enumerationCutoff(brand, now);
 		LocalDate today = LocalDate.now(KST);
@@ -217,7 +234,7 @@ public class BrandCollectService {
 		boolean coveredCutoff = false;
 		boolean cappedThisRun = false;   // 수집 개수 상한으로 끊겼는가 — 백필 커버리지 기록 입력(스펙 §7-1)
 		while (true) {
-			TaggedPage page = hiker.fetchTaggedPage(brand.igUserId(), cursor);
+			TaggedPage page = source.fetchTaggedPage(brand.igUserId(), cursor);
 			if (page.posts().isEmpty()) {
 				// 태그 0건(404 → 빈 페이지)·커서 종료는 자연 종료. 반대로 아직 커서가 살아 있는데
 				// 빈 페이지가 오는 건 일시 오류와 구분할 수 없어 커버로 치지 않는다(보수적 판정).
@@ -296,7 +313,7 @@ public class BrandCollectService {
 			// 태그 부재 검증(2026-08-25 tagged 삭제 감지 설계) — 커버한 열거에서 사라진 tagged-only
 			// 게시물만 단건 콜로 확정한다. ⑤(수집 상한) 종료는 목표 컷이 아니라 실제 커버 깊이가
 			// 하한이다 — 목표 컷을 쓰면 미도달 구간 전체를 부재로 오판해 검증 콜이 폭주한다.
-			verifyAbsentTagged(brand, seen, cappedThisRun ? oldestTakenAt(collected) : cutoff, now);
+			verifyAbsentTagged(brand, seen, cappedThisRun ? oldestTakenAt(collected) : cutoff, now, source);
 		}
 		if (brand.lastSweptOn() == null) {
 			// 백필 커버리지 기록(스펙 §7-1) — 일일 스윕은 기록하지 않는다(창 커버리지는 백필 속성:
@@ -327,7 +344,8 @@ public class BrandCollectService {
 	 * 매일 콜을 유발하지 않게). 그 외 실패는 격리(다음 스윕 재시도). 재관측(touchCrawled)이 두 표식을
 	 * 해제한다. 검증 하한이 null(⑤ 컷인데 편입 0건 — 깊이 미상)이면 범위를 정할 수 없어 건너뛴다.
 	 */
-	private void verifyAbsentTagged(BrandRow brand, Set<String> seen, Instant verifyFloor, Instant now) {
+	private void verifyAbsentTagged(BrandRow brand, Set<String> seen, Instant verifyFloor, Instant now,
+			InstagramSource source) {
 		if (verifyFloor == null) {
 			return;
 		}
@@ -347,7 +365,7 @@ public class BrandCollectService {
 		int gone = 0;
 		for (String code : toVerify) {
 			try {
-				hiker.fetchPost(code);
+				source.fetchPost(code);
 				taggedPosts.markAbsenceChecked(brand.id(), code, now);
 			} catch (SubjectNotFoundException e) {
 				log.info("tagged 게시물 부재 확정 — unavailable 마킹: {} ({})", code, e.toString());
@@ -439,6 +457,23 @@ public class BrandCollectService {
 	 */
 	public void enrich(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
 		enrich(brand, posts, onVisible, hiker);
+	}
+
+	/**
+	 * 등록 백필({@link BrandRegistrationService#runEnrichSafely}) 전용 진입점 — {@link #userTriggeredHiker}로
+	 * 라우팅한다(필드+진입점 분리 패턴, {@link #enrichSync} 참조). onVisible 훅 의미는
+	 * {@link #enrich(BrandRow, List, Runnable)}와 동일 — 소스만 갈린다.
+	 */
+	public void enrichUserTriggered(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
+		enrich(brand, posts, onVisible, userTriggeredHiker);
+	}
+
+	/**
+	 * 해시태그 수집({@link BrandHashtagCollectService#sweepUserTriggered}) 전용 진입점 — onVisible 없는
+	 * 2-인자 {@link #enrich(BrandRow, List)}의 사용자 트리거 대응판.
+	 */
+	public void enrichUserTriggered(BrandRow brand, List<PostInfo> posts) {
+		enrich(brand, posts, null, userTriggeredHiker);
 	}
 
 	/**
@@ -539,9 +574,9 @@ public class BrandCollectService {
 	 * <b>반드시 best-effort</b>: 프로필 콜 실패(일시 오류·비공개 전환 포함)가 태그 열거 수집을
 	 * 막으면 안 된다 — 브랜드는 탈퇴까지 추적이 정본(스펙 §8)이라 상태 전이도 하지 않는다.
 	 */
-	private void refreshBrandProfileSafely(BrandRow brand) {
+	private void refreshBrandProfileSafely(BrandRow brand, InstagramSource source) {
 		try {
-			ProfileInfo profile = hiker.fetchProfile(brand.username());
+			ProfileInfo profile = source.fetchProfile(brand.username());
 			writer.saveBrandProfile(brand.id(), brand.username(), LocalDate.now(KST), profile);
 		} catch (RuntimeException e) {
 			log.warn("브랜드 프로필 갱신 실패(격리, best-effort) — {}: {}", brand.username(), e.toString());

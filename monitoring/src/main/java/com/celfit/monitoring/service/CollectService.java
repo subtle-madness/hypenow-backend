@@ -30,11 +30,16 @@ import org.springframework.stereotype.Service;
  * <p><b>동기·비동기 소스 분리</b> — {@code *ForRegistration} 3종({@link #collectAccountForRegistration}·
  * {@link #collectPostForRegistration}·{@link #collectCommentsForRegistration})은 was→monitoring
  * 동기 등록 요청 스레드에서 돈다({@link RegistrationService} 참조) — {@link #syncHiker}(Hiker 1순위 +
- * 장애 시에만 self 구조)를 쓴다. 나머지(스윕용 {@link #collectAccount}·{@link #collectPost}·
- * {@link #collectComments}·{@link #collectTrackedPost}·재시도 계열)는 {@link DailySweepJob}(02:00
- * 크론) 또는 등록 직후 백그라운드 백필(metricsBackfillExecutor)에서만 돌아 {@link #hiker}(자체 1순위
- * + Hiker 폴백, 배치용 절감 경로)를 그대로 쓴다 — 이 분리는 기존에 이미 있던 메서드 분리를 그대로
- * 활용한다(새 분기 없음).
+ * 장애 시에만 self 구조)를 쓴다. 스윕용({@link #collectAccount}·{@link #collectPost}·
+ * {@link #collectComments}·{@link #collectTrackedPost})은 {@link DailySweepJob}(02:00 크론) 전용이라
+ * {@link #hiker}(자체 1순위 + Hiker 폴백, 배치용 절감 경로)를 그대로 쓴다.
+ *
+ * <p><b>{@link #retryReelsMetrics}만 예외</b> — DailySweepJob(스케줄)과 등록 직후 백그라운드 백필
+ * (metricsBackfillExecutor, {@link RegistrationService#scheduleMetricsBackfill}, 사용자 트리거)이
+ * 같은 메서드를 공유한다. 그래서 2026-09 사용자 트리거 도입 시점 토글을 위해 이 메서드만
+ * {@link #userTriggeredHiker}로 라우팅하는 {@link #retryReelsMetricsUserTriggered} 대응판을 따로
+ * 둔다(필드+진입점 분리 패턴, BrandCollectService.enrichSync와 동형) — DailySweepJob은 그대로
+ * {@link #retryReelsMetrics}(hiker, 자체 1순위)를 쓴다.
  */
 @Service
 public class CollectService {
@@ -45,10 +50,13 @@ public class CollectService {
 
 	private static final Logger log = LoggerFactory.getLogger(CollectService.class);
 
-	/** 배치(스윕·백필) 전용 — 자체 1순위 + Hiker 폴백. */
+	/** 배치(스윕) 전용 — 자체 1순위 + Hiker 폴백. */
 	private final InstagramSource hiker;
 	/** 등록(동기) 전용 — Hiker 1순위 + 장애 시에만 self 구조. 클래스 javadoc 참조. */
 	private final InstagramSource syncHiker;
+	/** 등록 직후 메트릭 백필(사용자 트리거 비동기, {@link #retryReelsMetricsUserTriggered}) 전용 — 2026-09
+	 * 도입 시점 토글(userTriggeredInstagramSource, HikerConfig 참조). 클래스 javadoc 참조. */
+	private final InstagramSource userTriggeredHiker;
 	private final SnapshotWriter writer;
 	private final CommentRepository comments;
 	private final SnapshotRepository snapshots;
@@ -70,6 +78,7 @@ public class CollectService {
 	 * 같은 꽝 세션을 되받아 재시도가 헛돈다.
 	 */
 	public CollectService(InstagramSource hiker, @Qualifier("syncInstagramSource") InstagramSource syncHiker,
+			@Qualifier("userTriggeredInstagramSource") InstagramSource userTriggeredHiker,
 			SnapshotWriter writer, CommentRepository comments,
 			SnapshotRepository snapshots,
 			@Value("${monitoring.enumerate-pages:1}") int enumeratePages,
@@ -79,6 +88,7 @@ public class CollectService {
 			@Value("${monitoring.metrics-retry-delay:10s}") Duration metricsRetryDelay) {
 		this.hiker = hiker;
 		this.syncHiker = syncHiker;
+		this.userTriggeredHiker = userTriggeredHiker;
 		this.writer = writer;
 		this.comments = comments;
 		this.snapshots = snapshots;
@@ -230,6 +240,19 @@ public class CollectService {
 	 * 즉시 재콜하면 Hiker 응답 캐시로 같은 꽝 세션을 되받는다.
 	 */
 	public void retryReelsMetrics(String userId, List<PostInfo> trackedPosts) {
+		retryReelsMetrics(hiker, userId, trackedPosts);
+	}
+
+	/**
+	 * 등록 직후 백필({@link RegistrationService#scheduleMetricsBackfill}) 전용 진입점 —
+	 * {@link #userTriggeredHiker}로 라우팅한다(필드+진입점 분리 패턴). 규칙·상한은
+	 * {@link #retryReelsMetrics(String, List)}와 완전히 동일 — 소스만 갈린다.
+	 */
+	public void retryReelsMetricsUserTriggered(String userId, List<PostInfo> trackedPosts) {
+		retryReelsMetrics(userTriggeredHiker, userId, trackedPosts);
+	}
+
+	private void retryReelsMetrics(InstagramSource source, String userId, List<PostInfo> trackedPosts) {
 		List<PostInfo> clipsPending = new ArrayList<>();
 		List<PostInfo> singlePending = new ArrayList<>();
 		for (PostInfo p : applyZeroCarry(trackedPosts)) {
@@ -250,9 +273,9 @@ public class CollectService {
 				return;   // 인터럽트는 종료 신호 — 보강만 포기한다(내일 스윕이 다시 시도).
 			}
 			// 단건을 먼저 돈다 — clips 처리에서 방금 전환된 게시물이 같은 시도에 즉시 재콜되지 않게.
-			List<PostInfo> singleNext = retrySinglesOnce(singlePending, attempt);
+			List<PostInfo> singleNext = retrySinglesOnce(source, singlePending, attempt);
 			if (!clipsPending.isEmpty()) {
-				clipsPending = retryClipsOnce(userId, clipsPending, singleNext, attempt);
+				clipsPending = retryClipsOnce(source, userId, clipsPending, singleNext, attempt);
 			}
 			singlePending = singleNext;
 		}
@@ -341,9 +364,9 @@ public class CollectService {
 	}
 
 	/** clips 복권 1회 — 창 밖 판정 게시물은 {@code singleNext}로 넘긴다. @return 다음 시도의 clips 대기분. */
-	private List<PostInfo> retryClipsOnce(String userId, List<PostInfo> pending,
+	private List<PostInfo> retryClipsOnce(InstagramSource source, String userId, List<PostInfo> pending,
 			List<PostInfo> singleNext, int attempt) {
-		Map<String, ClipCounts> observed = hiker.fetchClipCounts(userId, enumeratePages);
+		Map<String, ClipCounts> observed = source.fetchClipCounts(userId, enumeratePages);
 		List<PostInfo> next = new ArrayList<>();
 		for (PostInfo p : pending) {
 			ClipCounts c = observed.get(p.shortCode());
@@ -378,12 +401,12 @@ public class CollectService {
 	 * 공유수의 사실상 마지막 기회다. 콜 실패는 삼키고 다음 시도에 맡긴다(best-effort —
 	 * 상한이 이미 폭주를 막는다).
 	 */
-	private List<PostInfo> retrySinglesOnce(List<PostInfo> pending, int attempt) {
+	private List<PostInfo> retrySinglesOnce(InstagramSource source, List<PostInfo> pending, int attempt) {
 		List<PostInfo> next = new ArrayList<>();
 		for (PostInfo p : pending) {
 			PostInfo observed;
 			try {
-				observed = hiker.fetchPost(p.shortCode());
+				observed = source.fetchPost(p.shortCode());
 			} catch (RuntimeException e) {
 				log.warn("저장·리포스트 단건 재시도 실패 — {} 다음 시도에 재콜: {}", p.shortCode(), e.toString());
 				next.add(p);

@@ -263,12 +263,16 @@ public class BrandRegistrationService {
 	 * 콜백이 페이지분만 주므로 페이지끼리 겹치지 않아 중복 필터(구 earlyCodes)가 필요 없다.
 	 *
 	 * <p>core 실패는 격리 — 이미 정산된 페이지는 서빙을 유지하고, 다음 스윕이 잔여를 백스톱한다.
+	 *
+	 * <p>열거·보강 모두 사용자 트리거 비동기 전용 라우팅(sweepCoreUserTriggered·아래 runEnrichSafely의
+	 * enrichUserTriggered)을 탄다 — 2026-09 도입 시점 토글(ig-source.self-user-triggered, 시드 false)이
+	 * 켜지기 전까지는 이 백필 경로가 Hiker 1순위로 남는다(새벽 스윕은 그대로 자체 1순위).
 	 */
 	private void runBackfillSafely(BrandRow row) {
 		try {
 			AtomicBoolean served = new AtomicBoolean();
 			List<CompletableFuture<Void>> pages = new ArrayList<>();
-			collect.sweepCore(row, page -> {
+			collect.sweepCoreUserTriggered(row, page -> {
 				// 이 콜백 자체는 sweepCore 안에서 순차 호출된다 — pages.isEmpty()는 "아직 아무
 				// 페이지도 제출 안 한 시점"을 경합 없이 가리킨다(= 이번이 첫 페이지).
 				Runnable onVisible = pages.isEmpty()
@@ -301,7 +305,7 @@ public class BrandRegistrationService {
 	 */
 	private void runEnrichSafely(BrandRow row, List<PostInfo> posts, Runnable onVisible) {
 		try {
-			collect.enrich(row, posts, onVisible);
+			collect.enrichUserTriggered(row, posts, onVisible);
 		} catch (RuntimeException e) {
 			log.warn("브랜드 등록 보강 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 		}
@@ -353,7 +357,7 @@ public class BrandRegistrationService {
 	 */
 	private void runHashtagSweepSafely(BrandRow row) {
 		try {
-			hashtagCollect.sweep(row);
+			hashtagCollect.sweepUserTriggered(row);
 		} catch (RuntimeException e) {
 			log.warn("브랜드 해시태그 스윕 실패(격리) — {} 다음 야간 스윕이 백스톱: {}", row.username(), e.toString());
 		}

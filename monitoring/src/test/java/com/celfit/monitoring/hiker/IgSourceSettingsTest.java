@@ -363,6 +363,54 @@ class IgSourceSettingsTest {
 		assertThat(settings.selfEnabledForPath("fetchPost")).isFalse();
 	}
 
+	// ── 사용자 트리거 비동기 흐름 도입 시점 토글(ig-source.self-user-triggered, 2026-09) ─────
+	// 새벽 스케줄 트리거(instagramSource 빈, self-enabled만으로 개통)와 사용자 트리거 비동기
+	// (userTriggeredInstagramSource 빈)를 분리하는 별도 축 — 전역 게이트(force-hiker·self-enabled·
+	// proxy)와 무관하게 이 값 하나로 판정한다(실제 self 사용 가능 여부는 라우팅된 뒤 selfEnabled가
+	// 다시 게이트한다).
+
+	/** 마이그레이션 시드값 — false(사용자 트리거는 계속 Hiker 1순위, 행동 변화 0). */
+	@Test
+	void 시드_기본값에서_selfUserTriggered는_false다() {
+		assertThat(settings().selfUserTriggered()).isFalse();
+	}
+
+	@Test
+	void self_user_triggered를_true로_올리면_재시작_없이_반영된다() {
+		repo.upsert("ig-source.self-user-triggered", "true");
+		assertThat(settings().selfUserTriggered()).isTrue();
+	}
+
+	/** 전역 게이트(self-enabled)와 무관한 별도 축 — self-enabled가 꺼져 있어도 이 값만으로 판정한다. */
+	@Test
+	void self_user_triggered는_self_enabled와_무관하게_독립_판정된다() {
+		repo.upsert("ig-source.self-user-triggered", "true");
+		IgSourceSettings settings = settings();
+
+		assertThat(settings.selfUserTriggered()).isTrue();
+		assertThat(settings.selfEnabled()).isFalse();   // self-enabled는 시드 기본값(false) 그대로
+	}
+
+	@Test
+	void self_user_triggered_변경도_TTL_경유로_반영된다() {
+		IgSourceSettings settings = settings();
+		assertThat(settings.selfUserTriggered()).isFalse();
+
+		repo.upsert("ig-source.self-user-triggered", "true");
+		// TTL 내 — 아직 캐시가 살아있어 반영되지 않는다.
+		assertThat(settings.selfUserTriggered()).isFalse();
+
+		clock.advance(TTL.plusSeconds(1));
+		assertThat(settings.selfUserTriggered()).isTrue();
+	}
+
+	@Test
+	void DB_예외이고_직전_캐시가_없으면_selfUserTriggered도_false_안전측이다() {
+		IgSourceSettings settings = new IgSourceSettings(new AlwaysFailingRepo(), proxyProps, clock, TTL);
+
+		assertThat(settings.selfUserTriggered()).isFalse();
+	}
+
 	@Test
 	void 프록시_URL이_비어있으면_self_paths에_있어도_selfEnabledForPath는_false다() {
 		InstagramProxyProperties noProxy = new InstagramProxyProperties(null, null,

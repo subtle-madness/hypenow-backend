@@ -438,7 +438,7 @@ class BrandCollectServiceTest {
 	}
 
 	private BrandCollectService service(int maxPostsPerSweep, int collectionPostLimit) {
-		return new BrandCollectService(client(), client(), callContext, writer, snapshots, comments, tagged, authors,
+		return new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments, tagged, authors,
 				brands, new FakeAdJudge(), Runnable::run, maxPostsPerSweep, collectionPostLimit, 3, 30, true);
 	}
 
@@ -1326,7 +1326,7 @@ class BrandCollectServiceTest {
 		});
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
-			BrandCollectService svc = new BrandCollectService(latched, latched, callContext, writer, snapshots,
+			BrandCollectService svc = new BrandCollectService(latched, latched, latched, callContext, writer, snapshots,
 					comments, tagged, authors, brands, new FakeAdJudge(), pool, 2000, 10000, 3, 30, true);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
@@ -1600,7 +1600,7 @@ class BrandCollectServiceTest {
 			syncOnlyCalls.add(path);
 			return authorOrCommentResponse(path);
 		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
-		BrandCollectService svc = new BrandCollectService(hikerBackend, syncBackend, callContext, writer, snapshots,
+		BrandCollectService svc = new BrandCollectService(hikerBackend, syncBackend, hikerBackend, callContext, writer, snapshots,
 				comments, tagged, authors, brands, new FakeAdJudge(), Runnable::run, 10000, 10000, 3, 30, false);
 		PostInfo p = post("AAA", RECENT, "111", 3L);
 
@@ -1614,6 +1614,85 @@ class BrandCollectServiceTest {
 
 		assertThat(syncOnlyCalls).isEmpty();
 		assertThat(hikerOnlyCalls).isNotEmpty();
+	}
+
+	/**
+	 * {@link BrandCollectService#enrichUserTriggered}(등록 백필 전용, 2026-09 사용자 트리거 도입 시점
+	 * 토글)는 생성자 3번째 인자(userTriggeredHiker)로, {@link BrandCollectService#enrich(BrandRow, List)}·
+	 * {@link BrandCollectService#enrich(BrandRow, List, Runnable)}(스케줄 스윕 전용)는 1번째 인자
+	 * (hiker)로 게시자·댓글 콜을 각자 라우팅한다 — 위 syncHiker 분리 테스트와 같은 관용구.
+	 */
+	@Test
+	void enrichUserTriggered은_userTriggeredHiker로_enrich는_hiker로_게시자_댓글_콜이_각자_라우팅된다() {
+		List<String> hikerOnlyCalls = new ArrayList<>();
+		List<String> userTriggeredOnlyCalls = new ArrayList<>();
+		HikerBackend hikerBackend = new HikerBackend(new CountingHikerHttp(path -> {
+			hikerOnlyCalls.add(path);
+			return authorOrCommentResponse(path);
+		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
+		HikerBackend userTriggeredBackend = new HikerBackend(new CountingHikerHttp(path -> {
+			userTriggeredOnlyCalls.add(path);
+			return authorOrCommentResponse(path);
+		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
+		BrandCollectService svc = new BrandCollectService(hikerBackend, hikerBackend, userTriggeredBackend,
+				callContext, writer, snapshots, comments, tagged, authors, brands, new FakeAdJudge(),
+				Runnable::run, 10000, 10000, 3, 30, false);
+		PostInfo p = post("AAA", RECENT, "111", 3L);
+
+		svc.enrichUserTriggered(brand, List.of(p), null);
+
+		assertThat(hikerOnlyCalls).isEmpty();
+		assertThat(userTriggeredOnlyCalls).isNotEmpty();
+
+		userTriggeredOnlyCalls.clear();
+		svc.enrich(brand, List.of(p));
+
+		assertThat(userTriggeredOnlyCalls).isEmpty();
+		assertThat(hikerOnlyCalls).isNotEmpty();
+	}
+
+	/**
+	 * {@link BrandCollectService#sweepCoreUserTriggered}(등록 백필 열거 전용)도 같은 규칙 —
+	 * {@link BrandCollectService#sweepCore(BrandRow, java.util.function.Consumer)}(스케줄 스윕)는
+	 * hiker로, 백필 전용은 userTriggeredHiker로 태그 열거·브랜드 프로필 갱신 콜이 각자 라우팅된다.
+	 */
+	@Test
+	void sweepCoreUserTriggered은_userTriggeredHiker로_sweepCore는_hiker로_열거_콜이_각자_라우팅된다() {
+		List<String> hikerOnlyCalls = new ArrayList<>();
+		List<String> userTriggeredOnlyCalls = new ArrayList<>();
+		HikerBackend hikerBackend = new HikerBackend(path -> {
+			hikerOnlyCalls.add(path);
+			return enumerationResponse(path);
+		});
+		HikerBackend userTriggeredBackend = new HikerBackend(path -> {
+			userTriggeredOnlyCalls.add(path);
+			return enumerationResponse(path);
+		});
+		BrandCollectService svc = new BrandCollectService(hikerBackend, hikerBackend, userTriggeredBackend,
+				callContext, writer, snapshots, comments, tagged, authors, brands, new FakeAdJudge(),
+				Runnable::run, 10000, 10000, 3, 30, false);
+
+		svc.sweepCoreUserTriggered(brand, page -> { });
+
+		assertThat(hikerOnlyCalls).isEmpty();
+		assertThat(userTriggeredOnlyCalls).isNotEmpty();
+
+		userTriggeredOnlyCalls.clear();
+		svc.sweepCore(brand, page -> { });
+
+		assertThat(userTriggeredOnlyCalls).isEmpty();
+		assertThat(hikerOnlyCalls).isNotEmpty();
+	}
+
+	/** 브랜드 프로필·빈 태그 열거만 응답하는 최소 대역 — 위 열거 소스 분리 테스트 전용. */
+	private static String enumerationResponse(String path) {
+		if (path.startsWith("/v2/user/by/username")) {
+			return BRAND_PROFILE_JSON;
+		}
+		if (path.startsWith("/v2/user/tag/medias")) {
+			return page(null);   // 빈 페이지 — 태그 0건, 자연 종료
+		}
+		throw new IllegalStateException("예상 밖 콜: " + path);
 	}
 
 	/** 게시자 프로필·댓글 콜만 응답하는 최소 대역 — 위 소스 분리 테스트 전용. */
@@ -1635,7 +1714,7 @@ class BrandCollectServiceTest {
 	}
 
 	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge, boolean adDisclosureEnabled) {
-		return new BrandCollectService(client(), client(), callContext, writer, snapshots, comments, tagged, authors,
+		return new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments, tagged, authors,
 				brands, adJudge, Runnable::run, 10000, 10000, 3, 30, adDisclosureEnabled);
 	}
 

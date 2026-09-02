@@ -5,6 +5,7 @@ import com.celfit.instagram.source.HikerBackend;
 import com.celfit.instagram.source.HikerFirstInstagramSource;
 import com.celfit.instagram.source.HikerHttp;
 import com.celfit.instagram.source.InstagramSource;
+import com.celfit.instagram.source.ToggledInstagramSource;
 import com.celfit.instagram.source.self.DirectCommentFetcher;
 import com.celfit.instagram.source.self.EmbedPostFetcher;
 import com.celfit.instagram.source.self.FeedUserPostsFetcher;
@@ -28,6 +29,7 @@ import com.celfit.monitoring.store.RawPayloadRepository;
 import com.celfit.monitoring.store.TargetCallCountRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -129,5 +131,24 @@ public class HikerConfig {
 
 		return new HikerFirstInstagramSource(hikerBackend, rescueSelf, igSettings::selfEnabledForPath,
 				new MicrometerInstagramSourceMetrics(meterRegistry));
+	}
+
+	/**
+	 * 사용자 트리거 비동기 흐름(등록 백필·보강·해시태그 스윕·메트릭 백필) 전용 라우팅 빈 — 2026-09
+	 * 사용자 트리거 도입 시점 토글(스펙 참조). 위 {@link #instagramSource}(자체 1순위)와
+	 * {@link #syncInstagramSource}(Hiker 1순위) 두 완성 빈을 그대로 재사용해 콜마다
+	 * {@link IgSourceSettings#selfUserTriggered()}로 위임만 한다({@link ToggledInstagramSource} —
+	 * 새 폴백 로직 없음). 토글은 TTL(기본 5초)만큼의 지연으로 재배포 없이 반영된다.
+	 *
+	 * <p>시드는 false라 사용자 트리거 비동기는 {@link #syncInstagramSource}와 동형(Hiker 1순위 +
+	 * 장애 시에만 self 구조)으로 계속 동작한다 — 이미 개통된 새벽 스케줄 트리거(그대로
+	 * {@link #instagramSource}를 쓴다)와 도입 시점만 분리됐을 뿐, 최종적으로는 이 빈도 자체 1순위로
+	 * 수렴한다(영구 구조가 아니라 단계적 개통 수단).
+	 */
+	@Bean("userTriggeredInstagramSource")
+	public InstagramSource userTriggeredInstagramSource(
+			@Qualifier("instagramSource") InstagramSource selfFirst,
+			@Qualifier("syncInstagramSource") InstagramSource hikerFirst, IgSourceSettings igSettings) {
+		return new ToggledInstagramSource(selfFirst, hikerFirst, igSettings::selfUserTriggered);
 	}
 }
