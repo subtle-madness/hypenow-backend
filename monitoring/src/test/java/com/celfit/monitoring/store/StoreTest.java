@@ -153,6 +153,89 @@ class StoreTest {
 				.containsEntry("shares", 7L).containsEntry("shares_hidden", false);
 	}
 
+	// ── 같은 날 재수집 시 null 관측의 덮어쓰기 보호(데이터 보호 결함 수정) ──────
+	// self 단건(embed)은 saves/shares/reposts를 구조적으로 항상 null 반환한다 — 같은 날 Hiker가
+	// 채운 값 위에 self가 재수집하면 null로 덮이던 결함(fb_plays 캐리포워드와 동일 원칙 적용).
+
+	/** saves·shares·reposts는 EXCLUDED가 null이면 기존값을 유지한다(views/fb_plays 캐리포워드와 동형). */
+	@Test
+	void 저장_공유_리포스트_null_관측은_기존_값을_보존한다() {
+		var full = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 2L, 100L, null, 3L, 4L, 5L, null, null, null, true, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), full);
+
+		var selfOnly = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 2L, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), selfOnly);
+
+		assertThat(db.queryForMap("SELECT saves, shares, reposts FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("saves", 3L).containsEntry("shares", 4L).containsEntry("reposts", 5L);
+	}
+
+	/** comments의 null은 "파싱 실패"뿐이다(정상적으로 숨길 수 없는 값) — 동일 보호 적용. */
+	@Test
+	void 댓글수_null_관측은_기존_값을_보존한다() {
+		var known = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 5L, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), known);
+
+		var failed = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, null, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), failed);
+
+		assertThat(db.queryForMap("SELECT comments FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("comments", 5L);
+	}
+
+	/**
+	 * likes=null인데 likes_hidden=false인 관측(self의 정규식 파싱 실패를 "숨김 단정"하지 않도록 고친
+	 * 결과 — 수정 2)은 "미확정"으로 취급해 기존 좋아요·숨김 상태를 보존한다. likes_hidden=true(진짜
+	 * 숨김 관측)는 보호 대상이 아니다(아래 테스트로 구분).
+	 */
+	@Test
+	void 좋아요_미확정_null은_기존_값을_보존한다() {
+		var known = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				50L, 2L, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), known);
+
+		var ambiguous = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				null, 2L, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), ambiguous);
+
+		assertThat(db.queryForMap("SELECT likes, likes_hidden FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("likes", 50L).containsEntry("likes_hidden", false);
+	}
+
+	/** likes_hidden=true(진짜 숨김 관측)는 "미확정" 보호 대상이 아니라 정상적으로 기존 값을 덮는다. */
+	@Test
+	void 좋아요_실제_숨김_관측은_기존_값을_null로_덮는다() {
+		var known = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				50L, 2L, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), known);
+
+		var hidden = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				null, 2L, 100L, null, null, null, null, null, null, null, true, true, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), hidden);
+
+		assertThat(db.queryForMap("SELECT likes, likes_hidden FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("likes", null).containsEntry("likes_hidden", true);
+	}
+
+	/** shares_hidden=true(진짜 숨김 관측)도 likes와 동형 — 보호 대상이 아니라 정상적으로 기존 값을 덮는다. */
+	@Test
+	void 공유_실제_숨김_관측은_기존_값을_null로_덮는다() {
+		var known = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 2L, 100L, null, null, 7L, null, null, null, null, true, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), known);
+
+		var hidden = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 2L, 100L, null, null, null, null, null, null, null, true, false, true);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), hidden);
+
+		assertThat(db.queryForMap("SELECT shares, shares_hidden FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("shares", null).containsEntry("shares_hidden", true);
+	}
+
 	// ── 0 캐리 판정(08-05) — 구조적 키 부재 게시물의 매일 헛 재시도 차단 ────────
 	// 양수 관측 이력이 전무하고 전일 행이 0으로 끝났으면(0 간주 산물) 오늘은 재시도 없이 0을
 	// 잇는다. 양수 이력이 있거나 전일이 null(전부 꽝 이월)이면 대상이 아니다 — 근거 없는 캐리 금지.
@@ -523,6 +606,43 @@ class StoreTest {
 		assertThat(row.get("caption")).isEqualTo("캡션 수정본");
 		assertThat(row.get("thumbnail_url")).isEqualTo("https://cdn/thumb2.jpg");
 		assertThat(row.get("first_seen_at")).isEqualTo(firstSeenAt);
+	}
+
+	/**
+	 * 캡션 3-상태 계약(트랙 HH) — null=미수집(파싱 실패), ""=확인된 무캡션, 값=원문. null 수집이
+	 * 기존 캡션을 지우면 안 된다(데이터 보호 결함 수정 — 결손 제로 요구, thumbnail_url과 동형 보호).
+	 */
+	@Test
+	void 캡션_null_수집은_기존_캡션을_보존한다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션 원문", "https://cdn/thumb1.jpg");
+
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 29), null, "https://cdn/thumb1.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("caption")).isEqualTo("캡션 원문");
+	}
+
+	/** 빈 문자열("")은 "확인된 무캡션"이라는 정당한 값이므로 기존값 여부와 무관하게 정상적으로 덮인다. */
+	@Test
+	void 캡션_빈문자열은_확인된_무캡션으로_기존값을_덮는다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션 원문", "https://cdn/thumb1.jpg");
+
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 29), "", "https://cdn/thumb1.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("caption")).isEqualTo("");
+	}
+
+	/**
+	 * 신규 게시물 최초 수집이 캡션 미확보(null)면 null로 그대로 삽입된다 — 손실은 없지만(기존 행이
+	 * 없었으므로) "결손" 상태가 남는다(잔여 경계, 보고서 참조). 다음 재수집에서 값이나 ""로 자연 치유.
+	 */
+	@Test
+	void 최초_수집이_캡션_null이면_null로_삽입된다() {
+		postMeta.upsert("SC2", "acct_a", "REELS", LocalDate.of(2026, 7, 28), null, "https://cdn/thumb1.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC2'");
+		assertThat(row.get("caption")).isNull();
 	}
 
 	/** 일시적으로 썸네일을 못 얻은 수집이 기존 유효 URL을 지우면 안 된다(계약 §3 post_meta). */

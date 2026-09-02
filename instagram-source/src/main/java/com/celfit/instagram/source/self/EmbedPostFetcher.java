@@ -4,6 +4,8 @@ import com.celfit.instagram.source.PostInfo;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * embed 단건 fetcher — /p/{code}/embed/captioned/ 서버렌더 HTML에서 지표를 파싱한다(로그인·doc_id 불필요).
@@ -12,8 +14,19 @@ import java.util.regex.Pattern;
  * 좋아요·댓글·소유자·캡션은 렌더 텍스트에서, 조회수(video_view_count)만 릴스의 이스케이프된
  * JSON에서 뽑는다. 삭제·비공개 게시물은 302 리다이렉트(빈 본문) 또는 200 "빈 셸"(소유자·좋아요
  * 부재)로 온다 — 둘 다 NOT_FOUND로 분류해 폴백 없이 스킵시킨다.
+ *
+ * <p><b>좋아요 숨김 판정(데이터 보호 결함 수정)</b> — Hiker는 IG의 명시 플래그
+ * (like_and_view_counts_disabled)로 숨김을 판정하지만, self는 그런 신호가 없다. 좋아요 카운트
+ * 렌더 텍스트({@link #LIKES})가 안 잡히면 "진짜 숨김"과 "정규식 파싱 실패"(로케일 변경 등)를
+ * 신뢰 가능하게 구분할 신호가 없다(실 픽스처·라이브 조사로도 확인 못 함 — 결함 보고서 참조).
+ * 그래서 likesHidden을 단정하지 않고 항상 false를 반환한다 — "숨김 단정"이 틀리면 저장 계층에
+ * 영구 오염(실제로는 숨김이 아닌데 likes_hidden=true로 굳음)을 남기지만, false로 두면 저장
+ * 계층(SnapshotRepository.upsertPost)이 이 행을 "미확정 관측"으로 인식해 기존 likes·likes_hidden을
+ * 보존한다 — 실패를 안전한 쪽(보수적 미확정)으로 접는다.
  */
 public class EmbedPostFetcher {
+
+	private static final Logger log = LoggerFactory.getLogger(EmbedPostFetcher.class);
 
 	/** 저수준 전송 심 — 운영은 SelfHttpClient::get, 테스트는 픽스처 반환 람다를 꽂는다. */
 	@FunctionalInterface
@@ -72,6 +85,12 @@ public class EmbedPostFetcher {
 			// 200인데 소유자·좋아요 둘 다 없는 빈 셸 — 삭제·비공개 게시물의 또 다른 응답 셰이프.
 			throw new SelfCrawlException(SelfErrorClass.NOT_FOUND, "embed 빈 셸: " + shortCode);
 		}
+		if (likes == null) {
+			// 소유자는 있는데 좋아요 카운트만 안 잡힘 — 진짜 숨김인지 파싱 실패인지 구분할 신호가
+			// 없다(클래스 주석 참조). 숨김 단정 금지 — 저장 계층이 "미확정"으로 보호하도록 관측
+			// 가능하게 남긴다.
+			log.warn("embed 좋아요 카운트 파싱 실패(숨김 여부 미확정) shortCode={}", shortCode);
+		}
 		Long comments = number(first(COMMENTS, body));
 		Long views = number(first(VIEWS, body));
 		String caption = caption(body);
@@ -80,7 +99,7 @@ public class EmbedPostFetcher {
 
 		return new PostInfo(shortCode, username, null, null, null, contentType, caption,
 				null, null, likes, comments, views, null, null, null, null, null, null, null,
-				views != null, likes == null, false);
+				views != null, false, false);
 	}
 
 	private static String first(Pattern p, String body) {

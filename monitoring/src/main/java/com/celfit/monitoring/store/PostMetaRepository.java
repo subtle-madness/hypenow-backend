@@ -24,7 +24,14 @@ public class PostMetaRepository {
 
 	/**
 	 * thumbnailUrl이 null이면(일시적 미취득) 기존 값을 덮지 않는다 — COALESCE(EXCLUDED, 기존값) 패턴.
-	 * caption은 항상 EXCLUDED로 덮는다(수정 반영 — 계약 §3). first_seen_at은 갱신 안 함(최초 관측 보존).
+	 * first_seen_at은 갱신 안 함(최초 관측 보존).
+	 *
+	 * <p><b>캡션 3-상태 계약(트랙 HH, 데이터 보호 결함 수정)</b> — null=미수집(파싱 실패) /
+	 * ''=확인된 무캡션 / 값=원문. caption이 null이면(수집 실패) 기존 캡션을 지우지 않고 보존한다
+	 * (thumbnailUrl과 동일 COALESCE 패턴). 과거엔 caption을 항상 EXCLUDED로 덮었는데, 호출부
+	 * (SnapshotWriter)가 null을 ""로 강제 변환해 넘기던 시절엔 이게 곧 "파싱 실패가 기존 캡션을
+	 * 빈 문자열로 지우는" 결손 경로였다. 빈 문자열("")은 "확인된 무캡션"이라는 정당한 값이므로
+	 * COALESCE에 걸리지 않고 정상적으로 덮는다 — null만 "미확보"로 보호 대상이다.
 	 *
 	 * <p>트랙 KK(profile_meta 결함 ②)와 동형 — thumbnailUrl도 저장 전 스킴을 정규화한다. Hiker
 	 * 업스트림이 이따금 무효 스킴을 줄 수 있는 구조가 profile_pic_url과 동일하므로, http(s)가 아니면
@@ -40,7 +47,7 @@ public class PostMetaRepository {
 				  username = EXCLUDED.username,
 				  content_type = EXCLUDED.content_type,
 				  uploaded_at = EXCLUDED.uploaded_at,
-				  caption = EXCLUDED.caption,
+				  caption = COALESCE(EXCLUDED.caption, post_meta.caption),
 				  thumbnail_url = COALESCE(EXCLUDED.thumbnail_url, post_meta.thumbnail_url)""",
 				shortCode, username, contentType, uploadedAt, caption, normalizedThumbnailUrl);
 	}
