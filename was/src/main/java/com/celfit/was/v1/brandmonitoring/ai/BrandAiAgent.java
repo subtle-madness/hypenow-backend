@@ -344,6 +344,18 @@ public class BrandAiAgent {
 
 		/** 툴 실행을 시작하는 시점에 1회 호출한다. index는 이번 run() 전체에서 몇 번째 툴 호출인지(1부터). */
 		void onToolCall(String toolName, int index);
+
+		/** 진행 상태 확장(2026-09-02) - 매 LLM 호출 직전에 1회 통지한다. llmCallIndex는 이번 run() 전체에서
+		 * 몇 번째 LLM 호출인지(1부터) - 날조 방지 재시도 턴도 별개의 LLM 호출이므로 다시 통지된다.
+		 * 기본은 아무 것도 하지 않는다(기존 구현체·테스트 호환). */
+		default void onThinking(int llmCallIndex) {
+		}
+
+		/** 진행 상태 확장(2026-09-02) - 홀드백 중인 턴(강제 답변 턴이 아닌 일반 턴)에서 텍스트 청크가
+		 * 처음 도착했을 때 그 턴에 1회만 통지한다. 강제 답변 턴은 델타를 즉시 라이브 방출하므로(위
+		 * 홀드백 불변식) 이 콜백을 타지 않는다. 기본은 아무 것도 하지 않는다(기존 구현체·테스트 호환). */
+		default void onWriting() {
+		}
 	}
 
 	/**
@@ -403,9 +415,18 @@ public class BrandAiAgent {
 			// 강제 답변 턴(capped)만 라이브 방출한다 - 일반 턴은 순수 텍스트로 끝난 게 확정될 때까지
 			// 누적만 한다(홀드백 불변식, StreamListener 상단 주석).
 			boolean liveEmit = capped;
+			listener.onThinking(llmCall);
+			// 홀드백 중인 턴에서 텍스트 청크가 처음 도착한 순간에만 writing을 1회 통지한다(StreamListener
+			// 상단 주석) - 강제 답변 턴은 델타를 즉시 방출하니 writing 없이 delta로 바로 넘어간다.
+			boolean[] writingNotified = {false};
 			LlmTurn turn = client.generateStream(systemPrompt, contents, BrandAiToolSpecs.ALL, capped, chunk -> {
-				if (liveEmit && !chunk.textDelta().isEmpty()) {
-					listener.onAnswerDelta(chunk.textDelta());
+				if (liveEmit) {
+					if (!chunk.textDelta().isEmpty()) {
+						listener.onAnswerDelta(chunk.textDelta());
+					}
+				} else if (!writingNotified[0] && !chunk.textDelta().isEmpty()) {
+					writingNotified[0] = true;
+					listener.onWriting();
 				}
 			});
 			promptTokens += turn.promptTokens();

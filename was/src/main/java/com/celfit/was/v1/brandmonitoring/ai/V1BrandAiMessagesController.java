@@ -273,6 +273,18 @@ public class V1BrandAiMessagesController {
 	 * SSE 실행 본체(T4) - 전용 실행기 스레드에서 돈다(이미 풀 수용이 확정된 뒤이므로 F2와 동형으로
 	 * 여기서 신규 대화를 만든다). meta → (status·delta 반복) → done 순으로 이벤트를 보낸다. 실패·
 	 * 중단 시에는 error 이벤트 또는 로그만 남기고 done 없이 끝낸다.
+	 *
+	 * <p><b>status 이벤트 확장(2026-09-02, 진행 상태 세분화)</b> - stage는 세 가지다: {@code thinking}
+	 * (매 LLM 호출 직전, index=몇 번째 LLM 호출인지 1부터 - 날조 방지 재시도 턴도 다시 나간다),
+	 * {@code tool}(툴 실행 직전, tool·index=몇 번째 툴 호출인지 1부터), {@code writing}(홀드백 중인
+	 * 일반 턴에서 텍스트가 처음 도착한 시점, 그 턴에 1회). 전부 FE가 그대로 쓸 수 있는 한국어 문구를
+	 * label에 싣는다({@link BrandAiToolSpecs#labelFor}가 tool 문구의 정본). 본문 방출 방식(홀드백)은
+	 * 그대로다 - meta 직후 첫 thinking이 나가고, 툴 없이 끝나는 마지막 턴은
+	 * thinking → writing → delta(누적 답변 일괄) → done 순서가 된다. 예시:
+	 * {@code {"stage":"thinking","index":1,"label":"생각하는 중"}} →
+	 * {@code {"stage":"tool","tool":"list_posts","index":1,"label":"게시물 찾는 중"}} →
+	 * {@code {"stage":"thinking","index":2,"label":"생각하는 중"}} →
+	 * {@code {"stage":"writing","label":"답변 정리하는 중"}}.
 	 */
 	private void runSse(SseEmitter emitter, AtomicBoolean aborted, long userId, ConversationRef conversationRef,
 			Validated validated, AiMessagesRequest request) {
@@ -296,7 +308,20 @@ public class V1BrandAiMessagesController {
 			@Override
 			public void onToolCall(String toolName, int index) {
 				sendEvent(emitter, aborted, "status", objectMapper.createObjectNode().put("stage", "tool")
-						.put("tool", toolName).put("index", index));
+						.put("tool", toolName).put("index", index)
+						.put("label", BrandAiToolSpecs.labelFor(toolName)));
+			}
+
+			@Override
+			public void onThinking(int llmCallIndex) {
+				sendEvent(emitter, aborted, "status", objectMapper.createObjectNode().put("stage", "thinking")
+						.put("index", llmCallIndex).put("label", "생각하는 중"));
+			}
+
+			@Override
+			public void onWriting() {
+				sendEvent(emitter, aborted, "status",
+						objectMapper.createObjectNode().put("stage", "writing").put("label", "답변 정리하는 중"));
 			}
 		};
 

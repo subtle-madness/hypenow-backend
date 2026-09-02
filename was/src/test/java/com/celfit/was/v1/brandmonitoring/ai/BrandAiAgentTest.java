@@ -656,6 +656,55 @@ class BrandAiAgentTest {
 		assertThat(toolCalls).containsExactly("list_posts#1");
 	}
 
+	/** 진행 상태 통지(2026-09-02) 검증용 - onThinking·onToolCall·onWriting·onAnswerDelta를 호출 순서
+	 * 그대로 하나의 로그에 쌓는다. */
+	private static BrandAiAgent.StreamListener orderedListener(List<String> events) {
+		return new BrandAiAgent.StreamListener() {
+			@Override
+			public void onAnswerDelta(String textDelta) {
+				events.add("delta:" + textDelta);
+			}
+
+			@Override
+			public void onToolCall(String toolName, int index) {
+				events.add("tool:" + toolName + "#" + index);
+			}
+
+			@Override
+			public void onThinking(int llmCallIndex) {
+				events.add("thinking:" + llmCallIndex);
+			}
+
+			@Override
+			public void onWriting() {
+				events.add("writing");
+			}
+		};
+	}
+
+	/**
+	 * 진행 상태 확장(2026-09-02) 검증 - "툴 1회 후 텍스트로 종료" 시나리오에서 thinking이 LLM 호출마다
+	 * (재시도 없이도 매 턴) 먼저 나가고, 홀드백 중인 마지막 턴은 텍스트 청크가 처음 도착한 시점에
+	 * writing이 1회만 나간 뒤 델타가 홀드백 규칙대로 턴 종료 시 일괄 방출된다.
+	 */
+	@Test
+	void 진행_상태_통지가_thinking_tool_writing_순서로_나간다() {
+		BrandAiToolbox toolbox = mock(BrandAiToolbox.class);
+		given(toolbox.execute(any(BrandAiToolbox.ToolSession.class), anyLong(), anyString(), any()))
+				.willReturn(AiToolResult.ok("{\"posts\":[]}", 3, List.of("ABC")));
+		List<List<String>> chunkScript = List.of(
+				List.of(functionCallChunk("list_posts", "{\"brandId\":7}")),
+				List.of(textChunk("앞"), textChunk("뒤")));
+		BrandAiAgent agent = streamingAgentWith(chunkScript, toolbox, Clock.systemUTC());
+		List<String> events = new ArrayList<>();
+
+		BrandAiAgent.AgentOutcome outcome = agent.run(1L, List.of(new AiChatMessage("user", "질문")), null, null, "",
+				List.of(), orderedListener(events), () -> false);
+
+		assertThat(events).containsExactly("thinking:1", "tool:list_posts#1", "thinking:2", "writing", "delta:앞뒤");
+		assertThat(outcome.answer()).isEqualTo("앞뒤");
+	}
+
 	/** 강제 답변 턴(toolConfig NONE)은 반대로 델타 도착 즉시 라이브 방출한다. */
 	@Test
 	void 강제_답변_턴은_텍스트_델타를_도착_즉시_라이브_방출한다() {

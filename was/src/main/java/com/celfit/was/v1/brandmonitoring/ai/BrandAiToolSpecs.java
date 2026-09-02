@@ -1,6 +1,7 @@
 package com.celfit.was.v1.brandmonitoring.ai;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 툴 선언 8종(설계 §4, 2026-08-28 search_posts·aggregate_posts 신설) - 전부 읽기 전용이다. 이름
@@ -148,6 +149,26 @@ public final class BrandAiToolSpecs {
 					  "username":{"type":"string","description":"인스타그램 계정 아이디(@ 없이)"}
 					},"required":["username"]}
 					"""));
+
+	/** 미등록 툴(신규 추가 시 아직 라벨을 못 붙인 경우)에 쓰는 기본 진행 문구(2026-09-02, SSE status 확장). */
+	private static final String DEFAULT_LABEL = "조회하는 중";
+
+	/** 툴별 SSE status 진행 문구(2026-09-02, SSE status 확장) - FE 진행 표시가 읽는 정본이라 한 곳에
+	 * 모아둔다. 신규 툴을 추가하면 여기에도 항목을 더해야 한다(빠뜨리면 {@link #DEFAULT_LABEL}로 대체). */
+	private static final Map<String, String> LABELS = Map.of(
+			LIST_BRANDS, "브랜드 확인하는 중",
+			LIST_POSTS, "게시물 찾는 중",
+			SEARCH_POSTS, "캡션 검색하는 중",
+			AGGREGATE_POSTS, "집계하는 중",
+			GET_POST, "게시물 상세 확인하는 중",
+			GET_COMMENTS, "댓글 읽는 중",
+			LIST_HASHTAG_POSTS, "해시태그 게시물 찾는 중",
+			GET_AUTHOR, "작성자 프로필 확인하는 중");
+
+	/** toolName에 해당하는 SSE status 진행 문구를 돌려준다. 미등록 툴이면 {@link #DEFAULT_LABEL}. */
+	public static String labelFor(String toolName) {
+		return LABELS.getOrDefault(toolName, DEFAULT_LABEL);
+	}
 
 	private BrandAiToolSpecs() {
 	}

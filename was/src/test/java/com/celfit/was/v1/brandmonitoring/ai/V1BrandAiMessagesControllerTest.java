@@ -428,7 +428,10 @@ class V1BrandAiMessagesControllerTest {
 		given(agent.run(eq(USER_ID), any(), eq(BRAND_ID), any(), anyString(), any(),
 				any(BrandAiAgent.StreamListener.class), any())).willAnswer(invocation -> {
 					BrandAiAgent.StreamListener listener = invocation.getArgument(6);
+					listener.onThinking(1);
 					listener.onToolCall("search_posts", 1);
+					listener.onThinking(2);
+					listener.onWriting();
 					listener.onAnswerDelta("안녕하세요");
 					return new BrandAiAgent.AgentOutcome("안녕하세요", List.of(), List.of(), List.of(), 10, 5, BRAND_ID,
 							AiChatLogEntry.OUTCOME_OK, true, null);
@@ -445,12 +448,22 @@ class V1BrandAiMessagesControllerTest {
 		String body = result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
 		assertThat(body).contains("event:meta", "\"conversationId\":\"321\"")
 				.contains("event:status", "search_posts")
+				.contains("\"stage\":\"thinking\"", "\"label\":\"생각하는 중\"")
+				.contains("\"stage\":\"tool\"", "\"label\":\"캡션 검색하는 중\"")
+				.contains("\"stage\":\"writing\"", "\"label\":\"답변 정리하는 중\"")
 				.contains("event:delta", "안녕하세요")
 				.contains("event:done", "\"messageId\":\"999\"");
 		// meta가 가장 먼저, done이 가장 나중에 나와야 한다.
 		assertThat(body.indexOf("event:meta")).isLessThan(body.indexOf("event:status"));
 		assertThat(body.indexOf("event:status")).isLessThan(body.indexOf("event:delta"));
 		assertThat(body.indexOf("event:delta")).isLessThan(body.indexOf("event:done"));
+		// thinking → tool → thinking → writing 순서(2026-09-02 진행 상태 확장).
+		assertThat(body.indexOf("\"stage\":\"thinking\",\"index\":1"))
+				.isLessThan(body.indexOf("\"stage\":\"tool\""));
+		assertThat(body.indexOf("\"stage\":\"tool\""))
+				.isLessThan(body.indexOf("\"stage\":\"thinking\",\"index\":2"));
+		assertThat(body.indexOf("\"stage\":\"thinking\",\"index\":2"))
+				.isLessThan(body.indexOf("\"stage\":\"writing\""));
 		then(conversationRepository).should(times(1)).touch(321L);
 	}
 
