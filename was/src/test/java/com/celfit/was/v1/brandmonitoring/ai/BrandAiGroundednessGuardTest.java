@@ -172,7 +172,7 @@ class BrandAiGroundednessGuardTest {
 	}
 
 	/** 따옴표로 감싼 한글·공백 섞인 일반 문구는 계정명 후보 패턴에 안 맞아 애초에 신호로 잡히지
-	 * 않는다(표·핸들·따옴표 계정명 셋 다 없어 최초 신호 자체가 없다). */
+	 * 않는다(표·핸들·일반화 토큰 셋 다 없어 최초 신호 자체가 없다). */
 	@Test
 	void 따옴표로_감싼_한글_문구는_후보가_아니다() {
 		String answer = "이번 게시물은 \"설명 부족\"이 아쉬운 점으로 보입니다.";
@@ -180,5 +180,53 @@ class BrandAiGroundednessGuardTest {
 		BrandAiGroundednessGuard.Result result = BrandAiGroundednessGuard.ungrounded(answer, 0, null, Set.of());
 
 		assertThat(result.ungrounded()).isFalse();
+	}
+
+	/** 골드셋 chain-referent-resolution 재현 케이스(09-02 2차) - 계정명이 굵게(마크다운 강조, "**...**")로만
+	 * 감싸져 @핸들도 표 셀도 따옴표도 아닌 채 날조된 사례. 형식을 하나씩 쫓는 대신 일반화한 신호(d) -
+	 * 점·밑줄을 포함하는 계정명 형태 토큰 - 가 이 형식도 자연히 잡는지 검증한다. */
+	@Test
+	void 툴_호출_0회에_굵게_감싼_계정명이_있으면_미대조로_본다() {
+		String answer = "**laura.acds**의 프로필... 팔로워 수: 1,028,299명";
+
+		BrandAiGroundednessGuard.Result result = BrandAiGroundednessGuard.ungrounded(answer, 0, null, Set.of());
+
+		assertThat(result.ungrounded()).isTrue();
+		assertThat(result.unmatchedHandles()).containsExactly("laura.acds");
+	}
+
+	/** 도메인·URL 조각·순수 숫자 토큰은 점(.)을 포함해도 계정명 후보가 아니다(신호(d)의 제외 규칙) -
+	 * 흔한 TLD("hypenow.io")·숫자만("0.05")·URL 경로 일부("https://x.y/z")를 각각 확인한다. */
+	@Test
+	void 흔한_TLD_숫자만_URL_조각은_후보가_아니다() {
+		String answer = "자세한 내용은 hypenow.io 에서, 참여율 변화는 0.05, 원본은 https://x.y/z 참고하세요.";
+
+		BrandAiGroundednessGuard.Result result = BrandAiGroundednessGuard.ungrounded(answer, 0, null, Set.of());
+
+		assertThat(result.ungrounded()).isFalse();
+	}
+
+	/** 점·밑줄이 없는 순수 영단어는 신호(d) 후보에서 제외한다(오탐 억제를 위한 의도된 설계 - 알려진
+	 * 한계). 이런 단어가 실제 계정명을 가리키는 경우는 이 가드가 못 잡는다. */
+	@Test
+	void 순수_영단어는_후보가_아니다_알려진_한계() {
+		String answer = "**namvo**의 최근 게시물이 눈에 띕니다.";
+
+		BrandAiGroundednessGuard.Result result = BrandAiGroundednessGuard.ungrounded(answer, 0, null, Set.of());
+
+		assertThat(result.ungrounded()).isFalse();
+	}
+
+	/** 그라운딩 집합에 있는 계정명이 점·밑줄 없이 굵게만 감싸져 있으면 신호(d) 후보 자체가 안 되지만,
+	 * 애초에 날조도 아니므로 결과는 정상(false)이다 - 후보 판정과 무관하게 동작이 옳음을 고정한다. */
+	@Test
+	void 툴_1회_호출_후_점_밑줄_없는_굵게_감싼_그라운딩_계정명은_정상이다() {
+		String answer = "요청하신 **bhavikadhall** 계정의 최근 성과입니다.";
+
+		BrandAiGroundednessGuard.Result result = BrandAiGroundednessGuard.ungrounded(answer, 1, null,
+				Set.of("bhavikadhall"));
+
+		assertThat(result.ungrounded()).isFalse();
+		assertThat(result.unmatchedHandles()).isEmpty();
 	}
 }

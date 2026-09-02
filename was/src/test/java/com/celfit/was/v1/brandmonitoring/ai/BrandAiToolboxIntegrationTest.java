@@ -1390,4 +1390,24 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 		assertThat(result.failed()).isFalse();
 		assertThat(result.shortCodes()).hasSize(100);
 	}
+
+	// ---------- 작성자 팔로워 수(2026-09-02, groundedness 가드 후속) ----------
+
+	/** list_posts 행에 작성자 팔로워 수가 실리는지 검증한다 - {@link BrandPostAssembler#hydrate}가 이미
+	 * 배치 조회하는 author_profile(resolveAuthors)을 그대로 옮겨 싣는 것이라 추가 쿼리가 없다(F6/T3의
+	 * applyAuthorScope처럼 조건부로 도는 조회가 아니다). 골드셋 chain-referent-resolution 실측
+	 * 실패("거기서 조회수 젤 높은 사람 프로필 좀 보여줘"에 목록 단계 팔로워 수가 없어 모델이 지어낸
+	 * 사례) 후속 - 목록 단계부터 값을 실어 후속 질문에서 지어낼 공백을 없앤다. */
+	@Test
+	void list_posts는_행에_작성자_팔로워_수를_담는다() {
+		long brandId = insertBrand(monitoringJdbc, "followerslistbrand");
+		linkRepository.insertLink(userId, brandId, "followerslistbrand", BrandAccountType.OWN, 12);
+		insertTaggedPost(monitoringJdbc, brandId, "FOLLOWERS1", "followers_author", NOW.minusSeconds(3600));
+		insertAuthorProfile("followers_author", "followers_author", "팔로워 작성자", 192_487L);
+
+		AiToolResult result = toolbox.execute(userId, BrandAiToolSpecs.LIST_POSTS, args().put("brandId", brandId));
+
+		assertThat(result.failed()).isFalse();
+		assertThat(result.payloadJson()).contains("\"authorFollowers\":192487");
+	}
 }

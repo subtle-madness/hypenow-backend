@@ -35,13 +35,21 @@ final class BrandAiGroundednessGuard {
 	/** 인스타그램 계정명 형태의 @핸들. */
 	private static final Pattern HANDLE = Pattern.compile("@[A-Za-z0-9_.]{3,}");
 
-	/** 작은따옴표·큰따옴표·백틱으로 감싼 계정명 형태 토큰(2026-09-02 갭 보완) - 골드셋
-	 * chain-referent-resolution 실측 실패("작성자 'laura.acds'의 프로필 정보입니다"처럼 계정명을
-	 * 따옴표로만 감싸 @핸들도 표 셀도 아닌 채 날조된 사례, 4회 중 2회 재현)를 잡는다. 여는 따옴표와
-	 * 닫는 따옴표가 같은 문자여야 매치되도록 그룹 1을 역참조한다(group 1 = 따옴표 문자, group 2 =
-	 * 후보). 소문자·숫자·점·밑줄만 허용해 대문자가 섞인 shortCode("DcG1oOthloi")나 한글·공백이 섞인
-	 * 일반 문구("설명 부족")는 자연히 제외된다. */
-	private static final Pattern QUOTED_ACCOUNT_NAME = Pattern.compile("(['\"`])([a-z0-9_.]{3,30})\\1");
+	/** 답변 전체에서 점(.) 또는 밑줄(_)을 포함하는 계정명 형태 토큰을 뽑는 일반화 신호(d)(2026-09-02
+	 * 재설계) - 골드셋 chain-referent-resolution 실측 실패("**laura.acds**"처럼 굵게(마크다운
+	 * 강조)로만 감싸 @핸들·표 셀·따옴표 어디에도 안 걸린 계정명)를 형식을 하나씩 쫓지 않고 일반화해
+	 * 잡는다. 앞뒤로 영숫자·밑줄·점·슬래시·골뱅이·하이픈이 붙으면 더 큰 토큰(URL·이메일 등)의 일부이지
+	 * 독립된 계정명이 아니므로 경계 밖으로 본다(따옴표·별표 등은 이 클래스에 없어 경계가 된다). 소문자
+	 * 후보만 매치되므로 대문자가 섞인 shortCode("DcG1oOthloi")는 부분 매치도 안 된다(대문자도 경계
+	 * 제외 문자 집합에 포함). 점·밑줄 포함 여부·TLD 접미사·숫자만 여부 등 나머지 필터는
+	 * {@link #isAccountLikeToken}에서 한다. */
+	private static final Pattern GENERIC_ACCOUNT_TOKEN =
+			Pattern.compile("(?<![A-Za-z0-9_./@-])[a-z0-9_.]{3,30}(?![A-Za-z0-9_./@-])");
+
+	/** {@link #GENERIC_ACCOUNT_TOKEN}이 잡은 원시 후보 중 도메인·URL 조각·순수 영단어·숫자만인 값을
+	 * 걸러내는 접미사 목록(2026-09-02) - "hypenow.io"·"blog.hypenow.com" 같은 흔한 도메인을 계정명으로
+	 * 오인하지 않도록 한다. */
+	private static final Set<String> COMMON_TLD_SUFFIXES = Set.of(".com", ".io", ".co", ".kr", ".net", ".org");
 
 	/** 표 셀 중 계정명 형태(소문자·숫자·점·밑줄만, 문자·밑줄을 최소 1개는 포함) - "14520"·"1.82"처럼
 	 * 숫자(소수점 포함)만인 셀은 문자·밑줄이 없어 제외된다(조회수·참여율 등 수치 셀 오탐 방지). */
@@ -113,11 +121,11 @@ final class BrandAiGroundednessGuard {
 		}
 		boolean hasTable = MARKDOWN_TABLE_ROW.matcher(answer).find();
 		boolean hasHandle = HANDLE.matcher(answer).find();
-		boolean hasQuoted = QUOTED_ACCOUNT_NAME.matcher(answer).find();
-		// 최초 신호(표 또는 @핸들 또는 따옴표 감싼 계정명 형태)가 없으면 애초에 날조 의심 대상이
+		boolean hasGenericToken = hasAccountLikeToken(answer);
+		// 최초 신호(표 또는 @핸들 또는 점·밑줄 포함 계정명 형태 토큰)가 없으면 애초에 날조 의심 대상이
 		// 아니다 - 104턴 스윕 실측 오탐 0의 근거인 신호라 toolCallCountThisTurn 여부와 무관하게 좁혀
 		// 유지한다.
-		if (!hasTable && !hasHandle && !hasQuoted) {
+		if (!hasTable && !hasHandle && !hasGenericToken) {
 			return Result.GROUNDED;
 		}
 
@@ -149,9 +157,12 @@ final class BrandAiGroundednessGuard {
 			}
 			unmatched.add(cell);
 		}
-		Matcher quotedMatcher = QUOTED_ACCOUNT_NAME.matcher(answer);
-		while (quotedMatcher.find()) {
-			String candidate = quotedMatcher.group(2); // 이미 소문자만 매치되므로 그대로 정규화값
+		Matcher genericMatcher = GENERIC_ACCOUNT_TOKEN.matcher(answer);
+		while (genericMatcher.find()) {
+			String candidate = genericMatcher.group(); // 패턴이 소문자만 허용해 그대로 정규화값
+			if (!isAccountLikeToken(candidate)) {
+				continue;
+			}
 			if (candidate.equals(sessionHandle) || normalizedGrounded.contains(candidate)) {
 				continue;
 			}
@@ -162,6 +173,45 @@ final class BrandAiGroundednessGuard {
 			return Result.GROUNDED;
 		}
 		return new Result(true, List.copyOf(unmatched));
+	}
+
+	/** {@link #GENERIC_ACCOUNT_TOKEN}이 잡은 후보 중 실제로 계정명일 법한 것만 남기는 필터(2026-09-02) -
+	 * answer 전체에 이 조건을 만족하는 토큰이 하나라도 있으면 최초 신호로 본다. */
+	private static boolean hasAccountLikeToken(String answer) {
+		Matcher matcher = GENERIC_ACCOUNT_TOKEN.matcher(answer);
+		while (matcher.find()) {
+			if (isAccountLikeToken(matcher.group())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** 점(.) 또는 밑줄(_)을 하나 이상 포함해야 후보로 본다(순수 영단어는 오탐 억제를 위해 제외 - 알려진
+	 * 한계). 영문자를 하나도 포함하지 않으면("1.5"·"0.05"·"..." 등 숫자·점만) 제외한다. 흔한 도메인
+	 * 접미사({@link #COMMON_TLD_SUFFIXES})로 끝나면 URL·이메일 도메인 조각으로 보고 제외한다. */
+	private static boolean isAccountLikeToken(String candidate) {
+		boolean hasSeparator = candidate.indexOf('.') >= 0 || candidate.indexOf('_') >= 0;
+		if (!hasSeparator) {
+			return false;
+		}
+		boolean hasLetter = false;
+		for (int i = 0; i < candidate.length(); i++) {
+			char c = candidate.charAt(i);
+			if (c >= 'a' && c <= 'z') {
+				hasLetter = true;
+				break;
+			}
+		}
+		if (!hasLetter) {
+			return false;
+		}
+		for (String suffix : COMMON_TLD_SUFFIXES) {
+			if (candidate.endsWith(suffix)) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/**

@@ -356,6 +356,11 @@ public class BrandAiToolbox {
 			node.put("isPaidPartnership", post.isPaidPartnership());
 			node.put("caption", truncate(post.caption(), CAPTION_EXCERPT_LENGTH));
 			node.put("authorUsername", post.authorUsername());
+			// 작성자 팔로워 수(2026-09-02, groundedness 가드 후속) - hydrate가 이미 배치 조회한
+			// author_profile을 그대로 싣는다(추가 쿼리 없음) - "거기서 조회수 젤 높은 사람 프로필
+			// 보여줘" 같은 후속 질문에서 목록 단계부터 팔로워 수를 알 수 있어야 모델이 표에 없는
+			// 값을 지어내지 않는다. 값이 없으면(미수집) null로 명시한다(계약 무결성 규칙 #1).
+			node.put("authorFollowers", post.authorFollowers());
 			TrackingItemResponse.SnapshotResponse latest = post.latestSnapshot();
 			node.put("likes", latest == null ? null : latest.likes());
 			node.put("comments", latest == null ? null : latest.comments());
@@ -669,6 +674,9 @@ public class BrandAiToolbox {
 			node.put("shortCode", post.shortcode());
 			node.put("takenAt", post.takenAt());
 			node.put("authorUsername", post.authorUsername());
+			// 작성자 팔로워 수(2026-09-02, groundedness 가드 후속) - list_posts와 같은 이유·같은
+			// 산지(hydrate 배치 조회, 추가 쿼리 없음).
+			node.put("authorFollowers", post.authorFollowers());
 			node.put("caption", truncate(post.caption(), SEARCH_CAPTION_EXCERPT_LENGTH));
 			TrackingItemResponse.SnapshotResponse latest = post.latestSnapshot();
 			node.put("likes", latest == null ? null : latest.likes());
@@ -1105,6 +1113,9 @@ public class BrandAiToolbox {
 		ObjectNode payload = objectMapper.createObjectNode();
 		payload.put("shortCode", post.shortcode());
 		payload.put("authorUsername", post.authorUsername());
+		// 작성자 팔로워 수(2026-09-02, groundedness 가드 후속) - list_posts와 같은 이유·같은 산지
+		// (hydrate 배치 조회, 추가 쿼리 없음).
+		payload.put("authorFollowers", post.authorFollowers());
 		payload.put("contentType", post.contentType());
 		payload.put("uploadedAt", post.takenAt());
 		payload.put("caption", truncate(post.caption(), CAPTION_FULL_LENGTH));
