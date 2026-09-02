@@ -38,7 +38,8 @@ public class HikerConfig {
 	 * 수집 진입점 — 소비자는 이 InstagramSource를 주입받는다. 전송 데코레이터 체인(과금·원형 적재·
 	 * 지연 메트릭)은 그대로 유지되고, 그 위에 Hiker 파싱 백엔드(HikerBackend)와 정책 계층
 	 * (FailoverInstagramSource)을 얹는다. 자체크롤 토글은 app_setting 런타임 판정(IgSourceSettings —
-	 * 매 콜 재확인, 킬스위치 포함)이며 시드 기본은 off라 수집은 전량 Hiker로 위임한다(행동 변화 0).
+	 * 매 콜 재확인, 킬스위치 포함)이며 경로별(ig-source.self-paths)로도 걸린다(부분 개통 — 예: 프로필만
+	 * 빼고 켜기). 시드 기본은 self-enabled=off라 수집은 전량 Hiker로 위임한다(행동 변화 0).
 	 * 라우팅 결과는 instagram.source.route 카운터로 관측한다.
 	 *
 	 * <p>전송 위임자는 HikerHttp 단일 빈이라, 테스트가 {@code @Primary}로 가짜 전송을 꽂아도
@@ -74,7 +75,7 @@ public class HikerConfig {
 				new SelfRetry(3, selfRetryBudget),
 				igSettings::profileSurface);
 
-		return new FailoverInstagramSource(self, hikerBackend, igSettings::selfEnabled,
+		return new FailoverInstagramSource(self, hikerBackend, igSettings::selfEnabledForPath,
 				new MicrometerInstagramSourceMetrics(meterRegistry));
 	}
 }

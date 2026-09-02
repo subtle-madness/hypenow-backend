@@ -4,7 +4,10 @@ import com.celfit.monitoring.store.AppSettingRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,6 +26,12 @@ import org.springframework.stereotype.Service;
  * <p>댓글 GraphQL의 doc_id·friendly_name도 같은 캐시로 매 콜 재조회한다 — IG doc_id는 2~4주 주기로
  * 회전해(운영 실측) app_setting 값을 재배포 없이 바꿔 대응하기 위함. app_setting에 값이 없으면
  * env 주입(InstagramProxyProperties, monitoring.proxy.comment-doc-id 등)으로 폴백한다.
+ *
+ * <p>경로별(표면별) 토글(ig-source.self-paths, 쉼표 구분) — 운영 점진 개통 시 "프로필만 빼고 켜기" 같은
+ * 부분 개통을 지원한다. 토큰은 FailoverInstagramSource.route()가 넘기는 path 문자열(=metric path 태그)
+ * 그대로 재사용한다(fetchProfile·fetchRecentPosts·fetchPost·fetchComments — 별칭 매핑 없음). 위 4개
+ * 전역 조건(self-enabled·force-hiker·proxy)을 모두 통과해도 path가 이 목록에 없으면 그 경로만 Hiker.
+ * 빈 값·키 부재는 안전측(전 경로 비활성), 알 수 없는 토큰은 어떤 실제 경로와도 매치되지 않아 무해하다.
  */
 @Service
 public class IgSourceSettings {
@@ -54,7 +63,16 @@ public class IgSourceSettings {
 	}
 
 	public boolean selfEnabled() {
+		return globalSelfEnabled(snapshot());
+	}
+
+	/** 경로별 판정 — 전역 조건(selfEnabled())에 더해 path가 self-paths 목록에 있어야 self를 허용한다. */
+	public boolean selfEnabledForPath(String path) {
 		Snapshot s = snapshot();
+		return globalSelfEnabled(s) && s.selfPaths().contains(path);
+	}
+
+	private boolean globalSelfEnabled(Snapshot s) {
 		if (s.forceHiker() || !s.selfEnabledRaw()) {
 			return false;
 		}
@@ -116,25 +134,38 @@ public class IgSourceSettings {
 		String friendlyName = settings.find("ig-source.comment-friendly-name")
 				.filter(v -> !v.isBlank())
 				.orElse(proxyProps.commentFriendlyName());
-		return new Snapshot(forceHiker, selfEnabledRaw, surface, docId, friendlyName, now.plus(ttl));
+		Set<String> selfPaths = parseSelfPaths(settings.find("ig-source.self-paths").orElse(""));
+		return new Snapshot(forceHiker, selfEnabledRaw, surface, docId, friendlyName, selfPaths, now.plus(ttl));
 	}
 
 	private boolean bool(String key, boolean dflt) {
 		return settings.find(key).map(v -> "true".equalsIgnoreCase(v.trim())).orElse(dflt);
 	}
 
-	/** 캐시 스냅샷 — 5개 판정값 + 만료 시각. 성공 조회만 값을 갱신(실패는 withExpiry로 만료만 연장). */
+	/** 쉼표 구분 경로 토큰 파싱 — 트림 후 빈 토큰 제거. 빈 값·전부 빈 토큰이면 빈 집합(전 경로 비활성,
+	 * 안전측). 알 수 없는 토큰은 그대로 담기지만 실제 path와 매치될 일이 없어 무해하다. */
+	private static Set<String> parseSelfPaths(String raw) {
+		if (raw == null || raw.isBlank()) {
+			return Set.of();
+		}
+		return Arrays.stream(raw.split(","))
+				.map(String::trim)
+				.filter(token -> !token.isEmpty())
+				.collect(Collectors.toUnmodifiableSet());
+	}
+
+	/** 캐시 스냅샷 — 6개 판정값 + 만료 시각. 성공 조회만 값을 갱신(실패는 withExpiry로 만료만 연장). */
 	private record Snapshot(boolean forceHiker, boolean selfEnabledRaw, String profileSurface,
-			String commentDocId, String commentFriendlyName, Instant expiresAt) {
+			String commentDocId, String commentFriendlyName, Set<String> selfPaths, Instant expiresAt) {
 
 		Snapshot withExpiry(Instant newExpiresAt) {
 			return new Snapshot(forceHiker, selfEnabledRaw, profileSurface, commentDocId, commentFriendlyName,
-					newExpiresAt);
+					selfPaths, newExpiresAt);
 		}
 
 		static Snapshot safeDefaults(InstagramProxyProperties proxyProps, Instant expiresAt) {
 			return new Snapshot(false, false, "wpi", proxyProps.commentDocId(), proxyProps.commentFriendlyName(),
-					expiresAt);
+					Set.of(), expiresAt);
 		}
 	}
 }

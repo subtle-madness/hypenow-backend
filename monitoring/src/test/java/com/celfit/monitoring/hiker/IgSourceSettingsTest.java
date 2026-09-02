@@ -262,4 +262,114 @@ class IgSourceSettingsTest {
 
 		assertThat(settings.selfEnabled()).isFalse();
 	}
+
+	// ── 경로별(표면별) 자체크롤 토글 — 부분 개통("프로필만 빼고 켜기") 지원 ───────
+	// 토큰 = FailoverInstagramSource.route()가 넘기는 path 문자열(=metric path 태그)과 동일:
+	// fetchProfile · fetchRecentPosts · fetchPost · fetchComments. 별칭 매핑 없이 그대로 재사용한다.
+
+	/** 마이그레이션 시드값 — 전체 4경로(마스터 토글 self-enabled가 여전히 off라 행동 변화 0). */
+	@Test
+	void self_paths_시드값은_전체_4경로다() {
+		repo.upsert("ig-source.self-enabled", "true");
+		IgSourceSettings settings = settings();
+
+		assertThat(settings.selfEnabledForPath("fetchProfile")).isTrue();
+		assertThat(settings.selfEnabledForPath("fetchRecentPosts")).isTrue();
+		assertThat(settings.selfEnabledForPath("fetchPost")).isTrue();
+		assertThat(settings.selfEnabledForPath("fetchComments")).isTrue();
+	}
+
+	@Test
+	void self_paths에서_특정_경로를_빼면_그_경로만_false다() {
+		repo.upsert("ig-source.self-enabled", "true");
+		repo.upsert("ig-source.self-paths", "fetchRecentPosts,fetchPost,fetchComments");
+		IgSourceSettings settings = settings();
+
+		assertThat(settings.selfEnabledForPath("fetchProfile")).isFalse();
+		assertThat(settings.selfEnabledForPath("fetchPost")).isTrue();
+		assertThat(settings.selfEnabledForPath("fetchComments")).isTrue();
+	}
+
+	/** 빈 값 = 전부 비활성이 안전측. */
+	@Test
+	void self_paths가_빈_문자열이면_전부_비활성이다() {
+		repo.upsert("ig-source.self-enabled", "true");
+		repo.upsert("ig-source.self-paths", "");
+		IgSourceSettings settings = settings();
+
+		assertThat(settings.selfEnabledForPath("fetchPost")).isFalse();
+		assertThat(settings.selfEnabledForPath("fetchProfile")).isFalse();
+	}
+
+	/** 키 자체가 없어도(행 삭제) 빈 값과 동일하게 안전측으로 처리한다. */
+	@Test
+	void self_paths_키가_없으면_전부_비활성이다() {
+		repo.upsert("ig-source.self-enabled", "true");
+		db.update("DELETE FROM app_setting WHERE key = 'ig-source.self-paths'");
+		IgSourceSettings settings = settings();
+
+		assertThat(settings.selfEnabledForPath("fetchPost")).isFalse();
+	}
+
+	/** 공백·연속 콤마로 생기는 빈 토큰은 트림 후 걸러진다 — 알 수 없는 토큰과 섞여도 나머지는 정상 판정. */
+	@Test
+	void self_paths_공백과_빈_토큰은_무시된다() {
+		repo.upsert("ig-source.self-enabled", "true");
+		repo.upsert("ig-source.self-paths", " fetchPost , , fetchComments ,unknownToken");
+		IgSourceSettings settings = settings();
+
+		assertThat(settings.selfEnabledForPath("fetchPost")).isTrue();
+		assertThat(settings.selfEnabledForPath("fetchComments")).isTrue();
+		// 목록에 없는 경로는 여전히 false — 알 수 없는 토큰이 섞여 있어도 다른 경로를 켜지 않는다.
+		assertThat(settings.selfEnabledForPath("fetchProfile")).isFalse();
+	}
+
+	@Test
+	void 전역_force_hiker면_self_paths에_있어도_selfEnabledForPath는_false다() {
+		repo.upsert("ig-source.self-enabled", "true");
+		repo.upsert("ig-source.force-hiker", "true");
+		IgSourceSettings settings = settings();
+
+		assertThat(settings.selfEnabledForPath("fetchPost")).isFalse();
+	}
+
+	@Test
+	void self_enabled_자체가_false면_self_paths와_무관하게_전부_false다() {
+		// self-enabled는 시드 기본값(false) 그대로 — self-paths만 전체로 두어도 마스터 토글이 이긴다.
+		IgSourceSettings settings = settings();
+
+		assertThat(settings.selfEnabledForPath("fetchPost")).isFalse();
+	}
+
+	@Test
+	void self_paths_변경도_TTL_경유로_반영된다() {
+		repo.upsert("ig-source.self-enabled", "true");
+		IgSourceSettings settings = settings();
+		assertThat(settings.selfEnabledForPath("fetchProfile")).isTrue();
+
+		repo.upsert("ig-source.self-paths", "fetchPost");
+		// TTL 내 — 아직 캐시가 살아있어 반영되지 않는다.
+		assertThat(settings.selfEnabledForPath("fetchProfile")).isTrue();
+
+		clock.advance(TTL.plusSeconds(1));
+		assertThat(settings.selfEnabledForPath("fetchProfile")).isFalse();
+		assertThat(settings.selfEnabledForPath("fetchPost")).isTrue();
+	}
+
+	@Test
+	void DB_예외이고_직전_캐시가_없으면_selfEnabledForPath도_false_안전측이다() {
+		IgSourceSettings settings = new IgSourceSettings(new AlwaysFailingRepo(), proxyProps, clock, TTL);
+
+		assertThat(settings.selfEnabledForPath("fetchPost")).isFalse();
+	}
+
+	@Test
+	void 프록시_URL이_비어있으면_self_paths에_있어도_selfEnabledForPath는_false다() {
+		InstagramProxyProperties noProxy = new InstagramProxyProperties(null, null,
+				Duration.ofSeconds(15), false, "ENV_DOC_ID", "ENV_FRIENDLY_NAME");
+		repo.upsert("ig-source.self-enabled", "true");
+		IgSourceSettings settings = new IgSourceSettings(repo, noProxy, clock, TTL);
+
+		assertThat(settings.selfEnabledForPath("fetchPost")).isFalse();
+	}
 }
