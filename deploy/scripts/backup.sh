@@ -56,6 +56,14 @@
 #  단위 +20~30%p 출렁여, 여유까지 반영한 안전선이 35%다. 소요 +30%(28→36분)로 15:00 크론
 #  슬롯 안에 수용. 파이프라인 유닛만 상한해도 pg_dump 클라이언트가 감속하면 postgres 쪽도
 #  배압으로 따라 줄어 전체가 내려간다.)
+# (09-02: 오프사이트 암호화 도입 — B2로 나가는 스트림에만 age 공개키 암호화(`.sql.zst.age`).
+#  덤프에 사용자 이메일 등 개인정보가 담기는데 B2 계정 유출 시 그대로 노출되는 구멍을 막는다.
+#  서버 로컬 사본은 평문 유지 — 서버가 침해되면 어차피 라이브 DB가 읽혀 암호화 이득이 없고,
+#  로컬 즉시 복원 경로(zstdcat|psql)를 지키는 쪽이 이득. 복호화 비밀키는 서버에 없다(그게
+#  목적) — OCI Vault 시크릿 `hypenow-backup-age-key` + 로컬 맥 `~/.config/age/`(README §6-2).
+#  age 미설치면 B2 업로드 자체를 생략한다(기밀성 fail-closed) — 가용성은 기존 로컬 폴백이
+#  담당하고, 크론 로그 경고로 드러난다. 전환기 B2엔 구 평문 `.zst`와 신 `.zst.age`가 롤링창
+#  동안 공존하며 자연 소거된다 — 기간 롤링·개수 트리밍 글롭은 확장자 불문이라 무수정.)
 set -euo pipefail
 
 B2_CRAWLER_KEEP=3     # B2에 유지할 crawler 덤프 개수 — 복원 창 3일, 덤프가 11GiB급이라 개수가 곧 용량(08-04 5→3)
@@ -64,6 +72,9 @@ B2_BWLIMIT=10M        # rclone 업로드 대역 상한 — 무제한 시 실효 
                       # 10M이면 crawler 11GiB급 업로드가 ~20분 — 크론 슬롯(15:00, 다음 배치는 16:00 크롤)에 여유
 BACKUP_CPUQUOTA=35%   # 백업 유닛 CPU 상한(2코어 중 0.35코어) — 08-27 실험 실측 안전선(상단 주석).
                       # 조정 시 알람 문턱 85% 대비 동거 부하(+20~30%p) 여유를 남길 것
+# 오프사이트 암호화 공개키(09-02) — 공개키라 커밋 무해. 복호화 비밀키는 OCI Vault
+# `hypenow-backup-age-key` + 로컬 맥에만(서버에 두면 암호화가 무의미해진다 — README §6-2).
+AGE_RECIPIENT=age1ygrprm2yc83jeymm3xf75e7hnvpep043egjq423arewqmrct0s5qujuuzh
 
 # CPU 상한 자기 래핑 — 크론이 그냥 실행해도 systemd transient 유닛(CPUQuota) 안에서 돌게
 # 재실행한다(크론탭 무수정 — 상한값·로직이 이 파일 하나에 남아 버전 관리된다).
@@ -104,8 +115,13 @@ ls -1t "$BACKUP_DIR"/analysis-*.sql.* | tail -n +4 | xargs -r rm
 # 출력을 전량 읽어 조기 종료가 원천 불가. stderr는 버리지 않는다(무음 실패 증거 보존).
 b2_ready=false
 if command -v rclone >/dev/null 2>&1; then
-  remotes="$(rclone listremotes || true)"
-  if [[ $'\n'"$remotes" == *$'\n'"b2:"* ]]; then b2_ready=true; fi
+  if ! command -v age >/dev/null 2>&1; then
+    # 암호화 없이는 올리지 않는다(09-02 fail-closed) — 로컬 폴백이 백업 공백을 막는다
+    echo "경고: age 미설치 — 오프사이트 암호화 불가라 B2 업로드 생략(sudo apt-get install -y age)" >&2
+  else
+    remotes="$(rclone listremotes || true)"
+    if [[ $'\n'"$remotes" == *$'\n'"b2:"* ]]; then b2_ready=true; fi
+  fi
 fi
 
 # crawler 덤프는 GB급이라 "로컬에 쓰고 다시 읽어 올리는" 2단계가 시간·디스크 I/O를 배로
@@ -119,10 +135,12 @@ rm -f "$BACKUP_DIR"/.crawler-*.sql.*.tmp
 
 crawler_offsite=false
 if "$b2_ready"; then
+  # tee 뒤에서 암호화(09-02) — 로컬 임시본(폴백용)은 평문 .zst, B2로 나가는 쪽만 .zst.age
   if docker compose exec -T postgres-raw pg_dump -U "$RAW_DB_USER" -d crawler \
       | nice -n 19 zstd -q \
       | tee "$BACKUP_DIR/.crawler-$STAMP.sql.zst.tmp" \
-      | nice -n 19 rclone rcat --bwlimit "$B2_BWLIMIT" "$B2/crawler/crawler-$STAMP.sql.zst"; then
+      | nice -n 19 age -r "$AGE_RECIPIENT" \
+      | nice -n 19 rclone rcat --bwlimit "$B2_BWLIMIT" "$B2/crawler/crawler-$STAMP.sql.zst.age"; then
     crawler_offsite=true
     rm -f "$BACKUP_DIR/.crawler-$STAMP.sql.zst.tmp"   # B2 사본 확인 — 로컬 임시본 폐기
   else
@@ -130,7 +148,7 @@ if "$b2_ready"; then
     # 스트림을 정상 종료로 닫고 원격 파일을 만들 수 있다 — 반쪽 원격본이 정식 이름으로
     # 남으면 복원 사고가 되므로 즉시 제거를 시도한다(없으면 에러 한 줄, 무해).
     echo "경고: crawler 스트리밍 백업 실패 — 반쪽 원격본 정리 후 로컬 전용 덤프로 폴백" >&2
-    rclone deletefile "$B2/crawler/crawler-$STAMP.sql.zst" || true
+    rclone deletefile "$B2/crawler/crawler-$STAMP.sql.zst.age" || true
     rclone cleanup "$B2" || true   # 중단된 청크 업로드의 미완성 large-file 파트 회수
     rm -f "$BACKUP_DIR/.crawler-$STAMP.sql.zst.tmp"
   fi
@@ -168,8 +186,13 @@ fi
 offsite_ok=false
 if "$b2_ready"; then
   analysis_offsite=false
-  if rclone copy --bwlimit "$B2_BWLIMIT" "$BACKUP_DIR/analysis-$STAMP.sql.zst" "$B2/analysis/"; then
+  # 로컬 평문 파일을 스트리밍 암호화해 올린다(09-02) — 로컬에 암호문 사본을 따로 만들지 않는다.
+  # rcat 실패 시 반쪽 원격본이 정식 이름으로 남을 수 있어 crawler와 같은 즉시 제거를 시도.
+  if age -r "$AGE_RECIPIENT" < "$BACKUP_DIR/analysis-$STAMP.sql.zst" \
+      | rclone rcat --bwlimit "$B2_BWLIMIT" "$B2/analysis/analysis-$STAMP.sql.zst.age"; then
     analysis_offsite=true
+  else
+    rclone deletefile "$B2/analysis/analysis-$STAMP.sql.zst.age" || true
   fi
   if "$analysis_offsite" && "$crawler_offsite"; then
     offsite_ok=true
@@ -190,14 +213,16 @@ if "$b2_ready"; then
     # 덤프가 작아 analysis와 같은 7일 기간 롤링. analysis·crawler 업로드가 이미 성공한
     # 뒤라 캡 여유가 있다고 보고 시도 — monitoring 실패가 위 offsite_ok를 되돌리지 않는다.
     if [ -f "$BACKUP_DIR/monitoring-$STAMP.sql.zst" ]; then
-      if rclone copy --bwlimit "$B2_BWLIMIT" "$BACKUP_DIR/monitoring-$STAMP.sql.zst" "$B2/monitoring/"; then
+      if age -r "$AGE_RECIPIENT" < "$BACKUP_DIR/monitoring-$STAMP.sql.zst" \
+          | rclone rcat --bwlimit "$B2_BWLIMIT" "$B2/monitoring/monitoring-$STAMP.sql.zst.age"; then
         rclone delete --min-age 7d "$B2/monitoring/" \
           || echo "경고: B2 monitoring 기간 롤링 실패 — 다음 실행에서 재시도" >&2
       else
         echo "경고: monitoring B2 업로드 실패 — analysis·crawler 오프사이트는 정상" >&2
+        rclone deletefile "$B2/monitoring/monitoring-$STAMP.sql.zst.age" || true
       fi
     fi
-    echo "B2 업로드 완료: analysis-$STAMP.sql.zst, crawler-$STAMP.sql.zst${MONITORING_DUMP:+, $MONITORING_DUMP}"
+    echo "B2 업로드 완료(age 암호화): analysis-$STAMP.sql.zst.age, crawler-$STAMP.sql.zst.age${MONITORING_DUMP:+, $MONITORING_DUMP.age}"
   fi
 fi
 

@@ -12,7 +12,8 @@ fi
 # 2) 방화벽 — 80/443만 추가 개방 (OCI Security List와 이중 방어. 5432는 열지 않는다)
 sudo iptables -C INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT 2>/dev/null \
   || sudo iptables -I INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT
-sudo apt-get update -y && sudo apt-get install -y iptables-persistent rclone
+sudo apt-get update -y && sudo apt-get install -y iptables-persistent rclone zstd age
+# zstd·age는 backup.sh 의존(08-04 압축 전환·09-02 오프사이트 암호화 — README §6-2)
 sudo netfilter-persistent save
 
 # 3) 스왑 4GB — OOM 방어 (A1 12GB에 스왑 0B이면 메모리 스파이크 시 프로세스 강제 종료)
