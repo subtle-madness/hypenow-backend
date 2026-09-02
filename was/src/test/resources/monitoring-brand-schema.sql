@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS brand_account (
     backfill_error        text,
     backfill_completed_at timestamptz,
     last_swept_at         timestamptz,
+    -- 완주 시각(V20260902034452, 워터마크 분리) — monitoring 전용(was 미조회), 미러 정합만 유지.
+    sweep_completed_at    timestamptz,
     -- 이미지 아카이브 3컬럼(V20260811023454) — was는 image_object_path만 읽는다.
     image_object_path     text,
     image_source_name     text,

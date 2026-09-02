@@ -216,7 +216,7 @@
       "id": 5,
       "type": "stat",
       "title": "일일 수집 신선도 (monitoring)",
-      "description": "활성 브랜드의 마지막 일일 수집 성공 시각 기준. 26h 초과 = 어젯밤 02:00 KST 브랜드 일일 수집 불발(08-10 Hiker 402 고착 같은 사고). 클릭 → 없음(이 장이 착지).",
+      "description": "활성 브랜드의 마지막 일일 수집 완주 시각(sweep_completed_at — 09-02 진행 워터마크 last_swept_at에서 분리) 기준. 26h 초과 = 어젯밤 02:00 KST 브랜드 일일 수집 불발(08-10 Hiker 402 고착 같은 사고). 클릭 → 없음(이 장이 착지).",
       "gridPos": {
         "x": 0,
         "y": 10,
@@ -285,7 +285,7 @@
           "format": "table",
           "rawQuery": true,
           "refId": "A",
-          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(last_swept_at)))/3600 AS value FROM brand_account WHERE closed_at IS NULL"
+          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(sweep_completed_at)))/3600 AS value FROM brand_account WHERE closed_at IS NULL"
         }
       ]
     },
@@ -638,7 +638,7 @@
       "id": 11,
       "type": "stat",
       "title": "오늘 수집 소요 (monitoring)",
-      "description": "오늘 일일 수집의 첫 브랜드~마지막 브랜드 처리 시각 차이(분). 런 단위 기록 테이블이 없어 브랜드별 성공 시각에서 유도한 근사값.",
+      "description": "오늘 일일 수집의 첫 브랜드~마지막 브랜드 완주 도장(sweep_completed_at, touchSwept 전용) 시각 차이(분). 런 단위 기록 테이블이 없어 브랜드별 완주 시각에서 유도한 근사값. 진행 워터마크(last_swept_at)는 오전 해시태그 스윕 정산에 오염돼 쓰지 않고, 오늘 등록된 브랜드도 제외한다([흐름] 브랜드 장 동일 패널과 정합 — 09-02).",
       "gridPos": {
         "x": 6,
         "y": 15,
@@ -692,7 +692,7 @@
           "format": "table",
           "rawQuery": true,
           "refId": "A",
-          "rawSql": "SELECT round((EXTRACT(EPOCH FROM (max(last_swept_at) - min(last_swept_at)))/60)::numeric,1) AS value FROM brand_account WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date"
+          "rawSql": "SELECT round((EXTRACT(EPOCH FROM (max(sweep_completed_at) - min(sweep_completed_at)))/60)::numeric,1) AS value FROM brand_account WHERE last_swept_on = (now() AT TIME ZONE 'Asia/Seoul')::date AND (registered_at AT TIME ZONE 'Asia/Seoul')::date < (now() AT TIME ZONE 'Asia/Seoul')::date"
         }
       ]
     },
