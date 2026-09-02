@@ -108,7 +108,7 @@ class AiChatLogRepositoryIntegrationTest extends IntegrationTest {
 
 	@Test
 	void 마이그레이션이_분당_한도_기준값_10을_시드한다() {
-		// 최초 시드는 5(V20260830041012)지만 뒤이은 V20260831144340이 시드 기본값 그대로인 행을 10으로
+		// 최초 시드는 5(V20260902125202)지만 뒤이은 V20260902125203이 시드 기본값 그대로인 행을 10으로
 		// 올린다(2026-08-31 한계 재도출, 스펙 §4) - 전체 마이그레이션 체인을 탄 이 테스트 DB는 최종값
 		// 10을 본다.
 		assertThat(jdbcClient.sql("SELECT value FROM app.app_setting WHERE key = 'ai.chat.per-minute-limit'")

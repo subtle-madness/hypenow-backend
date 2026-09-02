@@ -11,7 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 /**
- * 피드백 저장 컬럼 왕복 검증(2026-09-02 마이그레이션 V20260902120707 - feedback·feedback_comment·
+ * 피드백 저장 컬럼 왕복 검증(2026-09-02 마이그레이션 V20260902125204 - feedback·feedback_comment·
  * feedback_at) - 저장·덮어쓰기·해제와, 소유·소프트 삭제 스코프가 실제 DB에서도 걸리는지가 핵심.
  */
 class AiChatFeedbackRepositoryIntegrationTest extends IntegrationTest {
