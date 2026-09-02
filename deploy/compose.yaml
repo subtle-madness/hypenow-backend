@@ -272,11 +272,18 @@ services:
       MONITORING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/monitoring
       MONITORING_DATASOURCE_USERNAME: was_reader
       MONITORING_DATASOURCE_PASSWORD: ${WAS_READER_PASSWORD:-}
+      # 브랜드 AI 어시스턴트(2026-09-02 #712로 코드 배포, 개통은 이 env) - 끄려면 .env에 BRAND_AI_ENABLED=false.
+      # monitoring.enabled도 true여야 컨트롤러 빈이 뜬다(둘 다 @ConditionalOnProperty). Vertex 프로젝트는
+      # analytics·monitoring과 같은 신규 프로젝트, SA 키는 같은 secrets 파일을 읽기 전용으로 마운트한다.
+      BRAND_AI_ENABLED: "${BRAND_AI_ENABLED:-true}"
+      BRAND_AI_VERTEX_PROJECT: ${BRAND_AI_VERTEX_PROJECT:-project-00d0f3bd-bdef-4b0a-9eb}
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
       # 상주 메모리 확보 — 오라클 무료 계정 유휴 회수(메모리 10% 미만 조건) 방어 겸 여유.
       # OOM 자동 힙 덤프 — analytics 주석 참조(첫 OOM분 1개만 보존, 덤프 크기 ~2g)
       JAVA_OPTS: "-Xms2g -Xmx2g -XX:+AlwaysPreTouch -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/was.hprof"
     volumes:
       - ./dumps:/dumps
+      - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
     # 롤링 배포(scripts/rollout.sh)의 전환 판정 — 8081 리슨 = Spring 기동 완료(app Flyway 포함).
     # 이미지에 curl이 없어 bash /dev/tcp(analytics와 동일 관용구). start_period는 2g pre-touch 여유.
     healthcheck:
