@@ -7,6 +7,7 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.ByteArrayOutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
@@ -140,5 +141,74 @@ class VertexHttpTransportTest {
 	void 요청_본문이_그대로_전달된다() {
 		transport().post("/v1/x", "{\"a\":1}");
 		assertThat(requestBodies).containsExactly("{\"a\":1}");
+	}
+
+	// --- postStream(T1) ---
+
+	@Test
+	void SSE_data_라인만_콜백으로_전달하고_빈줄_주석_다른필드_DONE은_무시한다() throws Exception {
+		server.createContext("/stream-ok", ex -> {
+			String body = ": comment\n"
+					+ "data: {\"chunk\":1}\n\n"
+					+ "event: ping\n\n"
+					+ "data: {\"chunk\":2}\n\n"
+					+ "data: [DONE]\n\n";
+			byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+			ex.sendResponseHeaders(200, bytes.length);
+			ex.getResponseBody().write(bytes);
+			ex.close();
+		});
+
+		List<String> received = new CopyOnWriteArrayList<>();
+		transport().postStream("/stream-ok", "{\"x\":1}", received::add);
+
+		assertThat(received).containsExactly("{\"chunk\":1}", "{\"chunk\":2}");
+	}
+
+	@Test
+	void 스트림_시작_전_429는_재시도로_넘긴다() {
+		failFirstN = 2;
+		okBody = "data: {\"ok\":true}\n\n";
+		List<String> received = new CopyOnWriteArrayList<>();
+
+		transport().postStream("/v1/x", "{}", received::add);
+
+		assertThat(callCount.get()).isEqualTo(3);
+		assertThat(received).containsExactly("{\"ok\":true}");
+	}
+
+	@Test
+	void 스트림도_재시도_소진까지_429면_쿼터_예외() {
+		failFirstN = 100;
+		assertThatThrownBy(() -> transport(3, 2000).postStream("/v1/x", "{}", d -> { }))
+				.isInstanceOf(LlmQuotaExhaustedException.class);
+		assertThat(callCount.get()).isEqualTo(3);
+	}
+
+	/**
+	 * 스트림이 열려 바이트가 흐르기 시작한 뒤 연결이 끊기면 재시도하지 않고 그대로 예외를 던진다 —
+	 * 이미 onData로 전달된 청크를 두고 처음부터 다시 스트리밍하면 클라이언트 화면에 답변이
+	 * 중복돼 붙는다. Content-Length를 실제 바이트 수보다 크게 선언해 조기 종료(연결 끊김)를
+	 * 재현한다.
+	 */
+	@Test
+	void 스트림_시작_후_끊기면_재시도하지_않고_예외를_던진다() throws Exception {
+		AtomicInteger dropCalls = new AtomicInteger();
+		server.createContext("/stream-drop", ex -> {
+			dropCalls.incrementAndGet();
+			byte[] bytes = "data: {\"a\":1}\n\n".getBytes(StandardCharsets.UTF_8);
+			// 실제보다 큰 Content-Length를 선언해 클라이언트가 더 읽으려다 연결 종료를 만나게 한다.
+			ex.sendResponseHeaders(200, bytes.length + 500);
+			ex.getResponseBody().write(bytes);
+			ex.getResponseBody().flush();
+			ex.close();
+		});
+
+		List<String> received = new CopyOnWriteArrayList<>();
+		assertThatThrownBy(() -> transport().postStream("/stream-drop", "{}", received::add))
+				.isInstanceOf(IllegalStateException.class);
+
+		assertThat(received).containsExactly("{\"a\":1}");
+		assertThat(dropCalls.get()).isEqualTo(1);
 	}
 }
