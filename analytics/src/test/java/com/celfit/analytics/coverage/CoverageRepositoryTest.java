@@ -8,8 +8,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
@@ -22,11 +20,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * 잔존 픽스처 리스크가 있었다. 매 테스트 전 재마이그레이션이라 "빈 스키마" 전제 테스트들과
  * 픽스처를 심는 테스트가 서로 격리된 채 공존한다.
  */
-@Testcontainers
 class CoverageRepositoryTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	JdbcTemplate db;
 	CoverageRepository repository;

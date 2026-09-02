@@ -7,10 +7,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.instagram.source.PostInfo;
 import com.celfit.monitoring.domain.KeywordRule;
 import com.celfit.monitoring.domain.TargetStatus;
 import com.celfit.monitoring.domain.TargetType;
-import com.celfit.monitoring.hiker.PostInfo;
 import com.celfit.monitoring.service.SnapshotWriter;
 import com.celfit.monitoring.store.TargetRepository;
 import com.celfit.monitoring.testsupport.TestDb;

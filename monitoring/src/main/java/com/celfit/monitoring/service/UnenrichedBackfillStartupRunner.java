@@ -15,7 +15,8 @@ import org.springframework.stereotype.Component;
  * ({@link ApplicationReadyEvent}) 시 활성 브랜드 전부를 순회하며
  * {@link BrandDirectCollectService#backfillUnenriched}로 미보강(enriched_at IS NULL) 재고를
  * 별도 데몬 스레드에서 전량 즉시 처리한다. 해시태그 직접 수집 전환이 구 감지 데이터를
- * {@code brand_tagged_post}로 이관하며 남긴 미보강 백로그를 다음 야간 스윕(2단계 상한 300건/스윕)의
+ * {@code brand_tagged_post}로 이관하며 남긴 미보강 백로그를 다음 야간 스윕(2단계 상한 기본
+ * 2,000건/스윕 — {@code monitoring.brand.unenumerated-sweep-limit}, F6 주석 정정 2026-09-02)의
  * 점진 소진에 맡기지 않는 것이 목적이다 — {@link AdDisclosureBackfillStartupRunner}와 동형 골격이다.
  *
  * <p>부팅을 블로킹하지 않는다 — {@link ApplicationReadyEvent} 리스너 자체는 즉시 반환하고, 실제

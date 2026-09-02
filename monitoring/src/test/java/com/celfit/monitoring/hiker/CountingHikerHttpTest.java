@@ -3,6 +3,8 @@ package com.celfit.monitoring.hiker;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.instagram.source.HikerFetchException;
+import com.celfit.instagram.source.HikerHttp;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.TargetCallCountRepository;
 import java.time.LocalDate;

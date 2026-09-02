@@ -1,5 +1,9 @@
 package com.celfit.monitoring.hiker;
 
+import com.celfit.instagram.source.HikerBadRequestException;
+import com.celfit.instagram.source.HikerFetchException;
+import com.celfit.instagram.source.HikerHttp;
+import com.celfit.instagram.source.SubjectNotFoundException;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;

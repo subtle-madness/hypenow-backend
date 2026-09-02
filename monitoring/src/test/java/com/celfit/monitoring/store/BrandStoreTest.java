@@ -3,11 +3,11 @@ package com.celfit.monitoring.store;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.AuthorInfo;
-import com.celfit.monitoring.hiker.CommentInfo;
-import com.celfit.monitoring.hiker.PostInfo;
-import com.celfit.monitoring.hiker.ProfileInfo;
 import com.celfit.monitoring.testsupport.TestDb;
 import java.sql.Timestamp;
 import java.time.Instant;

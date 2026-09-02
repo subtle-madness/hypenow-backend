@@ -1,7 +1,7 @@
 package com.celfit.monitoring.store;
 
-import com.celfit.monitoring.hiker.PostInfo;
-import com.celfit.monitoring.hiker.ProfileInfo;
+import com.celfit.instagram.source.PostInfo;
+import com.celfit.instagram.source.ProfileInfo;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.HashSet;

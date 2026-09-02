@@ -2,14 +2,13 @@ package com.celfit.analytics.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.celfit.analytics.testsupport.TestDb;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
@@ -17,11 +16,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * 걸려 있다. 운영은 기본값 analytics, dev 스테이징은 analytics.raw-schema=analytics_dev 오버라이드.
  * application.yml을 실제 로드(ConfigDataApplicationContextInitializer)해 yml의 init-sql 배선까지 잠근다.
  */
-@Testcontainers
 class RawSchemaSearchPathTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	private ApplicationContextRunner runner() {
 		return new ApplicationContextRunner()

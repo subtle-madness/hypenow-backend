@@ -1,7 +1,7 @@
 package com.celfit.monitoring.store;
 
+import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.monitoring.domain.BrandStatus;
-import com.celfit.monitoring.hiker.ProfileInfo;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
