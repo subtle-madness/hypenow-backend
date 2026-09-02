@@ -559,6 +559,49 @@ class BrandStoreTest {
 				.isEqualTo("https://thumb1");   // null이 기존 유효 썸네일을 지우지 않는다
 	}
 
+	/**
+	 * 캡션 3-상태 계약(트랙 HH, PostMetaRepository 수정 3과 동형) — BrandPostMetaRepository도
+	 * caption을 무조건 EXCLUDED로 덮던 동일 결함이 있었다. null(미수집) 수집이 기존 캡션을
+	 * 지우면 안 된다(데이터 보호 결함 수정 — 결손 제로 요구).
+	 */
+	@Test
+	void 캡션_null_수집은_기존_캡션을_보존한다() {
+		postMeta.upsert("CapA", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션 원문", "https://thumb1",
+				null, null, null);
+
+		postMeta.upsert("CapA", "creator", "REELS", LocalDate.of(2026, 8, 2), null, "https://thumb1",
+				null, null, null);
+
+		assertThat(db.queryForObject(
+				"SELECT caption FROM brand_post_meta WHERE short_code='CapA'", String.class))
+				.isEqualTo("캡션 원문");
+	}
+
+	/** 빈 문자열("")은 "확인된 무캡션"이라는 정당한 값이므로 기존값 여부와 무관하게 정상적으로 덮인다. */
+	@Test
+	void 캡션_빈문자열은_확인된_무캡션으로_기존값을_덮는다() {
+		postMeta.upsert("CapB", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션 원문", "https://thumb1",
+				null, null, null);
+
+		postMeta.upsert("CapB", "creator", "REELS", LocalDate.of(2026, 8, 2), "", "https://thumb1",
+				null, null, null);
+
+		assertThat(db.queryForObject(
+				"SELECT caption FROM brand_post_meta WHERE short_code='CapB'", String.class))
+				.isEqualTo("");
+	}
+
+	/** 신규 게시물 최초 수집이 캡션 미확보(null)면 보호할 기존 값이 없어 null 그대로 삽입된다(잔여 경계). */
+	@Test
+	void 최초_수집이_캡션_null이면_null로_삽입된다() {
+		postMeta.upsert("CapC", "creator", "REELS", LocalDate.of(2026, 8, 1), null, "https://thumb1",
+				null, null, null);
+
+		assertThat(db.queryForObject(
+				"SELECT caption FROM brand_post_meta WHERE short_code='CapC'", String.class))
+				.isNull();
+	}
+
 	@Test
 	void 게시물_메타는_영상_협찬_필드를_적재한다() {
 		postMeta.upsert("CodeB", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션", "https://thumb1",
