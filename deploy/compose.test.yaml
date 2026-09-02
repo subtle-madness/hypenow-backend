@@ -137,10 +137,15 @@ services:
       MONITORING_DATASOURCE_URL: jdbc:postgresql://test-postgres:5432/monitoring
       MONITORING_DATASOURCE_USERNAME: was_reader
       MONITORING_DATASOURCE_PASSWORD: ${DEV_WAS_READER_PASSWORD:-}
+      # 브랜드 AI 어시스턴트 - 운영 compose.yaml was 블록과 동일 구성(스테이징 스모크용). 끄려면 DEV_BRAND_AI_ENABLED=false.
+      BRAND_AI_ENABLED: "${DEV_BRAND_AI_ENABLED:-true}"
+      BRAND_AI_VERTEX_PROJECT: ${DEV_BRAND_AI_VERTEX_PROJECT:-project-00d0f3bd-bdef-4b0a-9eb}
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
       # OOM 자동 힙 덤프 — 운영 analytics 주석 참조
       JAVA_OPTS: "-Xms512m -Xmx512m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/test-was.hprof"
     volumes:
       - ./dumps:/dumps
+      - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
     # 기동 순서는 운영과 동일 규율 — test-analytics healthy(=test analysis DB 마이그레이션 완료) 후
     depends_on:
       test-postgres:
