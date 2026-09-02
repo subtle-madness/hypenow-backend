@@ -149,7 +149,7 @@ class BrandControllerTest {
 		Instant receivedRegisteredAt;
 
 		StubDirectCollect() {
-			super(null, null, null, null, null, 300);
+			super(null, null, null, null, null, null, 300);
 		}
 
 		@Override

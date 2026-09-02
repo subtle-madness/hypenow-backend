@@ -16,6 +16,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -41,7 +42,11 @@ public class BrandDirectCollectService {
 	/** 야간 스윕 2단계 보강 배치 크기 — sweep 1단계의 페이지 배치(~21건)와 같은 규모감. */
 	private static final int SWEEP_BATCH_SIZE = 20;
 
+	/** 야간 스윕 2단계·기동 백필(비동기) 전용 — 자체 1순위 + Hiker 폴백. {@link #collectOne}이 쓴다. */
 	private final InstagramSource hiker;
+	/** 동기 단건 등록 전용({@link #collectAndEnrich}, BrandController POST .../direct-posts) — Hiker
+	 * 1순위 + 장애 시에만 self 구조. */
+	private final InstagramSource syncHiker;
 	private final BrandCallContext callContext;
 	private final BrandSnapshotWriter writer;
 	private final TaggedPostRepository taggedPosts;
@@ -63,10 +68,13 @@ public class BrandDirectCollectService {
 	 */
 	final AtomicBoolean unenumeratedBusy = new AtomicBoolean(false);
 
-	public BrandDirectCollectService(InstagramSource hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
+	public BrandDirectCollectService(InstagramSource hiker,
+			@Qualifier("syncInstagramSource") InstagramSource syncHiker,
+			BrandCallContext callContext, BrandSnapshotWriter writer,
 			TaggedPostRepository taggedPosts, BrandCollectService collect,
 			@Value("${monitoring.brand.unenumerated-sweep-limit:300}") int sweepLimit) {
 		this.hiker = hiker;
+		this.syncHiker = syncHiker;
 		this.callContext = callContext;
 		this.writer = writer;
 		this.taggedPosts = taggedPosts;
@@ -84,7 +92,9 @@ public class BrandDirectCollectService {
 	}
 
 	private PostInfo doCollectAndEnrich(BrandRow brand, String shortCode, Instant registeredAt) {
-		PostInfo post = hiker.fetchPost(shortCode);   // SubjectNotFound·PrivateAccount는 그대로 전파
+		// 동기 단건 등록 경로 — syncHiker(Hiker 1순위 + 장애 시에만 self 구조). SubjectNotFound·
+		// PrivateAccount는 그대로 전파.
+		PostInfo post = syncHiker.fetchPost(shortCode);
 		if (post.takenAt() == null) {
 			// brand_tagged_post.taken_at은 NOT NULL이라 저장 불가 — 호출자가 422로 정산하게 던진다.
 			throw new PostShapeUnsupportedException("게시일 미상: " + shortCode);
@@ -93,7 +103,7 @@ public class BrandDirectCollectService {
 		writer.savePost(LocalDate.now(KST), adjusted);
 		taggedPosts.upsertDirect(brand.id(), adjusted, registeredAt);
 		taggedPosts.touchCrawled(brand.id(), List.of(shortCode), Instant.now());
-		collect.enrich(brand, List.of(adjusted));   // 게시자 + 댓글 + markEnriched(finally)
+		collect.enrichSync(brand, List.of(adjusted));   // 게시자 + 댓글(syncHiker) + markEnriched(finally)
 		return adjusted;
 	}
 

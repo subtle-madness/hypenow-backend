@@ -55,7 +55,7 @@ class CollectServiceTest {
 			return alwaysMorePage(calls.size());
 		});
 		// enumeratePages=1(이 테스트와 무관), commentPages=3(스윕), registrationCommentPages=1(등록)
-		var collect = new CollectService(client, null, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 3, 1, 0, java.time.Duration.ZERO);
+		var collect = new CollectService(client, client, null, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 3, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectComments("DbV7LgZsKG8", "rarebeauty");
 		assertThat(calls).hasSize(3);   // 응답이 계속 더 있다고 해도 설정된 3페이지에서 멈춘다
@@ -63,6 +63,87 @@ class CollectServiceTest {
 		calls.clear();
 		collect.collectCommentsForRegistration("DbV7LgZsKG8", "rarebeauty");
 		assertThat(calls).hasSize(1);   // 등록은 응답이 더 있어도 1페이지에서 멈춘다
+	}
+
+	// ── 동기(등록)·비동기(스윕) 소스 분리 — 사용자 대면 동기 경로 self 트러블 원천 차단 ──
+
+	/**
+	 * 등록(동기) 전용 3종({@link CollectService#collectAccountForRegistration}·
+	 * {@link CollectService#collectPostForRegistration}·
+	 * {@link CollectService#collectCommentsForRegistration})은 생성자 2번째 인자(syncHiker)로,
+	 * 스윕(비동기)용({@link CollectService#collectAccount}·{@link CollectService#collectPost}·
+	 * {@link CollectService#collectComments})은 1번째 인자(hiker)로 간다 — 서로 다른 fake로 갈아
+	 * 끼워 콜이 각자의 리스트로만 들어오는지 본다. 실서비스에서는 이 두 InstagramSource가 서로 다른
+	 * 정책(배치=자체 1순위+Hiker 폴백, 등록=Hiker 1순위+장애시 self 구조)이라 이 분리가 곧 사용자
+	 * 대면 동기 요청이 self 트러블의 지연을 절대 물려받지 않는다는 구조적 보장이다(HikerConfig 참조).
+	 */
+	@Test
+	void 등록_3종은_syncHiker로_스윕용은_hiker로_각자_라우팅된다() {
+		List<String> hikerCalls = new ArrayList<>();
+		List<String> syncHikerCalls = new ArrayList<>();
+		var hiker = new HikerBackend(path -> {
+			hikerCalls.add(path);
+			if (path.startsWith("/v2/user/by/username")) {
+				return PROFILE;
+			}
+			if (path.startsWith("/v2/user/clips")) {
+				return clips(false);
+			}
+			if (path.startsWith("/v2/media/comments")) {
+				return alwaysMorePage(hikerCalls.size());
+			}
+			if (path.startsWith("/v2/media/info/by/code")) {
+				return singlePost(false);
+			}
+			return MEDIAS_ONE_REEL;
+		});
+		var syncHiker = new HikerBackend(path -> {
+			syncHikerCalls.add(path);
+			if (path.startsWith("/v2/user/by/username")) {
+				return PROFILE;
+			}
+			if (path.startsWith("/v2/user/clips")) {
+				return clips(false);
+			}
+			if (path.startsWith("/v2/media/comments")) {
+				return alwaysMorePage(syncHikerCalls.size());
+			}
+			if (path.startsWith("/v2/media/info/by/code")) {
+				return singlePost(false);
+			}
+			return MEDIAS_ONE_REEL;
+		});
+		var collect = new CollectService(hiker, syncHiker, new RecordingWriter(), new NoopCommentRepository(),
+				new FbRepo(Set.of("ReelA")), 1, 3, 1, 0, java.time.Duration.ZERO);
+
+		collect.collectAccountForRegistration("acct");
+		assertThat(hikerCalls).isEmpty();
+		assertThat(syncHikerCalls).isNotEmpty();
+		syncHikerCalls.clear();
+
+		collect.collectPostForRegistration("Xx1");
+		// 위 collectAccountForRegistration이 이미 syncHiker를 썼으므로 여기선 syncHiker에만 콜이 더 쌓인다.
+		assertThat(hikerCalls).isEmpty();
+
+		syncHikerCalls.clear();
+		collect.collectCommentsForRegistration("Xx1", "acct");
+		assertThat(hikerCalls).isEmpty();
+		assertThat(syncHikerCalls).isNotEmpty();
+
+		syncHikerCalls.clear();
+		collect.collectAccount("acct");
+		assertThat(syncHikerCalls).isEmpty();
+		assertThat(hikerCalls).isNotEmpty();
+
+		hikerCalls.clear();
+		collect.collectPost("Xx1");
+		assertThat(syncHikerCalls).isEmpty();
+		assertThat(hikerCalls).isNotEmpty();
+
+		hikerCalls.clear();
+		collect.collectComments("Xx1", "acct");
+		assertThat(syncHikerCalls).isEmpty();
+		assertThat(hikerCalls).isNotEmpty();
 	}
 
 	// ── FB 몫 최초 1회 재시도(08-03, findings §2 결론 4) ─────────────────────
@@ -156,7 +237,7 @@ class CollectServiceTest {
 			return MEDIAS_ONE_REEL;
 		});
 		var writer = new RecordingWriter();
-		var collect = new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
+		var collect = new CollectService(client, client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectAccountForRegistration("acct");
 
@@ -175,7 +256,7 @@ class CollectServiceTest {
 			if (path.startsWith("/v2/user/clips")) return clips(false);
 			return MEDIAS_ONE_REEL;
 		});
-		var collect = new CollectService(client, new RecordingWriter(), new NoopCommentRepository(),
+		var collect = new CollectService(client, client, new RecordingWriter(), new NoopCommentRepository(),
 				new FbRepo(Set.of("ReelA")), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectAccountForRegistration("acct");
@@ -192,7 +273,7 @@ class CollectServiceTest {
 			if (path.startsWith("/v2/user/clips")) return clips(true);
 			return MEDIAS_ONE_REEL;
 		});
-		var collect = new CollectService(client, new RecordingWriter(), new NoopCommentRepository(),
+		var collect = new CollectService(client, client, new RecordingWriter(), new NoopCommentRepository(),
 				new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectAccountForRegistration("acct");
@@ -218,7 +299,7 @@ class CollectServiceTest {
 			return singlePost(calls.size() >= 2);
 		});
 		var writer = new RecordingWriter();
-		var collect = new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
+		var collect = new CollectService(client, client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectPostForRegistration("Xx1");
 
@@ -234,7 +315,7 @@ class CollectServiceTest {
 			return singlePost(false);
 		});
 		var writer = new RecordingWriter();
-		var collect = new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
+		var collect = new CollectService(client, client, writer, new NoopCommentRepository(), new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectPostForRegistration("Xx1");
 
@@ -251,7 +332,7 @@ class CollectServiceTest {
 			return singlePost(false);
 		});
 		var writer = new RecordingWriter();
-		var collect = new CollectService(client, writer, new NoopCommentRepository(),
+		var collect = new CollectService(client, client, writer, new NoopCommentRepository(),
 				new FbRepo(Set.of("Xx1")), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectPostForRegistration("Xx1");
@@ -273,7 +354,7 @@ class CollectServiceTest {
 			if (path.startsWith("/v2/user/clips")) return clips(false);
 			return MEDIAS_ONE_REEL;
 		});
-		var collect = new CollectService(client, new RecordingWriter(), new NoopCommentRepository(),
+		var collect = new CollectService(client, client, new RecordingWriter(), new NoopCommentRepository(),
 				new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectAccount("acct");
@@ -288,7 +369,7 @@ class CollectServiceTest {
 			calls.add(path);
 			return singlePost(false);
 		});
-		var collect = new CollectService(client, new RecordingWriter(), new NoopCommentRepository(),
+		var collect = new CollectService(client, client, new RecordingWriter(), new NoopCommentRepository(),
 				new FbRepo(Set.of()), 1, 1, 1, 0, java.time.Duration.ZERO);
 
 		collect.collectPost("Xx1");
@@ -319,7 +400,7 @@ class CollectServiceTest {
 	}
 
 	private static CollectService retryingCollect(HikerBackend client, RecordingWriter writer, int retryMax) {
-		return new CollectService(client, writer, new NoopCommentRepository(), new FbRepo(Set.of()),
+		return new CollectService(client, client, writer, new NoopCommentRepository(), new FbRepo(Set.of()),
 				1, 1, 1, retryMax, java.time.Duration.ZERO);
 	}
 
@@ -690,7 +771,7 @@ class CollectServiceTest {
 
 	private static CollectService carryingCollect(HikerBackend client, RecordingWriter writer,
 			Set<String> repostsCarry, Set<String> sharesCarry) {
-		return new CollectService(client, writer, new NoopCommentRepository(),
+		return new CollectService(client, client, writer, new NoopCommentRepository(),
 				new FbRepo(Set.of(), repostsCarry, sharesCarry), 1, 1, 1, 6, java.time.Duration.ZERO);
 	}
 

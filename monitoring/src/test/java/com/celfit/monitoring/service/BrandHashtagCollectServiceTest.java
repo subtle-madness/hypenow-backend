@@ -261,7 +261,7 @@ class BrandHashtagCollectServiceTest {
 	private BrandHashtagCollectService service(int maxPages, int postLimit) {
 		// adDisclosureEnabled=false — 광고 판정은 이 테스트의 관심사가 아니고, 꺼져 있으면
 		// judgeAdDisclosuresSafely가 adJudge를 아예 부르지 않아 null을 넘겨도 안전하다.
-		BrandCollectService collect = new BrandCollectService(client(), callContext, writer, snapshots, comments,
+		BrandCollectService collect = new BrandCollectService(client(), client(), callContext, writer, snapshots, comments,
 				tagged, authors, new InertBrands(), null, Runnable::run, 10000, 2000, 3, 30, false);
 		return new BrandHashtagCollectService(client(), callContext, tags, tagged, writer, collect,
 				maxPages, postLimit);

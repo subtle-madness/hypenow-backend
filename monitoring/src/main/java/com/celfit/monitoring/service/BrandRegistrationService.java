@@ -70,6 +70,11 @@ public class BrandRegistrationService {
 	/** 탈퇴 결과 — CLOSED·ALREADY_CLOSED는 멱등 204, NOT_FOUND는 404(was 재시도 안전). */
 	public enum DeregisterOutcome { CLOSED, ALREADY_CLOSED, NOT_FOUND }
 
+	/** 등록 프로필 1콜(동기, 사용자 대면 요청 스레드) 전용 — Hiker 1순위 + 장애 시에만 self 구조
+	 * ({@link com.celfit.monitoring.config.HikerConfig#syncInstagramSource} 참조). 백필·보강은 이
+	 * 필드를 쓰지 않는다({@link #collect}·{@link #hashtagCollect}가 각자 executor 위에서 배치용
+	 * InstagramSource를 물고 있다) — 이 클래스 안에서 InstagramSource를 직접 호출하는 지점은
+	 * {@link #register(String, String, Integer, String)}의 신규 등록 분기(프로필 1콜)뿐이다. */
 	private final InstagramSource hiker;
 	private final BrandRepository brands;
 	private final BrandCollectService collect;
@@ -82,7 +87,8 @@ public class BrandRegistrationService {
 	private final Executor enrich;
 	private final Executor hashtagSweep;
 
-	public BrandRegistrationService(InstagramSource hiker, BrandRepository brands,
+	public BrandRegistrationService(@Qualifier("syncInstagramSource") InstagramSource hiker,
+			BrandRepository brands,
 			BrandCollectService collect, BrandCallCountRepository callCounts,
 			BrandHashtagCollectService hashtagCollect,
 			TaggedPostRepository taggedPosts,

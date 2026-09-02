@@ -417,7 +417,7 @@ class BrandCollectServiceTest {
 	}
 
 	private BrandCollectService service(int maxPostsPerSweep, int collectionPostLimit) {
-		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
+		return new BrandCollectService(client(), client(), callContext, writer, snapshots, comments, tagged, authors,
 				brands, new FakeAdJudge(), Runnable::run, maxPostsPerSweep, collectionPostLimit, 3, 30, true);
 	}
 
@@ -1305,7 +1305,7 @@ class BrandCollectServiceTest {
 		});
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
-			BrandCollectService svc = new BrandCollectService(latched, callContext, writer, snapshots,
+			BrandCollectService svc = new BrandCollectService(latched, latched, callContext, writer, snapshots,
 					comments, tagged, authors, brands, new FakeAdJudge(), pool, 2000, 10000, 3, 30, true);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
@@ -1498,12 +1498,65 @@ class BrandCollectServiceTest {
 		assertThat(comments.upserted).contains("A");
 	}
 
+	// ---------- 동기(direct 등록)·비동기(스윕) 소스 분리 — 사용자 대면 동기 경로 self 트러블 원천 차단 ----------
+
+	/**
+	 * {@link BrandCollectService#enrichSync}(direct 게시물 동기 등록 전용, {@link BrandDirectCollectService}
+	 * 참조)는 생성자 2번째 인자(syncHiker)로, {@link BrandCollectService#enrich(BrandRow, List)}(2인자 —
+	 * 야간 스윕·백필 등 비동기 경로가 쓴다)는 1번째 인자(hiker)로 게시자·댓글 콜을 각자 라우팅한다.
+	 * 서로 다른 fake 백엔드로 갈아 끼워 콜이 각자의 리스트로만 들어오는지 본다 — 실서비스에서는 이
+	 * 두 InstagramSource가 서로 다른 정책(배치=자체 1순위+Hiker 폴백, 등록=Hiker 1순위+장애시 self
+	 * 구조)이라 이 분리가 곧 direct 게시물 동기 등록 요청이 self 트러블의 지연을 절대 물려받지
+	 * 않는다는 구조적 보장이다(HikerConfig 참조).
+	 */
+	@Test
+	void enrichSync은_syncHiker로_2인자_enrich는_hiker로_게시자_댓글_콜이_각자_라우팅된다() {
+		List<String> hikerOnlyCalls = new ArrayList<>();
+		List<String> syncOnlyCalls = new ArrayList<>();
+		HikerBackend hikerBackend = new HikerBackend(new CountingHikerHttp(path -> {
+			hikerOnlyCalls.add(path);
+			return authorOrCommentResponse(path);
+		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
+		HikerBackend syncBackend = new HikerBackend(new CountingHikerHttp(path -> {
+			syncOnlyCalls.add(path);
+			return authorOrCommentResponse(path);
+		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
+		BrandCollectService svc = new BrandCollectService(hikerBackend, syncBackend, callContext, writer, snapshots,
+				comments, tagged, authors, brands, new FakeAdJudge(), Runnable::run, 10000, 10000, 3, 30, false);
+		PostInfo p = post("AAA", RECENT, "111", 3L);
+
+		svc.enrichSync(brand, List.of(p));
+
+		assertThat(hikerOnlyCalls).isEmpty();
+		assertThat(syncOnlyCalls).isNotEmpty();
+
+		syncOnlyCalls.clear();
+		svc.enrich(brand, List.of(p));
+
+		assertThat(syncOnlyCalls).isEmpty();
+		assertThat(hikerOnlyCalls).isNotEmpty();
+	}
+
+	/** 게시자 프로필·댓글 콜만 응답하는 최소 대역 — 위 소스 분리 테스트 전용. */
+	private static String authorOrCommentResponse(String path) {
+		if (path.startsWith("/v2/user/by/id")) {
+			String id = path.substring(path.indexOf("?id=") + "?id=".length());
+			return "{\"user\":{\"pk\":%s,\"username\":\"author_%s\",\"follower_count\":100,\"is_private\":false}}"
+					.formatted(id, id);
+		}
+		if (path.startsWith("/v2/media/comments")) {
+			return """
+					{"response":{"comments":[]},"next_page_id":null}""";
+		}
+		throw new IllegalStateException("예상 밖 콜: " + path);
+	}
+
 	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge) {
 		return serviceWithAdJudge(adJudge, true);
 	}
 
 	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge, boolean adDisclosureEnabled) {
-		return new BrandCollectService(client(), callContext, writer, snapshots, comments, tagged, authors,
+		return new BrandCollectService(client(), client(), callContext, writer, snapshots, comments, tagged, authors,
 				brands, adJudge, Runnable::run, 10000, 10000, 3, 30, adDisclosureEnabled);
 	}
 

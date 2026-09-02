@@ -72,4 +72,34 @@ class HikerConfigTest {
 		assertThat(route).isNotNull();
 		assertThat(route.count()).isEqualTo(1.0);
 	}
+
+	/**
+	 * 사용자 대면 동기 경로 전용 빈(syncInstagramSource, HikerFirstInstagramSource) 조립 고정 —
+	 * self-enabled=true여도(EmptySettingsRepo는 안전측 false를 주므로 여기서는 프록시 미설정으로
+	 * self가 구조적으로 비활성인 상태) Hiker 성공 경로는 그대로 동작하고 external.call·
+	 * instagram.source.route 지표 배선도 동일하게 남는다 — 정책(Hiker 1순위+장애시 self 구조)
+	 * 자체의 세부 분기(구조 성공·실패)는 HikerFirstInstagramSourceTest가 fake 협력자로 정밀 검증한다.
+	 */
+	@Test
+	void 동기_전용_빈도_같은_체인으로_조립되고_hiker_성공_경로가_동작한다() {
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		InstagramProxyProperties proxyProps =
+				new InstagramProxyProperties("", "", null, false, "", "");
+		InstagramSource client = new HikerConfig().syncInstagramSource(path -> "{\"user\":{\"pk\":1}}",
+				new NoopPayloadRepo(), new BrandCallContext(), new BrandCallCountRepository(null),
+				new TargetCallContext(), new TargetCallCountRepository(null), registry, proxyProps,
+				new IgSourceSettings(new EmptySettingsRepo(), proxyProps), Duration.ofSeconds(2));
+
+		client.fetchProfile("hypenow");
+
+		Timer timer = registry.find("external.call")
+				.tags("api", "hiker", "operation", "profile", "outcome", "ok").timer();
+		assertThat(timer).isNotNull();
+		assertThat(timer.count()).isEqualTo(1);
+
+		Counter route = registry.find("instagram.source.route")
+				.tags("path", "fetchProfile", "backend", "hiker", "outcome", "ok").counter();
+		assertThat(route).isNotNull();
+		assertThat(route.count()).isEqualTo(1.0);
+	}
 }

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.celfit.instagram.source.AuthorInfo;
 import com.celfit.instagram.source.CommentInfo;
 import com.celfit.instagram.source.HikerBackend;
+import com.celfit.instagram.source.InstagramSource;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.PostShapeUnsupportedException;
 import com.celfit.instagram.source.SubjectNotFoundException;
@@ -250,9 +251,9 @@ class BrandDirectCollectServiceTest {
 		// 클래스 주석) null을 넘겨도 안전하다.
 		// brands는 무해 스텁 — direct 경로는 열거(doSweepCore·enumerationCutoff)를 타지 않아
 		// 커버리지 조회·기록 지점에 닿지 않는다(collect는 adjustLotteryMetrics 재사용 목적).
-		BrandCollectService collect = new BrandCollectService(client(), callContext, writer, snapshots, comments,
+		BrandCollectService collect = new BrandCollectService(client(), client(), callContext, writer, snapshots, comments,
 				tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
-		return new BrandDirectCollectService(client(), callContext, writer, tagged, collect, sweepLimit);
+		return new BrandDirectCollectService(client(), client(), callContext, writer, tagged, collect, sweepLimit);
 	}
 
 	/** service()가 collect·direct 각자 별도 HikerBackend(별도 fake 인스턴스)를 갖지만 같은 calls 리스트를 공유한다. */
@@ -313,6 +314,47 @@ class BrandDirectCollectServiceTest {
 
 		assertThat(writer.saved).isEmpty();
 		assertThat(tagged.upsertedDirect).isEmpty();
+	}
+
+	// ── 동기(collectAndEnrich)·비동기(sweepUnenumerated) 소스 분리 — 사용자 대면 동기 경로
+	// self 트러블 원천 차단 ───────────────────────────────────────────────────
+
+	/**
+	 * {@link BrandDirectCollectService#collectAndEnrich}(direct 게시물 동기 등록, BrandController
+	 * POST .../direct-posts)는 생성자 2번째 인자(syncHiker)로, {@link
+	 * BrandDirectCollectService#sweepUnenumerated}(야간 스윕 2단계, 비동기)는 1번째 인자(hiker)로
+	 * fetchPost를 각자 라우팅한다 — 서로 다른 fake 백엔드로 갈아 끼워 콜이 각자의 리스트로만 들어오는지
+	 * 본다(BrandCollectServiceTest의 enrichSync 라우팅 테스트와 짝).
+	 */
+	@Test
+	void collectAndEnrich은_syncHiker로_sweepUnenumerated는_hiker로_fetchPost가_라우팅된다() {
+		List<String> hikerCalls = new ArrayList<>();
+		List<String> syncCalls = new ArrayList<>();
+		InstagramSource hikerSource = new HikerBackend(new CountingHikerHttp(path -> {
+			hikerCalls.add(path);
+			return postJson("D1", RECENT, 101);
+		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
+		InstagramSource syncSource = new HikerBackend(new CountingHikerHttp(path -> {
+			syncCalls.add(path);
+			return postJson("D1", RECENT, 101);
+		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
+		BrandDirectCollectService svc = serviceWithSeparateSources(hikerSource, syncSource);
+
+		svc.collectAndEnrich(brand, "D1", Instant.now());
+		assertThat(hikerCalls).isEmpty();
+		assertThat(syncCalls).isNotEmpty();
+
+		syncCalls.clear();
+		tagged.due.add(new TaggedPostRepository.TrackedPost("D2", Instant.ofEpochSecond(RECENT), null));
+		svc.sweepUnenumerated(brand);
+		assertThat(syncCalls).isEmpty();
+		assertThat(hikerCalls).isNotEmpty();
+	}
+
+	private BrandDirectCollectService serviceWithSeparateSources(InstagramSource hiker, InstagramSource syncHiker) {
+		BrandCollectService collect = new BrandCollectService(client(), client(), callContext, writer, snapshots,
+				comments, tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
+		return new BrandDirectCollectService(hiker, syncHiker, callContext, writer, tagged, collect, 300);
 	}
 
 	// ── sweepUnenumerated — 격리 ───────────────────────────────────────────────────
