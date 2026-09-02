@@ -302,5 +302,29 @@
     ],
     "groundTruthSql": null,
     "_note": "마케터 막연 질문(09-02 실측 체인 F) - 세션 브랜드 고정 한계를 거짓 사유(경쟁사 미등록)로 설명하지 않는지"
+  },
+  {
+    "id": "boost-post-selection",
+    "question": "Meta 2차 광고에 쓸 만한 게시물 10개를 근거와 함께 선별해줘",
+    "presetId": null,
+    "expectTools": [
+      {
+        "name": "list_posts",
+        "argsInclude": {
+          "sort": "performance_desc"
+        }
+      }
+    ],
+    "forbidTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author"
+        }
+      }
+    ],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 실측 결함 - 게시물 선별 요청을 작성자 집계로 오매핑(그레인 오류)"
   }
 ]
