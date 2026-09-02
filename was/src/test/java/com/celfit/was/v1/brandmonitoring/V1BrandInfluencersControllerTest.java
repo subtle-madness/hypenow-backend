@@ -409,9 +409,9 @@ class V1BrandInfluencersControllerTest {
 	// ---------- 수집 상한 모수 ----------
 
 	@Test
-	void 수집_상한을_넘는_계정은_최신순_2000으로_잘리고_collectionCapped가_true다() throws Exception {
-		// FE 요청 2026-08-28 ② — 게시물 목록은 이 컷을 08-27부터 걸었는데 이 표면만 안 걸어,
-		// 목록이 "게시물 14개"로 센 작성자를 눌러 들어가면 10개만 나왔다(실측 인원 2,800 vs 1,607).
+	void 상한_없이_전량_계정을_반환한다() throws Exception {
+		// 2026-09-02 노출 상한 폐지 설계 §4 — 게시물 2,100건이 모두 창에 포함되고 전량 반환됨.
+		// 상한을 넘는 계정도 이제 서빙되고, collectionCapped는 항상 false.
 		givenLinks(link(100L, 12));
 		givenAccount(100L);
 		givenIndex(100L, cappedSeed(2100));
@@ -420,10 +420,10 @@ class V1BrandInfluencersControllerTest {
 		mockMvc.perform(get(URL).param("accountIds", "100").with(user(principal())))
 				.andExpect(status().isOk())
 				// 게시물 1건당 작성자 1명 시드라 통과 인원이 곧 통과 게시물 수다.
-				.andExpect(jsonPath("$.meta.total").value(2000))
-				.andExpect(jsonPath("$.meta.collectionCapped").value(true));
+				.andExpect(jsonPath("$.meta.total").value(2100))
+				.andExpect(jsonPath("$.meta.collectionCapped").value(false));
 
-		// 상한 안쪽 경계는 남고, 바깥은 어떤 필터로도 나오지 않는다.
+		// 상한 폐지 후 상한 밖 게시물(2000~2099)도 필터로 나온다.
 		mockMvc.perform(get(URL).param("accountIds", "100").param("keyword", "u1999")
 						.with(user(principal())))
 				.andExpect(status().isOk())
@@ -431,28 +431,23 @@ class V1BrandInfluencersControllerTest {
 		mockMvc.perform(get(URL).param("accountIds", "100").param("keyword", "u2099")
 						.with(user(principal())))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.length()").value(0));
+				.andExpect(jsonPath("$.data.length()").value(1));
 	}
 
 	@Test
-	void 상한_컷이_업로드_기간_필터보다_앞이라_잘린_게시물은_되살아나지_않는다() throws Exception {
-		// 컷을 기간 필터 뒤에 걸면 기간을 좁힐 때마다 상한 밖 게시물이 되살아나, 같은 계정의
-		// 모수가 필터에 따라 달라진다. 게시물 목록과 같은 순서(링크 창 → 컷 → 기간)를 고정한다.
+	void 상한_폐지_후_모든_게시물이_기간_필터_대상이_된다() throws Exception {
+		// 2026-09-02 노출 상한 폐지 설계 §4 — 신선도 통제가 수집 쪽 롤링 세트로 이동했다.
+		// 구 상한 밖 게시물(인덱스 2000~2099)도 이제 창에 포함되므로 기간 필터 대상이다.
 		givenLinks(link(100L, 12));
 		givenAccount(100L);
 		givenIndex(100L, cappedSeed(2100));
 		givenMetrics(100L);
-		// 가장 오래된 시드의 업로드일 — 상한 밖(인덱스 2000~2099) 게시물만 있는 날이다.
-		String cutDate = KstTimestamps.toKstDate(CAP_SEED_NEWEST.minusHours(2099)).toString();
 
-		mockMvc.perform(get(URL).param("accountIds", "100")
-						.param("uploadedFrom", cutDate).param("uploadedTo", cutDate)
-						.with(user(principal())))
+		mockMvc.perform(get(URL).param("accountIds", "100").with(user(principal())))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.length()").value(0))
-				.andExpect(jsonPath("$.meta.total").value(0))
-				// 기간 필터로 0건이 됐어도 모수가 잘린 사실은 남는다(FE가 "왜 적나"를 알 수 있게).
-				.andExpect(jsonPath("$.meta.collectionCapped").value(true));
+				.andExpect(jsonPath("$.meta.total").value(2100))
+				// 상한 폐지 후 collectionCapped는 항상 false
+				.andExpect(jsonPath("$.meta.collectionCapped").value(false));
 	}
 
 	@Test
