@@ -377,6 +377,25 @@ services:
       postgres:
         condition: service_healthy
 
+  # 인스타 댓글 doc_id 자동 갱신자 — one-shot, 호스트 크론이 트리거(deploy/docid-refresher/README.md 참조).
+  # profiles: [tools]로 up -d엔 절대 포함되지 않는다 — 이미지도 CD가 빌드·push하지 않으므로
+  # 서버가 로컬(build:)로 직접 빌드한다(4종 상주 서비스와 달리 ghcr pull 대상이 아님).
+  docid-refresher:
+    build: ./docid-refresher
+    profiles: [tools]
+    logging: *logging
+    mem_limit: 1024m   # Chromium 헤드리스 실행 여유
+    networks: [prod]   # postgres 접속. IG는 레지덴셜 프록시(IPv4) 경유라 v6egress 불요
+    environment:
+      DATAIMPULSE_RESIDENTIAL_PROXY_URL: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:-}
+      MONITORING_DB_HOST: postgres
+      MONITORING_DB_PORT: "5432"
+      MONITORING_DB_NAME: monitoring
+      MONITORING_DB_USER: ${MONITORING_DB_USER}
+      MONITORING_DB_PASSWORD: ${MONITORING_DB_PASSWORD}
+    # restart 없음(one-shot) — depends_on도 두지 않는다(run --rm은 up -d 스택과 별개 실행이라
+    # postgres가 이미 떠 있다는 전제, 크론 스크립트에서 postgres 헬시 확인은 불필요).
+
   # OCI ONS 알람 → 디스코드 웹훅 릴레이 — ONS가 SLACK 엔드포인트를 hooks.slack.com만
   # 허용해 디스코드 직결 불가(2026-07 실측). caddy가 /internal/ons-relay/*를 이쪽으로 라우팅.
   ons-relay:

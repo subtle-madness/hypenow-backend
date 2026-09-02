@@ -77,10 +77,16 @@ docker compose --profile tools run --rm docid-refresher
 작성돼 있음 — 프록시 파싱 실패 시에도 "proxy url 파싱 실패"만 출력). `.env`에만 두고 커밋하지
 말 것.
 
-## 추가할 compose 서비스 조각 (참고용 — 실제 반영은 상위 세션이 승인 후)
+## 운영 배치 (09-02 반영 완료)
 
-`deploy/compose.yaml`에 아래와 같은 형태로 추가하는 것을 상정한다. `profiles: [tools]`가
-핵심 — `up -d`에 절대 자동 기동되지 않게 한다.
+`deploy/compose.yaml`에 아래 서비스 조각, `deploy/setup-server.sh`에 크론 등록 블록이 실제로
+반영돼 있다. **CD는 이 디렉토리를 서버로 나르지 않는다** — `.github/workflows/cd.yml`의
+`deploy` 잡은 compose.yaml·Caddyfile·grafana/prometheus/loki/alloy 설정·`scripts/{rollout,backup,
+post-container-metrics}` 등 지정 파일만 scp한다(빌드 대상 4종은 GHA가 이미지를 빌드·push해
+서버는 pull만). `docid-refresher`는 `build: ./docid-refresher`로 **서버가 직접 빌드**하므로,
+소스 갱신(스크립트 수정 등)은 CD가 대신해주지 않는다 — `deploy/docid-refresher/`를 수동
+scp(또는 rsync)로 서버에 동기화해야 반영된다. main 승격 후에도 이 갭은 남는다(향후 CD에 편입할
+수 있으나 현재는 미편입).
 
 ```yaml
   # 인스타 댓글 doc_id 자동 갱신자 — one-shot, 호스트 크론이 트리거(README 참조).
@@ -102,9 +108,10 @@ docker compose --profile tools run --rm docid-refresher
     # postgres가 이미 떠 있다는 전제, 크론 스크립트에서 postgres 헬시 확인은 불필요).
 ```
 
-## 추가할 crontab 라인 (참고용 — 실제 반영은 상위 세션이 승인 후)
+## crontab 라인 (setup-server.sh에 반영됨)
 
-`deploy/setup-server.sh`의 `backup.sh` 등록 블록과 같은 패턴으로 추가하는 것을 상정한다:
+`deploy/setup-server.sh`의 `backup.sh` 등록 블록과 같은 패턴(재실행 시 멱등 — 기존 줄
+제거 후 재등록):
 
 ```bash
 ( crontab -l 2>/dev/null | grep -v 'docid-refresher' || true ;

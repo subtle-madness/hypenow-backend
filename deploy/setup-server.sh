@@ -36,4 +36,11 @@ mkdir -p "$HOME/backups"
 ( crontab -l 2>/dev/null | grep -v 'scripts/backup.sh' || true ;
   echo "0 15 * * * $HOME/deploy/scripts/backup.sh >> $HOME/backups/backup.log 2>&1" ) | crontab -
 
+# 5) 인스타 댓글 doc_id 자동 갱신자 크론 (주 2회 월·목 KST 05:30 = UTC 20:30 — 배치 윈도우 회피,
+#    deploy/docid-refresher/README.md §크론 등록 예시). 이미지는 profiles:[tools]라 up -d엔 안 뜨고
+#    이 크론이 유일한 트리거 — 소스는 CD가 나르지 않으므로 서버에 deploy/docid-refresher/가
+#    이미 존재해야 한다(최초 배치는 scp, 이후는 레포 갱신 시 수동 재동기화).
+( crontab -l 2>/dev/null | grep -v 'docid-refresher' || true ;
+  echo "0 20 * * 1,4 cd $HOME/deploy && docker compose build docid-refresher && docker compose --profile tools run --rm docid-refresher >> $HOME/docid-refresher.log 2>&1" ) | crontab -
+
 echo "셋업 완료 — 재로그인(docker 그룹) 후 deploy/.env 채우고 'docker compose up -d'"
