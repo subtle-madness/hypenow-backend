@@ -17,7 +17,9 @@ import org.springframework.context.annotation.Configuration;
  * LLM 콜은 Hiker 보강 워커 풀(brandEnrichWorkerPool)과 <b>분리된 전용 소형 풀</b>로 나간다 —
  * LLM 지연(초 단위)이 게시자·댓글 수집 처리량을 잠식하지 않게 한다(스펙 §7).
  * 전송({@link GeminiHttp})·활성 여부는 {@link LlmTransportConfig}가 조립한 공유 빈을 그대로 쓴다
- * (2026-08-18 Vertex 전환). 백필 방어선(서킷브레이커·1회 상한)도 08-18 429 폭주 실측 계기로 추가.
+ * (2026-08-18 Vertex 전환). 백필 방어선(서킷브레이커)도 08-18 429 폭주 실측 계기로 추가 — 1회 실행
+ * 처리량 상한은 도입했다가 2026-08-27 폐기(DECISIONS.md 참조, {@link AdDisclosureJudgeService}
+ * 클래스 javadoc).
  */
 @Configuration
 public class AdDisclosureConfig {
@@ -43,9 +45,7 @@ public class AdDisclosureConfig {
 	@Bean
 	public AdDisclosureJudgeService adDisclosureJudgeService(BrandPostMetaRepository metaRepo,
 			AdDisclosureExtractorGemini extractor, @Qualifier("adDisclosureWorkerPool") Executor worker,
-			@Value("${monitoring.brand.ad-disclosure.llm-failure-abort-threshold:10}") int llmFailureAbortThreshold,
-			@Value("${monitoring.brand.ad-disclosure.backfill-max-per-run:0}") int backfillMaxPerRun) {
-		return new AdDisclosureJudgeService(metaRepo, extractor, worker, llmFailureAbortThreshold,
-				backfillMaxPerRun);
+			@Value("${monitoring.brand.ad-disclosure.llm-failure-abort-threshold:10}") int llmFailureAbortThreshold) {
+		return new AdDisclosureJudgeService(metaRepo, extractor, worker, llmFailureAbortThreshold);
 	}
 }

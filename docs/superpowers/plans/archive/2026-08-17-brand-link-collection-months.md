@@ -634,7 +634,7 @@ git add -A && git commit -m "feat(was): 게시물 목록·상세를 링크 표�
 표 맨 위 행으로:
 
 ```markdown
-| 2026-08-17 | **유저별 표시 기간은 링크 레벨 `brand_monitorings.collection_months` — 자산 max 위의 개인 창** — 08-12 "자산 레벨 max, 구독 레벨 관리 기각"을 부분 뒤집음: 여러 유저가 공유하는 브랜드(cclime 실사례)에서 3개월 신청 유저가 12개월치 전량을 받는 문제. 크롤 자산(유저 간 max, 축소 없음)은 불변이고, 링크에 신청값을 저장해 게시물 목록·counts·상세·계정 응답을 그 창으로 자른다(direct 게시물은 명시 등록이라 예외). 재등록 명시값은 그대로 반영(링크는 축소 허용 — 자산과 규칙이 다름), 생략은 불변. 기존 행 백필 12 + cclime 3개월 유저만 운영 수동 UPDATE(신청값이 영속화된 적 없어 복원 불가) | [설계](docs/superpowers/specs/2026-08-17-brand-link-collection-months-design.md) · 마이그레이션 `V<채번>__brand_monitorings_collection_months.sql`(app) · was `BrandLinkRow`·`BrandLinkRepository`·`V1BrandAccountService`·`BrandAccountAssembler`·`V1BrandPostsController`(Clock 주입) |
+| 2026-08-17 | **유저별 표시 기간은 링크 레벨 `brand_monitorings.collection_months` — 자산 max 위의 개인 창** — 08-12 "자산 레벨 max, 구독 레벨 관리 기각"을 부분 뒤집음: 여러 유저가 공유하는 브랜드(cclime 실사례)에서 3개월 신청 유저가 12개월치 전량을 받는 문제. 크롤 자산(유저 간 max, 축소 없음)은 불변이고, 링크에 신청값을 저장해 게시물 목록·counts·상세·계정 응답을 그 창으로 자른다(direct 게시물은 명시 등록이라 예외). 재등록 명시값은 그대로 반영(링크는 축소 허용 — 자산과 규칙이 다름), 생략은 불변. 기존 행 백필 12 + cclime 3개월 유저만 운영 수동 UPDATE(신청값이 영속화된 적 없어 복원 불가) | [설계](../../specs/2026-08-17-brand-link-collection-months-design.md) · 마이그레이션 `V<채번>__brand_monitorings_collection_months.sql`(app) · was `BrandLinkRow`·`BrandLinkRepository`·`V1BrandAccountService`·`BrandAccountAssembler`·`V1BrandPostsController`(Clock 주입) |
 ```
 
 (`V<채번>`은 Task 1에서 실제 채번한 파일명으로 치환.)

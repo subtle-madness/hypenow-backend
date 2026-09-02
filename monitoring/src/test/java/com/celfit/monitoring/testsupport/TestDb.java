@@ -58,12 +58,54 @@ public final class TestDb {
 		return new DriverManagerDataSource(pg.getJdbcUrl(), "was_reader", "was_reader");
 	}
 
+	/**
+	 * 스키마 초기화 후 monitoring 마이그레이션이 전부 적용된 상태를 만든다.
+	 *
+	 * <p>매 호출 Flyway 재생 대신, 첫 호출에 마이그레이션을 템플릿 DB에 한 번만 적용해두고
+	 * 이후엔 {@code CREATE DATABASE ... TEMPLATE}로 통째로 복제한다(analytics TestDb와 동일
+	 * 기법 — 결과 상태 동등성은 TemplateEquivalenceCheck가 고정). @BeforeEach 호출자가 21개
+	 * 클래스라 재생 반복이 모듈 테스트 시간의 큰 몫이었다. 대상은 공유 컨테이너의 기본 DB뿐
+	 * 이므로 인자 db/ds는 더 이상 쓰지 않지만 호출부 시그니처 호환을 위해 유지한다.
+	 *
+	 * <p>구 구현(스키마 단위 DROP)과 달리 DB를 통째로 바꾸므로 app 등 다른 스키마도 함께
+	 * 사라진다 — app 픽스처가 필요한 테스트는 이 호출 뒤에 {@link #resetAppFixture}를 부를 것
+	 * (현재 그 순서를 어기는 호출자는 없다). was_reader 롤은 클러스터 수준이라 살아남고,
+	 * V2 GRANT가 만든 DB 내 권한은 템플릿에 담겨 복제된다.
+	 */
 	public static void resetAndMigrate(JdbcTemplate db, DataSource ds) {
-		db.update("DROP SCHEMA IF EXISTS raw CASCADE");
-		db.update("DROP SCHEMA public CASCADE");
-		db.update("CREATE SCHEMA public");
-		db.update(CREATE_READER_ROLE_SQL);
-		Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+		ensureTemplate();
+		JdbcTemplate admin = adminDb();
+		// WITH (FORCE): @SpringBootTest 컨텍스트 캐시가 물고 있는 유휴 풀 커넥션이 있어도 끊는다
+		// (Hikari는 다음 대여 때 isValid로 죽은 커넥션을 걸러 재접속하므로 무해)
+		admin.update("DROP DATABASE IF EXISTS " + container().getDatabaseName() + " WITH (FORCE)");
+		admin.update("CREATE DATABASE " + container().getDatabaseName() + " TEMPLATE " + TEMPLATE_DB);
+	}
+
+	private static final String TEMPLATE_DB = "monitoring_template";
+	private static boolean templateReady;
+
+	private static synchronized void ensureTemplate() {
+		if (templateReady) {
+			return;
+		}
+		JdbcTemplate admin = adminDb();
+		admin.update("DROP DATABASE IF EXISTS " + TEMPLATE_DB + " WITH (FORCE)");
+		admin.update("CREATE DATABASE " + TEMPLATE_DB);
+		// V2 GRANT 대상 롤은 container()가 이미 만들었지만, 방어적으로 한 번 더(멱등 DO 블록)
+		admin.update(CREATE_READER_ROLE_SQL);
+		Flyway.configure()
+				.dataSource(new DriverManagerDataSource(urlFor(TEMPLATE_DB), container().getUsername(), container().getPassword()))
+				.locations("classpath:db/migration").load().migrate();
+		templateReady = true;
+	}
+
+	/** 유지관리용 postgres DB 접속 — DROP/CREATE DATABASE는 대상 DB 밖에서만 가능하다. */
+	private static JdbcTemplate adminDb() {
+		return new JdbcTemplate(new DriverManagerDataSource(urlFor("postgres"), container().getUsername(), container().getPassword()));
+	}
+
+	private static String urlFor(String dbName) {
+		return "jdbc:postgresql://" + container().getHost() + ":" + container().getMappedPort(5432) + "/" + dbName;
 	}
 
 	/**

@@ -12,19 +12,15 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
  * V30 시드 ↔ celfit-front 배포본(2026-07-14) 필터 어휘 계약 검증.
  * was는 verbatim 매칭만 하므로(§4-4) 이 시드가 곧 목록 API 필터의 어휘다.
  */
-@Testcontainers
 class BeautyTaxonomySeedTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	static JdbcTemplate db;
 	static BeautyTaxonomy taxonomy;

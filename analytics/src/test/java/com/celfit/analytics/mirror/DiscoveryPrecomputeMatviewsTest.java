@@ -2,16 +2,14 @@ package com.celfit.analytics.mirror;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.celfit.analytics.testsupport.TestDb;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
@@ -19,19 +17,18 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * 마이그레이션은 WITH DATA로 만들지만 시드가 그 뒤라, 갱신은 DerivedViewRefresher로 수행
  * (CONCURRENTLY 경로 자체를 태운다 — unique index 누락 시 여기서 즉시 실패).
  */
-@Testcontainers
 class DiscoveryPrecomputeMatviewsTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	static JdbcTemplate db;
 
 	@BeforeAll
 	static void seed() {
 		DataSource ds = new DriverManagerDataSource(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
-		Flyway.configure().dataSource(ds).locations("classpath:db/migration/analysis").load().migrate();
 		db = new JdbcTemplate(ds);
+		// 공유 컨테이너라 이전 클래스의 잔재 위에서 migrate하면 안 된다 — 리셋 후 전체 재생
+		TestDb.resetAndMigrate(db, ds);
 		// acc_a 창 6건: 뷰티·분류 5건(makeup 4 + skincare 1 — 80%/20%, 게이트 경계), 비뷰티 1건(a6).
 		// a6는 비율 분모(analyzed)에는 잡히고 share 모수에서 빠진다. x1은 미분석 — 어디에도 없음.
 		db.update("""

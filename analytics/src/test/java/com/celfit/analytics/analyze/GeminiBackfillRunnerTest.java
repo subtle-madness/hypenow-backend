@@ -17,8 +17,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -27,11 +25,9 @@ import tools.jackson.databind.ObjectMapper;
  * 백필 one-shot 계약: submit(미분석 후보 → JSONL·사이드카·배치 생성) /
  * collect(결과 파싱·sanitize → ON CONFLICT 멱등 INSERT). 뷰는 신 스키마 계약(04·03) 픽스처.
  */
-@Testcontainers
 class GeminiBackfillRunnerTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	static final String INSIGHT_JSON = """
 			{"detectedBrands":null,"sponsoredSignalLevel":"low","sponsoredSignalReasons":null,
