@@ -34,7 +34,7 @@ V20260811085943) + 매일 브랜드 스윕에 합류하는 해시태그 파이�
 서비스에 이번에 추가. **잔여**: FE 공유 필요 — 해시태그 발견 게시물 별도 탭·제외 문자열 관리
 UI(계약 §8-4).
 
-안전 상한 개정(08-12 — DECISIONS 08-12 행, [spec 2026-08-12](../superpowers/specs/2026-08-12-brand-sweep-cap-revision-design.md)):
+안전 상한 개정(08-12 — DECISIONS 08-12 행, [spec 2026-08-12](../superpowers/specs/archive/2026-08-12-brand-sweep-cap-revision-design.md)):
 `max-posts-per-sweep` **2,000 → 10,000** + 도달 시 error 로그(열거 건수·목표 컷·커버 깊이).
 tooq.official(id=34, 11.8건/일 정상 고물량) 등록 백필이 상한 2,000에 걸려 365일 창의 172~365일
 구간이 조용히 영구 공백이 된 운영 실측 대응 — 상한 중단도 정상 반환이라 touchSwept가 찍혀
@@ -44,7 +44,7 @@ tooq.official(id=34, 11.8건/일 정상 고물량) 등록 백필이 상한 2,000
 `UPDATE brand_account SET last_swept_on=NULL WHERE id=34` → 야간 스윕 재백필(~205콜)** —
 was ready가 `last_swept_at` 기준(08-10)이라 FE 무영향. 실행 대기(운영 DB 쓰기 — 사용자 확인 필요).
 
-백필 페이지 스트리밍 적재 + 조기 서빙(2026-08-12 — [spec 2026-08-12](../superpowers/specs/2026-08-12-brand-backfill-streaming-serving-design.md)):
+백필 페이지 스트리밍 적재 + 조기 서빙(2026-08-12 — [spec 2026-08-12](../superpowers/specs/archive/2026-08-12-brand-backfill-streaming-serving-design.md)):
 tooq.official 등록 실측(운영)에서 등록 → ready가 **8분 24초**(365일 열거 96콜 × p50 4.9초를
 전부 끝낸 뒤에야 일괄 적재·ready)라 그동안 FE가 이미 받아온 데이터까지 로딩 화면으로 가렸다.
 `sweepCore`를 **페이지(~21건) 단위 즉시 적재**로 바꾸고(중복 콜 0 — 커서 체인은 그대로,
@@ -70,7 +70,7 @@ OOM 재발 방지 + 백필 core 2병렬(08-12 — DECISIONS 08-12 행):
 이 공식과 꼬리 레이턴시(request-timeout 15초 초과 시 과금 2배)로 판단한다.
 
 수집 범위 선택 + 기간 확장(2026-08-12 — DECISIONS 08-12 행,
-[spec 2026-08-12](../superpowers/specs/2026-08-12-brand-collection-months-design.md)): 등록에
+[spec 2026-08-12](../superpowers/specs/archive/2026-08-12-brand-collection-months-design.md)): 등록에
 수집 창 선택(1/3/6/12개월)을 도입했다. 창은 유저 단위가 아니라 **공유 크롤 자산 단위**
 (`brand_account.collection_months`, 신설 — 기존 행은 DEFAULT 12로 사실과 일치)이고 **절대
 줄이지 않는다**(유저 간 max). 전역 `registration-window-days:365`가 이 컬럼으로 대체돼
@@ -85,7 +85,7 @@ now()) 신설, 응답에 `collectionMonths` 추가. 부수 정정: 브랜드 스
 **08-17 개정으로 "자산 레벨 하나"는 부분 뒤집혔다 — 아래 링크 레벨 항목 참조.**
 
 링크 레벨 표시 창(2026-08-17 — DECISIONS 08-17 행,
-[spec 2026-08-17](../superpowers/specs/2026-08-17-brand-link-collection-months-design.md)):
+[spec 2026-08-17](../superpowers/specs/archive/2026-08-17-brand-link-collection-months-design.md)):
 08-12의 "자산 레벨 값 하나로 관리"가 공유 브랜드에서 무너졌다 — 3개월을 신청한 유저가
 12개월치 전량을 받는다(cclime 실사례). 신청값이 어디에도 영속화되지 않아 유저별로 자를
 근거 자체가 없었다. **크롤 자산은 그대로 두고**(`brand_account.collection_months` = 유저 간
@@ -101,7 +101,7 @@ max, 축소 없음 — 수집한 사실이 정본) 유저-브랜드 링크에 �
 tagged가 목록·상세 어디에도 없는데 등록만 DUPLICATE로 막혀 영구 도달 불능(데드엔드)이 된다.
 
 완결 배치 서빙(2026-08-13 — **구현 완료**, 커밋 `2d0d9b60`~`43b8a6a7` ·
-[spec 2026-08-13](../superpowers/specs/2026-08-13-brand-initial-batch-serving-design.md)):
+[spec 2026-08-13](../superpowers/specs/archive/2026-08-13-brand-initial-batch-serving-design.md)):
 FE 요청서(08-13)로 "완성된 게시물만 내려달라"는 계약 변경이 들어와, 서빙 판정을
 "열거 적재됨"에서 **게시물 단위 보강 정산**(`brand_tagged_post.enriched_at` 신설)으로 옮겼다.
 방출 단위는 열거 페이지(21건) 배치 — **첫 페이지 배치 완료가 곧 `markServing`**이라 08-12의

@@ -5,7 +5,7 @@
 > 원 요청: FE 개선요청 "성과 대시보드 목록 API 페이로드 + 탭별 전용 엔드포인트" (2026-08-27)
 > 선행: [2026-08-12 고정 지연 회신](2026-08-12-perf-dashboard-fixed-latency-reply.md)(슬림 조립) ·
 > [2026-08-13 ETag 설계](2026-08-13-performance-dashboard-etag-design.md)(PR ④로 구현됨) ·
-> [2026-08-27 브랜드 게시물 페이지네이션](2026-08-27-brand-posts-pagination-design.md)(2단 조립 원형, PR #602)
+> [2026-08-27 브랜드 게시물 페이지네이션](archive/2026-08-27-brand-posts-pagination-design.md)(2단 조립 원형, PR #602)
 
 ## 배경
 
