@@ -216,17 +216,16 @@ class V1BrandPostsControllerTest {
 	}
 
 	@Test
-	void total과_facets는_수집_상한_2000_모수로_통일된다() throws Exception {
-		// FE 요청 2026-08-27 ③ — 목록은 상한(2000)까지만 서빙하는데 total·facets가 상한 없는 전량을
-		// 말하면 화면 숫자가 조회 가능한 데이터와 어긋난다(실측: total 2000 vs facets.all 4256).
-		// 모수를 최신순 2000으로 선컷해 모든 숫자(total·counts·facets·influencerCount)가 같은 모수를
-		// 보게 하고, 상한 도달은 meta.collectionCapped로 구분한다("정확히 2000건"과의 구분).
+	void total과_facets는_수집_창의_전량_모수로_통일된다() throws Exception {
+		// 2026-09-02 노출 상한 폐지 설계 §4 — 신선도 통제가 수집 쪽 롤링 세트로 이동했다.
+		// 목록은 이제 창 안 전량을 서빙하고, total·counts·facets가 모두 같은 모수(2005)를 본다.
+		// meta.collectionCapped는 항상 false다.
 		var tagged = new BrandTaggedPostRow[2005];
 		var metas = new java.util.ArrayList<BrandPostMetaRow>(2005);
 		for (int i = 0; i < 2005; i++) {
 			String code = "P%04d".formatted(i);
 			tagged[i] = taggedRow(code, OffsetDateTime.parse("2026-08-01T00:00:00Z").minusMinutes(i).toString());
-			// 최신 2000은 릴스, 상한 밖으로 밀리는 가장 오래된 5건만 피드 — 모수 컷을 매체 축으로 관측.
+			// 최신 2000은 릴스, 가장 오래된 5건은 피드 — 모두 창에 포함됨
 			metas.add(meta(code, i < 2000 ? "REELS" : "FEED", null));
 		}
 		givenTagged(tagged);
@@ -234,14 +233,13 @@ class V1BrandPostsControllerTest {
 
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts?limit=1").with(user(principal())))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.meta.total").value(2000))
-				.andExpect(jsonPath("$.meta.counts.all").value(2000))
-				.andExpect(jsonPath("$.meta.facets.contentType.all").value(2000))
+				.andExpect(jsonPath("$.meta.total").value(2005))
+				.andExpect(jsonPath("$.meta.counts.all").value(2005))
+				.andExpect(jsonPath("$.meta.facets.contentType.all").value(2005))
 				.andExpect(jsonPath("$.meta.facets.contentType.reels").value(2000))
-				// 상한 밖 5건(피드)은 모수 자체에서 빠진다 — 필터로도 나올 수 없는 게시물이 칩 숫자로
-				// 노출되면 안 된다.
-				.andExpect(jsonPath("$.meta.facets.contentType.feed").value(0))
-				.andExpect(jsonPath("$.meta.collectionCapped").value(true));
+				// 상한 폐지 후 피드도 모수에 포함됨
+				.andExpect(jsonPath("$.meta.facets.contentType.feed").value(5))
+				.andExpect(jsonPath("$.meta.collectionCapped").value(false));
 	}
 
 	@Test

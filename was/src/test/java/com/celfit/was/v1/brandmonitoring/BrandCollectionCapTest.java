@@ -41,24 +41,20 @@ class BrandCollectionCapTest {
 	}
 
 	@Test
-	void 상한을_넘으면_최신_업로드순으로_자르고_capped가_true다() {
-		// 입력 순서를 뒤집어 넣어도 남는 것은 최신순 상위 2,000이다 — 컷 순서는 입력 순서와 무관하다.
-		List<BrandPostAssembler.PostRef> shuffled = new ArrayList<>(sequentialRefs(2001));
-		Collections.reverse(shuffled);
+	void 상한_없이_전량을_반환한다() {
+		// 2026-09-02 노출 상한 폐지 설계 §4 — 구 2,000 컷 테스트 대체
+		List<BrandPostAssembler.PostRef> refs = sequentialRefs(2500);
 
-		BrandCollectionCap.Capped capped = BrandCollectionCap.apply(shuffled);
+		BrandCollectionCap.Capped result = BrandCollectionCap.apply(refs);
 
-		assertThat(capped.refs()).hasSize(2000);
-		assertThat(capped.capped()).isTrue();
-		// sequentialRefs는 인덱스가 커질수록 과거다 — 가장 오래된 1건(2000)만 잘린다.
-		assertThat(capped.refs()).extracting(BrandPostAssembler.PostRef::shortcode)
-				.doesNotContain("P2000")
-				.contains("P0", "P1999");
+		assertThat(result.refs()).hasSize(2500);
+		assertThat(result.capped()).isFalse();
 	}
 
 	@Test
-	void 업로드일_동률은_shortcode로_갈라_컷이_결정적이다() {
-		// 2,001건 전부 같은 날 — 타이브레이크가 없으면 어느 1건이 잘릴지 호출마다 달라진다.
+	void 동일한_입력은_항상_동일한_전량_반환한다() {
+		// 2026-09-02 노출 상한 폐지 설계 §4 — 상한이 없으므로 2,001건 전부 반환되고
+		// 정렬도 하지 않는다(컷이 모수를 줄이는 일이지 순서를 정하는 일이 아니기 때문).
 		List<BrandPostAssembler.PostRef> sameDay = new ArrayList<>();
 		for (int i = 0; i < 2001; i++) {
 			sameDay.add(ref(String.format("P%04d", i), "2026-08-05"));
@@ -69,23 +65,24 @@ class BrandCollectionCapTest {
 		BrandCollectionCap.Capped second = BrandCollectionCap.apply(new ArrayList<>(sameDay));
 
 		assertThat(first.refs()).isEqualTo(second.refs());
-		// shortcode 오름차순이 이기므로 마지막 코드(P2000)가 잘린다.
-		assertThat(first.refs()).extracting(BrandPostAssembler.PostRef::shortcode)
-				.doesNotContain("P2000")
-				.contains("P0000", "P1999");
+		// 전량 반환되므로 P0000부터 P2000까지 모두 포함
+		assertThat(first.refs()).hasSize(2001)
+				.extracting(BrandPostAssembler.PostRef::shortcode)
+				.contains("P0000", "P1999", "P2000");
 	}
 
 	@Test
-	void 업로드일_미상은_마지막으로_밀려_먼저_잘린다() {
-		// 업로드일을 모르는 게시물은 "최신"을 주장할 근거가 없다 — 상한이 걸리면 이쪽부터 나간다.
+	void 업로드일_미상도_전량_포함된다() {
+		// 2026-09-02 노출 상한 폐지 설계 §4 — 상한이 없으므로 업로드일 미상 게시물도 전부 반환된다.
 		List<BrandPostAssembler.PostRef> input = new ArrayList<>(sequentialRefs(2000));
 		input.add(ref("UNKNOWN", null));
 
 		BrandCollectionCap.Capped capped = BrandCollectionCap.apply(input);
 
-		assertThat(capped.capped()).isTrue();
+		assertThat(capped.capped()).isFalse();
 		assertThat(capped.refs()).extracting(BrandPostAssembler.PostRef::shortcode)
-				.doesNotContain("UNKNOWN");
+				.contains("UNKNOWN", "P0", "P1999");
+		assertThat(capped.refs()).hasSize(2001);
 	}
 
 	/** 인덱스가 커질수록 하루씩 과거인 refs — 최신순 컷의 기대값을 인덱스로 읽을 수 있게 한다. */

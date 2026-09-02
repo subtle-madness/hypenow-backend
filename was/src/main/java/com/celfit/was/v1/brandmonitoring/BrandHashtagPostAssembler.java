@@ -20,6 +20,10 @@ import org.springframework.stereotype.Component;
  * ({@code brand_hashtag_post})에서 <b>통합 풀</b>로 옮긴다. FE가 새 통합 목록으로 전환하기 전에도
  * 화면이 낡지 않게 하는 전환기 장치이고, <b>다음 릴리스에 이 클래스와 엔드포인트를 함께 제거</b>한다.
  *
+ * <p>2026-09-02 노출 상한 폐지 설계 §4 — 신선도 통제가 수집 쪽 롤링 세트로 이동했다.
+ * 구 {@code HASHTAG_POST_LIMIT = 2000} 컷도 폐지되고, 창 안 전량을 반환한다.
+ * {@link BrandCollectionCap}과 함께 폐지.
+ *
  * <p>구현은 {@link BrandPostAssembler#assembleBrandPosts} 결과의 {@code source=hashtag} 부분집합을
  * 구 셰이프로 옮기는 것뿐이다 — 사용자 격리·정산 게이트·정렬을 사본으로 다시 구현하지 않으므로
  * 본 목록과 이 탭이 갈릴 수 없다(구 구조는 그 판정을 각자 갖고 있어 실제로 갈렸다). 개수만 필요한
@@ -37,12 +41,6 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnProperty(name = "monitoring.enabled", havingValue = "true")
 public class BrandHashtagPostAssembler {
-
-	/**
-	 * 서빙 상한 — 본 목록의 {@code POST_LIMIT}과 같은 값. 편입 상한(브랜드당 1,000)이 이미 모수를
-	 * 제한하지만, 폭주 방어 상한은 표시 표면마다 두는 것이 이 저장소의 관용구다.
-	 */
-	static final int HASHTAG_POST_LIMIT = 2000;
 
 	private static final String PROFILE_URL_PREFIX = "https://www.instagram.com/";
 
@@ -64,13 +62,14 @@ public class BrandHashtagPostAssembler {
 	 */
 	public List<BrandHashtagPostResponse> assembleForBrand(long userId, BrandAccountRow account,
 			String viewerAccountType, LocalDate windowStart) {
+		// 노출 상한 폐지(2026-09-02 노출 상한 폐지 설계 §4) — 신선도 통제가 수집 쪽 롤링 세트로 옮겨가
+		// 창 안 전량을 반환한다.
 		List<BrandPostResponse> hashtagPosts = brandPostAssembler
 				.assembleBrandPosts(userId, account, false, BrandPostAssembler.BrandPostScope.ENRICHED_ONLY,
 						false, viewerAccountType)
 				.stream()
 				.filter(p -> BrandPostAssembler.SOURCE_HASHTAG.equals(p.source()))
 				.filter(p -> withinWindow(p, windowStart))
-				.limit(HASHTAG_POST_LIMIT)
 				.toList();
 		if (hashtagPosts.isEmpty()) {
 			return List.of();

@@ -149,9 +149,28 @@ class BrandDirectCollectServiceTest {
 		final List<TrackedPost> due = new ArrayList<>();
 		final List<TrackedPost> unenrichedDue = new ArrayList<>();
 		final List<String> unavailable = new ArrayList<>();
+		Instant nthNewestHashtag;                       // 스텁 floor 응답(null = 세트 미포화)
+		Instant capturedFloor;                          // unenumeratedDuePosts에 전달된 floor 캡처
+		final List<Instant> frozenTouches = new ArrayList<>();  // touchFrozenHashtag(floor) 호출 캡처
 
 		InMemoryTagged() {
 			super(null);
+		}
+
+		@Override
+		public java.util.Optional<Instant> nthNewestHashtagTakenAt(long brandId, int n) {
+			return java.util.Optional.ofNullable(nthNewestHashtag);
+		}
+
+		@Override
+		public List<TrackedPost> unenumeratedDuePosts(long brandId, Instant minTakenAt, Instant hashtagFloor) {
+			capturedFloor = hashtagFloor;
+			return unenumeratedDuePosts(brandId, minTakenAt);   // 필터 자체는 Task 1 DB 테스트가 고정
+		}
+
+		@Override
+		public void touchFrozenHashtag(long brandId, Instant minTakenAt, Instant floorTakenAt, Instant at) {
+			frozenTouches.add(floorTakenAt);
 		}
 
 		@Override
@@ -250,6 +269,10 @@ class BrandDirectCollectServiceTest {
 	}
 
 	private BrandDirectCollectService serviceWithLimit(int sweepLimit) {
+		return serviceWithLimit(sweepLimit, 2000);
+	}
+
+	private BrandDirectCollectService serviceWithLimit(int sweepLimit, int monitoringSetSize) {
 		// adDisclosureEnabled=false — 이 테스트는 direct 단건 수집 경로만 검증한다. 킬 스위치가
 		// 꺼져 있으면 judgeAdDisclosuresSafely가 adJudge를 아예 호출하지 않으므로(BrandCollectService
 		// 클래스 주석) null을 넘겨도 안전하다.
@@ -257,7 +280,8 @@ class BrandDirectCollectServiceTest {
 		// 커버리지 조회·기록 지점에 닿지 않는다(collect는 adjustLotteryMetrics 재사용 목적).
 		BrandCollectService collect = new BrandCollectService(client(), callContext, writer, snapshots, comments,
 				tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
-		return new BrandDirectCollectService(client(), callContext, writer, tagged, collect, sweepLimit);
+		return new BrandDirectCollectService(client(), callContext, writer, tagged, collect, sweepLimit,
+				monitoringSetSize);
 	}
 
 	/** service()가 collect·direct 각자 별도 HikerClient(별도 fake 인스턴스)를 갖지만 같은 calls 리스트를 공유한다. */
@@ -436,6 +460,35 @@ class BrandDirectCollectServiceTest {
 
 		assertThat(tagged.touched).containsKey("NoDate");   // 커버 처리 — 즉시-due 창에서 빠진다
 		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("After");
+	}
+
+	// ── 감시 세트 바닥 한정(2026-09-02 해시태그 감시 세트 설계 §3) ─────────────────
+
+	/** 감시 세트가 포화면(floor 존재) 2단계는 동결 touch 후 floor 한정 모수로 돈다(설계 §3). */
+	@Test
+	void 스윕2단계는_세트_바닥을_동결_touch하고_같은_바닥으로_모수를_자른다() {
+		Instant floor = Instant.ofEpochSecond(NOW - 7L * 86400);
+		tagged.nthNewestHashtag = floor;
+		tagged.due.add(new TaggedPostRepository.TrackedPost("AAA", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("AAA", postJson("AAA", RECENT, 501));
+
+		serviceWithLimit(0).sweepUnenumerated(brand);
+
+		assertThat(tagged.frozenTouches).containsExactly(floor);
+		assertThat(tagged.capturedFloor).isEqualTo(floor);
+	}
+
+	/** 세트 미포화(floor 없음)면 동결 touch를 부르지 않고 기존 전체 모수 그대로다. */
+	@Test
+	void 세트_미포화면_동결_touch_없이_전체_모수로_돈다() {
+		tagged.nthNewestHashtag = null;
+		tagged.due.add(new TaggedPostRepository.TrackedPost("AAA", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("AAA", postJson("AAA", RECENT, 502));
+
+		serviceWithLimit(0).sweepUnenumerated(brand);
+
+		assertThat(tagged.frozenTouches).isEmpty();
+		assertThat(tagged.capturedFloor).isNull();
 	}
 
 	// ── backfillUnenriched — 기동 즉시 백필(2026-08-28 사용자 지시) ─────────────
