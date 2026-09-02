@@ -90,7 +90,21 @@ jobs:
       - name: src/test 있는 모듈 수집
         id: list
         run: |
-          modules=$(for m in $(sed -n "s/^include '\(.*\)'/\1/p" settings.gradle); do
+          # 파싱 무결성 가드: include 선언 수 ↔ 파싱 성공 수를 대조한다. 표기가 이 스크립트의
+          # 가정(작은따옴표 `include '이름'`, 평탄 모듈)을 벗어나는 경우 — 괄호·큰따옴표 표기,
+          # settings.gradle.kts 전환, 중첩 모듈('a:b', 디렉토리 매핑이 달라 여기선 미지원) —
+          # 일부 모듈이 조용히 빠지는 대신 여기서 시끄럽게 실패한다.
+          declared=$(grep -c '^include' settings.gradle)
+          parsed=$(sed -n "s/^include '\([^:']*\)'[[:space:]]*$/\1/p" settings.gradle)
+          parsed_count=$(echo "$parsed" | grep -c . || true)
+          if [ "$declared" -ne "$parsed_count" ]; then
+            echo "include 선언 ${declared}개 중 ${parsed_count}개만 파싱됨 — settings.gradle 표기가 바뀌었으면 이 스크립트도 함께 고칠 것"
+            exit 1
+          fi
+          for m in $parsed; do
+            [ -d "$m" ] || { echo "모듈 '$m'의 디렉토리가 없음 — 모듈명↔경로 매핑 회귀"; exit 1; }
+          done
+          modules=$(for m in $parsed; do
             [ -d "$m/src/test" ] && printf '%s\n' "$m"
           done | jq -R . | jq -cs .)
           if [ "$modules" = "[]" ]; then
