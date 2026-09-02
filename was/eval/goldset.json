@@ -403,5 +403,134 @@
     ],
     "groundTruthSql": null,
     "_note": "09-02 스윕 실측 chain-02 - 직전 턴 결과를 가리키는 지칭('거기서')을 해소하지 못하고 shortCode를 요구하거나 알 수 없다고 답하던 사고. 지칭 해소 회귀 앵커."
+  },
+  {
+    "id": "preset-weekly-briefing",
+    "question": "지난주에 우리 태그된 게시물 뭐 있었고 뭐가 터졌어?",
+    "presetId": "weekly_briefing",
+    "expectTools": [
+      {
+        "name": "list_posts",
+        "argsInclude": {
+          "days": 7,
+          "sort": "performance_desc",
+          "limit": 10
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 마케터 프리셋 개편 - verified 플랜 선실행 확인"
+  },
+  {
+    "id": "preset-organic-fans",
+    "question": "협찬 없이 우리 제품 올려준 크리에이터 중에 반응 좋은 사람 누구야?",
+    "presetId": "organic_fans",
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "sponsorship": "organic",
+          "orderBy": "avgViews",
+          "limit": 10
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 마케터 프리셋 개편 - verified 플랜 선실행 확인"
+  },
+  {
+    "id": "preset-sponsored-scorecard",
+    "question": "이번에 협찬한 크리에이터들 성적표 보여줘",
+    "presetId": "sponsored_scorecard",
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "sponsorship": "sponsored",
+          "orderBy": "avgViews",
+          "limit": 20
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 마케터 프리셋 개편 - verified 플랜 선실행 확인"
+  },
+  {
+    "id": "preset-ad-candidates",
+    "question": "광고로 돌릴 만한 크리에이터 게시물 골라줘",
+    "presetId": "ad_candidates",
+    "expectTools": [
+      {
+        "name": "list_posts",
+        "argsInclude": {
+          "sort": "performance_desc",
+          "limit": 20
+        }
+      }
+    ],
+    "forbidTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author"
+        }
+      }
+    ],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 마케터 프리셋 개편 - verified 플랜 선실행 확인. forbidTools는 게시물 단위 그레인(작성자 집계 아님) 강제."
+  },
+  {
+    "id": "preset-negative-comments",
+    "question": "댓글에 불만이나 안 좋은 반응 있어?",
+    "presetId": "negative_comments",
+    "expectTools": [
+      {
+        "name": "list_posts",
+        "argsInclude": {
+          "days": 30,
+          "sort": "performance_desc",
+          "limit": 5
+        }
+      },
+      {
+        "name": "get_comments",
+        "argsHasKeys": [
+          "shortCodes"
+        ]
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 마케터 프리셋 개편 - verified 플랜 선실행 확인"
+  },
+  {
+    "id": "preset-micro-creators",
+    "question": "팔로워는 적은데 반응 터지는 사람 있어?",
+    "presetId": "micro_creators",
+    "expectTools": [
+      {
+        "name": "aggregate_posts",
+        "argsInclude": {
+          "groupBy": "author",
+          "orderBy": "reachMultiple",
+          "limit": 30,
+          "minSample": 2
+        }
+      }
+    ],
+    "forbidTools": [],
+    "expectAnswerContains": [],
+    "groundTruthSql": null,
+    "_note": "09-02 마케터 프리셋 개편 - verified 플랜 선실행 확인"
   }
 ]
