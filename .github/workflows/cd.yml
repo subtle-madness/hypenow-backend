@@ -13,10 +13,14 @@ on:
   push:
     branches: [main]
 
-# 배포 겹침 방지 — 진행 중 배포는 취소하지 않고 다음 배포가 대기.
-# test CD(cd-test.yml)와 같은 그룹 — 두 CD가 같은 서버 ~/deploy를 쓰므로 직렬화한다
+# 같은 워크플로 실행끼리만 직렬화 — 연속 main push 시 빌드가 겹치면 늦게 끝난 구 커밋이
+# :latest를 덮는 역전이 가능해서다(07-20 ":latest는 마지막 push가 이긴다" 사고와 동일 레이스).
+# test CD(cd-test.yml)와의 직렬화는 서버를 실제로 만지는 deploy 잡의 job-level concurrency
+# (deploy-server)로 내렸다 — 빌드 잡은 태그가 달라(:latest vs :staging) 겹쳐도 무해한데,
+# 워크플로 전체를 묶으면 승격(develop→staging→main 연속 머지)마다 운영 CD가 test CD 종료까지
+# 순수 대기했다(09-01 실측: 잡 시작까지 3분 27초 대기, test CD 종료 3초 뒤 시작).
 concurrency:
-  group: deploy-server
+  group: cd-prod
   cancel-in-progress: false
 
 permissions:
@@ -89,6 +93,11 @@ jobs:
     needs: build-push
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # test CD(cd-test.yml)의 deploy 잡과 같은 그룹 — 두 CD가 같은 서버 ~/deploy·docker 데몬을
+    # 쓰므로 서버 접촉 구간만 직렬화한다(빌드는 겹쳐도 무해 — 파일 상단 concurrency 주석 참조).
+    concurrency:
+      group: deploy-server
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7   # 분석 뷰 SQL 전송용
 
