@@ -48,6 +48,8 @@ public class BrandDirectCollectService {
 	private final BrandCollectService collect;
 	/** 스윕당 브랜드당 단건 수집 상한(설계 §5) — 0 이하는 무제한. */
 	private final int sweepLimit;
+	/** 해시태그 감시 세트 크기(2026-09-02 설계 §1) — 편입 쪽(BrandHashtagCollectService)과 같은 키. */
+	private final int monitoringSetSize;
 	/**
 	 * unenumerated 처리 동시 실행 가드(2026-08-28 리뷰 지적) — {@link #sweepUnenumerated}(야간 스윕
 	 * 2단계)와 {@link #backfillUnenriched}(기동 즉시 백필)는 같은 모수(direct∪hashtag 미크롤 행)를
@@ -65,13 +67,15 @@ public class BrandDirectCollectService {
 
 	public BrandDirectCollectService(HikerClient hiker, BrandCallContext callContext, BrandSnapshotWriter writer,
 			TaggedPostRepository taggedPosts, BrandCollectService collect,
-			@Value("${monitoring.brand.unenumerated-sweep-limit:300}") int sweepLimit) {
+			@Value("${monitoring.brand.unenumerated-sweep-limit:2000}") int sweepLimit,
+			@Value("${monitoring.brand.hashtag.post-limit:2000}") int monitoringSetSize) {
 		this.hiker = hiker;
 		this.callContext = callContext;
 		this.writer = writer;
 		this.taggedPosts = taggedPosts;
 		this.collect = collect;
 		this.sweepLimit = sweepLimit;
+		this.monitoringSetSize = monitoringSetSize;
 	}
 
 	/**
@@ -131,8 +135,18 @@ public class BrandDirectCollectService {
 
 	private void doSweepUnenumerated(BrandRow brand) {
 		Instant now = Instant.now();
+		// 감시 세트 바닥(2026-09-02 설계 §3) — hashtag 행이 세트 크기 이상이면 바닥이 생기고,
+		// 바닥 밖 행은 ①동결 touch(커버 간주 — 대시보드·정렬 정합) ②모수 제외(매일 티어는 touch로
+		// 안 꺼진다 — repo 주석 참조) 두 겹으로 처리한다. 이 시점의 바닥은 "어제까지의 편입" 기준이다
+		// (스윕 순서가 ①tagged ②여기 ③hashtag 편입이라) — 오늘 편입분이 바닥을 밀어올리는 효과는
+		// 다음 날 스윕부터 반영되며, 하루 지연은 수용한다(설계 §3).
+		Instant floor = monitoringSetSize <= 0 ? null
+				: taggedPosts.nthNewestHashtagTakenAt(brand.id(), monitoringSetSize).orElse(null);
+		if (floor != null) {
+			taggedPosts.touchFrozenHashtag(brand.id(), floor, now);
+		}
 		List<TaggedPostRepository.TrackedPost> dueAll = taggedPosts
-				.unenumeratedDuePosts(brand.id(), now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE)).stream()
+				.unenumeratedDuePosts(brand.id(), now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE), floor).stream()
 				.filter(t -> BrandCrawlPolicy.due(t.takenAt(), t.lastCrawledAt(), now))
 				.toList();
 		// 스윕당 상한(2026-08-27 설계 §5) — 구 감지 데이터 이관분은 last_crawled_at이 NULL이라 180일
