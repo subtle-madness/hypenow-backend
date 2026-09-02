@@ -95,14 +95,19 @@ public class SnapshotWriter {
 	 * 단건 보강 전 경로의 단일 깔때기라, "게시물을 처음 만나는 모든 곳에서 적재" 요구가 자동 충족된다.
 	 * taken_at을 못 얻은 게시물은 잘못된 게시일을 만들지 않도록 post_meta upsert 자체를 스킵한다
 	 * (스냅샷 적재는 그대로 진행 — post_snapshot은 taken_at에 의존하지 않는다).
+	 *
+	 * <p>캡션은 3-상태(null=미수집 / ""=확인된 무캡션 / 값=원문, 트랙 HH 계약)를 그대로 저장
+	 * 계층까지 전달한다(데이터 보호 결함 수정) — 과거엔 여기서 null을 ""로 강제 변환해 넘겼는데,
+	 * PostMetaRepository.upsert가 caption을 무조건 EXCLUDED로 덮던 시절엔 그게 곧 파싱 실패를
+	 * "확인된 무캡션"으로 오기록해 기존 캡션을 지우는 결손 경로였다. null을 그대로 넘기면
+	 * PostMetaRepository의 COALESCE가 미수집을 "보존 대상"으로 안전하게 처리한다.
 	 */
 	private void savePostRow(LocalDate on, PostInfo post) {
 		alarms.recordMetricsHidden(on, post);
 		snapshots.upsertPost(on, post);
 		if (post.takenAt() != null) {
 			LocalDate uploadedAt = Instant.ofEpochSecond(post.takenAt()).atZone(KST).toLocalDate();
-			String caption = post.caption() != null ? post.caption() : "";   // 캡션 없는 게시물은 빈 문자열(계약 §3)
-			postMeta.upsert(post.shortCode(), post.username(), post.contentType(), uploadedAt, caption, post.thumbnailUrl());
+			postMeta.upsert(post.shortCode(), post.username(), post.contentType(), uploadedAt, post.caption(), post.thumbnailUrl());
 		}
 	}
 

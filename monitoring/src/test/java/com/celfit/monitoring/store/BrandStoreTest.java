@@ -454,6 +454,85 @@ class BrandStoreTest {
 		assertThat(snapshots.codesWithRepostsZeroCarry(Set.of("ReelC"), today.plusDays(1))).isEmpty();
 	}
 
+	// ── 같은 날 재수집 시 null 관측의 덮어쓰기 보호(SnapshotRepository 수정 1과 동형 결함) ──
+	// BrandSnapshotRepository.upsertPost는 SnapshotRepository.upsertPost를 그대로 이식한 것이라
+	// 같은 결함(EXCLUDED 무조건 덮기)을 그대로 물려받았다 — 동일한 보호를 이식한다.
+
+	@Test
+	void 저장_공유_리포스트_null_관측은_기존_값을_보존한다() {
+		LocalDate day = LocalDate.of(2026, 8, 10);
+		var full = new PostInfo("BSC1", "creator", null, null, "999", "REELS", "캡션", null,
+				1754000000L, 10L, 2L, 100L, null, 3L, 4L, 5L, null, null, null, true, false, false);
+		snapshots.upsertPost(day, full);
+
+		var selfOnly = new PostInfo("BSC1", "creator", null, null, "999", "REELS", "캡션", null,
+				1754000000L, 10L, 2L, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(day, selfOnly);
+
+		assertThat(db.queryForMap("SELECT saves, shares, reposts FROM brand_post_snapshot WHERE short_code='BSC1'"))
+				.containsEntry("saves", 3L).containsEntry("shares", 4L).containsEntry("reposts", 5L);
+	}
+
+	@Test
+	void 댓글수_null_관측은_기존_값을_보존한다() {
+		LocalDate day = LocalDate.of(2026, 8, 10);
+		var known = new PostInfo("BSC2", "creator", null, null, "999", "REELS", "캡션", null,
+				1754000000L, 10L, 5L, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(day, known);
+
+		var failed = new PostInfo("BSC2", "creator", null, null, "999", "REELS", "캡션", null,
+				1754000000L, 10L, null, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(day, failed);
+
+		assertThat(db.queryForMap("SELECT comments FROM brand_post_snapshot WHERE short_code='BSC2'"))
+				.containsEntry("comments", 5L);
+	}
+
+	@Test
+	void 좋아요_미확정_null은_기존_값을_보존한다() {
+		LocalDate day = LocalDate.of(2026, 8, 10);
+		var known = new PostInfo("BSC3", "creator", null, null, "999", "REELS", "캡션", null,
+				1754000000L, 50L, 2L, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(day, known);
+
+		var ambiguous = new PostInfo("BSC3", "creator", null, null, "999", "REELS", "캡션", null,
+				1754000000L, null, 2L, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(day, ambiguous);
+
+		assertThat(db.queryForMap("SELECT likes, likes_hidden FROM brand_post_snapshot WHERE short_code='BSC3'"))
+				.containsEntry("likes", 50L).containsEntry("likes_hidden", false);
+	}
+
+	@Test
+	void 좋아요_실제_숨김_관측은_기존_값을_null로_덮는다() {
+		LocalDate day = LocalDate.of(2026, 8, 10);
+		var known = new PostInfo("BSC4", "creator", null, null, "999", "REELS", "캡션", null,
+				1754000000L, 50L, 2L, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(day, known);
+
+		var hidden = new PostInfo("BSC4", "creator", null, null, "999", "REELS", "캡션", null,
+				1754000000L, null, 2L, 100L, null, null, null, null, null, null, null, true, true, false);
+		snapshots.upsertPost(day, hidden);
+
+		assertThat(db.queryForMap("SELECT likes, likes_hidden FROM brand_post_snapshot WHERE short_code='BSC4'"))
+				.containsEntry("likes", null).containsEntry("likes_hidden", true);
+	}
+
+	@Test
+	void 공유_실제_숨김_관측은_기존_값을_null로_덮는다() {
+		LocalDate day = LocalDate.of(2026, 8, 10);
+		var known = new PostInfo("BSC5", "creator", null, null, "999", "REELS", "캡션", null,
+				1754000000L, 10L, 2L, 100L, null, null, 7L, null, null, null, null, true, false, false);
+		snapshots.upsertPost(day, known);
+
+		var hidden = new PostInfo("BSC5", "creator", null, null, "999", "REELS", "캡션", null,
+				1754000000L, 10L, 2L, 100L, null, null, null, null, null, null, null, true, false, true);
+		snapshots.upsertPost(day, hidden);
+
+		assertThat(db.queryForMap("SELECT shares, shares_hidden FROM brand_post_snapshot WHERE short_code='BSC5'"))
+				.containsEntry("shares", null).containsEntry("shares_hidden", true);
+	}
+
 	@Test
 	void 브랜드_프로필_추이_적재() {
 		var profile = new ProfileInfo("brandx", "111", 1000L, 10L, 5L, "브랜드", "https://p", "소개", null, null);
@@ -478,6 +557,49 @@ class BrandStoreTest {
 		assertThat(db.queryForObject(
 				"SELECT thumbnail_url FROM brand_post_meta WHERE short_code='CodeA'", String.class))
 				.isEqualTo("https://thumb1");   // null이 기존 유효 썸네일을 지우지 않는다
+	}
+
+	/**
+	 * 캡션 3-상태 계약(트랙 HH, PostMetaRepository 수정 3과 동형) — BrandPostMetaRepository도
+	 * caption을 무조건 EXCLUDED로 덮던 동일 결함이 있었다. null(미수집) 수집이 기존 캡션을
+	 * 지우면 안 된다(데이터 보호 결함 수정 — 결손 제로 요구).
+	 */
+	@Test
+	void 캡션_null_수집은_기존_캡션을_보존한다() {
+		postMeta.upsert("CapA", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션 원문", "https://thumb1",
+				null, null, null);
+
+		postMeta.upsert("CapA", "creator", "REELS", LocalDate.of(2026, 8, 2), null, "https://thumb1",
+				null, null, null);
+
+		assertThat(db.queryForObject(
+				"SELECT caption FROM brand_post_meta WHERE short_code='CapA'", String.class))
+				.isEqualTo("캡션 원문");
+	}
+
+	/** 빈 문자열("")은 "확인된 무캡션"이라는 정당한 값이므로 기존값 여부와 무관하게 정상적으로 덮인다. */
+	@Test
+	void 캡션_빈문자열은_확인된_무캡션으로_기존값을_덮는다() {
+		postMeta.upsert("CapB", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션 원문", "https://thumb1",
+				null, null, null);
+
+		postMeta.upsert("CapB", "creator", "REELS", LocalDate.of(2026, 8, 2), "", "https://thumb1",
+				null, null, null);
+
+		assertThat(db.queryForObject(
+				"SELECT caption FROM brand_post_meta WHERE short_code='CapB'", String.class))
+				.isEqualTo("");
+	}
+
+	/** 신규 게시물 최초 수집이 캡션 미확보(null)면 보호할 기존 값이 없어 null 그대로 삽입된다(잔여 경계). */
+	@Test
+	void 최초_수집이_캡션_null이면_null로_삽입된다() {
+		postMeta.upsert("CapC", "creator", "REELS", LocalDate.of(2026, 8, 1), null, "https://thumb1",
+				null, null, null);
+
+		assertThat(db.queryForObject(
+				"SELECT caption FROM brand_post_meta WHERE short_code='CapC'", String.class))
+				.isNull();
 	}
 
 	@Test

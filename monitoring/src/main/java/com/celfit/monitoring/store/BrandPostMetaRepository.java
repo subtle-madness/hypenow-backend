@@ -34,8 +34,15 @@ public class BrandPostMetaRepository {
 
 	/**
 	 * thumbnailUrl이 null이면(일시적 미취득) 기존 값을 덮지 않는다 — COALESCE(EXCLUDED, 기존값) 패턴.
-	 * caption은 항상 EXCLUDED로 덮는다(수정 반영). first_seen_at은 갱신 안 함(최초 관측 보존).
-	 * 무효 스킴 URL은 저장 전 null로 강등(PostMetaRepository·트랙 KK 동형).
+	 * first_seen_at은 갱신 안 함(최초 관측 보존). 무효 스킴 URL은 저장 전 null로 강등
+	 * (PostMetaRepository·트랙 KK 동형).
+	 *
+	 * <p><b>캡션 3-상태 계약(트랙 HH, PostMetaRepository 수정과 동형 결함 수정)</b> — null=미수집
+	 * (파싱 실패) / ""=확인된 무캡션 / 값=원문. caption이 null이면(수집 실패) 기존 캡션을 지우지
+	 * 않고 보존한다(thumbnailUrl과 동일 COALESCE 패턴). 과거엔 caption을 항상 EXCLUDED로 덮었는데,
+	 * 호출부(BrandSnapshotWriter)가 null을 ""로 강제 변환해 넘기던 시절엔 이게 곧 "파싱 실패가
+	 * 기존 캡션을 빈 문자열로 지우는" 결손 경로였다. 빈 문자열("")은 "확인된 무캡션"이라는 정당한
+	 * 값이므로 COALESCE에 걸리지 않고 정상적으로 덮는다.
 	 *
 	 * <p>영상·협찬 3필드(was 계약 §3-2)는 <b>컬럼마다 규칙이 다르다</b>:
 	 * <ul>
@@ -59,7 +66,7 @@ public class BrandPostMetaRepository {
 				  username = EXCLUDED.username,
 				  content_type = EXCLUDED.content_type,
 				  uploaded_at = EXCLUDED.uploaded_at,
-				  caption = EXCLUDED.caption,
+				  caption = COALESCE(EXCLUDED.caption, brand_post_meta.caption),
 				  thumbnail_url = COALESCE(EXCLUDED.thumbnail_url, brand_post_meta.thumbnail_url),
 				  video_url = COALESCE(EXCLUDED.video_url, brand_post_meta.video_url),
 				  video_duration = COALESCE(EXCLUDED.video_duration, brand_post_meta.video_duration),

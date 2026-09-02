@@ -61,6 +61,38 @@ class BrandSnapshotWriterTest {
 				.isEqualTo(1L);
 	}
 
+	/**
+	 * 캡션 미확보(null)는 3-상태 계약(트랙 HH)의 "미수집"이다 — brand_post_meta.caption도 null
+	 * 그대로 저장된다(SnapshotWriter 수정 3과 동형). 신규 게시물 최초 수집이라 손실은 없지만
+	 * 결손 상태가 남는 잔여 경계 케이스다 — 다음 재수집에서 값이나 ""로 자연 치유된다.
+	 */
+	@Test
+	void 캡션이_null이면_null_그대로_저장된다() {
+		var post = new PostInfo("CodeB", "creator", null, null, "999", "REELS", null,
+				"https://cdn/thumb.jpg", TAKEN_AT, 100L, 5L, 1000L, null, 20L, 3L, 1L,
+				"https://cdn/video.mp4", 12.5, true, true, false, false);
+
+		writer.savePost(LocalDate.of(2026, 8, 7), post);
+
+		assertThat(db.queryForObject(
+				"SELECT caption FROM brand_post_meta WHERE short_code='CodeB'", String.class)).isNull();
+	}
+
+	/** 기존 캡션이 있는 행을 캡션 미확보(null) 수집이 지우면 안 된다(사용자 요구 — 캡션 결손 제로). */
+	@Test
+	void 기존_캡션이_있으면_null_수집이_지우지_않는다() {
+		writer.savePost(LocalDate.of(2026, 8, 6), post());   // caption="캡션"
+
+		var withoutCaption = new PostInfo("CodeA", "creator", null, null, "999", "REELS", null,
+				"https://cdn/thumb.jpg", TAKEN_AT, 100L, 5L, 1000L, null, 20L, 3L, 1L,
+				"https://cdn/video.mp4", 12.5, true, true, false, false);
+		writer.savePost(LocalDate.of(2026, 8, 7), withoutCaption);
+
+		assertThat(db.queryForObject(
+				"SELECT caption FROM brand_post_meta WHERE short_code='CodeA'", String.class))
+				.isEqualTo("캡션");
+	}
+
 	@Test
 	void saveBrandProfile은_최신값과_추이를_함께_적재한다() {
 		long id = brands.insertOrReactivate("brandx",
