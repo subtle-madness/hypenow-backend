@@ -42,9 +42,9 @@ def main() -> None:
     prefix, cache_control = sys.argv[1], sys.argv[2]
     apply = "--apply" in sys.argv[3:]
 
-    urls = subprocess.run(
+    urls = [line.strip() for line in subprocess.run(
         ["gcloud", "storage", "ls", f"{BUCKET}/{prefix}/"],
-        capture_output=True, text=True, check=True).stdout.split()
+        capture_output=True, text=True, check=True).stdout.splitlines() if line.strip()]
     print(f"대상 {len(urls)}개 (모드: {'APPLY' if apply else '드라이런'})")
 
     shrunk = passed = kept = failed = 0
@@ -83,10 +83,15 @@ def main() -> None:
                 after += out.stat().st_size
             outs = list(up.iterdir())
             if apply and outs:
-                subprocess.run(
-                    ["gcloud", "storage", "cp", *map(str, outs), f"{BUCKET}/{prefix}/",
-                     "--content-type=image/jpeg", f"--cache-control={cache_control}"],
-                    capture_output=True, check=True)
+                try:
+                    subprocess.run(
+                        ["gcloud", "storage", "cp", *map(str, outs), f"{BUCKET}/{prefix}/",
+                         "--content-type=image/jpeg", f"--cache-control={cache_control}"],
+                        capture_output=True, check=True)
+                except subprocess.CalledProcessError as e:
+                    err = e.stderr.decode() if isinstance(e.stderr, bytes) else e.stderr
+                    print(f"업로드 실패: {err}")
+                    raise
         done = min(i + BATCH, len(urls))
         print(f"  {done}/{len(urls)} — 축소 {shrunk} · 통과 {passed} · 유지 {kept} · 실패 {failed}", flush=True)
 
