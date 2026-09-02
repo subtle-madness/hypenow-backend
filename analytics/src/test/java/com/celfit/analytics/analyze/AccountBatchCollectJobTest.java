@@ -18,8 +18,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import tools.jackson.databind.ObjectMapper;
 
@@ -29,11 +27,9 @@ import tools.jackson.databind.ObjectMapper;
  * ContentBatchCollectJobTest와 동형(콘텐츠 쪽 셋업·fake GeminiBatchApi 관용을 그대로 미러) — 차이는
  * 대상 테이블·사이드카 필드(계정은 timely가 없다)뿐이다.
  */
-@Testcontainers
 class AccountBatchCollectJobTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	JdbcTemplate db;
 	DataSource ds;
