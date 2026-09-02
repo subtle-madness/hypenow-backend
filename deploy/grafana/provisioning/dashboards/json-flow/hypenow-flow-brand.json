@@ -1421,7 +1421,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms",
+          "unit": "suffix: ms",
           "decimals": 0,
           "min": 0,
           "noValue": "기간 내 등록 없음",
@@ -1470,7 +1470,7 @@
       "id": 16,
       "type": "table",
       "title": "최근 등록 15건 — 총 소요",
-      "description": "최근 등록 브랜드의 등록 시각부터 백필(과거 게시물 소급 수집) 완료까지 총 소요. '진행 중'이 오래 머물거나 에러 컬럼이 차 있으면 백필이 멈춘 것 — 상세는 위 '적재 결과' row의 '백필 미완 브랜드'와 monitoring 로그로. 등록 순간의 초기 응답 속도는 브랜드별로 저장되지 않아 이 표엔 없다 — 분포는 위 '수신 처리 p95'의 POST /api/brands 선으로 본다. 시간 필터를 타지 않는 상태 스냅샷.",
+      "description": "최근 등록 브랜드의 등록 시각부터 백필(과거 게시물 소급 수집) 완료까지 총 소요. 상태: 완료 / 수집 실패(백필 에러 기록, 다음 스윕 백스톱 대기) / 삭제됨(사용자 탈퇴 — 스윕 대상 아님, 재시도 없음) / 진행 중. '진행 중'이 오래 머물면 백필이 멈춘 것 — 상세는 위 '적재 결과' row의 '백필 미완 브랜드'와 monitoring 로그로. 등록 순간의 초기 응답 속도는 브랜드별로 저장되지 않아 이 표엔 없다 — 분포는 위 '수신 처리 p95'의 POST /api/brands 선으로 본다. 시간 필터를 타지 않는 상태 스냅샷.",
       "gridPos": {
         "h": 9,
         "w": 24,
@@ -1490,7 +1490,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "총 소요(분)"
+              "options": "총 소요(ms)"
             },
             "properties": [
               {
@@ -1533,7 +1533,7 @@
             "uid": "hypenow-monitoring-pg"
           },
           "format": "table",
-          "rawSql": "SELECT username AS \"브랜드\", registered_at AS \"등록 시각\", round((EXTRACT(EPOCH FROM (backfill_completed_at - registered_at))/60)::numeric, 0) AS \"총 소요(분)\", CASE WHEN backfill_completed_at IS NOT NULL THEN '완료' ELSE '진행 중' END AS \"상태\", backfill_error AS \"에러\" FROM brand_account ORDER BY registered_at DESC LIMIT 15"
+          "rawSql": "SELECT username AS \"브랜드\", registered_at AS \"등록 시각\", round((EXTRACT(EPOCH FROM (backfill_completed_at - registered_at))*1000)::numeric, 0) AS \"총 소요(ms)\", CASE WHEN closed_at IS NOT NULL THEN '삭제됨' WHEN backfill_completed_at IS NOT NULL THEN '완료' WHEN backfill_error IS NOT NULL THEN '수집 실패' ELSE '진행 중' END AS \"상태\", backfill_error AS \"에러\" FROM brand_account ORDER BY registered_at DESC LIMIT 15"
         }
       ]
     },
