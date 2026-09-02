@@ -158,7 +158,9 @@ public class BrandAiAgent {
 			}
 			toolCalls.add(new AiChatLogEntry.ToolCallLog(call.toolName(), args, result.rowCount()));
 			shortCodes.addAll(result.shortCodes());
-			contents.add(client.modelToolCallContent(List.of(new LlmTurn.ToolCall(call.toolName(), args))));
+			// thoughtSignature=null - 모델이 생성한 게 아니라 우리가 직접 합성한 호출이라 서명이 없다
+			// (GeminiChatClient#modelToolCallContent가 되돌려 보낼 때 공식 더미 서명으로 채운다).
+			contents.add(client.modelToolCallContent(List.of(new LlmTurn.ToolCall(call.toolName(), args, null))));
 			contents.add(client.toolResultContent(
 					List.of(new GeminiChatClient.ToolResponse(call.toolName(), result.payloadJson()))));
 		}

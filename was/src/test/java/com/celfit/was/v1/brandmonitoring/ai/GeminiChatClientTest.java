@@ -158,6 +158,77 @@ class GeminiChatClientTest {
 		assertThat(turn.outputTokens()).isEqualTo(15);
 	}
 
+	/** Gemini 3.x thoughtSignature 패스스루(공식 문서 "Thought signatures") - functionCall part의
+	 * 형제 필드로 실린 서명을 ToolCall에 캡처해야 다음 턴 되먹임에서 그대로 echo할 수 있다. */
+	@Test
+	void 함수호출_응답에서_thoughtSignature를_캡처한다() {
+		GeminiChatClient client = new GeminiChatClient(body -> """
+				{"candidates":[{"content":{"role":"model","parts":[
+				  {"functionCall":{"name":"list_posts","args":{"brandId":7}},"thoughtSignature":"sig-A"}]}}],
+				 "usageMetadata":{"promptTokenCount":120,"candidatesTokenCount":15}}
+				""", om);
+
+		LlmTurn turn = client.generate("시스템", List.of(client.userContent("질문")), List.of());
+
+		assertThat(turn.toolCalls().get(0).thoughtSignature()).isEqualTo("sig-A");
+	}
+
+	/** 서명이 없는 functionCall part(병렬 호출의 두 번째 이후 등)는 null로 캡처된다 - 예외가 아니다. */
+	@Test
+	void 서명이_없는_함수호출은_thoughtSignature가_null이다() {
+		GeminiChatClient client = new GeminiChatClient(body -> """
+				{"candidates":[{"content":{"role":"model","parts":[
+				  {"functionCall":{"name":"list_posts","args":{"brandId":7}}}]}}],
+				 "usageMetadata":{"promptTokenCount":120,"candidatesTokenCount":15}}
+				""", om);
+
+		LlmTurn turn = client.generate("시스템", List.of(client.userContent("질문")), List.of());
+
+		assertThat(turn.toolCalls().get(0).thoughtSignature()).isNull();
+	}
+
+	/** modelToolCallContent - 실제 서명이 있으면 part 레벨(형제 필드)로 그대로 되돌려 보낸다. */
+	@Test
+	void modelToolCallContent는_서명이_있으면_그대로_에코한다() {
+		GeminiChatClient client = new GeminiChatClient(body -> "", om);
+
+		JsonNode content = client.modelToolCallContent(
+				List.of(new LlmTurn.ToolCall("list_posts", om.createObjectNode().put("brandId", 7), "sig-A")));
+
+		JsonNode part = content.path("parts").path(0);
+		assertThat(part.path("functionCall").path("name").asString()).isEqualTo("list_posts");
+		assertThat(part.path("thoughtSignature").asString()).isEqualTo("sig-A");
+		// functionCall 객체 안이 아니라 part의 형제 필드여야 한다(공식 문서 예제 구조).
+		assertThat(part.path("functionCall").has("thoughtSignature")).isFalse();
+	}
+
+	/** modelToolCallContent - 첫 파트에 서명이 없으면(합성 호출) Google 공식 더미 서명으로 채워
+	 * 강제 검증을 스킵시킨다(ai.google.dev/gemini-api/docs/generate-content/thought-signatures). */
+	@Test
+	void modelToolCallContent는_첫_파트_서명이_없으면_더미_서명을_채운다() {
+		GeminiChatClient client = new GeminiChatClient(body -> "", om);
+
+		JsonNode content = client.modelToolCallContent(
+				List.of(new LlmTurn.ToolCall("aggregate_posts", om.createObjectNode(), null)));
+
+		assertThat(content.path("parts").path(0).path("thoughtSignature").asString())
+				.isEqualTo("context_engineering_is_the_way_to_go");
+	}
+
+	/** modelToolCallContent - 병렬 호출에서 두 번째 이후 파트는 서명이 없어도(정상, 공식 문서) 더미를
+	 * 채우지 않는다. 첫 파트만 필수다. */
+	@Test
+	void modelToolCallContent는_두번째_이후_파트는_서명_없어도_더미를_채우지_않는다() {
+		GeminiChatClient client = new GeminiChatClient(body -> "", om);
+
+		JsonNode content = client.modelToolCallContent(List.of(
+				new LlmTurn.ToolCall("list_posts", om.createObjectNode(), "sig-A"),
+				new LlmTurn.ToolCall("get_post", om.createObjectNode(), null)));
+
+		assertThat(content.path("parts").path(0).path("thoughtSignature").asString()).isEqualTo("sig-A");
+		assertThat(content.path("parts").path(1).has("thoughtSignature")).isFalse();
+	}
+
 	@Test
 	void 텍스트_응답은_파트를_이어붙인다() {
 		GeminiChatClient client = new GeminiChatClient(body -> """
@@ -254,6 +325,24 @@ class GeminiChatClientTest {
 		assertThat(turn.toolCalls().get(0).name()).isEqualTo("list_posts");
 		assertThat(deltaCalls).hasSize(1);
 		assertThat(deltaCalls.get(0)).hasSize(1);
+	}
+
+	/** 스트리밍 경로도 비스트리밍과 동일하게 thoughtSignature를 캡처해야 한다. */
+	@Test
+	void 스트리밍_함수호출_청크에서도_thoughtSignature를_캡처한다() {
+		List<String> sent = new ArrayList<>();
+		ChatTransport transport = streamingFake(List.of(
+				"{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":["
+						+ "{\"functionCall\":{\"name\":\"list_posts\",\"args\":{\"brandId\":7}},"
+						+ "\"thoughtSignature\":\"sig-B\"}]}}],"
+						+ "\"usageMetadata\":{\"promptTokenCount\":20,\"candidatesTokenCount\":8}}"),
+				sent);
+		GeminiChatClient client = new GeminiChatClient(transport, om);
+
+		LlmTurn turn = client.generateStream("시스템", List.of(client.userContent("질문")), List.of(), false,
+				chunk -> { });
+
+		assertThat(turn.toolCalls().get(0).thoughtSignature()).isEqualTo("sig-B");
 	}
 
 	@Test

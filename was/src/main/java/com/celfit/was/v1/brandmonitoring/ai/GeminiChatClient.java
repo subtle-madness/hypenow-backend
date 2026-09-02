@@ -20,6 +20,11 @@ public class GeminiChatClient {
 
 	private static final double TEMPERATURE = 0.2;
 	private static final int MAX_OUTPUT_TOKENS = 2048;
+	/** 모델이 생성하지 않은(합성) functionCall에 서명이 없을 때 쓰는 Google 공식 더미 서명
+	 * (ai.google.dev/gemini-api/docs/generate-content/thought-signatures - "you can set the
+	 * following dummy signatures ... to skip validation", 대안값 "skip_thought_signature_validator"와
+	 * 동등하다). {@link #modelToolCallContent} 참조. */
+	private static final String DUMMY_THOUGHT_SIGNATURE = "context_engineering_is_the_way_to_go";
 
 	private final ChatTransport transport;
 	private final ObjectMapper objectMapper;
@@ -93,8 +98,11 @@ public class GeminiChatClient {
 				JsonNode functionCall = part.path("functionCall");
 				if (functionCall.isObject()) {
 					JsonNode args = functionCall.path("args");
+					// thoughtSignature는 functionCall과 같은 part 레벨의 형제 필드다(Gemini 3.x 공식
+					// 문서 "Thought signatures") - 병렬 호출이면 첫 functionCall part에만 실린다.
 					LlmTurn.ToolCall call = new LlmTurn.ToolCall(functionCall.path("name").asString(),
-							args.isObject() ? args : objectMapper.createObjectNode());
+							args.isObject() ? args : objectMapper.createObjectNode(),
+							part.path("thoughtSignature").asString(null));
 					allCalls.add(call);
 					deltaCalls.add(call);
 				} else if (part.hasNonNull("text")) {
@@ -202,15 +210,33 @@ public class GeminiChatClient {
 		return textContent("model", text);
 	}
 
-	/** 모델이 요청한 툴 호출을 대화 이력에 그대로 되돌려 넣는다 - 없으면 다음 턴에서 문맥이 끊긴다. */
+	/**
+	 * 모델이 요청한 툴 호출을 대화 이력에 그대로 되돌려 넣는다 - 없으면 다음 턴에서 문맥이 끊긴다.
+	 *
+	 * <p>Gemini 3.x는 thoughtSignature를 엄격 검증한다(공식 문서 "Thought signatures") - "각 턴의
+	 * 첫 functionCall part는 반드시 thoughtSignature를 실어야 한다", 없으면 400
+	 * "Function call ... is missing a thought_signature"가 난다. 실제 모델 응답을 파싱한 호출은
+	 * {@link LlmTurn.ToolCall#thoughtSignature()}에 캡처된 값을 그대로 되돌려 보낸다(병렬 호출이면
+	 * 첫 파트만 서명을 갖고 있는 게 정상이라 나머지는 없어도 된다 - 같은 문서). 서명이 없는데 첫
+	 * 파트인 경우는 우리가 직접 합성한 호출뿐이다({@link BrandAiAgent#injectPlannedCalls} 프리셋
+	 * 선실행) - 이때는 문서가 안내하는 더미 서명({@value #DUMMY_THOUGHT_SIGNATURE})으로 채워 검증을
+	 * 스킵시킨다.
+	 */
 	public JsonNode modelToolCallContent(List<LlmTurn.ToolCall> calls) {
 		ObjectNode content = objectMapper.createObjectNode();
 		content.put("role", "model");
 		ArrayNode parts = content.putArray("parts");
-		for (LlmTurn.ToolCall call : calls) {
-			ObjectNode functionCall = parts.addObject().putObject("functionCall");
+		for (int i = 0; i < calls.size(); i++) {
+			LlmTurn.ToolCall call = calls.get(i);
+			ObjectNode part = parts.addObject();
+			ObjectNode functionCall = part.putObject("functionCall");
 			functionCall.put("name", call.name());
 			functionCall.set("args", call.args());
+			if (call.thoughtSignature() != null) {
+				part.put("thoughtSignature", call.thoughtSignature());
+			} else if (i == 0) {
+				part.put("thoughtSignature", DUMMY_THOUGHT_SIGNATURE);
+			}
 		}
 		return content;
 	}
@@ -253,7 +279,8 @@ public class GeminiChatClient {
 			if (functionCall.isObject()) {
 				JsonNode args = functionCall.path("args");
 				calls.add(new LlmTurn.ToolCall(functionCall.path("name").asString(),
-						args.isObject() ? args : objectMapper.createObjectNode()));
+						args.isObject() ? args : objectMapper.createObjectNode(),
+						part.path("thoughtSignature").asString(null)));
 			} else if (part.hasNonNull("text")) {
 				text.append(part.path("text").asString());
 			}

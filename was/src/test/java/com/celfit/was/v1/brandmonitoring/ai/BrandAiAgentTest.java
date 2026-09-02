@@ -324,6 +324,9 @@ class BrandAiAgentTest {
 		assertThat(argsCaptor.getValue().path("brandId").asLong()).isEqualTo(7L);
 		// 첫 LLM 요청 본문에 이미 선실행 functionCall/functionResponse 쌍이 실려 있어야 한다.
 		assertThat(captured.get(0)).contains("functionCall").contains("aggregate_posts").contains("functionResponse");
+		// 선실행 functionCall은 모델이 생성한 게 아니라 우리가 합성했으니 서명이 없다 - Gemini 3.x
+		// 강제 검증(공식 문서 "Thought signatures")을 피하려면 공식 더미 서명이 실려 있어야 한다.
+		assertThat(captured.get(0)).contains("\"thoughtSignature\":\"context_engineering_is_the_way_to_go\"");
 		// 선실행분도 tool_calls 로그에 포함된다(관측 일관성, 스펙 §6).
 		assertThat(outcome.toolCalls()).hasSize(1);
 		assertThat(outcome.toolCalls().get(0).name()).isEqualTo("aggregate_posts");

@@ -15,7 +15,17 @@ import tools.jackson.databind.JsonNode;
 public record LlmTurn(String text, List<ToolCall> toolCalls, int promptTokens, int outputTokens,
 		String finishReason) {
 
-	/** 모델이 요청한 툴 호출 1건. args는 항상 object 노드(빈 object 포함). */
-	public record ToolCall(String name, JsonNode args) {
+	/**
+	 * 모델이 요청한 툴 호출 1건. args는 항상 object 노드(빈 object 포함).
+	 *
+	 * @param thoughtSignature Gemini 3.x가 functionCall part에 실어 보내는 암호화된 추론 상태
+	 *                          서명(공식 문서 "Thought signatures" - 대화 이력을 되돌려 보낼 때 그대로
+	 *                          echo해야 한다, 없으면 다음 턴에서 400 "missing a thought_signature").
+	 *                          모델 응답을 파싱한 호출은 실제 값(병렬 호출이면 첫 파트만)을, 프리셋
+	 *                          선실행처럼 우리가 직접 합성한 호출은 null을 담는다 -
+	 *                          {@link GeminiChatClient#modelToolCallContent}가 되돌려 보낼 때
+	 *                          null이면 문서가 안내하는 더미 서명으로 채운다.
+	 */
+	public record ToolCall(String name, JsonNode args, String thoughtSignature) {
 	}
 }
