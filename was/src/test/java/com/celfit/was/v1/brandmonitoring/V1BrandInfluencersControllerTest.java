@@ -435,19 +435,26 @@ class V1BrandInfluencersControllerTest {
 	}
 
 	@Test
-	void 상한_폐지_후_모든_게시물이_기간_필터_대상이_된다() throws Exception {
+	void 상한_폐지_후_키워드_필터로도_구_상한_밖_게시물을_찾을_수_있다() throws Exception {
 		// 2026-09-02 노출 상한 폐지 설계 §4 — 신선도 통제가 수집 쪽 롤링 세트로 이동했다.
-		// 구 상한 밖 게시물(인덱스 2000~2099)도 이제 창에 포함되므로 기간 필터 대상이다.
+		// 구 상한 밖(인덱스 2000~2099) 게시물도 이제 창에 포함되므로 키워드 필터로도 찾아진다.
+		// 구 상한 내(인덱스 1999)의 게시물과 밖(인덱스 2050)의 게시물이 모두 찾아지는지 확인.
 		givenLinks(link(100L, 12));
 		givenAccount(100L);
 		givenIndex(100L, cappedSeed(2100));
 		givenMetrics(100L);
 
-		mockMvc.perform(get(URL).param("accountIds", "100").with(user(principal())))
+		// 상한 내 게시물(인덱스 1999)도 여전히 찾아진다
+		mockMvc.perform(get(URL).param("accountIds", "100").param("keyword", "u1999")
+						.with(user(principal())))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.meta.total").value(2100))
-				// 상한 폐지 후 collectionCapped는 항상 false
-				.andExpect(jsonPath("$.meta.collectionCapped").value(false));
+				.andExpect(jsonPath("$.data.length()").value(1));
+
+		// 상한 밖 게시물(인덱스 2050)도 이제 찾아진다 — 폐지의 증거
+		mockMvc.perform(get(URL).param("accountIds", "100").param("keyword", "u2050")
+						.with(user(principal())))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.length()").value(1));
 	}
 
 	@Test
