@@ -10,6 +10,7 @@ import com.celfit.analytics.analyze.ProgressReporter;
 import com.celfit.analytics.archive.GcsImageStore;
 import com.celfit.analytics.archive.ImageArchiveJob;
 import com.celfit.analytics.archive.ImageDownloader;
+import com.celfit.analytics.archive.ImageResizer;
 import com.celfit.analytics.archive.ImageStore;
 import com.celfit.analytics.archive.ParImageStore;
 import com.celfit.analytics.classify.CommentClassificationJob;
@@ -187,7 +188,7 @@ public class JobConfig {
 				? new GcsImageStore(imageGcsBucket, imageGcsKey)
 				: new ParImageStore(imageParUrl);
 		return new ImageArchiveJob(rawJdbcTemplate, analysisDataSource,
-				store, ImageDownloader.http(), settings, reporter);
+				store, ImageResizer.wrap(ImageDownloader.http()), settings, reporter);
 	}
 
 	/** trait 어휘 매핑 원샷(2026-07-29 스펙 §3-3) — 어드민 수동 트리거 전용, 스케줄 없음. */
