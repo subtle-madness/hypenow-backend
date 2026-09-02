@@ -28,6 +28,15 @@ public class BrandSnapshotRepository {
 	 * views는 화면 합산값(IG 몫 + FB 몫)으로 조립해 저장 — 규칙은 SnapshotRepository.upsertPost와
 	 * 동일(캐리포워드·첫 관측 역전파 포함, findings §2 결론 4). 태그 열거도 세션에 따라 fb_* 키가
 	 * 실렸다 빠지는 같은 소스라 규칙이 그대로 적용된다.
+	 *
+	 * <p><b>같은 날 재수집 시 null 관측의 덮어쓰기 보호</b> — SnapshotRepository.upsertPost 수정과
+	 * 동형(이 메서드가 그 메서드를 그대로 이식한 것이라 같은 결함을 그대로 물려받고 있었다). self
+	 * 단건(embed)은 saves·shares·reposts를 구조적으로 항상 null 반환하는데, 같은 날 Hiker가 먼저
+	 * 채운 값 위에 self가 재수집하면 EXCLUDED가 무조건 이겨 null로 덮이던 결함을 막는다.
+	 * saves·shares·reposts·comments는 EXCLUDED가 null이면 기존값을 유지한다(COALESCE, fb_plays와
+	 * 동일 원칙). likes·shares는 숨김 플래그(likes_hidden·shares_hidden)와 얽혀 있어, EXCLUDED가
+	 * (값 null + hidden=false)인 행만 "미확정"으로 보고 값·hidden 플래그를 함께 보존하고, 진짜
+	 * 숨김 관측(hidden=true)은 정상적으로 덮는다.
 	 */
 	public void upsertPost(LocalDate on, PostInfo p) {
 		Long fb = p.fbPlays() != null ? p.fbPlays() : latestFbPlays(p.shortCode(), on);
@@ -44,11 +53,19 @@ public class BrandSnapshotRepository {
 				                                 saves, shares, shares_hidden, reposts)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT (short_code, captured_on) DO UPDATE SET
-				  likes=EXCLUDED.likes, likes_hidden=EXCLUDED.likes_hidden,
-				  comments=EXCLUDED.comments, views=EXCLUDED.views,
+				  likes = CASE WHEN EXCLUDED.likes IS NULL AND EXCLUDED.likes_hidden = false
+				               THEN brand_post_snapshot.likes ELSE EXCLUDED.likes END,
+				  likes_hidden = CASE WHEN EXCLUDED.likes IS NULL AND EXCLUDED.likes_hidden = false
+				               THEN brand_post_snapshot.likes_hidden ELSE EXCLUDED.likes_hidden END,
+				  comments = COALESCE(EXCLUDED.comments, brand_post_snapshot.comments),
+				  views=EXCLUDED.views,
 				  fb_plays=EXCLUDED.fb_plays,
-				  saves=EXCLUDED.saves, shares=EXCLUDED.shares,
-				  shares_hidden=EXCLUDED.shares_hidden, reposts=EXCLUDED.reposts""",
+				  saves = COALESCE(EXCLUDED.saves, brand_post_snapshot.saves),
+				  shares = CASE WHEN EXCLUDED.shares IS NULL AND EXCLUDED.shares_hidden = false
+				               THEN brand_post_snapshot.shares ELSE EXCLUDED.shares END,
+				  shares_hidden = CASE WHEN EXCLUDED.shares IS NULL AND EXCLUDED.shares_hidden = false
+				               THEN brand_post_snapshot.shares_hidden ELSE EXCLUDED.shares_hidden END,
+				  reposts = COALESCE(EXCLUDED.reposts, brand_post_snapshot.reposts)""",
 				p.username(), p.shortCode(), on, p.contentType(),
 				p.likes(), p.likesHidden(), p.comments(), views, fb,
 				p.saves(), p.shares(), p.sharesHidden(), p.reposts());
