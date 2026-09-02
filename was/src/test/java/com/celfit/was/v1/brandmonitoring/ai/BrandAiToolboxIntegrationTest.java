@@ -216,16 +216,22 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 	}
 
 	private void insertHashtagPost(long brandId, String shortCode, String matchedTag, String author) {
+		// 해시태그 직접 수집 전환(2026-08-27 설계) — 발견 게시물은 별도 테이블이 아니라 통합 풀
+		// (brand_tagged_post, hashtag_detected_at만 non-null)에 산다. 매칭 태그는 brand_post_matched_tag.
 		monitoringJdbc.sql("""
-				INSERT INTO brand_hashtag_post (brand_id, short_code, matched_tag, author_username, taken_at,
-				                                verdict, verdict_source)
-				VALUES (:brandId, :shortCode, :matchedTag, :author, :takenAt, 'RELEVANT', 'RULE')
-				""").param("brandId", brandId).param("shortCode", shortCode).param("matchedTag", matchedTag)
-				.param("author", author)
+				INSERT INTO brand_tagged_post (brand_id, short_code, author_username, author_ig_user_id,
+				                               taken_at, enriched_at, tag_detected_at, hashtag_detected_at)
+				VALUES (:brandId, :shortCode, :author, :author, :takenAt, now(), NULL, :takenAt)
+				""").param("brandId", brandId).param("shortCode", shortCode).param("author", author)
 				.param("takenAt", OffsetDateTime.ofInstant(NOW.minusSeconds(86400), ZoneOffset.UTC))
 				.update();
 		monitoringJdbc.sql("""
-				INSERT INTO brand_hashtag_post_matched_tags (brand_id, short_code, tag)
+				INSERT INTO brand_post_meta (short_code, username, content_type, uploaded_at, caption)
+				VALUES (:shortCode, :author, 'reel', DATE '2026-08-26', '#해시태그 발견 게시물')
+				ON CONFLICT (short_code) DO NOTHING
+				""").param("shortCode", shortCode).param("author", author).update();
+		monitoringJdbc.sql("""
+				INSERT INTO brand_post_matched_tag (brand_id, short_code, tag)
 				VALUES (:brandId, :shortCode, :tag)
 				""").param("brandId", brandId).param("shortCode", shortCode).param("tag", matchedTag).update();
 	}
@@ -783,7 +789,8 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 		long brandId = insertBrand(monitoringJdbc, "scopehashtagbrand");
 		linkRepository.insertLink(userId, brandId, "scopehashtagbrand", BrandAccountType.OWN, 12);
 		// insertHashtagPost는 항상 NOW-1일에 심는다(고정 helper) - scope.dateFrom을 그보다 미래로 잡아
-		// 게시물이 scope 날짜 필터 하나만으로 걸러지는지 본다.
+		// 게시물이 scope 날짜 필터 하나만으로 걸러지는지 본다(장부 태그는 있어 격리 필터는 통과 전제).
+		hashtagTagRepository.addTags(userId, brandId, List.of("#brand"));
 		insertHashtagPost(brandId, "HTAGIN", "#brand", "author1");
 		LocalDate afterSeed = KstTimestamps.toKstDate(OffsetDateTime.ofInstant(NOW, ZoneOffset.UTC)).plusDays(1);
 		AiScope scope = new AiScope(afterSeed, null, null, null, null, null, null, null);
@@ -816,6 +823,8 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 	void list_hashtag_posts는_scope_q_필터로_작성자를_좁힌다() {
 		long brandId = insertBrand(monitoringJdbc, "hashtagqbrand");
 		linkRepository.insertLink(userId, brandId, "hashtagqbrand", BrandAccountType.OWN, 12);
+		// 격리 필터 fail-open 폐기(2026-08-27 설계 §4) — 조회자 장부 태그와 교집합이 있어야 노출된다.
+		hashtagTagRepository.addTags(userId, brandId, List.of("#brand"));
 		insertHashtagPost(brandId, "HQ1", "#brand", "glow_official");
 		insertHashtagPost(brandId, "HQ2", "#brand", "random_user");
 		insertAuthorProfile("glow_official", "glow_official", "글로우 공식", 5000L);
@@ -833,6 +842,7 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 	void list_hashtag_posts는_scope_팔로워_범위_필터로_좁힌다() {
 		long brandId = insertBrand(monitoringJdbc, "hashtagfollowerbrand");
 		linkRepository.insertLink(userId, brandId, "hashtagfollowerbrand", BrandAccountType.OWN, 12);
+		hashtagTagRepository.addTags(userId, brandId, List.of("#brand"));
 		insertHashtagPost(brandId, "HF1", "#brand", "big_author");
 		insertHashtagPost(brandId, "HF2", "#brand", "small_author");
 		insertAuthorProfile("big_author", "big_author", "빅", 100_000L);
