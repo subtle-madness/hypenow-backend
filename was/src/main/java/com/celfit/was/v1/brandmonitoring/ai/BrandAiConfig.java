@@ -54,7 +54,7 @@ public class BrandAiConfig {
 	public ChatTransport brandAiChatTransport(
 			@Value("${monitoring.brand.ai.vertex-project}") String project,
 			@Value("${monitoring.brand.ai.vertex-location:global}") String location,
-			@Value("${monitoring.brand.ai.model:gemini-2.5-flash}") String model) {
+			@Value("${monitoring.brand.ai.model:gemini-3.1-flash-lite}") String model) {
 		if (!VertexTokenProvider.credentialsPresent() || project == null || project.isBlank()) {
 			log.error("AI 어시스턴트 Vertex 설정 미비 - GOOGLE_APPLICATION_CREDENTIALS={}, vertex-project={} "
 							+ "(WAS는 정상 기동하되 브랜드 AI 챗 호출마다 502 AI_UNAVAILABLE을 돌려줍니다)",
