@@ -10,8 +10,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
@@ -20,11 +18,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * 읽고 다시 쓰는 경로가 실제로 도는지 여기서 실증한다(안 하면 운영 미러 첫 실행에서 터진다).
  * 뷰 정의 자체의 집계 규칙은 SQL 하니스(analytics/test/30_crawl_cost.test.sql)가 검증한다.
  */
-@Testcontainers
 class CrawlCallDailyMirrorTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	JdbcTemplate db;
 	MirrorJob job;
@@ -36,9 +32,9 @@ class CrawlCallDailyMirrorTest {
 		DataSource ds = TestDb.rawDataSource(pg);
 		db = new JdbcTemplate(ds);
 		job = new MirrorJob(db, ds);
-		db.update("DROP SCHEMA IF EXISTS analytics CASCADE");
-		db.update("DROP TABLE IF EXISTS crawl_call_daily");
-		db.update("DROP TABLE IF EXISTS crawl_call_src");
+		// 공유 컨테이너라 자기 테이블만 골라 지우면 다른 클래스의 잔재(Flyway가 만든 동명
+		// 테이블·의존 객체)에 걸릴 수 있다 — 스키마 통째 리셋으로 단순화.
+		TestDb.reset(db);
 		db.update("CREATE SCHEMA analytics");
 		// 소스는 최소 픽스처다 — 실제 30_crawl_cost.sql을 여기 복사하지 않는다. 그 집계 규칙은
 		// SQL 하니스가 실 스키마로 검증하고, 여기서 볼 것은 date 컬럼의 JDBC 왕복뿐이다.

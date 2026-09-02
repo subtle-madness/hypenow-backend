@@ -13,8 +13,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
@@ -25,11 +23,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
  * ⑦ oe(CDN 서명 만료) 지난 URL은 시도 없이 제외 ⑧ 만료 임박 순 처리
  * ⑨ 영구 무효 URL(비http 스킴·IG 플레이스홀더)은 시도 없이 제외하고 실패로 세지 않는다.
  */
-@Testcontainers
 class ImageArchiveJobTest {
 
-	@Container
-	static PostgreSQLContainer pg = new PostgreSQLContainer("postgres:16-alpine");
+	static final PostgreSQLContainer pg = TestDb.shared();
 
 	JdbcTemplate db;
 	DataSource ds;

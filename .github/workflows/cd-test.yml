@@ -12,9 +12,11 @@ on:
     types: [completed]
     branches: [staging]
 
-# 운영 CD(cd.yml)와 같은 그룹 — 두 CD가 같은 서버 ~/deploy를 쓰므로 배포를 직렬화한다
+# 같은 워크플로 실행끼리만 직렬화 — 연속 staging 배포 시 빌드가 겹치면 늦게 끝난 구 커밋이
+# :staging을 덮는 역전이 가능해서다. 운영 CD(cd.yml)와의 직렬화는 서버를 실제로 만지는
+# deploy 잡의 job-level concurrency(deploy-server)로 내렸다 — 상세 근거는 cd.yml 주석 참조.
 concurrency:
-  group: deploy-server
+  group: cd-test
   cancel-in-progress: false
 
 permissions:
@@ -93,6 +95,10 @@ jobs:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # 운영 CD(cd.yml)의 deploy 잡과 같은 그룹 — 같은 서버 ~/deploy·docker 데몬 접촉 구간만 직렬화
+    concurrency:
+      group: deploy-server
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
         with:
