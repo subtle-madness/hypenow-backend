@@ -14,16 +14,16 @@
 
 ## 배경 (실행자가 알아야 할 사실)
 
-- **왜**: 08-11에 야간 콘텐츠 분석(ANALYZE·LATE_BACKFILL)만 배치로 전환됐고, 계정 카피는 "배치용 JSONL 빌더·파서 부재"로 의도적으로 제외됐다([AnalyticsSettings.java:50-52](../../../analytics/src/main/java/com/celfit/analytics/config/AnalyticsSettings.java) 주석). 08-17 조사로 계정 카피가 8일 주기 대량 온라인 펄스(회당 ~2,700건, ~$4.3)의 범인으로 확정됐다 — 쿨다운 7일 + 잡이 07:00 정각에 돌아 D일 코호트가 D+7 판정(`analyzed_at < now()-7d` 엄격 미만)을 근소하게 놓치고 D+8에 통째로 재도래한다. 운영 `analytics.account-analyze-batch-limit=30000`(07-28 상향·**원복 금지** — 사용자 확정)이라 펄스가 한 아침에 전량 처리된다.
-- **미러 원본**: 제출은 [ContentAnalysisJob.java:197-264](../../../analytics/src/main/java/com/celfit/analytics/analyze/ContentAnalysisJob.java) `submitBatch()`, 수거는 [ContentBatchCollectJob.java](../../../analytics/src/main/java/com/celfit/analytics/analyze/ContentBatchCollectJob.java), 라인 조립·해석은 [GeminiBatchLines.java](../../../analytics/src/main/java/com/celfit/analytics/analyze/GeminiBatchLines.java).
-- **전환 대상**: [AccountAnalysisJob.java](../../../analytics/src/main/java/com/celfit/analytics/analyze/AccountAnalysisJob.java)(대상 자격 `ELIGIBLE_WHERE`·`analyzeOne`), LLM 호출은 [GeminiAccountSynthesizer.java](../../../analytics/src/main/java/com/celfit/analytics/llm/GeminiAccountSynthesizer.java).
+- **왜**: 08-11에 야간 콘텐츠 분석(ANALYZE·LATE_BACKFILL)만 배치로 전환됐고, 계정 카피는 "배치용 JSONL 빌더·파서 부재"로 의도적으로 제외됐다([AnalyticsSettings.java:50-52](../../../../analytics/src/main/java/com/celfit/analytics/config/AnalyticsSettings.java) 주석). 08-17 조사로 계정 카피가 8일 주기 대량 온라인 펄스(회당 ~2,700건, ~$4.3)의 범인으로 확정됐다 — 쿨다운 7일 + 잡이 07:00 정각에 돌아 D일 코호트가 D+7 판정(`analyzed_at < now()-7d` 엄격 미만)을 근소하게 놓치고 D+8에 통째로 재도래한다. 운영 `analytics.account-analyze-batch-limit=30000`(07-28 상향·**원복 금지** — 사용자 확정)이라 펄스가 한 아침에 전량 처리된다.
+- **미러 원본**: 제출은 [ContentAnalysisJob.java:197-264](../../../../analytics/src/main/java/com/celfit/analytics/analyze/ContentAnalysisJob.java) `submitBatch()`, 수거는 [ContentBatchCollectJob.java](../../../../analytics/src/main/java/com/celfit/analytics/analyze/ContentBatchCollectJob.java), 라인 조립·해석은 [GeminiBatchLines.java](../../../../analytics/src/main/java/com/celfit/analytics/analyze/GeminiBatchLines.java).
+- **전환 대상**: [AccountAnalysisJob.java](../../../../analytics/src/main/java/com/celfit/analytics/analyze/AccountAnalysisJob.java)(대상 자격 `ELIGIBLE_WHERE`·`analyzeOne`), LLM 호출은 [GeminiAccountSynthesizer.java](../../../../analytics/src/main/java/com/celfit/analytics/llm/GeminiAccountSynthesizer.java).
 - **콘텐츠보다 단순한 점**: 계정 카피는 이미지 입력이 없어(`image=null` 고정) VLM 폴백 가드가 불필요하고, 기준선(baseline) 9종 스냅샷 대신 사이드카에 3개 필드만 실으면 된다.
 - **콘텐츠와 다른 점(함정)**:
   1. 시스템 프롬프트가 **계정마다 다르다** — `instructions(vocab, confidence)`의 `PerfConfidence`가 계정별 판정이라, 콘텐츠처럼 시스템 문자열 하나를 전 라인에 공유할 수 없다. 라인마다 각자 조립한다.
   2. 응답 파싱이 static으로 분리돼 있지 않다 — `synthesize()`에 `om.readValue(out, AccountCopy.class)` 인라인. 먼저 `parse()`로 추출해야 배치가 재사용한다(Task 3).
   3. `RESPONSE_SCHEMA`·`MAX_OUTPUT_TOKENS`가 package-private인데 배치 헬퍼는 `analyze` 패키지다 — public 승격 필요(Task 3). (콘텐츠의 `GeminiContentAnalyzer` 상수들이 public인 것과 동형.)
   4. `account_analyses`는 이력 테이블이라 **유니크 제약이 없다** — 콘텐츠의 `ON CONFLICT DO NOTHING` 같은 DB 멱등이 없다. 중복 제출 방어는 "제출 전 pending 수거"(콘텐츠와 동일)와 `ELIGIBLE_WHERE` 자연 재대상에 의존한다. 수거 잡이 같은 배치를 두 번 처리하지 않는 것(pending→collected 단방향 전이)이 유일한 수거측 멱등이므로, **전체 스트리밍 성공 후에만 상태 전이**하는 순서를 지킨다.
-- **재대상 안전망**: 배치가 실패하거나 일부 라인이 파싱 불가면 `account_analyses`에 행이 안 쌓이고, `ELIGIBLE_WHERE`(분석 이력 없음 OR stale)가 다음 실행에서 자동 재대상한다 — 별도 재시도 로직을 만들지 않는다(콘텐츠와 동일 관용, [ContentBatchCollectJob.java:84-85](../../../analytics/src/main/java/com/celfit/analytics/analyze/ContentBatchCollectJob.java) 주석).
+- **재대상 안전망**: 배치가 실패하거나 일부 라인이 파싱 불가면 `account_analyses`에 행이 안 쌓이고, `ELIGIBLE_WHERE`(분석 이력 없음 OR stale)가 다음 실행에서 자동 재대상한다 — 별도 재시도 로직을 만들지 않는다(콘텐츠와 동일 관용, [ContentBatchCollectJob.java:84-85](../../../../analytics/src/main/java/com/celfit/analytics/analyze/ContentBatchCollectJob.java) 주석).
 - **사이드카는 DB 컬럼**: analytics 컨테이너에 쓰기 볼륨이 없어 로컬 파일은 배포 시 유실 좀비를 만든다(08-11 리뷰 지적) — `account_batch_jobs.sidecar_jsonl` text 컬럼에 저장.
 - **스코프 제외**: 8일 펄스 주기 자체의 보정(쿨다운 경계 완화)은 하지 않는다 — 배치 전환이면 펄스 비용이 반감되고 서빙 영향이 없다. 콘텐츠 배치 경로·`content_batch_jobs`는 일절 건드리지 않는다.
 - **작업 브랜치**: develop에서 `feat/account-analyze-batch-transport` 분기. **PR은 사용자 명시 승인 후에만 연다**(전역 규칙 — push·보고까지만).
@@ -518,7 +518,7 @@ static boolean processResultLine(JdbcTemplate analysis, ObjectMapper om, String 
 }
 ```
 
-주의: `AccountAnalysisWriter.insert`의 실제 파라미터 순서·타입은 [AccountAnalysisWriter.java:56-78](../../../analytics/src/main/java/com/celfit/analytics/analyze/AccountAnalysisWriter.java)를 열어 그대로 맞춘다(위 코드는 조사 시점 시그니처 기준). `analyzedAt`은 **수거 시점** `OffsetDateTime.now()` — 온라인 경로(analyzeOne line 163)와 동일 관용이고, `ELIGIBLE_WHERE` 쿨다운 기준 시각이 된다.
+주의: `AccountAnalysisWriter.insert`의 실제 파라미터 순서·타입은 [AccountAnalysisWriter.java:56-78](../../../../analytics/src/main/java/com/celfit/analytics/analyze/AccountAnalysisWriter.java)를 열어 그대로 맞춘다(위 코드는 조사 시점 시그니처 기준). `analyzedAt`은 **수거 시점** `OffsetDateTime.now()` — 온라인 경로(analyzeOne line 163)와 동일 관용이고, `ELIGIBLE_WHERE` 쿨다운 기준 시각이 된다.
 
 - [ ] **Step 5: AccountBatchCollectJob 구현**
 
@@ -785,7 +785,7 @@ Expected: 새 테스트 3개 FAIL(컴파일 실패 또는 배치 분기 부재�
 
 - [ ] **Step 3: AccountAnalysisJob에 배치 분기 구현**
 
-생성자에 `GeminiBatchApi batchApi`(nullable)를 추가하고, 수거 잡을 내부 생성한다(콘텐츠의 [ContentAnalysisJob.java:103](../../../analytics/src/main/java/com/celfit/analytics/analyze/ContentAnalysisJob.java) 동형):
+생성자에 `GeminiBatchApi batchApi`(nullable)를 추가하고, 수거 잡을 내부 생성한다(콘텐츠의 [ContentAnalysisJob.java:103](../../../../analytics/src/main/java/com/celfit/analytics/analyze/ContentAnalysisJob.java) 동형):
 
 ```java
 private final com.celfit.analytics.llm.GeminiBatchApi batchApi;

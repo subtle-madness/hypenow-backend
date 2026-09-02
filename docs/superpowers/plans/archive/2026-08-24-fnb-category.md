@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 스펙: [2026-08-23-fnb-category-design.md](../specs/2026-08-23-fnb-category-design.md)
+> 상태: 🟢 활성 · 스펙: [2026-08-23-fnb-category-design.md](../../specs/2026-08-23-fnb-category-design.md)
 
 **Goal:** 뷰티 단일 카테고리 판정을 2축(뷰티+F&B)으로 확장 — 판정·백필·명단까지 구축하고, 수집·시드 편입은 `fnb.pipeline-enabled` 토글(기본 off) 뒤에 둔다.
 

@@ -4,11 +4,11 @@
 
 **Goal:** 대시보드 4표면(`/contents`·`/comparison`·`/influencers`·`/growth`)에 약한 ETag + 조기 304를 얹어 무변경 재요청의 조립·직렬화·전송을 전부 생략한다.
 
-**Architecture:** [08-13 설계](../specs/2026-08-13-performance-dashboard-etag-design.md)를 그대로 구현한다 — 버전키는 데이터 유래 지문(md5: cacheEpoch·userId·KST 날짜·레거시/브랜드 스윕 워터마크·유저 소유 행 지문), **조립 전** 계산해 If-None-Match 일치 시 304 조기 반환. 캐시 헤더는 4표면만 `private, no-cache`로 전환. 단건 라우트는 제외(원 설계).
+**Architecture:** [08-13 설계](../../specs/2026-08-13-performance-dashboard-etag-design.md)를 그대로 구현한다 — 버전키는 데이터 유래 지문(md5: cacheEpoch·userId·KST 날짜·레거시/브랜드 스윕 워터마크·유저 소유 행 지문), **조립 전** 계산해 If-None-Match 일치 시 304 조기 반환. 캐시 헤더는 4표면만 `private, no-cache`로 전환. 단건 라우트는 제외(원 설계).
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · JdbcClient(app DataSource) · MessageDigest md5.
 
-**스펙:** 08-13 설계 전체 + [2026-08-27 설계 §6](../specs/2026-08-27-perf-dashboard-list-api-optimization-design.md)(표면 4종 확장·지문 재점검)
+**스펙:** 08-13 설계 전체 + [2026-08-27 설계 §6](../../specs/2026-08-27-perf-dashboard-list-api-optimization-design.md)(표면 4종 확장·지문 재점검)
 
 ## Global Constraints
 
