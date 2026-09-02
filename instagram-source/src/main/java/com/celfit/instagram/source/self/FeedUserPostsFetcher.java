@@ -85,11 +85,35 @@ public class FeedUserPostsFetcher {
 				null, null,
 				userId,
 				contentType,
-				item.path("caption").path("text").asString(null),
+				extractCaption(item, userId),
 				null,
 				item.path("taken_at").isNumber() ? item.path("taken_at").asLong() : null,
 				likes, comments, views,
 				null, null, null, null, null, null, null,
 				views != null, likesHidden, false);
+	}
+
+	/**
+	 * 캡션 3-상태 구분(트랙 HH 계약, 데이터 보호 결함 수정) — IG 응답의 caption 노드는 명시적으로
+	 * null이면(실제 확인된 무캡션 셰이프) ""로 매핑하고, 키 자체가 없거나 text 필드가 없으면
+	 * (예상외 셰이프) 파싱 실패로 보고 콜 전체를 실패시켜 Hiker 폴백을 유도한다 — 전자를 후자로
+	 * 오분류해도 저장 계층(SnapshotWriter/PostMetaRepository)이 안전하게 흡수하지만, 후자를
+	 * 전자로 오분류하면(과거 {@code asString(null)} 단일 처리) 캡션 결손이 조용히 지나간다.
+	 */
+	private static String extractCaption(JsonNode item, String userId) {
+		if (!item.has("caption")) {
+			throw new SelfCrawlException(SelfErrorClass.OTHER,
+					"feed/user caption 키 부재(예상외 셰이프) userId=" + userId);
+		}
+		JsonNode captionNode = item.path("caption");
+		if (captionNode.isNull()) {
+			return "";
+		}
+		JsonNode textNode = captionNode.path("text");
+		if (!textNode.isString()) {
+			throw new SelfCrawlException(SelfErrorClass.OTHER,
+					"feed/user caption.text 부재(예상외 셰이프) userId=" + userId);
+		}
+		return textNode.asString();
 	}
 }

@@ -41,6 +41,18 @@ public class SnapshotRepository {
 	 * 캐리포워드한다 — FB 몫은 실측상 며칠 단위로 거의 정적이라 오차가 작고, 이 규칙 덕에 세션
 	 * 복불복에도 views 시계열이 역행하지 않는다. 관측된 0은 캐리포워드가 아니라 0으로 덮는다.
 	 * views가 null(피드·클립 보강 실패)이면 fb와 무관하게 null 유지 — 비공개 오탐 방지 계약 그대로.
+	 *
+	 * <p><b>같은 날 재수집 시 null 관측의 덮어쓰기 보호(데이터 보호 결함 수정)</b> — self 단건(embed)은
+	 * saves·shares·reposts를 구조적으로 항상 null 반환한다. 같은 날 Hiker가 먼저 채운 값 위에 self가
+	 * 재수집하면 EXCLUDED가 무조건 이겨 null로 덮이던 결함이 있었다(views/fb_plays만 캐리포워드
+	 * 보호가 있었다). saves·shares·reposts·comments는 EXCLUDED가 null이면 기존값을 유지한다
+	 * (fb_plays 캐리포워드와 동일 원칙 — comments의 null은 "파싱 실패"뿐이라 안전하게 보호할 수 있다).
+	 *
+	 * <p>likes·shares는 "숨김"(likes_hidden·shares_hidden)과 얽혀 있어 단순 COALESCE로는 부족하다.
+	 * 숨김이면 값이 null인 게 정당하므로, EXCLUDED가 (값 null + hidden=false)인 행만 "미확정"으로
+	 * 보고 값·hidden 플래그를 함께 보존한다 — self가 hidden을 단정하지 않도록 고친 결과(수정 2)
+	 * 자연히 여기서 "관측 실패"로 흡수된다. EXCLUDED가 (값 null + hidden=true)면 진짜 숨김 관측이라
+	 * 정상적으로 덮는다.
 	 */
 	public void upsertPost(LocalDate on, PostInfo p) {
 		Long fb = p.fbPlays() != null ? p.fbPlays() : latestFbPlays(p.shortCode(), on);
@@ -61,11 +73,19 @@ public class SnapshotRepository {
 				                           saves, shares, shares_hidden, reposts)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT (short_code, captured_on) DO UPDATE SET
-				  likes=EXCLUDED.likes, likes_hidden=EXCLUDED.likes_hidden,
-				  comments=EXCLUDED.comments, views=EXCLUDED.views,
+				  likes = CASE WHEN EXCLUDED.likes IS NULL AND EXCLUDED.likes_hidden = false
+				               THEN post_snapshot.likes ELSE EXCLUDED.likes END,
+				  likes_hidden = CASE WHEN EXCLUDED.likes IS NULL AND EXCLUDED.likes_hidden = false
+				               THEN post_snapshot.likes_hidden ELSE EXCLUDED.likes_hidden END,
+				  comments = COALESCE(EXCLUDED.comments, post_snapshot.comments),
+				  views=EXCLUDED.views,
 				  fb_plays=EXCLUDED.fb_plays,
-				  saves=EXCLUDED.saves, shares=EXCLUDED.shares,
-				  shares_hidden=EXCLUDED.shares_hidden, reposts=EXCLUDED.reposts""",
+				  saves = COALESCE(EXCLUDED.saves, post_snapshot.saves),
+				  shares = CASE WHEN EXCLUDED.shares IS NULL AND EXCLUDED.shares_hidden = false
+				               THEN post_snapshot.shares ELSE EXCLUDED.shares END,
+				  shares_hidden = CASE WHEN EXCLUDED.shares IS NULL AND EXCLUDED.shares_hidden = false
+				               THEN post_snapshot.shares_hidden ELSE EXCLUDED.shares_hidden END,
+				  reposts = COALESCE(EXCLUDED.reposts, post_snapshot.reposts)""",
 				p.username(), p.shortCode(), on, p.contentType(),
 				p.likes(), p.likesHidden(), p.comments(), views, fb,
 				p.saves(), p.shares(), p.sharesHidden(), p.reposts());
