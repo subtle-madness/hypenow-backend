@@ -25,6 +25,11 @@ public final class ContentCacheSeed {
 		jdbc.execute("DROP TABLE IF EXISTS beauty_distributors");
 		jdbc.execute("DROP TABLE IF EXISTS account_summaries");
 		jdbc.execute("DROP TABLE IF EXISTS account_analyses");
+		// 6.23 유사 캐시 테스트가 만드는 빈 뷰(상수 SELECT라 테이블 의존 없음) — 다른 클래스의
+		// CREATE VIEW와 이름이 겹치지 않도록 매번 치운다.
+		jdbc.execute("DROP VIEW IF EXISTS account_peer_axis_stats");
+		jdbc.execute("DROP VIEW IF EXISTS account_category_stats");
+		jdbc.execute("DROP VIEW IF EXISTS account_beauty_ratio");
 		jdbc.execute("DROP TABLE IF EXISTS account_content_series");
 		jdbc.execute("DROP TABLE IF EXISTS beauty_taxonomy");
 		jdbc.execute("""
@@ -61,7 +66,9 @@ public final class ContentCacheSeed {
 				    handle            text PRIMARY KEY,
 				    display_name      text,
 				    profile_image_url text,
-				    followers         bigint
+				    followers         bigint,
+				    beauty            boolean,
+				    fnb               boolean
 				)""");
 		jdbc.execute("CREATE TABLE image_assets (kind text NOT NULL, key text NOT NULL, object_path text)");
 		// axis는 findDistributorOptions의 뷰티 축 필터가 읽는다 (2026-08-31 F&B 어휘 추가)

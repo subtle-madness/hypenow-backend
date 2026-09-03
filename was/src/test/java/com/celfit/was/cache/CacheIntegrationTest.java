@@ -47,6 +47,8 @@ import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.ThumbRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportService;
 import com.celfit.was.v2.influencer.InfluencerAiReportV2;
 import com.celfit.was.v2.influencer.V2InfluencerReportService;
+import com.celfit.was.v2.influencer.V2SimilarInfluencerService;
+import com.celfit.was.v2.influencer.V2SimilarInfluencerService.SimilarInfluencers;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -105,6 +107,9 @@ class CacheIntegrationTest extends IntegrationTest {
 
 	@Autowired
 	V2InfluencerReportService v2ReportService;
+
+	@Autowired
+	V2SimilarInfluencerService similarService;
 
 	@BeforeEach
 	void setUp() throws Exception {
@@ -365,6 +370,69 @@ class CacheIntegrationTest extends IntegrationTest {
 		var result = REDIS.execInContainer("redis-cli", "ttl", key);
 		long ttl = Long.parseLong(result.getStdout().trim());
 		assertThat(ttl).isGreaterThan(3600L).isLessThanOrEqualTo(21600L); // v1 리포트와 같은 등급
+	}
+
+	@Test
+	void 유사_인플루언서는_서비스_경유_두번째_호출도_캐시_히트다() {
+		seedSimilarViews();
+		SimilarInfluencers first = similarService.similar("glow");
+		assertThat(first.cards()).isEmpty(); // 후보 풀(빈 뷰)이 비어 있어 목록은 빈 값 — 빈 결과도 캐시된다
+
+		// 미스라면 findSummary 부재로 404가 나야 하는 상태로 바꾼다 — 그래도 응답이 오면 캐시 히트.
+		jdbcTemplate.update("DELETE FROM account_summaries WHERE handle = 'glow'");
+
+		SimilarInfluencers second = similarService.similar("glow");
+		assertThat(second).isEqualTo(first);
+	}
+
+	@Test
+	void 유사_인플루언서_404는_캐시에_남지_않는다() {
+		seedSimilarViews();
+		assertThatThrownBy(() -> similarService.similar("no-such-influencer"))
+				.isInstanceOf(V1ApiException.class);
+		assertThat(cacheManager.getCache(CacheConfig.INFLUENCER_SIMILAR).get("no-such-influencer")).isNull();
+	}
+
+	@Test
+	void 유사_인플루언서_카드_목록이_JSON_왕복되고_6시간_등급_TTL이다() throws Exception {
+		// 값이 List 최상위가 아니라 record 래퍼인 이유: 불변 List(toList/List.of)를 값 최상위로 두면
+		// 직렬화기가 구현 클래스명을 박아 역직렬화가 깨진다 — 발굴 DiscoveryPage와 같은 구조로 감싼다.
+		InfluencerCard card = new V1InfluencerDiscoveryAssembler().toCards(
+				List.of(new CardRow("glow", "글로우", null, 20000L, 214L, 380L, "소개",
+						"저자극 톤", new BigDecimal("12.4"), new BigDecimal("3.8"),
+						413200L, 10370L, 152L, 72L, 3L, "glow@example.com", new BigDecimal("72.5000"), 1L)),
+				List.of(new ShareRow("glow", "skincare", 80)),
+				List.of(new BrandRow("glow", "롬앤")),
+				List.of(new ThumbRow("glow", "c1", null, "reels", "skincare", "organic",
+						OffsetDateTime.now(ZoneOffset.UTC), 1000L, 100L, 10L)),
+				List.of()).get(0);
+		SimilarInfluencers value = new SimilarInfluencers(List.of(card));
+
+		Cache cache = cacheManager.getCache(CacheConfig.INFLUENCER_SIMILAR);
+		cache.put("roundtrip-similar", value);
+		SimilarInfluencers back = (SimilarInfluencers) cache.get("roundtrip-similar").get();
+		assertThat(back).isEqualTo(value);
+
+		String key = findRedisKey("influencer-similar:roundtrip-similar");
+		long ttl = Long.parseLong(REDIS.execInContainer("redis-cli", "ttl", key).getStdout().trim());
+		assertThat(ttl).isGreaterThan(3600L).isLessThanOrEqualTo(21600L); // 리포트 등급(6h)
+	}
+
+	/** findFnbAxis·findSimilarHandles가 참조하는 뷰 3종을 빈 상수 뷰로 — 후보 풀이 비어 결과는 빈 목록.
+	 *  캐시 배선 검증엔 충분하고, 실제 유사도 계산은 V2InfluencerReportRepositoryTest가 담당한다. */
+	private void seedSimilarViews() {
+		jdbcTemplate.execute("""
+				CREATE VIEW account_peer_axis_stats AS
+				SELECT ''::text AS handle, ''::text AS axis, ''::text AS peer_category,
+				       ''::text AS follower_bucket WHERE false""");
+		jdbcTemplate.execute("""
+				CREATE VIEW account_category_stats AS
+				SELECT ''::text AS account_handle, ''::text AS main_group, 0::bigint AS content_count,
+				       ''::text AS axis WHERE false""");
+		jdbcTemplate.execute("""
+				CREATE VIEW account_beauty_ratio AS
+				SELECT ''::text AS account_handle, 0::bigint AS analyzed_count, 0::bigint AS beauty_count
+				WHERE false""");
 	}
 
 	/** 6.22 리포트가 성립하는 최소 재료 — 신 스키마 카피 1행 + 협찬 게시물 1건(브랜드 롬앤). */
