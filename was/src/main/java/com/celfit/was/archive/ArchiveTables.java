@@ -141,7 +141,6 @@ public final class ArchiveTables {
 			List.of(), "t.user_id = :userId");
 
 	/**
-<<<<<<< HEAD
 	 * AI 어시스턴트 질문 로그(2026-08-27 브랜드 모니터링 AI 어시스턴트 PoC) — users CASCADE(직접
 	 * FK). BRAND_HASHTAG_TAGS와 같은 위상(자식 없음, 순정 CASCADE 자식이라 명시 DELETE 불필요 —
 	 * USERS 삭제 시 함께 사라진다).
