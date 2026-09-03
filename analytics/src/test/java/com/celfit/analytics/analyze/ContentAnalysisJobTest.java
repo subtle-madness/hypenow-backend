@@ -1081,6 +1081,79 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void split_배치_스윕은_resolveTargets보다_먼저_돌아_pending_수거분_재해석을_막는다() {
+		// C1(2026-09-03 리뷰): SYNTHESIS 배치 제출 전 스윕(collectJob.run())이 resolveTargets보다
+		// 먼저 돌아야 한다. 순서가 뒤바뀌면(고치기 전 코드) 스윕이 막 timely로 확정한 short_code가
+		// 여전히 targets에 남아 빈 "확인된 사실"로 재제출되고, 그 재수거가 방금 수거한 좋은 해석을
+		// 덮어쓴다.
+		enableSplitMode();
+		enableBatchTransport();
+		// post_a를 파트 A만 채워진 상태(pending)로 직접 시딩 - runFacts를 거치지 않고 "전날
+		// 미수거 배치"만 재현한다. post_a는 setUp 기본값대로 v_analysis_candidates에 이미
+		// timely=true 후보로 있다("현재 timely 후보").
+		db.update("""
+				INSERT INTO content_analyses (short_code, model, main_category, ad_type, is_beauty,
+				  metric_timeliness) VALUES ('post_a', 'facts-model', 'cleansing', 'organic', true, 'pending')""");
+		String sidecar = om.writeValueAsString(om.createObjectNode()
+				.put("short_code", "post_a")
+				.put("timely", "true")) + "\n";
+		db.update("""
+				INSERT INTO content_batch_jobs (batch_name, timely, submitted_count, status, sidecar_jsonl, kind)
+				VALUES ('batches/pre', true, 1, 'pending', ?, 'synthesis')""", sidecar);
+		String synthesisJson = """
+				{"aiContentSummary":"수거된 해석","contentsPattern":"패턴","aiCommentInsight":"인사이트",
+				 "commentAuthenticityGrade":"normal","commentAuthenticityNote":"근거"}"""
+				.replace("\n", "");
+		String resultJsonl = """
+				{"key":"post_a","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(synthesisJson));
+		GeminiBatchApi api = new GeminiBatchApi() {
+			@Override
+			public String uploadFile(byte[] jsonl, String displayName) {
+				batchUploads.add(jsonl);
+				batchUploadNames.add(displayName);
+				return "files/" + displayName;
+			}
+
+			@Override
+			public String createBatch(String model, String inputFileName, String displayName) {
+				batchCreated.add(model + "|" + inputFileName);
+				return "batches/new"; // 고치기 전 코드라면 여기서 잘못된 재제출이 생긴다
+			}
+
+			@Override
+			public String getBatch(String batchName) {
+				if ("batches/pre".equals(batchName)) {
+					return """
+							{"name":"batches/pre","metadata":{"state":"JOB_STATE_SUCCEEDED",
+							 "output":{"responsesFile":"files/pre"}}}""";
+				}
+				return "{\"metadata\":{\"state\":\"JOB_STATE_RUNNING\"}}";
+			}
+
+			@Override
+			public void downloadResults(String fileName, java.util.function.Consumer<String> onLine) {
+				resultJsonl.lines().filter(l -> !l.isBlank()).forEach(onLine);
+			}
+		};
+		rewireSplitJob(api);
+
+		job.run();
+
+		assertEquals("timely", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		assertEquals("수거된 해석", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'post_a'", String.class));
+		// 스윕이 resolveTargets보다 먼저 돌아 post_a가 이미 timely로 확정됐으므로 더 이상 SYNTHESIS
+		// 대상이 아니다 - 새 배치가 제출되지 않는다(고치기 전에는 여기서 batches/new가 하나 더
+		// 생기고 post_a가 빈 "확인된 사실"로 재해석 대기 상태가 됐다).
+		assertEquals(List.of("batches/pre"),
+				db.queryForList("SELECT batch_name FROM content_batch_jobs", String.class));
+		assertEquals("collected", db.queryForObject(
+				"SELECT status FROM content_batch_jobs WHERE batch_name = 'batches/pre'", String.class));
+	}
+
+	@Test
 	void unified_모드는_현행_그대로_통합_1콜이다() {
 		// 회귀 고정: 토글을 켜지 않으면 파트 A/파트 B 포트는 한 번도 안 탄다
 		rewireSplitJob(null);

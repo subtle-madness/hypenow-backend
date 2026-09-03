@@ -66,10 +66,13 @@ final class ContentAnalysisWriter {
 	 *
 	 * <p>{@code ON CONFLICT DO NOTHING} 고정 - 같은 배치가 두 번 수거되거나 파트 A 제출이 겹쳐도
 	 * 이미 파트 B까지 채워진 행을 되돌리면 안 된다.
+	 *
+	 * @return INSERT된 행 수(0·1) - 0이면 이미 존재하는 행(ON CONFLICT DO NOTHING이 삼킴). 호출자가
+	 *         예상 밖 빈도를 눈치챌 수 있게 반환한다(2026-09-03 리뷰 M8).
 	 */
-	static void insertFacts(JdbcTemplate analysis, ObjectMapper json, String shortCode, String model,
+	static int insertFacts(JdbcTemplate analysis, ObjectMapper json, String shortCode, String model,
 			ContentAttributes attrs) {
-		analysis.update("""
+		return analysis.update("""
 				INSERT INTO content_analyses (short_code, model,
 				  detected_brands, sponsored_signal_level, sponsored_signal_reasons, ad_disclosure,
 				  detected_product_categories, detected_products, vlm_attributes, main_category,

@@ -275,7 +275,13 @@ final class GeminiBatchLines {
 				log.info("분류 대상이나 대분류 미도출 - 미분류로 종결 저장(재시도 루프 방지): {}", parsed.shortCode());
 				attrs = attrs.asUnclassified();
 			}
-			ContentAnalysisWriter.insertFacts(analysis, om, parsed.shortCode(), model, hasCaption ? attrs : null);
+			int inserted = ContentAnalysisWriter.insertFacts(analysis, om, parsed.shortCode(), model,
+					hasCaption ? attrs : null);
+			if (inserted == 0) {
+				// ON CONFLICT DO NOTHING - 이미 존재하는 행. 수거 자체는 성공(true)으로 센다 - 파트 A
+				// 제출이 겹치거나 재수거된 정상 범주라 라인 실패로 취급하지 않는다(M8).
+				log.warn("파트 A INSERT 0행 - 이미 존재하는 행(ON CONFLICT DO NOTHING): {}", parsed.shortCode());
+			}
 			return true;
 		} catch (Exception e) {
 			log.warn("파트 A 결과 라인 저장 실패: {}", abbreviate(line), e);

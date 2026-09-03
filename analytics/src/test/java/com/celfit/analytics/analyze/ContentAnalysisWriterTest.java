@@ -53,8 +53,9 @@ class ContentAnalysisWriterTest {
 
 	@Test
 	void insertFacts는_사실만_채우고_pending으로_남긴다() {
-		ContentAnalysisWriter.insertFacts(db, json, "sc_a", "gemini-test", facts());
+		int inserted = ContentAnalysisWriter.insertFacts(db, json, "sc_a", "gemini-test", facts());
 
+		assertEquals(1, inserted); // 신규 INSERT - 1행(M8)
 		assertEquals("pending", db.queryForObject(
 				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'sc_a'", String.class));
 		assertEquals("cleansing", db.queryForObject(
@@ -87,8 +88,9 @@ class ContentAnalysisWriterTest {
 		ContentAnalysisWriter.updateSynthesis(db, "sc_a", "gemini-test", BASELINE, synthesis(), "timely");
 
 		// 같은 배치가 두 번 수거돼도 파트 B 결과를 지우면 안 된다(ON CONFLICT DO NOTHING)
-		ContentAnalysisWriter.insertFacts(db, json, "sc_a", "gemini-test", facts());
+		int inserted = ContentAnalysisWriter.insertFacts(db, json, "sc_a", "gemini-test", facts());
 
+		assertEquals(0, inserted); // 이미 존재하는 행 - ON CONFLICT DO NOTHING이 삼킨다(M8)
 		assertEquals("timely", db.queryForObject(
 				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'sc_a'", String.class));
 		assertEquals("요약", db.queryForObject(
