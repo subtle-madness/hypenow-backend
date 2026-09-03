@@ -61,20 +61,28 @@ class AdminUiControllerTest {
 	private static final PipelineStatsService.Accounts ACCOUNTS =
 			new PipelineStatsService.Accounts(14_123, 1_714, 723, 169, 822, 1_861);
 
-	/** 콘텐츠 축 실측 — 후보 7,402 = timely 1,435 + 윈도우 5,967, 기분석 7,116 / 미분석 286. */
+	/**
+	 * 콘텐츠 축 실측 — 후보 7,402 = timely 1,435 + 윈도우 5,967, 기분석 7,116 / 미분석 286.
+	 * 파트 A 축(사실만 2+100, 파트 A 후보 9,000 · 완료 8,800)은 2026-09-03 2단계 분리 추가분 — 실측이
+	 * 아니라 항등식만 성립하는 임의값(테스트 목적).
+	 */
 	private static final PipelineStatsService.Heavy HEAVY = new PipelineStatsService.Heavy(
-			7_402, 1_435, 1_432, 5_967, 5_684,
+			7_402,
+			1_435, 1_432, 2,
+			5_967, 5_684, 100,
+			9_000, 8_800,
 			12_777, 11_072, 4_000, 1_104, 723, 700,
 			// 아카이브 커버리지 07-27 실측 — 썸네일 107,886 중 27,686 · 프로필 5,699 중 5,694
 			new PipelineStatsService.ArchiveCoverage(107_886, 27_686, 5_699, 5_694),
 			Instant.parse("2026-07-21T08:20:00Z"));
 
-	/** heavy 유무·실패 사유만 갈아끼우는 픽스처 — 누적(각주)·미러 수치는 §1 실측. */
+	/** heavy 유무·실패 사유만 갈아끼우는 픽스처 — 누적(각주)·미러 수치는 §1 실측.
+	 *  pendingMarked=0 — 이 픽스처는 07-21 실측이라 2단계 분리 이전 데이터, "기타 445" 항등식 유지. */
 	private static PipelineStatsService.Funnel funnel(PipelineStatsService.Heavy heavy,
 			String candidatesError) {
 		long remaining = heavy == null ? -1 : heavy.truePending();
 		return new PipelineStatsService.Funnel(31_038,
-				16_827, 1_745, 14_637,
+				16_827, 1_745, 14_637, 0,
 				30_358, 1_515, 1_517, 12,
 				ACCOUNTS, heavy,
 				remaining < 0 ? 0 : (int) remaining, remaining < 0 ? 0 : 1,
@@ -169,6 +177,16 @@ class AdminUiControllerTest {
 				// 자격 밖은 별도 행으로 승격 — "실패·지연 아님"이 명시돼야 잔여와 안 섞인다
 				.andExpect(content().string(Matchers.containsString("분석 안 함")))
 				.andExpect(content().string(Matchers.containsString("실패·지연 아님")));
+	}
+
+	@Test
+	void 콘텐츠_보드는_사실만_칩으로_파트A_완료분을_따로_보여준다() throws Exception {
+		// 파트 A만 채워진 행은 랭킹에 못 뜨므로 '기분석'이 아니라 '사실만'으로 센다 -
+		// 이걸 뭉개면 "분석이 다 됐는데 왜 랭킹에 없나"라는 오독이 생긴다.
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(Matchers.containsString("사실만")));
 	}
 
 	@Test

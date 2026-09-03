@@ -69,9 +69,9 @@ public class AdminUiController {
 			String copyBase, String copyHave, int copyPercent, String copyStale, String copyCumulative,
 			// 콘텐츠 보드 — 축 수치
 			String rawContents, String serving, String candidates,
-			String timelyTotal, String timelyDone, String timelyPending,
-			String windowTotal, String windowDone, String windowPending,
-			String truePending, int todayPlanned, int daysToFull,
+			String timelyTotal, String timelyDone, String timelyPending, String timelyFactsOnly,
+			String windowTotal, String windowDone, String windowPending, String windowFactsOnly,
+			String truePending, String factsOnlyTotal, int todayPlanned, int daysToFull,
 			String immature, String lateExcluded,
 			// 서빙 커버리지 (G2)
 			String servingAnalyzed, String coverageText, int coveragePercent,
@@ -201,6 +201,13 @@ public class AdminUiController {
 		}
 		PipelineStatsService.Heavy h = f.heavy();
 		return switch (job) {
+			case FACT_ANALYZE -> {
+				if (h == null) {
+					yield f.candidatesError() != null ? "대상 집계 실패 - 분석 뷰 확인 필요" : "대상 집계 중…";
+				}
+				yield "후보 %s · 사실 보유 %s · 미추출 %s".formatted(
+						comma(h.factCandidates()), comma(h.factAnalyzed()), comma(h.factPending()));
+			}
 			case ANALYZE -> {
 				if (h == null) {
 					yield f.candidatesError() != null ? "대상 집계 실패 — 분석 뷰 확인 필요" : "대상 집계 중…";
@@ -245,6 +252,7 @@ public class AdminUiController {
 			return null;
 		}
 		return switch (job) {
+			case FACT_ANALYZE -> "성숙 무관 - 업로드 다음 날 광고 판정·카테고리를 먼저 채운다";
 			// 잔여 미상(집계 중·실패)이면 todayPlanned은 0이 아니라 "모름" — "+0 예정"은 오독을 부른다.
 			// LIMIT 폐지(2026-07-23) 이후 잡은 자기 트랙의 잔여 전량을 오늘 시도 — 트랙별 잔여를 그대로 쓴다.
 			case ANALYZE -> f.heavy() == null ? "오늘 예정량 미상"
@@ -283,8 +291,9 @@ public class AdminUiController {
 		int copyPercent = h != null && h.beautyHandles() > 0
 				? (int) Math.min(100L, h.beautyCopied() * 100L / h.beautyHandles()) : 0;
 		String computedText = h == null ? null : HHMM.format(h.computedAt().atZone(KST));
-		// immature·마킹 전(NULL) 레거시 — timely/backfill 어느 쪽도 아닌 기분석분.
-		long other = Math.max(0, f.analyzed() - f.timelyMarked() - f.backfillMarked());
+		// immature·마킹 전(NULL) 레거시 - timely/backfill/pending 어느 쪽도 아닌 기분석분.
+		long other = Math.max(0,
+				f.analyzed() - f.timelyMarked() - f.backfillMarked() - f.pendingMarked());
 		return new FunnelView(pending, failed, f.candidatesError(), computedText,
 				comma(a.total()), comma(a.qualified()), comma(a.beautyIndividual()),
 				comma(a.beautyCompany()), comma(a.nonBeauty()),
@@ -298,10 +307,13 @@ public class AdminUiController {
 				h == null ? null : comma(h.timelyTotal()),
 				h == null ? null : comma(h.timelyDone()),
 				h == null ? null : comma(h.timelyPending()),
+				h == null ? null : comma(h.timelyFactsOnly()),
 				h == null ? null : comma(h.windowTotal()),
 				h == null ? null : comma(h.windowDone()),
 				h == null ? null : comma(h.windowPending()),
+				h == null ? null : comma(h.windowFactsOnly()),
 				h == null ? null : comma(h.truePending()),
+				h == null ? null : comma(h.factsOnlyTotal()),
 				f.todayPlanned(), f.daysToFull(),
 				h == null ? null : comma(h.immaturePool()),
 				h == null ? null : comma(h.lateExcluded()),

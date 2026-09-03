@@ -10,6 +10,8 @@
 --   _comment_gate(short_code)                — 댓글 미러됨 ∧ 분류 미완 (잡 보류 게이트)
 --   _mirrored(short_code)                    — 미러 contents (라이브 뷰-미러 간극 스킵 판정)
 -- 상태 정의는 /ui 콘텐츠 보드(PipelineStatsService)와 동일 — 항등식 대조 출력으로 검증한다.
+-- ※ 2026-09-03 2단계 분리: metric_timeliness='pending'은 "파트 A(사실)만 채워짐"이다.
+--   행 존재 = 기분석이 아니므로 상태 11 / 24 / 34 / 42로 따로 센다.
 
 ANALYZE _analyzed;
 ANALYZE _comment_gate;
@@ -22,17 +24,20 @@ SELECT
   p.short_code,
   CASE
     WHEN NOT p.has_caption THEN '50'
-    WHEN NOT p.mature THEN '10'
+    WHEN NOT p.mature THEN CASE WHEN s.facts_only THEN '11' ELSE '10' END
     WHEN c.timely IS TRUE THEN
-      CASE WHEN s.analyzed THEN '20'
+      CASE WHEN s.facts_only THEN '24'
+           WHEN s.analyzed THEN '20'
            WHEN s.gated THEN '22'
            WHEN NOT s.mirrored THEN '23'
            ELSE '21' END
     WHEN c.timely IS FALSE THEN
-      CASE WHEN s.analyzed THEN '30'
+      CASE WHEN s.facts_only THEN '34'
+           WHEN s.analyzed THEN '30'
            WHEN s.gated THEN '32'
            WHEN NOT s.mirrored THEN '33'
            ELSE '31' END
+    WHEN s.facts_only THEN '42'
     WHEN s.analyzed THEN '41'
     ELSE '40'
   END AS k
@@ -48,6 +53,10 @@ FROM (
 LEFT JOIN (SELECT short_code, timely FROM analytics.v_analysis_candidates) c USING (short_code)
 CROSS JOIN LATERAL (
   SELECT EXISTS (SELECT 1 FROM _analyzed a WHERE a.short_code = p.short_code) AS analyzed,
+         -- 2026-09-03 2단계 분리: 행이 있어도 파트 A만이면 '기분석'이 아니다(해석·기준선이 없어
+         -- 랭킹·드로어 비교 블록에 못 뜬다). '사실만'으로 따로 센다.
+         EXISTS (SELECT 1 FROM _analyzed a WHERE a.short_code = p.short_code
+                 AND a.metric_timeliness = 'pending') AS facts_only,
          EXISTS (SELECT 1 FROM _comment_gate g WHERE g.short_code = p.short_code) AS gated,
          EXISTS (SELECT 1 FROM _mirrored m WHERE m.short_code = p.short_code) AS mirrored
 ) s;
@@ -57,16 +66,20 @@ CROSS JOIN LATERAL (
 SELECT st.label AS "상태", COALESCE(c.n, 0) AS "건수", st.note AS "해석"
 FROM (VALUES
   ('10', '미성숙 — 제때창 안 닫힘',     '판정 대기 — 창 닫히면 랭킹/상세/영구 제외로 갈린다. 분석 실패 아님'),
+  ('11', '미성숙 · 사실만',             '파트 A 완료(광고 판정·카테고리 표시됨) - 해석은 창 닫힌 뒤'),
   ('20', '랭킹 트랙 · 기분석',          '제때창(3일) 안 크롤 성공 + 분석 완료 → 랭킹 노출'),
   ('21', '랭킹 트랙 · 분석 대기',       '분석 대상 — 다음 새벽 잡이 처리(진짜 잔여)'),
   ('22', '랭킹 트랙 · 댓글 게이트 보류', '후보지만 댓글 분류 미완으로 잡이 스킵 — 분류 완료 후 자연 재대상'),
   ('23', '랭킹 트랙 · 미러 갭',         '후보지만 미러에 아직 없어 잡이 스킵 — 다음 미러 후 자연 해소'),
+  ('24', '랭킹 트랙 · 사실만',          '파트 A 완료 · 파트 B 대기 - 광고/카테고리는 뜨지만 랭킹엔 아직 안 나온다'),
   ('30', '상세 트랙 · 기분석',          '제때창 놓침·최근 윈도우 안 + 분석 완료 → 인플루언서 상세만(랭킹 제외)'),
   ('31', '상세 트랙 · 분석 대기',       '분석 대상(백필 잡) — 분석돼도 랭킹엔 안 나온다'),
   ('32', '상세 트랙 · 댓글 게이트 보류', '후보지만 댓글 분류 미완으로 잡이 스킵'),
   ('33', '상세 트랙 · 미러 갭',         '후보지만 미러에 아직 없어 잡이 스킵'),
+  ('34', '상세 트랙 · 사실만',          '파트 A 완료 · 파트 B 대기 - 인플루언서 상세엔 이미 반영'),
   ('40', '영구 제외 · 미분석',          '제때창(3일) 놓침 ∧ 최근 윈도우 밖 — 분석 대상이 아니다(실패·지연 아님)'),
   ('41', '영구 제외 · 과거 분석 보유',   '윈도우에 있던 시절 분석됨 — 저장분 노출은 유지, 신규 분석 없음'),
+  ('42', '영구 제외 · 사실만',          '제때창 놓침 ∧ 윈도우 밖이지만 파트 A는 채워짐 - 해석은 영영 안 만든다'),
   ('50', '캡션 없음 — 자격 밖',         'LLM 입력 불가 — 분석 대상이 아니다')
 ) st(k, label, note)
 LEFT JOIN (SELECT k, count(*) AS n FROM _cls GROUP BY k) c USING (k)
@@ -75,15 +88,16 @@ ORDER BY st.k;
 \echo ''
 \echo '== /ui 콘텐츠 보드 대조 (항등식: 자격 = 랭킹 + 상세 · 각 트랙 = 기분석 + 미분석) =='
 SELECT
-  count(*) FILTER (WHERE k IN ('20','21','22','23','30','31','32','33')) AS "분석 자격",
-  count(*) FILTER (WHERE k IN ('20','21','22','23'))                     AS "랭킹 트랙",
-  count(*) FILTER (WHERE k = '20')                                       AS "랭킹 기분석",
-  count(*) FILTER (WHERE k IN ('21','22','23'))                          AS "랭킹 미분석",
-  count(*) FILTER (WHERE k IN ('30','31','32','33'))                     AS "상세 트랙",
-  count(*) FILTER (WHERE k = '30')                                       AS "상세 기분석",
-  count(*) FILTER (WHERE k IN ('31','32','33'))                          AS "상세 미분석",
-  count(*) FILTER (WHERE k = '10')                                       AS "미성숙",
-  count(*) FILTER (WHERE k IN ('40','41'))                               AS "영구 제외"
+  count(*) FILTER (WHERE k IN ('20','21','22','23','24','30','31','32','33','34')) AS "분석 자격",
+  count(*) FILTER (WHERE k IN ('20','21','22','23','24'))                          AS "랭킹 트랙",
+  count(*) FILTER (WHERE k = '20')                                                 AS "랭킹 기분석",
+  count(*) FILTER (WHERE k IN ('21','22','23','24'))                               AS "랭킹 미분석",
+  count(*) FILTER (WHERE k = '24')                                                 AS "랭킹 사실만",
+  count(*) FILTER (WHERE k IN ('30','31','32','33','34'))                          AS "상세 트랙",
+  count(*) FILTER (WHERE k = '30')                                                 AS "상세 기분석",
+  count(*) FILTER (WHERE k IN ('31','32','33','34'))                               AS "상세 미분석",
+  count(*) FILTER (WHERE k IN ('10','11'))                                         AS "미성숙",
+  count(*) FILTER (WHERE k IN ('40','41','42'))                                    AS "영구 제외"
 FROM _cls;
 
 -- 마킹·뷰 불일치 — 캘린더일 정합(07-28) 이후에도 남은 과거 마킹 표류(소급 런북 대상:

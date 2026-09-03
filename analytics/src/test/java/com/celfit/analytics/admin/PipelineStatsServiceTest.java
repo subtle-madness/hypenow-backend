@@ -22,21 +22,26 @@ class PipelineStatsServiceTest {
 	}
 
 	@Test
-	void 트랙별_대조는_기분석_셋과의_교집합으로_4분할() {
-		// 후보 5건: timely 2(a,b) + 윈도우 3(c,d,e). 기분석 셋엔 a,c,d와 후보 밖 x.
+	void 트랙별_대조는_파트B_완료만_기분석으로_센다() {
+		// 후보 5건: timely 2(a,b) + 윈도우 3(c,d,e). 행 보유 {a,c,d,x}, 그중 pending(A만) {c}.
+		// 파트 A 행은 랭킹에 못 뜨므로 '기분석'이 아니라 '사실만'으로 따로 센다.
 		Map<String, Boolean> candidates = new LinkedHashMap<>();
 		candidates.put("a", true);
 		candidates.put("b", true);
 		candidates.put("c", false);
 		candidates.put("d", false);
 		candidates.put("e", false);
-		PipelineStatsService.TrackSplit s =
-				PipelineStatsService.split(candidates, Set.of("a", "c", "d", "x"));
+
+		PipelineStatsService.TrackSplit s = PipelineStatsService.split(
+				candidates, Set.of("a", "c", "d", "x"), Set.of("c"));
+
 		assertThat(s.timelyTotal()).isEqualTo(2);
 		assertThat(s.timelyDone()).isEqualTo(1);
+		assertThat(s.timelyFactsOnly()).isZero();
 		assertThat(s.windowTotal()).isEqualTo(3);
-		assertThat(s.windowDone()).isEqualTo(2);
-		// 항등식: 후보 = 트랙 합, 후보 밖 기분석(x)은 어디에도 안 센다
+		assertThat(s.windowDone()).isEqualTo(1);   // d만 (c는 사실만)
+		assertThat(s.windowFactsOnly()).isEqualTo(1);
+		// 항등식: 후보 = 트랙 합, 후보 밖 행 보유(x)는 어디에도 안 센다
 		assertThat(s.timelyTotal() + s.windowTotal()).isEqualTo(candidates.size());
 	}
 
@@ -64,16 +69,24 @@ class PipelineStatsServiceTest {
 
 	@Test
 	void heavy_스냅샷은_항등식_후보는_기분석더하기미분석() {
-		// v3 설계 문서 §1 실측(07-21): 후보 7,402 = timely 1,435 + 윈도우 5,967, 미분석 286.
+		// v3 설계 문서 §1 실측(07-21) + 09-03 파트 A 축.
 		PipelineStatsService.Heavy h = new PipelineStatsService.Heavy(
-				7_402, 1_435, 1_432, 5_967, 5_684,
-				12_777, 11_072, 4_000, 1_104, 723, 700,
+				7_402,
+				1_435, 1_432, 2,
+				5_967, 5_684, 100,
+				9_000, 8_800,
+				12_777, 11_072,
+				4_000, 1_104,
+				723, 700,
 				new PipelineStatsService.ArchiveCoverage(107_886, 27_686, 5_699, 5_694),
 				Instant.now());
 		assertThat(h.timelyPending()).isEqualTo(3);
 		assertThat(h.windowPending()).isEqualTo(283);
 		assertThat(h.truePending()).isEqualTo(286);
-		// 항등식: 후보 = (트랙별 기분석 + 미분석)의 합
+		assertThat(h.factsOnlyTotal()).isEqualTo(102);
+		assertThat(h.factPending()).isEqualTo(200);
+		// 항등식: 후보 = (트랙별 파트 B 완료 + 미완)의 합. '사실만'은 미완에 포함된다 -
+		// 파트 A만으로는 랭킹에 못 뜨므로 여전히 해야 할 일이다.
 		assertThat(h.timelyDone() + h.timelyPending() + h.windowDone() + h.windowPending())
 				.isEqualTo(h.candidates());
 	}
