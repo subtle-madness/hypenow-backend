@@ -11,7 +11,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
 
 /**
  * 브랜드 해시태그 제안 런타임 설정(2026-09-03 자동 시드 재설계 §3-5) — app_setting을 짧은 TTL
@@ -23,7 +23,7 @@ import org.springframework.stereotype.Component;
  * 여기 상수는 "마이그레이션 이전·행 삭제" 같은 예외 상태의 안전망이지 정본이 아니다 — 기준값
  * 변경은 후속 마이그레이션으로 한다(CLAUDE.md 규칙).
  */
-@Component
+@Service
 public class BrandHashtagSeedSettings {
 
 	private static final Logger log = LoggerFactory.getLogger(BrandHashtagSeedSettings.class);
@@ -34,7 +34,7 @@ public class BrandHashtagSeedSettings {
 	static final String KEY_AI_ENABLED = "brand.hashtag-seed.ai-enabled";
 
 	private static final int DEFAULT_MIN_POSTS = 7;
-	private static final String DEFAULT_STOPLIST =
+	static final String DEFAULT_STOPLIST =
 			"광고,협찬,이벤트,공구,체험단,유료광고,광고포함,ad,sponsored,pr";
 
 	private final AppSettingRepository settings;
@@ -43,6 +43,7 @@ public class BrandHashtagSeedSettings {
 
 	private volatile Snapshot cache;
 
+	// 테스트 전용 3-arg 생성자가 함께 있어 후보가 2개라 Spring이 암묵 선택을 못 한다 — 명시 지정 필수.
 	@Autowired
 	public BrandHashtagSeedSettings(AppSettingRepository settings) {
 		this(settings, Clock.systemUTC(), DEFAULT_TTL);

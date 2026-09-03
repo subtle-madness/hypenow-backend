@@ -3,6 +3,7 @@ package com.celfit.monitoring.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.monitoring.store.AppSettingRepository;
+import com.celfit.monitoring.testsupport.TestDb;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -11,6 +12,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * 해시태그 제안 설정 TTL 캐시 — {@code IgSourceSettings}와 같은 관용구(짧은 TTL·이상값 안전측·
@@ -99,6 +101,10 @@ class BrandHashtagSeedSettingsTest {
 		store.values.put("brand.hashtag-seed.min-posts", "0");
 
 		assertThat(settings().minPosts()).isEqualTo(7);
+
+		store.values.put("brand.hashtag-seed.min-posts", "-5");
+
+		assertThat(settings().minPosts()).isEqualTo(7);
 	}
 
 	@Test
@@ -159,5 +165,23 @@ class BrandHashtagSeedSettingsTest {
 
 		assertThat(settings().minPosts()).isEqualTo(7);
 		assertThat(settings().aiEnabled()).isTrue();
+	}
+
+	/**
+	 * Flyway 시드값이 클래스 기본값 상수와 일치하는지 검증(실 Testcontainers Postgres) —
+	 * {@code AppSettingRepositoryTest.시드된_토글_기준값을_조회한다} /
+	 * {@code IgSourceSettingsTest.commentDocId_는_마이그레이션_시드값이다}와 같은 패턴.
+	 */
+	@Test
+	void 마이그레이션_시드값은_클래스_기본값과_같다() {
+		var ds = TestDb.dataSource(TestDb.container());
+		var db = new JdbcTemplate(ds);
+		TestDb.resetAndMigrate(db, ds);
+		var repo = new AppSettingRepository(db);
+
+		assertThat(repo.find("brand.hashtag-seed.min-posts")).isEqualTo(Optional.of("7"));
+		assertThat(repo.find("brand.hashtag-seed.ai-enabled")).isEqualTo(Optional.of("true"));
+		assertThat(repo.find("brand.hashtag-seed.stoplist"))
+				.isEqualTo(Optional.of(BrandHashtagSeedSettings.DEFAULT_STOPLIST));
 	}
 }
