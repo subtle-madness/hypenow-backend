@@ -16,6 +16,9 @@ import tools.jackson.databind.json.JsonMapper;
  * 버그)에 걸려 항상 실패하는데, feed/user는 다른 엔드포인트라 그 400을 안 받는다. 이 표면도
  * 401-민감이라(레지던셜보다 크게 낮지만) MOBILE 티어로 나간다. 영상 조회수(play_count)가 아이템에
  * 이미 실려 오므로 clips 보강 콜이 불요하다.
+ *
+ * <p>썸네일 갱신(S14, 2026-09-03 감사 수정) — {@link #thumbnailUrl(JsonNode)} 참조: 과거엔 이 필드가
+ * 항상 null이라 저장 계층의 COALESCE 보호가 만료 예정 CDN URL을 영구 보존하는 결함이 있었다.
  */
 public class FeedUserPostsFetcher {
 
@@ -65,13 +68,25 @@ public class FeedUserPostsFetcher {
 	}
 
 	private static PostInfo toPost(JsonNode item, String username, String userId) {
-		int mediaType = item.path("media_type").asInt(0);
-		String contentType = mediaType == 2 ? "REELS" : "FEED";
+		String contentType = contentType(item);
 
 		JsonNode likeCount = item.path("like_count");
-		// -1은 IG의 좋아요 숨김 센티널 — 부재도 동일 취급.
-		boolean likesHidden = !likeCount.isNumber() || likeCount.asLong() < 0;
-		Long likes = likesHidden ? null : likeCount.asLong();
+		// -1은 IG의 명시적 좋아요 숨김 센티널(확정 true). 숫자를 실제로 봤으면 확정 false. 키
+		// 자체가 없으면(구조적 부재) 미확정(null, S9 보완, 2026-09-03 리뷰 지적) — embed와 같은
+		// 규칙이다. 과거엔 부재를 -1과 뭉뚱그려 확정 true로 단정해, mergedWith의 OR 병합에서
+		// 정본(embed)의 진짜 확정 false를 덮어 likes를 null로 강제하는 결함을 냈다.
+		Boolean likesHidden;
+		Long likes;
+		if (!likeCount.isNumber()) {
+			likesHidden = null;
+			likes = null;
+		} else if (likeCount.asLong() < 0) {
+			likesHidden = true;
+			likes = null;
+		} else {
+			likesHidden = false;
+			likes = likeCount.asLong();
+		}
 
 		JsonNode commentCount = item.path("comment_count");
 		Long comments = commentCount.isNumber() ? commentCount.asLong() : null;
@@ -86,11 +101,46 @@ public class FeedUserPostsFetcher {
 				userId,
 				contentType,
 				extractCaption(item, userId),
-				null,
+				thumbnailUrl(item),
 				item.path("taken_at").isNumber() ? item.path("taken_at").asLong() : null,
 				likes, comments, views,
 				null, null, null, null, null, null, null,
-				views != null, likesHidden, false);
+				// sharesHidden=null(미확정, S9) — feed/user 응답에는 공유 횟수 자체가 안 실려
+				// "숨김"과 "이 표면이 원래 못 주는 값"을 구분할 신호가 없다(EmbedPostFetcher와 동일
+				// 구조적 한계). 과거 false 하드코딩은 Hiker의 확정 false와 안 구분돼, 공유 숨김
+				// 릴스가 재시도 상한까지 헛돌고 소진 시 공유 0으로 오기록되는 결함을 냈다.
+				views != null, likesHidden, null);
+	}
+
+	/**
+	 * S4 — HikerBackend와 같은 신호(product_type == "clips")로 판정한다. media_type==2는 일반
+	 * 비디오 피드도 포함해 REELS 단독 판별 신호가 아니다(HikerBackend 주석 "media_type==2는 일반
+	 * 비디오 피드도 포함 → 릴스 판별은 product_type" 동일 결론, findings §4). product_type 필드
+	 * 자체가 없으면(예상외 셰이프) media_type만으로 단정하지 않고 null(판별 불가)을 반환한다 —
+	 * 저장 계층(PostMetaRepository)이 COALESCE로 기존 값을 보존하므로, 콜 전체를 실패시켜 Hiker
+	 * 폴백을 강제할 필요가 없는 항목이다(캡션과 달리 결손이 저장 계층에서 안전하게 흡수된다).
+	 */
+	private static String contentType(JsonNode item) {
+		JsonNode productType = item.path("product_type");
+		if (!productType.isString()) {
+			return null;
+		}
+		return "clips".equals(productType.asString()) ? "REELS" : "FEED";
+	}
+
+	/**
+	 * S14 — post_meta 표시 메타(HikerBackend.thumbnailUrl과 동일 필드·경로, {@link PostInfo} javadoc
+	 * 참조) — feed/user는 Hiker와 같은 IG 사설 API media 노드 셰이프라 image_versions2가 같은
+	 * 위치에 실린다. 과거엔 이 필드가 항상 null이라, 저장 계층의 COALESCE 보호(PostMetaRepository)가
+	 * "일시적 미취득"으로 오인해 기존(만료 예정) CDN URL을 영구 보존했다(EmbedPostFetcher와 동일
+	 * 결함, 클래스 javadoc 참조). 키·candidates 부재는 예상외 셰이프가 아니라(캐러셀 등 셰이프
+	 * 다양성) 예외 없이 null(미취득)을 반환한다.
+	 */
+	private static String thumbnailUrl(JsonNode item) {
+		JsonNode candidates = item.path("image_versions2").path("candidates");
+		return candidates.isArray() && !candidates.isEmpty()
+				? candidates.get(0).path("url").asString(null)
+				: null;
 	}
 
 	/**

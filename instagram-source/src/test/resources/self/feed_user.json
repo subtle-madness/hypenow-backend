@@ -3,15 +3,23 @@
     {
       "code": "DImageAAAAA",
       "media_type": 1,
+      "product_type": "feed",
       "like_count": 485267,
       "comment_count": 3359,
       "taken_at": 1787148707,
       "user": {"username": "nasa"},
-      "caption": {"text": "A stunning view of Earth from orbit."}
+      "caption": {"text": "A stunning view of Earth from orbit."},
+      "image_versions2": {
+        "candidates": [
+          {"url": "https://scontent-gmp1-1.cdninstagram.com/v/t51.29350-15/img_1080.jpg?oe=6A9B20B6", "width": 1080, "height": 1080},
+          {"url": "https://scontent-gmp1-1.cdninstagram.com/v/t51.29350-15/img_480.jpg?oe=6A9B20B6", "width": 480, "height": 480}
+        ]
+      }
     },
     {
       "code": "DReelBBBBBB",
       "media_type": 2,
+      "product_type": "clips",
       "like_count": 95971,
       "comment_count": 1204,
       "play_count": 560359,
@@ -22,6 +30,7 @@
     {
       "code": "DCaroCCCCCC",
       "media_type": 8,
+      "product_type": "carousel_container",
       "like_count": 12000,
       "comment_count": 210,
       "taken_at": 1786900000,

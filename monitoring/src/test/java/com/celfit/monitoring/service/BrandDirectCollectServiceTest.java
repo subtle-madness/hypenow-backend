@@ -4,12 +4,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.celfit.instagram.source.AuthorInfo;
+import com.celfit.instagram.source.ClipCounts;
 import com.celfit.instagram.source.CommentInfo;
+import com.celfit.instagram.source.CommentsFetch;
+import com.celfit.instagram.source.HashtagPage;
 import com.celfit.instagram.source.HikerBackend;
+import com.celfit.instagram.source.HikerFetchException;
 import com.celfit.instagram.source.InstagramSource;
+import com.celfit.instagram.source.MediaRef;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.PostShapeUnsupportedException;
+import com.celfit.instagram.source.PrivateAccountException;
+import com.celfit.instagram.source.ProfileInfo;
 import com.celfit.instagram.source.SubjectNotFoundException;
+import com.celfit.instagram.source.TaggedPage;
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.CountingHikerHttp;
@@ -217,6 +225,17 @@ class BrandDirectCollectServiceTest {
 		public List<TrackedPost> unenrichedUnenumeratedPosts(long brandId, Instant minTakenAt) {
 			return unenrichedDue.stream().filter(t -> !t.takenAt().isBefore(minTakenAt)).toList();
 		}
+
+		// 게시자 id 재사용/역보강(S8 결함 수정) — 이 테스트는 재사용 대상이 없다(no-op 대역).
+		@Override
+		public Map<String, String> authorIgUserIds(long brandId, Collection<String> shortCodes) {
+			return Map.of();
+		}
+
+		@Override
+		public void backfillAuthorIgUserIds(long brandId, Map<String, String> authorIdsByShortCode) {
+			// no-op — 이 테스트 스위트는 역보강 상태를 단언하지 않는다.
+		}
 	}
 
 	private static final class InMemoryAuthors extends AuthorProfileRepository {
@@ -284,8 +303,10 @@ class BrandDirectCollectServiceTest {
 		// 커버리지 조회·기록 지점에 닿지 않는다(collect는 adjustLotteryMetrics 재사용 목적).
 		BrandCollectService collect = new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments,
 				tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
-		return new BrandDirectCollectService(client(), client(), callContext, writer, tagged, collect, sweepLimit,
-				monitoringSetSize);
+		// recheck 소스(5번째 인자, S13)도 client()로 — 같은 postResponses/notFoundCodes를 보므로
+		// 재확인 콜도 원 콜과 같은 응답을 받는다(재확인이 상황을 못 바꾸는 케이스의 기본 배선).
+		return new BrandDirectCollectService(client(), client(), callContext, writer, tagged, collect, client(),
+				sweepLimit, monitoringSetSize);
 	}
 
 	/** service()가 collect·direct 각자 별도 HikerBackend(별도 fake 인스턴스)를 갖지만 같은 calls 리스트를 공유한다. */
@@ -348,6 +369,180 @@ class BrandDirectCollectServiceTest {
 		assertThat(tagged.upsertedDirect).isEmpty();
 	}
 
+	// ── taken_at 없는 self 구조 결과의 Hiker 재확인(S13, 2026-09-03 감사) ─────────
+	//
+	// syncHiker(HikerFirst)는 Hiker 장애 시 self로 구조하는데, self(embed 등)는 taken_at을
+	// 구조적으로 못 준다 — 등록은 저빈도 동기 경로라 taken_at 미상 응답을 즉시 422로 정산하기 전에
+	// Hiker 단건 재확인을 1회 허용한다. 재확인은 self를 다시 타면 같은 결과(구조적 null)만 반복하므로
+	// self를 완전히 우회하는 Hiker 직결 소스(생성자 7번째 인자)로 라우팅한다.
+
+	/** fetchPost만 의미 있는 최소 스텁 — 이 테스트 스위트는 나머지 메서드를 호출하지 않는다. */
+	private static class FetchPostOnlySource implements InstagramSource {
+		private final java.util.function.Function<String, PostInfo> fn;
+
+		FetchPostOnlySource(java.util.function.Function<String, PostInfo> fn) {
+			this.fn = fn;
+		}
+
+		@Override
+		public PostInfo fetchPost(String shortCode) {
+			return fn.apply(shortCode);
+		}
+
+		@Override
+		public ProfileInfo fetchProfile(String username) {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public AuthorInfo fetchAuthorProfile(String userId) {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public List<PostInfo> fetchRecentPosts(String username, String userId, int pages) {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public Map<String, ClipCounts> fetchClipCounts(String userId, int pages) {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public TaggedPage fetchTaggedPage(String userId, String pageId) {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public HashtagPage fetchHashtagRecentPage(String tag, String pageId) {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public CommentsFetch fetchComments(String shortCode, String postUsername, int pages) {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public CommentsFetch fetchComments(String shortCode, String postUsername, int pages,
+				Set<String> knownCommentIds) {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public MediaRef resolveMediaByUrl(String url) {
+			throw new UnsupportedOperationException();
+		}
+	}
+
+	private static PostInfo postInfoNoTakenAt(String shortCode) {
+		return new PostInfo(shortCode, "author_101", "작가", "https://p", "101", "REELS", null, null,
+				null, 10L, 2L, 500L, null, null, null, null, null, null, null, true, null, null);
+	}
+
+	/** taken_at이 채워진 Hiker 재확인 성공 응답. */
+	private static PostInfo postInfoWithTakenAt(String shortCode, long takenAt) {
+		return postInfoNoTakenAt(shortCode).withTakenAt(takenAt);
+	}
+
+	@Test
+	void taken_at_없는_self_구조_결과는_Hiker_재확인으로_구조된다() {
+		java.util.concurrent.atomic.AtomicInteger syncCalls = new java.util.concurrent.atomic.AtomicInteger();
+		InstagramSource syncSource = new FetchPostOnlySource(code -> {
+			syncCalls.incrementAndGet();
+			return postInfoNoTakenAt(code);   // Hiker 장애 → self 구조 결과, taken_at 구조적 null
+		});
+		InstagramSource recheckSource = new FetchPostOnlySource(code -> postInfoWithTakenAt(code, RECENT));
+		BrandDirectCollectService svc = serviceWithSeparateSources(client(), syncSource, recheckSource);
+
+		PostInfo result = svc.collectAndEnrich(brand, "Rescued", Instant.now());
+
+		assertThat(result.takenAt()).isEqualTo(RECENT);
+		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("Rescued");
+		assertThat(tagged.upsertedDirect).containsExactly("Rescued");
+		assertThat(syncCalls.get()).isEqualTo(1);   // 재확인은 syncHiker가 아니라 recheck 소스로 간다
+	}
+
+	/** 재확인도 taken_at을 못 주면(Hiker가 여전히 장애) 기존 422 정산을 그대로 유지한다 — 무한 재시도로 번지지 않는다. */
+	@Test
+	void 재확인도_taken_at_없으면_기존_422로_정산된다() {
+		InstagramSource syncSource = new FetchPostOnlySource(BrandDirectCollectServiceTest::postInfoNoTakenAt);
+		java.util.concurrent.atomic.AtomicInteger recheckCalls = new java.util.concurrent.atomic.AtomicInteger();
+		InstagramSource recheckSource = new FetchPostOnlySource(code -> {
+			recheckCalls.incrementAndGet();
+			return postInfoNoTakenAt(code);   // Hiker가 여전히 장애 — 재확인도 self 셰이프
+		});
+		BrandDirectCollectService svc = serviceWithSeparateSources(client(), syncSource, recheckSource);
+
+		assertThatThrownBy(() -> svc.collectAndEnrich(brand, "StillDown", Instant.now()))
+				.isInstanceOf(PostShapeUnsupportedException.class);
+
+		assertThat(recheckCalls.get()).isEqualTo(1);   // 재확인은 정확히 1회만 — 루프 아님
+		assertThat(writer.saved).isEmpty();
+	}
+
+	/** 재확인 콜 자체가 벤더 장애로 실패해도(타임아웃 등) 원래의 422 정산으로 수렴한다 — 재확인 예외가 새지 않는다. */
+	@Test
+	void 재확인_콜이_실패해도_기존_422로_정산된다() {
+		InstagramSource syncSource = new FetchPostOnlySource(BrandDirectCollectServiceTest::postInfoNoTakenAt);
+		InstagramSource recheckSource = new FetchPostOnlySource(code -> {
+			throw new HikerFetchException("타임아웃");
+		});
+		BrandDirectCollectService svc = serviceWithSeparateSources(client(), syncSource, recheckSource);
+
+		assertThatThrownBy(() -> svc.collectAndEnrich(brand, "Timeout", Instant.now()))
+				.isInstanceOf(PostShapeUnsupportedException.class);
+
+		assertThat(writer.saved).isEmpty();
+	}
+
+	/** 재확인이 게시물 부재를 결정적으로 확인하면(삭제됨) 422가 아니라 그 판정을 그대로 전파한다. */
+	@Test
+	void 재확인이_부재를_확인하면_부재_예외가_전파된다() {
+		InstagramSource syncSource = new FetchPostOnlySource(BrandDirectCollectServiceTest::postInfoNoTakenAt);
+		InstagramSource recheckSource = new FetchPostOnlySource(code -> {
+			throw new SubjectNotFoundException("게시물 없음: " + code);
+		});
+		BrandDirectCollectService svc = serviceWithSeparateSources(client(), syncSource, recheckSource);
+
+		assertThatThrownBy(() -> svc.collectAndEnrich(brand, "GoneNow", Instant.now()))
+				.isInstanceOf(SubjectNotFoundException.class);
+
+		assertThat(writer.saved).isEmpty();
+	}
+
+	/** 재확인이 비공개 전환을 확인해도 마찬가지로 그 판정을 그대로 전파한다. */
+	@Test
+	void 재확인이_비공개_전환을_확인하면_비공개_예외가_전파된다() {
+		InstagramSource syncSource = new FetchPostOnlySource(BrandDirectCollectServiceTest::postInfoNoTakenAt);
+		InstagramSource recheckSource = new FetchPostOnlySource(code -> {
+			throw new PrivateAccountException("비공개 전환: " + code);
+		});
+		BrandDirectCollectService svc = serviceWithSeparateSources(client(), syncSource, recheckSource);
+
+		assertThatThrownBy(() -> svc.collectAndEnrich(brand, "WentPrivate", Instant.now()))
+				.isInstanceOf(PrivateAccountException.class);
+
+		assertThat(writer.saved).isEmpty();
+	}
+
+	/** taken_at이 처음부터 있으면 재확인 콜 자체가 없다 — 정상 경로에 추가 콜을 얹지 않는다. */
+	@Test
+	void taken_at이_처음부터_있으면_재확인_콜이_없다() {
+		postResponses.put("D1", postJson("D1", RECENT, 101));
+		java.util.concurrent.atomic.AtomicInteger recheckCalls = new java.util.concurrent.atomic.AtomicInteger();
+		InstagramSource recheckSource = new FetchPostOnlySource(code -> {
+			recheckCalls.incrementAndGet();
+			throw new IllegalStateException("호출되면 안 됨");
+		});
+		BrandDirectCollectService svc = serviceWithSeparateSources(client(), client(), recheckSource);
+
+		svc.collectAndEnrich(brand, "D1", Instant.now());
+
+		assertThat(recheckCalls.get()).isZero();
+	}
+
 	// ── 동기(collectAndEnrich)·비동기(sweepUnenumerated) 소스 분리 — 사용자 대면 동기 경로
 	// self 트러블 원천 차단 ───────────────────────────────────────────────────
 
@@ -384,9 +579,15 @@ class BrandDirectCollectServiceTest {
 	}
 
 	private BrandDirectCollectService serviceWithSeparateSources(InstagramSource hiker, InstagramSource syncHiker) {
+		return serviceWithSeparateSources(hiker, syncHiker, client());
+	}
+
+	private BrandDirectCollectService serviceWithSeparateSources(InstagramSource hiker, InstagramSource syncHiker,
+			InstagramSource recheckHiker) {
 		BrandCollectService collect = new BrandCollectService(client(), client(), client(), callContext, writer, snapshots,
 				comments, tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
-		return new BrandDirectCollectService(hiker, syncHiker, callContext, writer, tagged, collect, 300, 2000);
+		return new BrandDirectCollectService(hiker, syncHiker, callContext, writer, tagged, collect, recheckHiker,
+				300, 2000);
 	}
 
 	// ── sweepUnenumerated — 격리 ───────────────────────────────────────────────────

@@ -21,6 +21,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -631,6 +632,13 @@ public class BrandCollectService {
 	//    키가 오기 시작해 자동 해제된다.
 	// ③ 전부 꽝 세션(saves도 부재)은 근거가 없으므로 null(미관측) 유지.
 	//    fb 캐리포워드·역전파는 BrandSnapshotRepository.upsertPost가 처리한다 — 여기서 안 건드린다.
+	//
+	// sharesHidden이 Boolean(nullable)이 된 뒤(S9, 2026-09-03 감사 수정) 이 메서드의 두 용도가
+	// 갈린다: step1의 "①부재=0"은 CollectService#assumeZeroForOmittedKeys와 같은 근거 없는 맹목적
+	// 추정이라 확정 false(Boolean.FALSE)일 때만 적용한다 — 이 경로는 재시도 콜이 없어(비용 모델에
+	// 예산 없음) self 기원 미확정(null)을 걸러낼 기회가 이번 한 번뿐이다, 여기서 잘못 0으로 찍으면
+	// 다음 스윕도 saves가 다시 관측되지 않는 한 정정되지 않는다. 후보 수집·②0 캐리는 DB 이력이
+	// 뒷받침하는 조회라 CollectService#applyZeroCarry와 같은 관대한 !Boolean.TRUE.equals를 쓴다.
 
 	/**
 	 * package-private로 승격(2026-08-18 direct 통합 §2-2) — {@link BrandDirectCollectService}가
@@ -642,7 +650,7 @@ public class BrandCollectService {
 			if (!"REELS".equals(p.contentType()) || p.saves() == null) {
 				return p;
 			}
-			Long zeroShares = p.shares() == null && !p.sharesHidden() ? 0L : null;
+			Long zeroShares = p.shares() == null && Boolean.FALSE.equals(p.sharesHidden()) ? 0L : null;
 			Long zeroReposts = p.reposts() == null ? 0L : null;
 			return zeroShares == null && zeroReposts == null ? p
 					: p.mergedMetrics(null, zeroShares, zeroReposts);
@@ -656,7 +664,7 @@ public class BrandCollectService {
 			if (p.reposts() == null) {
 				repostsCandidates.add(p.shortCode());
 			}
-			if (p.shares() == null && !p.sharesHidden()) {
+			if (p.shares() == null && !Boolean.TRUE.equals(p.sharesHidden())) {
 				sharesCandidates.add(p.shortCode());
 			}
 		}
@@ -668,7 +676,7 @@ public class BrandCollectService {
 		Set<String> sharesCarry = snapshots.codesWithSharesZeroCarry(sharesCandidates, today);
 		return step1.stream().map(p -> {
 			Long zeroReposts = p.reposts() == null && repostsCarry.contains(p.shortCode()) ? 0L : null;
-			Long zeroShares = p.shares() == null && !p.sharesHidden()
+			Long zeroShares = p.shares() == null && !Boolean.TRUE.equals(p.sharesHidden())
 					&& sharesCarry.contains(p.shortCode()) ? 0L : null;
 			return zeroShares == null && zeroReposts == null ? p
 					: p.mergedMetrics(null, zeroShares, zeroReposts);
@@ -680,9 +688,30 @@ public class BrandCollectService {
 	 * (스펙 §2·§8: 신규 감지 시 1회 + 등장 시 stale 갱신, 월 일괄 배치 아님). 브랜드 간 전역
 	 * 캐시(author_profile)라 같은 인플루언서를 여러 브랜드가 태그해도 콜은 30일에 1번이다.
 	 * 게시자 단위 격리 — 한 명의 실패가 나머지 게시자·게시물 수집에 번지면 안 된다.
+	 *
+	 * <p>self 표면(embed 등)은 media 응답에 소유 계정 pk 노드를 구조적으로 안 실어 ownerUserId가
+	 * 항상 null이다(무예외 200이라 폴백도 없다 — "빈 칸 있는 성공", S8 감사 수정). 예전엔 이번
+	 * 관측의 ownerUserId non-null만 모아 프로필 생성·stale 갱신을 걸었는데, 그러면 self로만 수집되는
+	 * 게시물은 이 파이프라인에 영구히 안 잡힌다. {@link TaggedPostRepository#authorIgUserIds}로 그
+	 * 게시물 자신이 <b>이전</b> 관측(주로 Hiker)에서 저장해 둔 id를 재사용하고, 반대로 이번 관측이
+	 * 실 id를 줬는데 저장값이 비어 있으면 {@link TaggedPostRepository#backfillAuthorIgUserIds}로
+	 * 채운다(direct·hashtag 2단계 단건 수집처럼 최초 관측 이후 저장 갱신이 없는 경로가 있어 이렇게
+	 * 채워 두지 않으면 self가 우연히 한 번 실패해 얻은 id가 그 순간에만 쓰이고 버려진다).
 	 */
 	private void ensureAuthors(long brandId, Collection<PostInfo> posts, InstagramSource source) {
-		Set<String> ids = posts.stream().map(PostInfo::ownerUserId).filter(Objects::nonNull)
+		Set<String> missingCodes = posts.stream().filter(p -> p.ownerUserId() == null)
+				.map(PostInfo::shortCode).collect(Collectors.toCollection(LinkedHashSet::new));
+		Map<String, String> reusedIds = missingCodes.isEmpty() ? Map.of()
+				: taggedPosts.authorIgUserIds(brandId, missingCodes);
+		Map<String, String> observedIds = posts.stream().filter(p -> p.ownerUserId() != null)
+				.collect(Collectors.toMap(PostInfo::shortCode, PostInfo::ownerUserId, (a, b) -> a,
+						LinkedHashMap::new));
+		if (!observedIds.isEmpty()) {
+			taggedPosts.backfillAuthorIgUserIds(brandId, observedIds);
+		}
+		Set<String> ids = posts.stream()
+				.map(p -> p.ownerUserId() != null ? p.ownerUserId() : reusedIds.get(p.shortCode()))
+				.filter(Objects::nonNull)
 				.collect(Collectors.toCollection(LinkedHashSet::new));
 		if (ids.isEmpty()) {
 			return;

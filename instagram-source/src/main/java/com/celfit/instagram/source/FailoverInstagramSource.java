@@ -119,7 +119,9 @@ public class FailoverInstagramSource implements InstagramSource {
 	/**
 	 * 자체 1순위 → 실패 시 Hiker(매 콜 selfEnabled 재확인). NOT_FOUND는 부재로 종료(폴백 안 함,
 	 * SubjectNotFoundException 변환), 그 외 자체 실패·미지원은 Hiker 폴백. 성공/폴백 결과를 관측한다
-	 * (Hiker 자체 예외는 그대로 전파, 미기록).
+	 * (Hiker 자체 예외는 그대로 전파, 미기록). self가 직접 던지는 확정 판정(SubjectNotFoundException·
+	 * PrivateAccountException — 부재·비공개)은 Hiker 재확인 없이 그대로 전파한다(동기 등록 경로
+	 * HikerFirstInstagramSource와 동일 계약).
 	 */
 	private <T> T route(String path, Supplier<T> selfCall, Supplier<T> hikerCall) {
 		if (self == null || !selfEnabledForPath.test(path)) {
@@ -147,10 +149,21 @@ public class FailoverInstagramSource implements InstagramSource {
 			T r = hikerCall.get();
 			metrics.record(path, "hiker", "fallback:" + e.errorClass());
 			return r;
+		} catch (SubjectNotFoundException e) {
+			// self가 직접 던진 확정 판정(부재) — SelfCrawlException 경유 없이도 동일 계약으로
+			// 전파한다. 정상 판정이라 로그·Hiker 재확인 없음(캐치올 노이즈 금지).
+			metrics.record(path, "self", "notfound");
+			throw e;
+		} catch (PrivateAccountException e) {
+			// self가 직접 던진 확정 판정(비공개) — 게시물 열거가 원천 불가능해 Hiker로 재확인해도
+			// 결과가 달라지지 않는다. 정상 판정이라 로그 없음.
+			metrics.record(path, "self", "private");
+			throw e;
 		} catch (RuntimeException e) {
-			// SelfCrawlException·UnsupportedOperationException으로 분류되지 못하고 self 호출에서
-			// 그대로 샌 예외(예: 미처 못 잡은 설정 오류) — 분류 불가라 서킷 계상은 하지 않지만,
-			// 폴백망 누수(F2)는 막아야 하므로 Hiker로는 태운다. 원인 추적용으로 태그를 구분한다.
+			// SelfCrawlException·UnsupportedOperationException·확정 판정 예외(SubjectNotFoundException·
+			// PrivateAccountException)로 분류되지 못하고 self 호출에서 그대로 샌 예외(예: 미처 못 잡은
+			// 설정 오류) — 분류 불가라 서킷 계상은 하지 않지만, 폴백망 누수(F2)는 막아야 하므로
+			// Hiker로는 태운다. 원인 추적용으로 태그를 구분한다.
 			log.warn("자체크롤 {} 예상 못한 런타임 예외 — hiker로 폴백: {}", path, e.getMessage(), e);
 			T r = hikerCall.get();
 			metrics.record(path, "hiker", "fallback:UNEXPECTED");
