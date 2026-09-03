@@ -106,6 +106,16 @@ class AnalyticsJobServiceTest {
 	}
 
 	@Test
+	void fact_analyze가_처리0건_no_op이면_파생_matview를_갱신하지_않는다() {
+		// unified 모드 no-op(또는 split인데 대상 없음)은 입력이 실제로 안 바뀐 것 - 매 무의미한
+		// 트리거마다 무거운 matview 재계산을 태울 이유가 없다(2026-09-03 리뷰).
+		when(analyzeJob.runFacts()).thenReturn(new JobResult(0, 0, false));
+		service().trigger(JobName.FACT_ANALYZE, TriggerType.MANUAL);
+
+		org.mockito.Mockito.verify(derivedViewRefresher, org.mockito.Mockito.never()).refresh();
+	}
+
+	@Test
 	void late_backfill_잡을_트리거하면_runLateBackfill이_호출된다() {
 		when(analyzeJob.runLateBackfill()).thenReturn(new JobResult(2, 0, false));
 		var result = service().trigger(JobName.LATE_BACKFILL_ANALYZE, TriggerType.MANUAL);

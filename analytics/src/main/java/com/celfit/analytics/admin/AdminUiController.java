@@ -73,6 +73,11 @@ public class AdminUiController {
 			String windowTotal, String windowDone, String windowPending, String windowFactsOnly,
 			String truePending, String factsOnlyTotal, int todayPlanned, int daysToFull,
 			String immature, String lateExcluded,
+			// 파트 A만 채워진 채 후보 뷰 밖으로 나가 어느 Heavy 트랙 카운터에도 안 잡히는 잔여
+			// (pendingMarked - factsOnlyTotal, 2026-09-03 리뷰) — 성숙 후 timely도 아니고 최근
+			// 윈도우도 벗어난 행: 파트 B가 영영 안 만들어지는데 "진짜 잔여"·"사실만"에도 안 보인다.
+			// raw long은 템플릿의 "> 0" 가드용(other/otherMarkedText와 동형 관용구).
+			long factsOnlyStranded, String factsOnlyStrandedText,
 			// 서빙 커버리지 (G2)
 			String servingAnalyzed, String coverageText, int coveragePercent,
 			// 누적 각주 (역대 분석 저장 — 모수 리비전 혼재)
@@ -252,7 +257,12 @@ public class AdminUiController {
 			return null;
 		}
 		return switch (job) {
-			case FACT_ANALYZE -> "성숙 무관 - 업로드 다음 날 광고 판정·카테고리를 먼저 채운다";
+			// unified 모드에서는 통합 콜(ANALYZE)이 사실까지 만들어 이 잡이 no-op이다(ContentAnalysisJob
+			// .runFacts() 참조) - 대상 카운트 줄은 그대로 두되(집계 자체는 유효), 보조 설명만 no-op임을
+			// 밝힌다. 안 밝히면 "성숙 무관 - 다음 날 채운다"만 보고 실제로는 안 도는 잡을 도는 줄로 오독한다.
+			case FACT_ANALYZE -> settings.splitAnalyzeMode()
+					? "성숙 무관 - 업로드 다음 날 광고 판정·카테고리를 먼저 채운다"
+					: "unified 모드 - 이 잡은 no-op (analytics.analyze-mode=split로 전환 시 활성)";
 			// 잔여 미상(집계 중·실패)이면 todayPlanned은 0이 아니라 "모름" — "+0 예정"은 오독을 부른다.
 			// LIMIT 폐지(2026-07-23) 이후 잡은 자기 트랙의 잔여 전량을 오늘 시도 — 트랙별 잔여를 그대로 쓴다.
 			case ANALYZE -> f.heavy() == null ? "오늘 예정량 미상"
@@ -294,6 +304,11 @@ public class AdminUiController {
 		// immature·마킹 전(NULL) 레거시 - timely/backfill/pending 어느 쪽도 아닌 기분석분.
 		long other = Math.max(0,
 				f.analyzed() - f.timelyMarked() - f.backfillMarked() - f.pendingMarked());
+		// 파트 A만 채워진 채 후보 뷰 밖으로 나가 Heavy 트랙 카운터(timelyFactsOnly+windowFactsOnly)
+		// 어디에도 안 잡히는 잔여(2026-09-03 리뷰) - 성숙 후 timely도 아니고 최근 윈도우도 벗어난
+		// 행. h==null이면 이 값을 쓸 화면 자체가 안 그려지므로(th:unless heavyPending/heavyFailed)
+		// 0으로 둬도 무해하다.
+		long factsOnlyStranded = h == null ? 0 : Math.max(0, f.pendingMarked() - h.factsOnlyTotal());
 		return new FunnelView(pending, failed, f.candidatesError(), computedText,
 				comma(a.total()), comma(a.qualified()), comma(a.beautyIndividual()),
 				comma(a.beautyCompany()), comma(a.nonBeauty()),
@@ -317,6 +332,7 @@ public class AdminUiController {
 				f.todayPlanned(), f.daysToFull(),
 				h == null ? null : comma(h.immaturePool()),
 				h == null ? null : comma(h.lateExcluded()),
+				factsOnlyStranded, comma(factsOnlyStranded),
 				h == null ? null : comma(h.servingAnalyzed()),
 				coverageText, coveragePercent,
 				comma(f.analyzed()), comma(f.timelyMarked()), comma(f.backfillMarked()),

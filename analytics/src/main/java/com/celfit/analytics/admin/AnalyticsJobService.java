@@ -91,7 +91,7 @@ public class AnalyticsJobService {
 			try {
 				log.info("{} 시작 (trigger={})", job, triggerType);
 				result = run(job);
-				refreshDerivedViews(job);
+				refreshDerivedViews(job, result);
 			} catch (Exception e) {
 				error = e;
 				log.error("{} 잡 실패", job, e);
@@ -117,9 +117,15 @@ public class AnalyticsJobService {
 	}
 
 	/** 입력 변경 잡 성공(부분 실패 포함) 후 발굴 사전집계 matview 갱신 — 실패해도 잡 이력은 오염시키지 않는다
-	 * (다음 입력 잡 후크가 재시도 기회). run()이 던지면 호출 자체가 스킵된다. */
-	private void refreshDerivedViews(JobName job) {
+	 * (다음 입력 잡 후크가 재시도 기회). run()이 던지면 호출 자체가 스킵된다.
+	 *
+	 * <p>FACT_ANALYZE가 처리 0건(unified 모드 no-op 또는 split인데 대상 없음)이면 갱신을 건너뛴다
+	 * (2026-09-03 리뷰) — 입력이 실제로 안 바뀌었는데도 매 무의미한 트리거마다 무거운 matview
+	 * 재계산을 태울 이유가 없다. 다른 DERIVED_INPUT_JOBS 멤버는 processed=0이어도 그대로 갱신한다 -
+	 * 이 예외는 FACT_ANALYZE의 흔한 no-op(토글 off) 특성에 한정한다. */
+	private void refreshDerivedViews(JobName job, JobResult result) {
 		if (!DERIVED_INPUT_JOBS.contains(job)) return;
+		if (job == JobName.FACT_ANALYZE && result.processed() == 0) return;
 		try {
 			derivedViewRefresher.refresh();
 		} catch (Exception e) {

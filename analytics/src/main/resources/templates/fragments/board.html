@@ -161,6 +161,9 @@
                     <span class="off">자격 ∩ 미분석</span></span>
                 <span class="chip mute">그중 사실만 <b th:text="${funnel.factsOnlyTotal()}">0</b>
                     <span class="off">파트 A 완료 · 파트 B 대기</span></span>
+                <span class="chip mute" th:if="${funnel.factsOnlyStranded() > 0}">사실만 · 해석 대상 아님 <b
+                        th:text="${funnel.factsOnlyStrandedText()}">0</b>
+                    <span class="off">파트 A만 채워진 채 성숙 후 후보 뷰 밖으로 나감 - 파트 B 영구 미생성</span></span>
                 <span class="chip">오늘 +<b th:text="${funnel.todayPlanned()}">0</b> 예정</span>
                 <span class="chip mute" th:if="${funnel.daysToFull() > 0}">완주까지 <b
                         th:text="${funnel.daysToFull()}">0</b>일</span>
