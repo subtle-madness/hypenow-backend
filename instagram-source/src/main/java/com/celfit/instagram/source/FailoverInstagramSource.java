@@ -119,12 +119,16 @@ public class FailoverInstagramSource implements InstagramSource {
 	/**
 	 * 자체 1순위 → 실패 시 Hiker(매 콜 selfEnabled 재확인). NOT_FOUND는 부재로 종료(폴백 안 함,
 	 * SubjectNotFoundException 변환), 그 외 자체 실패·미지원은 Hiker 폴백. 성공/폴백 결과를 관측한다
-	 * (Hiker 자체 예외는 그대로 전파, 미기록).
+	 * (Hiker 자체 예외는 그대로 전파, 미기록). record와 짝을 이뤄 같은 (path, backend, outcome)
+	 * 태그로 소요시간도 함께 남긴다 — 폴백 케이스의 duration은 self 시도 + hiker 콜을 합친
+	 * "호출자가 본 논리 콜 1건"의 총 소요다(둘을 분리하지 않는다, 의도된 설계).
 	 */
 	private <T> T route(String path, Supplier<T> selfCall, Supplier<T> hikerCall) {
+		long start = System.nanoTime();
 		if (self == null || !selfEnabledForPath.test(path)) {
 			T r = hikerCall.get();
 			metrics.record(path, "hiker", "ok");
+			metrics.recordDuration(path, "hiker", "ok", System.nanoTime() - start);
 			return r;
 		}
 		try {
@@ -134,18 +138,23 @@ public class FailoverInstagramSource implements InstagramSource {
 			// 동작은 그대로 — 관측만 바뀐다).
 			String outcome = (r instanceof CommentsFetch cf && !cf.complete()) ? "partial" : "ok";
 			metrics.record(path, "self", outcome);
+			metrics.recordDuration(path, "self", outcome, System.nanoTime() - start);
 			return r;
 		} catch (UnsupportedOperationException e) {
 			T r = hikerCall.get();
 			metrics.record(path, "hiker", "hardgate");
+			metrics.recordDuration(path, "hiker", "hardgate", System.nanoTime() - start);
 			return r;
 		} catch (SelfCrawlException e) {
 			if (e.errorClass() == SelfErrorClass.NOT_FOUND) {
 				metrics.record(path, "self", "notfound");
+				metrics.recordDuration(path, "self", "notfound", System.nanoTime() - start);
 				throw new SubjectNotFoundException(e.getMessage());
 			}
 			T r = hikerCall.get();
-			metrics.record(path, "hiker", "fallback:" + e.errorClass());
+			String outcome = "fallback:" + e.errorClass();
+			metrics.record(path, "hiker", outcome);
+			metrics.recordDuration(path, "hiker", outcome, System.nanoTime() - start);
 			return r;
 		} catch (RuntimeException e) {
 			// SelfCrawlException·UnsupportedOperationException으로 분류되지 못하고 self 호출에서
@@ -154,6 +163,7 @@ public class FailoverInstagramSource implements InstagramSource {
 			log.warn("자체크롤 {} 예상 못한 런타임 예외 — hiker로 폴백: {}", path, e.getMessage(), e);
 			T r = hikerCall.get();
 			metrics.record(path, "hiker", "fallback:UNEXPECTED");
+			metrics.recordDuration(path, "hiker", "fallback:UNEXPECTED", System.nanoTime() - start);
 			return r;
 		}
 	}

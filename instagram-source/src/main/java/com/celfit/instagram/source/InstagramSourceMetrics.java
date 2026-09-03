@@ -11,6 +11,14 @@ public interface InstagramSourceMetrics {
 
 	void record(String path, String backend, String outcome);
 
+	/**
+	 * 소요시간 관측 훅 — Hiker HTTP에는 이미 external.call 타이머가 있지만(TimedHikerHttp) 자체크롤
+	 * (self) 경로가 그걸 우회해 지연 관측이 비어 있었다. record와 같은 (path, backend, outcome) 태그로
+	 * 라우팅 계층 자체에서 duration을 남겨 그 공백을 메운다. 기본 구현은 무기록 — 기존 구현체(NOOP 등)가
+	 * 이 메서드를 몰라도 깨지지 않는다(추상 메서드는 여전히 record 하나뿐이라 @FunctionalInterface 유지).
+	 */
+	default void recordDuration(String path, String backend, String outcome, long elapsedNanos) {}
+
 	/** 무기록 기본(테스트·미배선). */
 	InstagramSourceMetrics NOOP = (path, backend, outcome) -> {};
 }

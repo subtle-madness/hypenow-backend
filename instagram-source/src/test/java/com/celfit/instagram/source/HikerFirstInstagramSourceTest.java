@@ -85,10 +85,16 @@ class HikerFirstInstagramSourceTest {
 	private static final class RecordingMetrics implements InstagramSourceMetrics {
 
 		final List<String> records = new ArrayList<>();
+		final List<String> durationRecords = new ArrayList<>();
 
 		@Override
 		public void record(String path, String backend, String outcome) {
 			records.add(path + "|" + backend + "|" + outcome);
+		}
+
+		@Override
+		public void recordDuration(String path, String backend, String outcome, long elapsedNanos) {
+			durationRecords.add(path + "|" + backend + "|" + outcome);
 		}
 	}
 
@@ -163,6 +169,7 @@ class HikerFirstInstagramSourceTest {
 		source.fetchPost("ABC");
 
 		assertThat(metrics.records).containsExactly("fetchPost|self|rescue");
+		assertThat(metrics.durationRecords).containsExactly("fetchPost|self|rescue");
 	}
 
 	@Test
@@ -180,6 +187,7 @@ class HikerFirstInstagramSourceTest {
 		source.fetchPost("ABC");
 
 		assertThat(metrics.records).containsExactly("fetchPost|hiker|ok");
+		assertThat(metrics.durationRecords).containsExactly("fetchPost|hiker|ok");
 	}
 
 	@Test
@@ -247,6 +255,7 @@ class HikerFirstInstagramSourceTest {
 		assertThatThrownBy(() -> source.fetchPost("ABC"));
 
 		assertThat(metrics.records).containsExactly("fetchPost|hiker|rescue-failed");
+		assertThat(metrics.durationRecords).containsExactly("fetchPost|hiker|rescue-failed");
 	}
 
 	@Test

@@ -115,11 +115,15 @@ public class HikerFirstInstagramSource implements InstagramSource {
 	 * {@code PrivateAccountException}(계정 부재·비공개, Hiker의 정상 판정)은 즉시 전파한다. 그 외
 	 * 벤더 장애성 실패만, 그리고 self가 있고 토글이 그 path를 허용할 때만 self로 구조를 1회 시도한다.
 	 * self가 성공하면 그 결과를 쓰고, self도 실패하면(하드게이트 포함) <b>원래 Hiker 예외</b>를 던진다.
+	 * record와 짝을 이뤄 같은 (path, backend, outcome) 태그로 소요시간도 함께 남긴다 — 구조(rescue)
+	 * 케이스의 duration은 Hiker 콜 + self 콜을 합친 "호출자가 본 논리 콜 1건"의 총 소요다(의도된 설계).
 	 */
 	private <T> T rescue(String path, Supplier<T> hikerCall, Supplier<T> selfCall) {
+		long start = System.nanoTime();
 		try {
 			T r = hikerCall.get();
 			metrics.record(path, "hiker", "ok");
+			metrics.recordDuration(path, "hiker", "ok", System.nanoTime() - start);
 			return r;
 		} catch (SubjectNotFoundException | PrivateAccountException businessFailure) {
 			// Hiker의 결정적 판정(계정 부재·비공개) — self로 재시도해도 같은 결론이라 구조 대상이 아니다.
@@ -132,6 +136,7 @@ public class HikerFirstInstagramSource implements InstagramSource {
 				T r = selfCall.get();
 				log.warn("Hiker {} 실패 — 자체크롤로 구조 성공: {}", path, hikerFailure.toString());
 				metrics.record(path, "self", "rescue");
+				metrics.recordDuration(path, "self", "rescue", System.nanoTime() - start);
 				return r;
 			} catch (RuntimeException selfFailure) {
 				// self 실패 사유(하드게이트 UnsupportedOperationException 포함)는 부수 정보 — 호출자에게는
@@ -139,6 +144,7 @@ public class HikerFirstInstagramSource implements InstagramSource {
 				log.warn("Hiker {} 실패 후 자체크롤 구조도 실패 — 원 Hiker 예외 전파 (self={})",
 						path, selfFailure.toString());
 				metrics.record(path, "hiker", "rescue-failed");
+				metrics.recordDuration(path, "hiker", "rescue-failed", System.nanoTime() - start);
 				throw hikerFailure;
 			}
 		}

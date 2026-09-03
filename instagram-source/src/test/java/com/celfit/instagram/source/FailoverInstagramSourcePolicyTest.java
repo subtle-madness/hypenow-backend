@@ -233,14 +233,24 @@ class FailoverInstagramSourcePolicyTest {
 		assertThat(source.fetchPost("ABC")).isSameAs(selfPost);
 	}
 
-	/** 관측 훅 계약 — path·backend·outcome 3튜플을 그대로 기록한다. */
+	/**
+	 * 관측 훅 계약 — path·backend·outcome 3튜플을 그대로 기록한다. durationRecords는 recordDuration이
+	 * record와 같은 (path, backend, outcome) 태그로 짝을 이뤄 불리는지 검증하는 용도(elapsedNanos는
+	 * 값 자체를 검증하지 않고 "호출됐다"만 태그 문자열로 확인한다).
+	 */
 	private static final class RecordingMetrics implements InstagramSourceMetrics {
 
 		final List<String> records = new ArrayList<>();
+		final List<String> durationRecords = new ArrayList<>();
 
 		@Override
 		public void record(String path, String backend, String outcome) {
 			records.add(path + "|" + backend + "|" + outcome);
+		}
+
+		@Override
+		public void recordDuration(String path, String backend, String outcome, long elapsedNanos) {
+			durationRecords.add(path + "|" + backend + "|" + outcome);
 		}
 	}
 
@@ -260,6 +270,7 @@ class FailoverInstagramSourcePolicyTest {
 		source.fetchPost("ABC");
 
 		assertThat(metrics.records).containsExactly("fetchPost|self|ok");
+		assertThat(metrics.durationRecords).containsExactly("fetchPost|self|ok");
 	}
 
 	@Test
@@ -282,6 +293,7 @@ class FailoverInstagramSourcePolicyTest {
 		source.fetchPost("ABC");
 
 		assertThat(metrics.records).containsExactly("fetchPost|hiker|fallback:STRUCTURAL_400");
+		assertThat(metrics.durationRecords).containsExactly("fetchPost|hiker|fallback:STRUCTURAL_400");
 	}
 
 	/** F9 — 댓글 미완주(complete=false)는 self 호출 자체는 성공이라 폴백 안 하지만 "partial"로 구분 관측된다. */
@@ -340,6 +352,8 @@ class FailoverInstagramSourcePolicyTest {
 		assertThatThrownBy(() -> source.fetchPost("ABC")).isInstanceOf(SubjectNotFoundException.class);
 
 		assertThat(metrics.records).containsExactly("fetchPost|self|notfound");
+		// NOT_FOUND는 예외를 던지기 직전에 기록된다 — duration도 예외 전파와 무관하게 함께 남아야 한다.
+		assertThat(metrics.durationRecords).containsExactly("fetchPost|self|notfound");
 	}
 
 	// ── 경로별(표면별) 자체크롤 토글 — Predicate<String> 생성자(부분 개통 지원) ──────
