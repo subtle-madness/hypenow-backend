@@ -19,7 +19,8 @@ import org.springframework.web.context.WebApplicationContext;
  * 컨텍스트(=운영 기본)에서 {@link AuthorImageBackfillController}가 아예 빈으로 뜨지 않아
  * /api/author-image-backfill이 403·에러가 아니라 404여야 한다(SweepControllerDisabledTest와 동형).
  */
-@SpringBootTest
+// 백필 재시도 스케줄러 틱 방지(2026-09, 결함 3) — @SpringBootTest 컨텍스트에서 5분 주기가 돌지 않게.
+@SpringBootTest(properties = "monitoring.brand.backfill-retry.enabled=false")
 class AuthorImageBackfillControllerDisabledTest {
 
 	@DynamicPropertySource

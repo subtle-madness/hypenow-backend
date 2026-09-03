@@ -120,6 +120,8 @@ monitoring:
                                   # "자동으로 재시도 중이에요"라 사실과 달랐다(DECISIONS 09-03 행).
       enabled: true               # 킬 스위치 — false면 스케줄러 빈 자체가 등록 안 되고(@ConditionalOnProperty),
                                   # BrandRegistrationService의 즉시 실패 문구도 exhausted(정기 수집 안내)로 곧장 간다.
+                                  # 다른 스케줄러의 cron "-" 관용구(sweep-cron)와 다른 형태 — 여기는 fixedDelay라
+                                  # cron 문자열이 아니므로 "-"로 끌 수 없다, enabled 하나로만 끈다(2026-09, 결함 3).
       interval: 5m                 # 틱 주기(fixedDelay) — FE 폴링 30분 상한 안에서 최소 2회 구제 기회를 주는 값.
       max-attempts: 3               # 상한 — 선형 백오프(아래 backoff × 1,2,3회차)와 짝. 08-27 Hiker 전면 장애
                                     # 재현 시 실패 콜이 최대 3배가 되는 대가(서킷브레이커는 아직 없음 — 잔여 리스크).

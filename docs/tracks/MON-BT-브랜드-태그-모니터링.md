@@ -650,3 +650,16 @@ DB 측 전송분이 ~7.5ms뿐이라 로컬 하니스로는 ~1.9초 고정비의 
   `monitoring.brand.backfill-retry.enabled`(기본 true) off 시 즉시 실패 문구도 소진 문구를 쓴다
   (재시도가 없으니 "잠시 후 다시 시도"는 과약속). was 코드·API 표면 변화 없음(monitoring 단독
   재기동으로 충분). 잔여 리스크(서킷브레이커 없음·후행 유실 창 확대 등)는 설계 문서 §5 참조.
+- **PR #741 후속 수정 4건(09-03, DECISIONS 09-03 행, 계약 v2.18)** — 감사에서 확인된 결함
+  ① 후행(댓글·판정) 완료 시점에 `touchProgress`가 안 찍혀 was 캐시(ETag·`BrandIndexCache`)가
+  회전 안 함 → `enrich`의 후행 태스크 finally에 `brands.touchProgress(brand.id())` 추가(계약
+  §11을 이 메커니즘으로 정정, v2.18) ② 재등록(`insertOrReactivate`)·기간확장(`expandWindow`)이
+  `backfill_attempts`·`backfill_attempted_at`을 리셋 안 해 재시도 상한 소진 상태로 재가입하면
+  첫 실패가 곧장 exhausted로 떨어짐 → 두 UPDATE에 리셋 추가 ③ `@SpringBootTest` 컨텍스트에서
+  재시도 스케줄러 5분 틱이 도는 문제 → 해당 7개 테스트 클래스에 `monitoring.brand.backfill-retry.
+  enabled=false` properties 추가(test resources `application.yml` 신설은 기각 — 실측 결과 test
+  리소스가 main보다 클래스패스 우선순위가 앞서 main `application.yml` 전체를 가려버림) ④ compose
+  킬 스위치 `MONITORING_BRAND_BACKFILL_RETRY_ENABLED`(기본 true) 노출, `deploy/README.md`에
+  끄는 법 추가. staging(`compose.test.yaml`)은 운영 compose를 상속하지 않는 완전 별도 정의라
+  이 키가 없으면 이미지 기본값(true)으로 켜진 채 배포됨 — 별도 오버라이드는 붙이지 않기로 결정
+  (판단만, 끄지 않음).
