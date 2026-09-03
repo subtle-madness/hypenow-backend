@@ -88,6 +88,33 @@ public class TaggedPostRepository {
 	}
 
 	/**
+	 * 해시태그 제안 FREQ 모수(2026-09-03 자동 시드 재설계 §3-2) — 이 브랜드에 <b>태그된</b> 게시물의
+	 * 캡션·게시일. 캡션은 게시물 전역 1행인 {@code brand_post_meta}에 있어 short_code로 조인한다.
+	 *
+	 * <p><b>{@code tag_detected_at IS NOT NULL} 가드가 핵심이다</b>: 이 모수는 "다른 사용자가 이
+	 * 브랜드 계정을 태그한 게시물"이고, hashtag 성분만 있는 행(해시태그 스윕이 긁어 온 게시물)은
+	 * 여기 들어오면 안 된다. 특히 구 절삭 태그(예: {@code #dr}) 정리 뒤에도 그 태그로 수집된 무관
+	 * 게시물 행은 남는데, 그 캡션이 집계에 섞이면 새 규칙이 오염을 그대로 물려받는다. 겹침 행
+	 * (tag + hashtag)은 tag 성분이 있으므로 포함된다.
+	 *
+	 * <p>캡션 3-상태 계약(트랙 HH) 중 null(미수집)·""(확인된 무캡션)은 후보를 만들지 못하므로
+	 * SQL에서 거른다 — 전송량과 집계 루프를 함께 줄인다.
+	 */
+	public List<TaggedCaption> findCaptionsForSeed(long brandId) {
+		return db.query("""
+				SELECT m.caption, t.taken_at
+				FROM brand_tagged_post t
+				JOIN brand_post_meta m ON m.short_code = t.short_code
+				WHERE t.brand_id = ?
+				  AND t.tag_detected_at IS NOT NULL
+				  AND m.caption IS NOT NULL
+				  AND m.caption <> ''""",
+				(rs, rowNum) -> new TaggedCaption(rs.getString("caption"),
+						rs.getTimestamp("taken_at") == null ? null : rs.getTimestamp("taken_at").toInstant()),
+				brandId);
+	}
+
+	/**
 	 * 신규 감지 게시물 링크 — 재감지(ON CONFLICT)는 지표·메타를 건드리지 않는다. taken_at null은
 	 * 호출자가 거른다.
 	 *

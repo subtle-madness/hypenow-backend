@@ -166,6 +166,25 @@ public class BrandRepository {
 				BrandRepository::toRow, brandId).stream().findFirst();
 	}
 
+	/**
+	 * IG 표시명(full_name) — 해시태그 제안 AI 입력(2026-09-03 자동 시드 재설계 §3-3). 등록 시
+	 * 프로필 1콜로 저장되고 매일 스윕이 {@link #refreshProfile}로 갱신한다.
+	 *
+	 * <p>{@link BrandRow}에 싣지 않고 전용 조회로 두는 이유: BrandRow는 스윕·등록의 뜨거운 경로가
+	 * 전부 물고 다니는 단면이라 이 한 필드를 위해 넓히면 비용이 크고, 표시명은 제안 계산에서만
+	 * 쓰인다(브랜드당 생애 1회).
+	 *
+	 * <p>미수집(null)·공백은 empty — 호출측이 "표시명 없음"으로 다루고 계정명만으로 진행한다.
+	 */
+	public Optional<String> findFullName(long brandId) {
+		List<String> rows = db.query("SELECT full_name FROM brand_account WHERE id = ?",
+				(rs, rowNum) -> rs.getString("full_name"), brandId);
+		if (rows.isEmpty()) {
+			return Optional.empty();
+		}
+		return Optional.ofNullable(rows.getFirst()).filter(value -> !value.isBlank());
+	}
+
 	public List<BrandRow> findActive() {
 		return db.query("""
 				SELECT id, username, ig_user_id, status, last_swept_on, collection_months, has_own_link
