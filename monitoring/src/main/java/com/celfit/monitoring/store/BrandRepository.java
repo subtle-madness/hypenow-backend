@@ -25,9 +25,12 @@ public class BrandRepository {
 	/**
 	 * 등록 또는 재가입 — CLOSED 행이 있으면 ACTIVE로 재활성하고 프로필 관측값을 갱신한다.
 	 * last_swept_on을 null로 되돌리는 이유: 재가입 시점의 윈도우(90일)를 백필이 다시 채우기
-	 * 전까지는 "수집 준비 중"(was 계약의 판별 기준)이어야 하기 때문이다. 백필 상태 두 컬럼
+	 * 전까지는 "수집 준비 중"(was 계약의 판별 기준)이어야 하기 때문이다. 백필 상태 컬럼
 	 * (backfill_error·backfill_completed_at)도 같은 이유로 리셋한다 — 재등록은 백필을 처음부터
 	 * 다시 도는 것이라, 지난 가입의 완주·실패 기록이 남으면 was 폴링이 곧장 ready를 본다.
+	 * <b>재시도 예산(backfill_attempts·backfill_attempted_at, 2026-09 결함 수정)도 0·NULL로
+	 * 리셋</b> — 재등록 전 열거가 상한(3회)까지 소진돼 있으면, 리셋 없이는 재등록 직후 첫 열거
+	 * 실패가 곧장 exhausted 문구로 떨어져 재시도 스케줄러가 구제할 기회 자체가 없다.
 	 * 수집 창은 GREATEST로 합친다 — 재가입 축소 요청은 무시한다: 기존 수집분이 이미 있어 창을
 	 * 줄이면 응답 창과 보유 데이터가 어긋난다.
 	 *
@@ -49,6 +52,7 @@ public class BrandRepository {
 				  external_url = EXCLUDED.external_url, following = EXCLUDED.following,
 				  media_count = EXCLUDED.media_count, status = 'ACTIVE', closed_at = NULL,
 				  last_swept_on = NULL, backfill_error = NULL, backfill_completed_at = NULL,
+				  backfill_attempts = 0, backfill_attempted_at = NULL,
 				  registered_at = now(),
 				  collection_months = GREATEST(brand_account.collection_months, EXCLUDED.collection_months),
 				  collection_started_at = now(),
@@ -74,6 +78,10 @@ public class BrandRepository {
 	 * last_swept_on NULL이 핵심이다: 확장 백필이 죽어도 다음 새벽 스윕이 백필 분기(전체 창 열거)로
 	 * 자동 복구한다(기존 백스톱 상속).
 	 *
+	 * <p>2026-09 결함 수정: backfill_attempts·backfill_attempted_at도 0·NULL로 리셋한다 — 확장
+	 * 전 열거가 재시도 상한을 소진해 있었다면, 리셋 없이는 확장 백필의 첫 실패가 재시도 없이 곧장
+	 * exhausted로 떨어진다(위 insertOrReactivate와 같은 결함, 같은 이유).
+	 *
 	 * <p>2026-08-13 개정: backfill_completed_at도 리셋한다(08-12의 "보존한다" 결정을 뒤집는다).
 	 * FE 폴링 종료 조건이 이 값(응답 collectionCompletedAt)이 되면서, 보존하면 확장 시작 즉시
 	 * 폴링이 멎어 확장분이 화면에 반영되지 않는다. 그 대가로 was의 "확장 중 → collecting" 유도
@@ -94,7 +102,7 @@ public class BrandRepository {
 				UPDATE brand_account
 				SET collection_months = GREATEST(collection_months, ?), last_swept_on = NULL,
 				    collection_started_at = now(), backfill_error = NULL,
-				    backfill_completed_at = NULL
+				    backfill_completed_at = NULL, backfill_attempts = 0, backfill_attempted_at = NULL
 				WHERE id = ? AND collection_months < ?""", months, brandId, months) > 0;
 	}
 

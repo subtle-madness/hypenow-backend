@@ -312,6 +312,26 @@ class BrandStoreTest {
 		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNull();
 	}
 
+	/**
+	 * 결함 2 수정(2026-09) — 재등록 전 열거가 재시도 상한을 소진해 있었으면, 리셋 없이는 재등록
+	 * 직후 첫 실패가 재시도 없이 곧장 exhausted 문구로 떨어진다.
+	 */
+	@Test
+	void 재가입은_백필_재시도_예산도_초기화한다() {
+		long id = brands.insertOrReactivate("brand_retry2", profile("brand_retry2"), 12, true);
+		brands.markBackfillAttempt(id);
+		brands.markBackfillAttempt(id);
+		brands.markBackfillAttempt(id);   // attempts=3=maxAttempts, backfill_attempted_at도 채워짐
+		assertThat(column(id, "backfill_attempts", Integer.class)).isEqualTo(3);
+		assertThat(column(id, "backfill_attempted_at", Timestamp.class)).isNotNull();
+		brands.close("brand_retry2");
+
+		brands.insertOrReactivate("brand_retry2", profile("brand_retry2"), 12, true);
+
+		assertThat(column(id, "backfill_attempts", Integer.class)).isZero();
+		assertThat(column(id, "backfill_attempted_at", Timestamp.class)).isNull();
+	}
+
 	@Test
 	void 수집_창은_요청값으로_저장되고_재가입에도_줄지_않는다() {
 		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3, true);
@@ -367,6 +387,25 @@ class BrandStoreTest {
 		assertThat(brands.expandWindow(id, 12)).isTrue();
 
 		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNull();
+	}
+
+	/**
+	 * 결함 2 수정(2026-09) — 확장 전 열거가 재시도 상한을 소진해 있었으면, 리셋 없이는 확장
+	 * 백필의 첫 실패가 재시도 없이 곧장 exhausted 문구로 떨어진다(insertOrReactivate와 같은 결함).
+	 */
+	@Test
+	void 기간_확장이_백필_재시도_예산도_초기화한다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3, true);
+		brands.markBackfillAttempt(id);
+		brands.markBackfillAttempt(id);
+		brands.markBackfillAttempt(id);   // attempts=3=maxAttempts
+		assertThat(column(id, "backfill_attempts", Integer.class)).isEqualTo(3);
+		assertThat(column(id, "backfill_attempted_at", Timestamp.class)).isNotNull();
+
+		assertThat(brands.expandWindow(id, 12)).isTrue();
+
+		assertThat(column(id, "backfill_attempts", Integer.class)).isZero();
+		assertThat(column(id, "backfill_attempted_at", Timestamp.class)).isNull();
 	}
 
 	@Test

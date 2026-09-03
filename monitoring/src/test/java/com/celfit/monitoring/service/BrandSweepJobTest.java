@@ -547,7 +547,7 @@ class BrandSweepJobTest {
 		final AtomicInteger timedOut = new AtomicInteger();
 
 		RendezvousCollect() {
-			super(null, null, null, null, null, null, null, null, null, null, null, null,
+			super(null, null, null, null, null, null, null, null, null, null, null, null, null,
 					2000, 10000, 3, 30, true);
 		}
 

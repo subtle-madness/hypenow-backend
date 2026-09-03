@@ -5,7 +5,9 @@
 > [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/archive/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.17 (브랜드 등록 백필 완주 스탬프 의미 확정 — `collectionCompletedAt`이 게시물·게시자
+> 상태: **v2.18 (§11 정정 — 후행(댓글·판정) 완료 시 `touchProgress`로 `last_swept_at`을 갱신해
+> was 캐시 버전키(ETag·`BrandIndexCache`)가 회전한다는 실동작을 명문화. 2026-09-03)** ·
+> v2.17 (브랜드 등록 백필 완주 스탬프 의미 확정 — `collectionCompletedAt`이 게시물·게시자
 > 보강 정산 완료만 뜻하고 댓글·광고 표기 판정은 그 밖의 후행 단계임을 명문화 + 열거 실패 재시도
 > 스케줄러 신설로 `backfillError` 문구가 2종으로 갈림을 명문화. 2026-09-03, §11)** ·
 > 명령 API **3종**(등록·연장·해지) +
@@ -141,6 +143,12 @@
 > 신규 컬럼에 영속화 — was는 이 두 컬럼을 SELECT하지 않아 배포 순서 결합은 없다). 그 결과
 > `backfillError.message`(= `collectionError.message`, `code: "BACKFILL_FAILED"` 불변)가 상황에
 > 따라 2종으로 갈린다 — was·FE는 문구 문자열로 분기하지 말고 표시만 할 것.)
+> → **v2.18**(2026-09-03, §11 정정 — 후행(댓글 수집·광고 표기 판정) 완료 시점에도 monitoring이
+> `brands.touchProgress(brand.id())`를 호출해 `last_swept_at`을 전진시킨다. 후행이 채우는
+> `ad_verdict`가 was 인덱스 캐시(`BrandIndexCache`)에 캐시되는 `PostRef`에 포함돼 있어, 이 호출이
+> 없으면 캐시·ETag 버전키가 안 움직여 신규 브랜드의 광고 뱃지·필터가 다음 자연 갱신 전까지 최대
+> 하루 안 보였다. v2.17 §11의 "이후 폴링 없이(다음 다른 표면 조회 시) 조용히 채워진다"는 서술을
+> 이 메커니즘으로 정정 — was 코드·API 표면 변경 없음, monitoring 단독 재기동으로 충분.)
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -1126,10 +1134,12 @@ was `BrandReadRepository`가 `collection_capped`·`covered_until`을 **무조건
 
 **댓글(`recentComments`·`commentsCollectedCount`)과 광고 표기 판정(`adDisclosure`·
 `adViolations`·`adEvidence`)은 이 표식 밖의 후행 단계다.** `collectionCompletedAt`이 채워진
-시점에도 이 두 필드셋은 비어 있을 수 있고, 이후 폴링 없이(다음 다른 표면 조회 시) 조용히
-채워진다. was·FE 어느 쪽도 `collectionCompletedAt != null`을 "댓글·판정까지 확정됨"으로 해석하면
-안 된다 — 예를 들어 `adDisclosure == null`을 "판정 없음(비광고)"으로 단정하거나, 댓글 0건을
-"댓글 없음"으로 확정 표기하면 오독이다.
+시점에도 이 두 필드셋은 비어 있을 수 있다. **후행 완료 시 monitoring이 `last_swept_at`을 한 번
+더 전진시켜(v2.18) was 버전키(ETag·`BrandIndexCache`)를 회전시키므로, 다음 조회 시 반영된다** —
+was·FE가 별도로 폴링을 재개하거나 다른 표면을 조회할 필요는 없다. was·FE 어느 쪽도
+`collectionCompletedAt != null`을 "댓글·판정까지 확정됨"으로 해석하면 안 된다 — 예를 들어
+`adDisclosure == null`을 "판정 없음(비광고)"으로 단정하거나, 댓글 0건을 "댓글 없음"으로 확정
+표기하면 오독이다.
 
 **갱신 전 계약과의 차이** — 종전(v2.16 이전, 계약 문서에 표면화된 적은 없었다)에는 등록 백필의
 댓글 수집·광고 표기 판정이 끝난 뒤에야 이 값이 찍혔다. 2,000건급 브랜드는 신규 게시물 전량의

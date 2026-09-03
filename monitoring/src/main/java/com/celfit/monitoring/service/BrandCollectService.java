@@ -572,8 +572,18 @@ public class BrandCollectService {
 			// followup(등록 백필 전용)이면 이 스레드는 기다리지 않고 반환한다(fire-and-forget —
 			// 제출 자체는 무제한 큐라 예외를 던지지 않는다).
 			followupExecutor.execute(() -> {
-				collectCommentsGatedSafely(brand.id(), posts, source);
-				judgeAdDisclosuresSafely(brand, posts);
+				try {
+					collectCommentsGatedSafely(brand.id(), posts, source);
+					judgeAdDisclosuresSafely(brand, posts);
+				} finally {
+					// 후행 완료 시에도 last_swept_at을 한 번 더 전진(2026-09 결함 수정) — was는
+					// 댓글·광고 판정을 직접 안 읽지만, 캐시되는 PostRef가 ad_verdict를 품고 있어
+					// 후행이 갱신한 값이 위 touchProgress(정산 시점) 이후 캐시(ETag·BrandIndexCache
+					// 버전키)에 반영되지 않으면 신규 브랜드의 광고 뱃지·필터가 다음 자연 갱신 전까지
+					// 최대 하루 안 보인다. 페이지마다 호출돼도 UPDATE 1행이라 무해. 예외로 끝나도
+					// 호출되게 finally — 실패해도 이미 쓰인 부분 판정까지는 캐시 회전 대상이다.
+					brands.touchProgress(brand.id());
+				}
 			});
 		}
 		log.info("브랜드 태그 보강 — {} 게시자 수집·정산 완료({}건 대상)", brand.username(), posts.size());

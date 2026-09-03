@@ -1561,6 +1561,50 @@ class BrandCollectServiceTest {
 		assertThat(followupSubmissions).isEmpty();         // 후행 executor는 전혀 제출받지 않았다
 	}
 
+	/**
+	 * 결함 1 수정(2026-09) — 후행(댓글 수집·광고 표기 판정)이 끝나면 {@code touchProgress}를 한 번
+	 * 더 호출해 was 캐시 버전키(last_swept_at)를 회전시켜야 한다. 정산 시점(1회)과 후행 완료
+	 * 시점(1회) 합쳐 2회 호출을 기대한다.
+	 */
+	@Test
+	void 후행이_끝나면_touchProgress를_한_번_더_호출한다() {
+		List<Runnable> queue = new ArrayList<>();
+		Executor queueing = queue::add;
+		FakeAdJudge adJudge = new FakeAdJudge();
+		BrandCollectService svc = serviceWithFollowup(queueing, adJudge);
+		PostInfo post = post("AAA", RECENT, "111", 3L);
+
+		svc.enrichUserTriggeredDeferred(brand, List.of(post), () -> {});
+		int touchesAfterSettle = brands.progressTouches.size();   // 정산 시점 1회
+
+		queue.forEach(Runnable::run);   // 후행 실행
+
+		assertThat(brands.progressTouches.size()).isGreaterThan(touchesAfterSettle);
+		assertThat(brands.progressTouches).contains(1L, 1L);   // 정산 1회 + 후행 완료 1회
+	}
+
+	/**
+	 * 결함 1 수정 — 후행이 예외로 끝나도 {@code touchProgress}는 호출돼야 한다(finally). 댓글·판정
+	 * 각각을 감싸는 safely 래퍼는 RuntimeException만 삼키므로, 그 밖의 Throwable(Error)로 실제
+	 * finally 배선을 검증한다.
+	 */
+	@Test
+	void 후행이_예외로_끝나도_touchProgress는_호출된다() {
+		List<Runnable> queue = new ArrayList<>();
+		Executor queueing = queue::add;
+		FakeAdJudge adJudge = new FakeAdJudge();
+		adJudge.failHard = true;
+		BrandCollectService svc = serviceWithFollowup(queueing, adJudge);
+		PostInfo post = post("AAA", RECENT, "111", 3L);
+
+		svc.enrichUserTriggeredDeferred(brand, List.of(post), () -> {});
+		int touchesAfterSettle = brands.progressTouches.size();
+
+		assertThatThrownBy(() -> queue.forEach(Runnable::run)).isInstanceOf(Error.class);
+
+		assertThat(brands.progressTouches.size()).isGreaterThan(touchesAfterSettle);
+	}
+
 	/** 후행 executor·adJudge를 함께 주입하는 팩토리 — 완주 스탬프 축소 개정 검증 전용. */
 	private BrandCollectService serviceWithFollowup(Executor followup, FakeAdJudge adJudge) {
 		return new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments, tagged,
@@ -1680,7 +1724,9 @@ class BrandCollectServiceTest {
 
 		service(2000).sweep(brand);
 
-		assertThat(brands.progressTouches).containsExactly(1L);
+		// 정산 시점 1회 + 후행(댓글·판정) 완료 시점 1회(2026-09 결함 1 수정) — 야간 스윕은 후행이
+		// DIRECT executor로 반환 전에 동기 실행되므로 여기서도 두 번째 touch가 함께 찍힌다.
+		assertThat(brands.progressTouches).containsExactly(1L, 1L);
 	}
 
 	/**
@@ -1696,7 +1742,9 @@ class BrandCollectServiceTest {
 
 		service(2000).sweep(brand);
 
-		assertThat(order).containsExactly("enriched", "progress");
+		// 두 번째 "progress"는 후행(댓글·판정) 완료 시점의 touch(2026-09 결함 1 수정) — 정산 뒤에만
+		// 오면 되므로 순서 보장 대상은 앞 두 항목뿐이다.
+		assertThat(order).containsExactly("enriched", "progress", "progress");
 	}
 
 	/** 빈 배치는 데이터 변화가 없다 — 전진하면 폴링마다 헛 재계산만 유발한다. */
@@ -1721,7 +1769,9 @@ class BrandCollectServiceTest {
 		assertThatThrownBy(() -> svc.enrich(brand, posts, null))
 				.isInstanceOf(IllegalStateException.class);
 
-		assertThat(brands.progressTouches).containsExactly(1L);
+		// 정산 시점 1회 + 후행 완료 시점 1회(2026-09 결함 1 수정, 위 두 테스트와 같은 이유) —
+		// 게시자 하드 실패로 예외가 전파되는 중에도 두 finally가 모두 돈다.
+		assertThat(brands.progressTouches).containsExactly(1L, 1L);
 	}
 
 	/** 태그 0건(빈 배치)도 onVisible을 1회 받는다 — 못 받으면 그 브랜드가 collecting에 영구히 갇힌다. */
@@ -1904,6 +1954,8 @@ class BrandCollectServiceTest {
 	private static final class FakeAdJudge extends com.celfit.monitoring.ad.AdDisclosureJudgeService {
 		final List<String> judged = Collections.synchronizedList(new ArrayList<>());
 		boolean fail;
+		/** judgeAdDisclosuresSafely의 RuntimeException 캐치를 뚫고 나가는 결함 시나리오 전용(Error). */
+		boolean failHard;
 
 		FakeAdJudge() {
 			super(null, null, Runnable::run);
@@ -1911,6 +1963,9 @@ class BrandCollectServiceTest {
 
 		@Override
 		public void judgePosts(List<PostInfo> posts) {
+			if (failHard) {
+				throw new OutOfMemoryError("광고 판정 치명 실패(테스트)");
+			}
 			if (fail) {
 				throw new IllegalStateException("광고 판정 실패(테스트)");
 			}
