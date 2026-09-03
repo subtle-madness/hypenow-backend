@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 설계: [specs/2026-09-03-brand-sweep-parallel-design.md](../specs/2026-09-03-brand-sweep-parallel-design.md)
+> 상태: ✅ 실행됨 · 설계: [specs/2026-09-03-brand-sweep-parallel-design.md](../../specs/2026-09-03-brand-sweep-parallel-design.md)
 
 **Goal:** 야간 브랜드 태그 스윕(`BrandSweepJob`)의 브랜드 루프를 고정 풀 4스레드로 병렬화해 6시간 44분을 105~140분으로 줄인다.
 
