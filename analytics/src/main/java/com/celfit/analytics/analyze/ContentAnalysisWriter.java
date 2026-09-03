@@ -90,7 +90,9 @@ final class ContentAnalysisWriter {
 	 * 행을 파트 B가 timely / late_backfill로 확정하는 지점이 여기다. 재생성 잡
 	 * ({@code ContentSynthesisRefreshJob})은 저장된 값을 그대로 넘겨 동작이 불변이다.
 	 * {@code WHERE ... AND metric_timeliness = 'pending'} 같은 조건은 걸지 않는다 -
-	 * 재생성 잡이 이미 확정된 행에 같은 메서드를 쓰기 때문이다.
+	 * 재생성 잡이 이미 확정된 행에 같은 메서드를 쓰기 때문이다. 파트 B 최초 생성 경로(스윕·온라인
+	 * 폴백)는 대신 아래 {@link #updateSynthesisPending}을 쓴다 - "이미 확정된 행"과 "이제 막
+	 * 확정하는 행"의 요구가 서로 달라 조건 하나로 겸용하면 어느 한쪽이 틀린다.
 	 *
 	 * @param metricTimeliness 지표 시점 마킹(V33 어휘 + 09-03 'pending'). 파트 B 수거는
 	 *        사이드카의 timely로, 재생성 잡은 저장된 기존 값으로 넘긴다.
@@ -108,6 +110,43 @@ final class ContentAnalysisWriter {
 				  category_top_percentile = ?, category_avg_views = ?, category_sample_size = ?,
 				  model = ?, metric_timeliness = ?, synthesis_version = ?, synthesized_at = now()
 				WHERE short_code = ?""",
+				s.aiContentSummary(), s.contentsPattern(), s.aiCommentInsight(),
+				s.commentAuthenticityGrade(), s.commentAuthenticityNote(),
+				b.recentReelsAvgViews(), b.rankInRecentReels(), b.recentReelsCount(),
+				b.recentContentsCount(), b.recent12AvgEngagementRate(),
+				b.recent12AvgLikeCount(), b.recent12AvgCommentCount(),
+				b.categoryTopPercentile(), b.categoryAvgViews(), b.categorySampleSize(),
+				model, metricTimeliness, Synthesis.VERSION, shortCode);
+	}
+
+	/**
+	 * {@link #updateSynthesis}와 SET 목록은 같되 {@code WHERE short_code = ? AND
+	 * metric_timeliness = 'pending'}로 좁힌다(2026-09-03 리뷰) - 파트 B 최초 생성 경로(배치 수거
+	 * {@code GeminiBatchLines.processSynthesisResultLine}·온라인
+	 * {@code ContentAnalysisJob.synthesizeOne})가 쓴다. 막을 시나리오: split ON → 파트 B 배치
+	 * 제출 → 운영자가 롤백하며 pending 행을 삭제 → 통합(unified) ANALYZE가 같은 short_code를
+	 * 완결 행(non-pending)으로 재생성 → 그 뒤에 옛 파트 B 배치 결과가 도착해 방금 만든 완결 행을
+	 * 덮어쓴다. pending 가드가 있으면 그 UPDATE는 0행이라 조용히 실패로 집계되고 완결 행은 그대로
+	 * 보존된다.
+	 *
+	 * <p>재생성 잡({@code ContentSynthesisRefreshJob})은 이 메서드를 쓰지 않는다 - 그 잡의 대상은
+	 * 이미 확정된(non-pending) 행이라 pending 가드를 걸면 자기 자신의 정상 갱신이 전부 0행이 된다.
+	 *
+	 * @return 갱신된 행 수 (0이면 그 사이 행이 사라졌거나, 이미 non-pending으로 확정된 행이라
+	 *         대상이 아니었던 것 - 호출자가 warn으로 집계한다)
+	 */
+	static int updateSynthesisPending(JdbcTemplate analysis, String shortCode, String model,
+			Baseline b, Synthesis s, String metricTimeliness) {
+		return analysis.update("""
+				UPDATE content_analyses SET
+				  ai_content_summary = ?, contents_pattern = ?, ai_comment_insight = ?,
+				  comment_authenticity_grade = ?, comment_authenticity_note = ?,
+				  recent_reels_avg_views = ?, rank_in_recent_reels = ?, recent_reels_count = ?,
+				  recent_contents_count = ?, recent12_avg_engagement_rate = ?,
+				  recent12_avg_like_count = ?, recent12_avg_comment_count = ?,
+				  category_top_percentile = ?, category_avg_views = ?, category_sample_size = ?,
+				  model = ?, metric_timeliness = ?, synthesis_version = ?, synthesized_at = now()
+				WHERE short_code = ? AND metric_timeliness = 'pending'""",
 				s.aiContentSummary(), s.contentsPattern(), s.aiCommentInsight(),
 				s.commentAuthenticityGrade(), s.commentAuthenticityNote(),
 				b.recentReelsAvgViews(), b.rankInRecentReels(), b.recentReelsCount(),

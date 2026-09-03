@@ -155,4 +155,38 @@ class ContentAnalysisWriterTest {
 		assertEquals(0, ContentAnalysisWriter.updateSynthesis(
 				db, "sc_missing", "m", BASELINE, synthesis(), "timely"));
 	}
+
+	@Test
+	void updateSynthesisPending은_pending_행만_전이시킨다() {
+		ContentAnalysisWriter.insertFacts(db, json, "sc_d", "facts-model", facts());
+
+		int updated = ContentAnalysisWriter.updateSynthesisPending(
+				db, "sc_d", "synth-model", BASELINE, synthesis(), "timely");
+
+		assertEquals(1, updated);
+		assertEquals("timely", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'sc_d'", String.class));
+		assertEquals("요약", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'sc_d'", String.class));
+	}
+
+	@Test
+	void updateSynthesisPending은_이미_확정된_행을_건드리지_않는다() {
+		// 시나리오(2026-09-03 리뷰): split ON → 파트 B 배치 제출 → 운영자가 롤백하며 pending 행
+		// 삭제 → 통합 ANALYZE가 같은 short_code를 완결 행으로 재생성 → 그 뒤 옛 파트 B 배치 결과가
+		// 도착. pending 가드가 없으면 이 UPDATE가 방금 만든 완결 행을 덮어쓴다.
+		ContentAnalysisWriter.insertFacts(db, json, "sc_e", "facts-model", facts());
+		ContentAnalysisWriter.updateSynthesis(db, "sc_e", "synth-model", BASELINE, synthesis(), "timely");
+
+		int updated = ContentAnalysisWriter.updateSynthesisPending(db, "sc_e", "late-batch",
+				BASELINE, new Synthesis("낡은 요약", "낡은 패턴", "낡은 댓글", "low", "낡은 근거"), "late_backfill");
+
+		assertEquals(0, updated); // 이미 timely로 확정된 행이라 대상이 아니다
+		assertEquals("timely", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'sc_e'", String.class));
+		assertEquals("요약", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'sc_e'", String.class));
+		assertEquals("synth-model", db.queryForObject(
+				"SELECT model FROM content_analyses WHERE short_code = 'sc_e'", String.class));
+	}
 }
