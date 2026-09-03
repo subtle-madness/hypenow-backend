@@ -175,6 +175,35 @@ class V1ContentReportAssemblerTest {
 	}
 
 	@Test
+	void 카테고리맥락_사실만_pending은_백분위_null() {
+		// 2026-09-03 2단계 분리: 파트 A만 채워진 행은 지표 시점이 미확정이라 표본(timely)과
+		// 잣대가 다르다. comparableMetric이 timely·NULL만 통과시키므로 was 코드 변경 없이 억제된다.
+		var row = categoryRow(50000L, "pending");
+
+		var ctx = assembler.toReport(row, List.of(),
+				new V1ContentReportRepository.CategoryContextRow(200L, 41713L, 5L),
+				Map.of(), List.of()).categoryContext();
+
+		assertThat(ctx.percentile()).isNull();
+		assertThat(ctx.sampleSize()).isEqualTo(200L);
+		assertThat(ctx.categoryAvgViews()).isEqualTo(41713L);
+	}
+
+	@Test
+	void 사실만_pending은_기준선_인용_필드가_null이다() {
+		// 드로어 비교 블록의 baseline 계열(참여율·좋아요·댓글 평균)은 content_analyses의
+		// recent12_* 컬럼에서 온다. 파트 A 행에는 없으므로 null이다 - FE는 이 상태를
+		// "해석 준비 중"으로 렌더링해야 한다(docs/contracts/v1-content-report-nullable-fields.md).
+		var report = assembler.toReport(categoryRow(1000L, "pending"), List.of(), null,
+				Map.of(), List.of());
+
+		assertThat(report.summary()).isNull();
+		assertThat(report.comparison().engagementRate().baseline()).isNull();
+		assertThat(report.comparison().engagementQuality().likes().baselineCount()).isNull();
+		assertThat(report.comparison().narrative()).isNull();
+	}
+
+	@Test
 	void 카테고리맥락_미분류면_전부_null_표본0이면_0() {
 		var 미분류 = assembler.toReport(categoryRow(1000L, "timely"), List.of(), null, Map.of(), List.of())
 				.categoryContext();

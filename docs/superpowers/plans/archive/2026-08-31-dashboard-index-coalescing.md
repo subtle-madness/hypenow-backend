@@ -8,7 +8,7 @@
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · JUnit 5 + Mockito(`MockitoExtension`) + AssertJ · `@WebMvcTest`(Spring Boot 4는 `org.springframework.boot.webmvc.test.autoconfigure`)
 
-**설계 문서:** [2026-08-31-dashboard-index-coalescing-design.md](../../specs/2026-08-31-dashboard-index-coalescing-design.md)
+**설계 문서:** [2026-08-31-dashboard-index-coalescing-design.md](../../specs/archive/2026-08-31-dashboard-index-coalescing-design.md)
 
 ## Global Constraints
 
@@ -604,7 +604,7 @@ git commit -m "feat(was): DashboardIndex 컬렉션 전량 불변화 — 합류�
 
 **Files:**
 - Modify: `DECISIONS.md` (맨 위에 새 행)
-- Modify: `docs/superpowers/specs/2026-08-31-dashboard-index-coalescing-design.md` (상태 헤더)
+- Modify: `docs/superpowers/specs/archive/2026-08-31-dashboard-index-coalescing-design.md` (상태 헤더)
 - Move: `docs/superpowers/plans/2026-08-31-dashboard-index-coalescing.md` → `docs/superpowers/plans/archive/`
 
 - [ ] **Step 1: 모듈 전체 테스트**
@@ -617,7 +617,7 @@ Expected: 전부 PASS. 대량 실패가 나면 테스트 결함으로 오진하�
 
 - [ ] **Step 2: 설계 문서 상태 헤더를 갱신한다**
 
-`docs/superpowers/specs/2026-08-31-dashboard-index-coalescing-design.md` 2행:
+`docs/superpowers/specs/archive/2026-08-31-dashboard-index-coalescing-design.md` 2행:
 
 ```markdown
 > 상태: ✅ 구현됨 (2026-08-31 작성 · §2~§5 구현, §7은 후속)
@@ -635,7 +635,7 @@ Expected: 전부 PASS. 대량 실패가 나면 테스트 결함으로 오진하�
 
 ```bash
 git mv docs/superpowers/plans/2026-08-31-dashboard-index-coalescing.md docs/superpowers/plans/archive/
-git add DECISIONS.md docs/superpowers/specs/2026-08-31-dashboard-index-coalescing-design.md
+git add DECISIONS.md docs/superpowers/specs/archive/2026-08-31-dashboard-index-coalescing-design.md
 git commit -m "docs: 동시 조립 합류 구현 반영 — DECISIONS 행 추가, 스펙 상태 갱신, 계획서 아카이브"
 ```
 
@@ -672,7 +672,7 @@ gh pr create --base develop --title "feat(was): 성과 대시보드 동시 조�
 
 인덱스 캐시, `findAccounts` 배치, **화면 범위 스코핑 + DB 집계**(8.4초 고정비의 본체 — 화면은 7일 724행이면 되는데 180일 15,177행을 만든다). 설계 §7에 근거와 함께 적어 뒀다.
 
-설계: `docs/superpowers/specs/2026-08-31-dashboard-index-coalescing-design.md`
+설계: `docs/superpowers/specs/archive/2026-08-31-dashboard-index-coalescing-design.md`
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF

@@ -14,16 +14,22 @@ import com.celfit.monitoring.image.HashtagPostThumbnailArchiveJob;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import java.time.LocalDate;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.time.ZoneId;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 /** 브랜드 스윕 — 매일 전량(주기 판정 없음)·성공 시에만 last_swept_on 갱신·브랜드 단위 격리. */
 class BrandSweepJobTest {
 
-	private static final class StubArchive extends AuthorProfileImageArchiveJob {
+	private static class StubArchive extends AuthorProfileImageArchiveJob {
 		int runs;
 		boolean failing;
 
@@ -130,16 +136,19 @@ class BrandSweepJobTest {
 
 	private static final class StubBrands extends BrandRepository {
 		List<BrandRow> active = List.of();
-		final List<Long> touched = new ArrayList<>();
+		final List<Long> touched = new CopyOnWriteArrayList<>();   // 병렬 스윕에서 여러 스레드가 기록
 		/** 계정 게이트 호출 관측(2026-08-18) — 야간 스윕은 markServing을 부르지 않는다는 회귀 방지. */
-		final List<Long> served = new ArrayList<>();
+		final List<Long> served = new CopyOnWriteArrayList<>();
+		/** 스윕이 넘긴 콜 집계 기준일 — "KST 오늘 − 1일" 계약 검증. */
+		LocalDate calledOn;
 
 		StubBrands() {
 			super(null);
 		}
 
 		@Override
-		public List<BrandRow> findActive() {
+		public List<BrandRow> findActiveHeaviestFirst(LocalDate calledOn) {
+			this.calledOn = calledOn;
 			return active;
 		}
 
@@ -155,7 +164,7 @@ class BrandSweepJobTest {
 	}
 
 	private static final class StubCollect extends BrandCollectService {
-		final List<String> swept = new ArrayList<>();
+		final List<String> swept = new CopyOnWriteArrayList<>();
 		final Set<String> failing = new HashSet<>();
 
 		StubCollect() {
@@ -173,7 +182,7 @@ class BrandSweepJobTest {
 	}
 
 	private static final class StubDirectCollect extends BrandDirectCollectService {
-		final List<String> swept = new ArrayList<>();
+		final List<String> swept = new CopyOnWriteArrayList<>();
 		final Set<String> failing = new HashSet<>();
 
 		StubDirectCollect() {
@@ -190,7 +199,7 @@ class BrandSweepJobTest {
 	}
 
 	private static final class StubHashtagCollect extends BrandHashtagCollectService {
-		final List<String> swept = new ArrayList<>();
+		final List<String> swept = new CopyOnWriteArrayList<>();
 		final Set<String> failing = new HashSet<>();
 
 		StubHashtagCollect() {
@@ -227,7 +236,7 @@ class BrandSweepJobTest {
 			boolean adDisclosureEnabled) {
 		return new BrandSweepJob(brands, collect, new StubDirectCollect(), hashtagCollect, archive, brandArchive,
 				new StubPostThumbArchive(), new StubHashtagThumbArchive(), new StubHashtagAuthorArchive(),
-				adJudge, adDisclosureEnabled);
+				adJudge, adDisclosureEnabled, Runnable::run);
 	}
 
 	@Test
@@ -356,7 +365,7 @@ class BrandSweepJobTest {
 
 		new BrandSweepJob(brands, collect, directCollect, hashtagCollect, new StubArchive(),
 				new StubBrandArchive(), new StubPostThumbArchive(), new StubHashtagThumbArchive(),
-				new StubHashtagAuthorArchive(), new StubAdJudge(), true).run();   // 예외가 새면 여기서 터진다
+				new StubHashtagAuthorArchive(), new StubAdJudge(), true, Runnable::run).run();   // 예외가 새면 여기서 터진다
 
 		assertThat(hashtagCollect.swept).containsExactly("first");   // direct 실패와 무관하게 시도됨
 		assertThat(brands.touched).containsExactly(1L);              // 1단계(유저태그) 성공은 유지
@@ -372,7 +381,7 @@ class BrandSweepJobTest {
 
 		new BrandSweepJob(brands, collect, directCollect, new StubHashtagCollect(), new StubArchive(),
 				new StubBrandArchive(), new StubPostThumbArchive(), new StubHashtagThumbArchive(),
-				new StubHashtagAuthorArchive(), new StubAdJudge(), true).run();
+				new StubHashtagAuthorArchive(), new StubAdJudge(), true, Runnable::run).run();
 
 		assertThat(directCollect.swept).containsExactly("boom");
 		assertThat(brands.touched).isEmpty();   // 유저태그 스윕 실패라 여전히 미갱신
@@ -409,7 +418,7 @@ class BrandSweepJobTest {
 	void 스윕이_예외로_이탈해도_아카이브는_실행된다() {
 		var brands = new BrandRepository(null) {
 			@Override
-			public List<BrandRow> findActive() {
+			public List<BrandRow> findActiveHeaviestFirst(LocalDate calledOn) {
 				throw new IllegalStateException("DB 조회 실패 주입");
 			}
 		};
@@ -422,7 +431,7 @@ class BrandSweepJobTest {
 
 		assertThatThrownBy(() -> new BrandSweepJob(brands, new StubCollect(), new StubDirectCollect(),
 				new StubHashtagCollect(), archive, brandArchive, postThumbArchive, hashtagThumbArchive,
-				hashtagAuthorArchive, adJudge, true).run())
+				hashtagAuthorArchive, adJudge, true, Runnable::run).run())
 				.isInstanceOf(IllegalStateException.class);
 
 		assertThat(archive.runs).isEqualTo(1);   // DailySweepJob과 동형 — finally에서 반드시 실행
@@ -442,7 +451,7 @@ class BrandSweepJobTest {
 
 		new BrandSweepJob(brands, new StubCollect(), new StubDirectCollect(), new StubHashtagCollect(), new StubArchive(),
 				new StubBrandArchive(), postThumbArchive, hashtagThumbArchive,
-				new StubHashtagAuthorArchive(), new StubAdJudge(), true).run();
+				new StubHashtagAuthorArchive(), new StubAdJudge(), true, Runnable::run).run();
 
 		assertThat(postThumbArchive.runs).isEqualTo(1);
 		assertThat(hashtagThumbArchive.runs).isEqualTo(1);
@@ -458,7 +467,7 @@ class BrandSweepJobTest {
 
 		new BrandSweepJob(brands, new StubCollect(), new StubDirectCollect(), new StubHashtagCollect(), new StubArchive(),
 				new StubBrandArchive(), postThumbArchive, hashtagThumbArchive,
-				new StubHashtagAuthorArchive(), new StubAdJudge(), true).run();   // 예외가 새면 여기서 터진다
+				new StubHashtagAuthorArchive(), new StubAdJudge(), true, Runnable::run).run();   // 예외가 새면 여기서 터진다
 
 		assertThat(brands.touched).containsExactly(1L);
 		assertThat(hashtagThumbArchive.runs).isEqualTo(1);   // 잡별 격리 — 한쪽 실패가 다른 쪽을 막지 않는다
@@ -472,7 +481,7 @@ class BrandSweepJobTest {
 
 		new BrandSweepJob(brands, new StubCollect(), new StubDirectCollect(), new StubHashtagCollect(), new StubArchive(),
 				new StubBrandArchive(), new StubPostThumbArchive(), new StubHashtagThumbArchive(),
-				hashtagAuthorArchive, new StubAdJudge(), true).run();
+				hashtagAuthorArchive, new StubAdJudge(), true, Runnable::run).run();
 
 		assertThat(hashtagAuthorArchive.runs).isEqualTo(1);
 	}
@@ -486,7 +495,7 @@ class BrandSweepJobTest {
 
 		new BrandSweepJob(brands, new StubCollect(), new StubDirectCollect(), new StubHashtagCollect(), new StubArchive(),
 				new StubBrandArchive(), new StubPostThumbArchive(), new StubHashtagThumbArchive(),
-				hashtagAuthorArchive, new StubAdJudge(), true).run();   // 예외가 새면 여기서 터진다
+				hashtagAuthorArchive, new StubAdJudge(), true, Runnable::run).run();   // 예외가 새면 여기서 터진다
 
 		assertThat(brands.touched).containsExactly(1L);
 	}
@@ -528,5 +537,113 @@ class BrandSweepJobTest {
 				adJudge, true).run();   // 예외가 새면 여기서 터진다
 
 		assertThat(brands.touched).containsExactly(1L);
+	}
+
+	// ── 브랜드 단위 병렬 실행(2026-09-03 설계 §3-1) ─────────────────────────────
+
+	/** 두 브랜드가 동시에 스윕 안에 들어와야 래치가 열린다 — 직렬이면 첫 브랜드가 영원히 기다려 타임아웃. */
+	private static final class RendezvousCollect extends BrandCollectService {
+		final CountDownLatch inside = new CountDownLatch(2);
+		final AtomicInteger timedOut = new AtomicInteger();
+
+		RendezvousCollect() {
+			super(null, null, null, null, null, null, null, null, null, null, null, null,
+					2000, 10000, 3, 30, true);
+		}
+
+		@Override
+		public void sweep(BrandRow brand) {
+			inside.countDown();
+			try {
+				if (!inside.await(2, TimeUnit.SECONDS)) {
+					timedOut.incrementAndGet();
+				}
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		}
+	}
+
+	@Test
+	void 브랜드들은_executor_스레드에서_동시에_스윕된다() {
+		ExecutorService pool = Executors.newFixedThreadPool(2);
+		try {
+			var brands = new StubBrands();
+			var collect = new RendezvousCollect();
+			brands.active = List.of(brand(1, "first"), brand(2, "second"));
+
+			new BrandSweepJob(brands, collect, new StubDirectCollect(), new StubHashtagCollect(), new StubArchive(),
+					new StubBrandArchive(), new StubPostThumbArchive(), new StubHashtagThumbArchive(),
+					new StubHashtagAuthorArchive(), new StubAdJudge(), true, pool).run();
+
+			assertThat(collect.timedOut).hasValue(0);          // 둘 다 상대를 만났다 = 동시 실행
+			assertThat(brands.touched).containsExactlyInAnyOrder(1L, 2L);
+		} finally {
+			pool.shutdownNow();
+		}
+	}
+
+	@Test
+	void 병렬_실행에서도_실패_격리와_카운터가_유지되고_아카이브는_전_브랜드_완료_뒤에_돈다() {
+		ExecutorService pool = Executors.newFixedThreadPool(4);
+		try {
+			var brands = new StubBrands();
+			var collect = new StubCollect();
+			collect.failing.add("boom");
+			var directCollect = new StubDirectCollect();
+			directCollect.failing.add("third");
+			var hashtagCollect = new StubHashtagCollect();
+			brands.active = List.of(brand(1, "first"), brand(2, "boom"), brand(3, "third"), brand(4, "fourth"));
+			// 아카이브가 돌 때 스윕이 몇 건 끝나 있었는지 스냅샷 — 전 브랜드 완료 뒤여야 한다
+			var sweptWhenArchived = new AtomicInteger(-1);
+			var archive = new StubArchive() {
+				@Override
+				public void run() {
+					sweptWhenArchived.set(collect.swept.size());
+					super.run();
+				}
+			};
+
+			new BrandSweepJob(brands, collect, directCollect, hashtagCollect, archive, new StubBrandArchive(),
+					new StubPostThumbArchive(), new StubHashtagThumbArchive(), new StubHashtagAuthorArchive(),
+					new StubAdJudge(), true, pool).run();   // 예외가 새면 여기서 터진다
+
+			assertThat(collect.swept).containsExactlyInAnyOrder("first", "third", "fourth");
+			assertThat(brands.touched).containsExactlyInAnyOrder(1L, 3L, 4L);   // boom은 "준비 중" 유지
+			assertThat(directCollect.swept).containsExactlyInAnyOrder("first", "boom", "fourth");
+			assertThat(hashtagCollect.swept).containsExactlyInAnyOrder("first", "boom", "third", "fourth");
+			assertThat(sweptWhenArchived).hasValue(3);   // 아카이브는 join 뒤 — 스윕이 전부 끝난 상태
+		} finally {
+			pool.shutdownNow();
+		}
+	}
+
+	@Test
+	void 동시성_1이면_제출_순서대로_직렬_실행된다() {
+		ExecutorService single = Executors.newSingleThreadExecutor();
+		try {
+			var brands = new StubBrands();
+			var collect = new StubCollect();
+			brands.active = List.of(brand(1, "first"), brand(2, "second"), brand(3, "third"));
+
+			new BrandSweepJob(brands, collect, new StubDirectCollect(), new StubHashtagCollect(), new StubArchive(),
+					new StubBrandArchive(), new StubPostThumbArchive(), new StubHashtagThumbArchive(),
+					new StubHashtagAuthorArchive(), new StubAdJudge(), true, single).run();
+
+			assertThat(collect.swept).containsExactly("first", "second", "third");   // 롤백(동시성 1) = 현행 직렬
+		} finally {
+			single.shutdownNow();
+		}
+	}
+
+	/** LPT 배정 입력 — 직전 스윕의 콜이 계상된 날짜(KST 오늘 − 1일)로 조회한다. */
+	@Test
+	void 브랜드_조회는_KST_전날_콜_수_기준이다() {
+		var brands = new StubBrands();
+		brands.active = List.of(brand(1, "first"));
+
+		sweepJob(brands, new StubCollect(), new StubHashtagCollect(), new StubArchive(), new StubBrandArchive()).run();
+
+		assertThat(brands.calledOn).isEqualTo(LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(1));
 	}
 }

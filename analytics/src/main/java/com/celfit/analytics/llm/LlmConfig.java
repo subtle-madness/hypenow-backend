@@ -84,6 +84,19 @@ public class LlmConfig {
 		return new GeminiContentAnalyzer(gemini.getObject(), settings::geminiModel, taxonomyLoader::get);
 	}
 
+	/**
+	 * 파트 A(사실 추출) 전용 포트 - 2단계 분리(analytics.analyze-mode=split)의 온라인 폴백이 쓴다.
+	 * {@link ContentSynthesisPort}와 같은 이유로 Gemini/Vertex만 지원한다: split 모드 자체가
+	 * 배치 전송을 전제로 설계됐고, anthropic은 롤백 경로(unified)로 남는다.
+	 * 프로바이더가 anthropic이면 JobConfig가 이 빈을 조회하지 않는다(batchApiOrNull과 같은 관용구).
+	 */
+	@Bean
+	@Lazy
+	public ContentFactsPort contentFactsPort(AnalyticsSettings settings,
+			ObjectProvider<GeminiApi> gemini, BeautyTaxonomyLoader taxonomyLoader) {
+		return new GeminiContentAnalyzer(gemini.getObject(), settings::geminiModel, taxonomyLoader::get);
+	}
+
 	@Bean
 	@Lazy
 	public TraitTaxonomyLoader traitTaxonomyLoader(

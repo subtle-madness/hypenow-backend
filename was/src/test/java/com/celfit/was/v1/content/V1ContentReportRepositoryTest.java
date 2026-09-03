@@ -93,7 +93,8 @@ class V1ContentReportRepositoryTest extends IntegrationTest {
 				 ('mfeed',   'alpha', 'feed',  NULL,   90,  9),
 				 ('mlate',   'alpha', 'reels', 99999, 999, 99),
 				 ('mnb',     'alpha', 'reels', 7000,  700, 70),
-				 ('s1',      'alpha', 'reels', 2000,  200, 20)""");
+				 ('s1',      'alpha', 'reels', 2000,  200, 20),
+				 ('mpend',   'alpha', 'reels', 50000, 5000, 500)""");
 		// mnb는 F&B 분석분(is_beauty=false ∧ snack) — makeup 표본에 안 섞이고 snack 표본이 된다
 		jdbcTemplate.update("""
 				INSERT INTO content_analyses (short_code, main_category, is_beauty, metric_timeliness,
@@ -105,7 +106,8 @@ class V1ContentReportRepositoryTest extends IntegrationTest {
 				 ('mfeed',   'makeup',   true,  'timely',        '요약', 12),
 				 ('mlate',   'makeup',   true,  'late_backfill', '요약', 12),
 				 ('mnb',     'snack',    false, 'timely',        '요약', 12),
-				 ('s1',      'skincare', true,  'timely',        '요약', 12)""");
+				 ('s1',      'skincare', true,  'timely',        '요약', 12),
+				 ('mpend',   'makeup',   true,  'pending',       NULL,   12)""");
 	}
 
 	@Test
@@ -156,5 +158,32 @@ class V1ContentReportRepositoryTest extends IntegrationTest {
 		// 프리즈 컬럼은 여전히 NULL — 라이브 집계가 대체한다
 		assertThat(row.categoryTopPercentile()).isNull();
 		assertThat(row.categorySampleSize()).isNull();
+	}
+
+	@Test
+	void 사실만_채워진_pending은_카테고리_표본에서_빠진다() {
+		// mpend는 views 50000으로 표본에 끼면 평균을 크게 왜곡한다.
+		// 지표 시점이 미확정이라 표본(timely)과 잣대가 다르다 - late_backfill과 같은 이유로 제외한다.
+		var ctx = repository.findCategoryContext("makeup", 1000L);
+
+		assertThat(ctx.sampleSize()).isEqualTo(4L);
+		assertThat(ctx.avgViews()).isEqualTo(1325L);
+	}
+
+	@Test
+	void 사실만_채워진_pending도_6_3_조회에는_잡힌다_해석은_null() {
+		// 이 트랙의 목표: D+1부터 드로어가 404가 아니라 200이 되고, 광고 판정·카테고리가 먼저 뜬다.
+		// 해석 5필드·기준선은 파트 B가 채우기 전이라 null이다(계약 문서 docs/contracts 참조).
+		var row = repository.findReport("mpend").orElseThrow();
+
+		assertThat(row.metricTimeliness()).isEqualTo("pending");
+		assertThat(row.mainCategory()).isEqualTo("makeup");
+		assertThat(row.categoryLabel()).isEqualTo("메이크업");
+		assertThat(row.aiContentSummary()).isNull();
+		assertThat(row.contentsPattern()).isNull();
+		assertThat(row.aiCommentInsight()).isNull();
+		assertThat(row.commentAuthenticityGrade()).isNull();
+		assertThat(row.recent12AvgLikeCount()).isNull();
+		assertThat(row.recent12AvgEngagementRate()).isNull();
 	}
 }

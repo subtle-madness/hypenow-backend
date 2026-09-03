@@ -50,6 +50,23 @@ class CryptoConfigTest {
 				.hasMessageContaining("vault");
 	}
 
+	/**
+	 * vault 모드는 빈 생성 시점에 app.encryption_keys를 읽으므로 app Flyway가 먼저 돌아야 한다 —
+	 * 2026-09-03 첫 승격 배포에서 순서가 뒤집혀 스테이징 was가 크래시루프(테스트는 local 모드라
+	 * 런타임으로는 못 잡는다). 빈 이름은 AppFlywayConfig#appFlyway 메서드명과 같아야 한다.
+	 */
+	@Test
+	void fieldCipher_빈은_app_Flyway_빈에_의존한다() throws Exception {
+		var method = java.util.Arrays.stream(CryptoConfig.class.getMethods())
+				.filter(m -> m.getName().equals("fieldCipher")).findFirst().orElseThrow();
+		var dependsOn = method.getAnnotation(org.springframework.context.annotation.DependsOn.class);
+		assertThat(dependsOn).isNotNull();
+		assertThat(dependsOn.value()).containsExactly("appFlyway");
+		var flywayMethod = java.util.Arrays.stream(com.celfit.was.config.AppFlywayConfig.class.getMethods())
+				.filter(m -> m.getName().equals("appFlyway")).findFirst();
+		assertThat(flywayMethod).as("AppFlywayConfig#appFlyway 빈 이름이 바뀌면 @DependsOn도 같이 바꿔야 한다").isPresent();
+	}
+
 	@Test
 	void prod_프로파일이어도_allow_local_in_prod가_켜져있으면_local_모드가_통과한다() {
 		byte[] key = new byte[64];

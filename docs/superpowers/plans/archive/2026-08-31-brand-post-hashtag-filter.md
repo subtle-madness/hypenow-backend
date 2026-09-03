@@ -6,7 +6,7 @@
 
 **Goal:** 브랜드 모니터링 게시물 캡션에서 해시태그를 추출해 게시물별 태그 배열 + 브랜드 스코프 태그 facet을 내려주고, 태그 필터 파라미터로 수집된 게시물 내 필터를 제공한다.
 
-**Architecture:** 조회 시 추출(A안, [spec](../../specs/2026-08-31-brand-post-hashtag-filter-design.md)). 인덱스 SQL(`findBrandPostIndex`)에 `m.caption`을 추가 프로젝션하고 `indexForBrand()`에서 Java 정규식으로 태그만 뽑아 `PostRef`에 싣는다(캡션은 버림 — ref는 계속 경량). 필터·facet은 기존 in-memory 필터/FacetAxis 패턴에 5번째 축으로 편입. DB 스키마·monitoring 모듈 무변경.
+**Architecture:** 조회 시 추출(A안, [spec](../../specs/archive/2026-08-31-brand-post-hashtag-filter-design.md)). 인덱스 SQL(`findBrandPostIndex`)에 `m.caption`을 추가 프로젝션하고 `indexForBrand()`에서 Java 정규식으로 태그만 뽑아 `PostRef`에 싣는다(캡션은 버림 — ref는 계속 경량). 필터·facet은 기존 in-memory 필터/FacetAxis 패턴에 5번째 축으로 편입. DB 스키마·monitoring 모듈 무변경.
 
 **Tech Stack:** Java 21, Spring Boot 4.1 (was 모듈만), JUnit 5 + AssertJ. Task 1~3은 순수 유닛 테스트라 Testcontainers 불요. Task 4 회귀만 colima + `DOCKER_HOST` 필요.
 
@@ -526,7 +526,7 @@ Expected: 0 fail. (전체 `./gradlew test`는 PR 직전에만 — CLAUDE.md.)
 ```markdown
 - 2026-08-31 **브랜드 게시물 해시태그 필터는 조회 시 정규식 추출** — AI 판단·수집 시 저장 불채택.
   규칙 `#[\p{L}\p{N}_]+`(전각 ＃ 제외 — 인스타 링크화 검증), 근거·갭은
-  [spec](docs/superpowers/specs/2026-08-31-brand-post-hashtag-filter-design.md).
+  [spec](docs/superpowers/specs/archive/2026-08-31-brand-post-hashtag-filter-design.md).
 ```
 
 (DECISIONS.md의 실제 항목 포맷이 다르면 그 포맷을 따른다.)

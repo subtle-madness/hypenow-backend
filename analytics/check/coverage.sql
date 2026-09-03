@@ -35,11 +35,21 @@ WITH
                 count(ad_type)                AS ad_type,
                 least(count(detected_brands), count(detected_products)) AS tags,
                 count(detected_distributors)  AS distributors,
-                least(count(ai_content_summary), count(contents_pattern), count(ai_comment_insight)) AS copy3,
-                least(count(recent_reels_avg_views), count(recent12_avg_engagement_rate)) AS baseline,
-                                least(count(sponsored_signal_level), count(detected_product_categories), count(vlm_attributes)) AS vlm,
-                count(comment_authenticity_grade) AS cauth
+                least(count(sponsored_signal_level), count(detected_product_categories), count(vlm_attributes)) AS vlm
          FROM content_analyses),
+  -- 해석(파트 B) 채움율은 "해석 단계까지 온 행"만 분모로 삼는다(2026-09-03 2단계 분리).
+  -- 파트 A만 채워진 행(metric_timeliness='pending')은 아직 해석을 만들 차례가 아니라
+  -- 결손이 아니다 - 전체를 분모로 두면 파트 A가 쌓이는 만큼 상시 '부분'으로 보인다.
+  -- <> 가 아니라 IS DISTINCT FROM: 시점이 NULL인 레거시 기분석분을 빠뜨리면 안 된다.
+  -- baseline(19행 — 드로어 성과 비교 기준선)도 여기 속한다: 기준선 10컬럼은 파트 A
+  -- insertFacts에서 채우지 않고 파트 B updateSynthesis에서만 채운다(ContentAnalysisWriter) —
+  -- copy3·cauth와 같은 파트 B 전용 라이프사이클이라 pending 행을 분모에서 뺀다.
+  anb AS (SELECT count(*) AS total,
+                 least(count(ai_content_summary), count(contents_pattern),
+                       count(ai_comment_insight)) AS copy3,
+                 count(comment_authenticity_grade) AS cauth,
+                 least(count(recent_reels_avg_views), count(recent12_avg_engagement_rate)) AS baseline
+          FROM content_analyses WHERE metric_timeliness IS DISTINCT FROM 'pending'),
   v AS (SELECT (SELECT count(*) FROM beauty_taxonomy)     AS taxonomy,
                (SELECT count(*) FROM beauty_distributors) AS dist_vocab),
   cm AS (SELECT count(*) AS total FROM content_comments),
@@ -138,14 +148,14 @@ SELECT "화면 요소", "소스", "채움", "상태" FROM (
   FROM v
   UNION ALL
   SELECT 18, '드로어 AI 카피 3종 (댓글 인사이트는 임시 숨김)', 'content_analyses.ai_* / contents_pattern',
-         format('%s / %s', an.copy3, c.total),
-         CASE WHEN an.copy3 = 0 THEN '없음' WHEN an.copy3 < c.total THEN '부분' ELSE '준비됨' END
-  FROM an, c
+         format('%s / %s', anb.copy3, anb.total),
+         CASE WHEN anb.copy3 = 0 THEN '없음' WHEN anb.copy3 < anb.total THEN '부분' ELSE '준비됨' END
+  FROM anb
   UNION ALL
   SELECT 19, '드로어 성과 비교 기준선 (조회수·참여율)', 'content_analyses.recent_*',
-         format('%s / %s', an.baseline, c.total),
-         CASE WHEN an.baseline = 0 THEN '없음' WHEN an.baseline < c.total THEN '부분' ELSE '준비됨' END
-  FROM an, c
+         format('%s / %s', anb.baseline, anb.total),
+         CASE WHEN anb.baseline = 0 THEN '없음' WHEN anb.baseline < anb.total THEN '부분' ELSE '준비됨' END
+  FROM anb
   UNION ALL
   SELECT 20, '드로어 카테고리 맥락 (상위%·평균·모수 — was 라이브 계산)', 'content_analyses.main_category',
          format('%s / %s', an.category, c.total),
@@ -158,9 +168,9 @@ SELECT "화면 요소", "소스", "채움", "상태" FROM (
   FROM an, c
   UNION ALL
   SELECT 22, '드로어 댓글 신뢰도 판정 (배포본 임시 숨김)', 'content_analyses.comment_authenticity_grade',
-         format('%s / %s', an.cauth, c.total),
-         CASE WHEN an.cauth = 0 THEN '없음' WHEN an.cauth < c.total THEN '부분' ELSE '준비됨' END
-  FROM an, c
+         format('%s / %s', anb.cauth, anb.total),
+         CASE WHEN anb.cauth = 0 THEN '없음' WHEN anb.cauth < anb.total THEN '부분' ELSE '준비됨' END
+  FROM anb
   UNION ALL
   SELECT 23, '드로어 댓글 원문 (배포본 임시 숨김)', 'content_comments',
          format('%s행', cm.total),

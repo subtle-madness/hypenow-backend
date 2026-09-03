@@ -27,8 +27,8 @@ import org.springframework.stereotype.Component;
  * <p>미보강 재고가 없으면 브랜드마다 빈 목록 조회 한 번으로 끝나는 no-op이다 — 평시 재기동(배포
  * 롤링 등)마다 매번 도는 러너지만 비용이 사실상 없다.
  *
- * <p>가드 있음(2026-08-28 리뷰 지적) — {@link BrandDirectCollectService#unenumeratedBusy}가 이
- * 러너와 야간 스윕 2단계({@code sweepUnenumerated})의 동시 실행을 브랜드 호출 단위로 막는다.
+ * <p>가드 있음(2026-08-28 리뷰 지적) — {@link BrandDirectCollectService#busyBrands}가 이
+ * 러너와 야간 스윕 2단계({@code sweepUnenumerated})의 동시 실행을 같은 브랜드에 한해 브랜드 호출 단위로 막는다(2026-09-03 브랜드 키화).
  * 겹치면 그 브랜드는 이번 호출에서 스킵된다(멱등이라 데이터는 안전하고, Hiker 콜 이중 지출만
  * 방지하는 목적 — 스킵된 브랜드는 다음 야간 스윕이나 다음 재기동이 이어받는다).
  */
