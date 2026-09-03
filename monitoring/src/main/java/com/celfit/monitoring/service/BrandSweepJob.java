@@ -11,9 +11,14 @@ import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -31,6 +36,12 @@ import org.springframework.stereotype.Service;
  * <p>계정 삭제·비공개 전환(SubjectNotFound·PrivateAccount)도 상태 전이 없이 격리만 한다 —
  * 브랜드 추적은 탈퇴(CLOSED)까지가 정본이라(스펙 §8) 캠페인의 hidden 전이를 승계하지 않는다.
  * 태그 열거 404(태그 0건)는 HikerBackend.fetchTaggedPage가 이미 빈 페이지로 삼킨다.
+ *
+ * <p>2026-09-03 브랜드 단위 병렬화(설계 §3-1) — 브랜드 1건 = 태스크 1건을 {@code brandSweepExecutor}
+ * (기본 4스레드)에 제출하고 전부 끝나길 기다린다. 브랜드 간 의존이 없고 3단계가 이미 브랜드 단위로
+ * 격리돼 있어 루프의 실행 형태만 바뀐다 — 브랜드 안의 순서(태그→direct→해시태그)·touchSwept 규칙은
+ * 그대로다. 제출 순서는 전날 콜 수 내림차순(LPT — 무거운 브랜드가 꼬리에 오면 종료가 그만큼 밀린다).
+ * 태스크는 예외를 밖으로 내지 않으므로 join()은 전 브랜드 완료만 뜻한다.
  */
 @Service
 public class BrandSweepJob {
@@ -49,6 +60,7 @@ public class BrandSweepJob {
 	private final HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchive;
 	private final AdDisclosureJudgeService adJudge;
 	private final boolean adDisclosureEnabled;
+	private final Executor sweepExecutor;
 
 	public BrandSweepJob(BrandRepository brands, BrandCollectService collect,
 			BrandDirectCollectService directCollect, BrandHashtagCollectService hashtagCollect,
@@ -56,7 +68,8 @@ public class BrandSweepJob {
 			BrandPostThumbnailArchiveJob brandPostThumbnailArchive,
 			HashtagPostThumbnailArchiveJob hashtagPostThumbnailArchive,
 			HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchive, AdDisclosureJudgeService adJudge,
-			@Value("${monitoring.brand.ad-disclosure.enabled:true}") boolean adDisclosureEnabled) {
+			@Value("${monitoring.brand.ad-disclosure.enabled:true}") boolean adDisclosureEnabled,
+			@Qualifier("brandSweepExecutor") Executor sweepExecutor) {
 		this.brands = brands;
 		this.collect = collect;
 		this.directCollect = directCollect;
@@ -68,6 +81,7 @@ public class BrandSweepJob {
 		this.hashtagPostAuthorImageArchive = hashtagPostAuthorImageArchive;
 		this.adJudge = adJudge;
 		this.adDisclosureEnabled = adDisclosureEnabled;
+		this.sweepExecutor = sweepExecutor;
 	}
 
 	/**
@@ -97,43 +111,64 @@ public class BrandSweepJob {
 		}
 	}
 
+	private void runSweep() {
+		long startNanos = System.nanoTime();
+		LocalDate today = LocalDate.now(KST);
+		// 직전 스윕(전날 KST 02:00~)의 콜은 전날 날짜에 계상된다 — 그 순서로 무거운 브랜드부터 제출한다.
+		List<BrandRow> active = brands.findActiveHeaviestFirst(today.minusDays(1));
+		AtomicInteger failures = new AtomicInteger();
+		AtomicInteger directFailures = new AtomicInteger();
+		AtomicInteger hashtagFailures = new AtomicInteger();
+		List<CompletableFuture<Void>> tasks = new ArrayList<>(active.size());
+		for (BrandRow b : active) {
+			tasks.add(CompletableFuture.runAsync(
+					() -> sweepOne(b, today, failures, directFailures, hashtagFailures), sweepExecutor));
+		}
+		CompletableFuture.allOf(tasks.toArray(CompletableFuture[]::new)).join();
+		log.info("브랜드 태그 스윕 완료 — 브랜드 {}건 중 실패 {}건, direct 실패 {}건, 해시태그 실패 {}건, 소요 {}ms",
+				active.size(), failures.get(), directFailures.get(), hashtagFailures.get(),
+				(System.nanoTime() - startNanos) / 1_000_000);
+	}
+
 	/**
-	 * 유저태그 스윕·direct 2단계·해시태그 스윕은 브랜드마다 각자 try/catch로 격리한다(2026-08-18
-	 * direct 통합 §3-2) — 한쪽 실패가 touchSwept·failures 카운트에 영향을 주지 않고, 어느 한 단계가
-	 * 실패한 브랜드도 나머지 단계는 그대로 시도된다(서로 독립된 수집 경로 — 스펙 §8).
+	 * 브랜드 1건의 3단계 — 유저태그 스윕·direct 2단계·해시태그 스윕은 각자 try/catch로 격리한다
+	 * (2026-08-18 direct 통합 §3-2). 한쪽 실패가 touchSwept·failures 카운트에 영향을 주지 않고, 어느 한
+	 * 단계가 실패한 브랜드도 나머지 단계는 그대로 시도된다(서로 독립된 수집 경로 — 스펙 §8).
 	 *
 	 * <p><b>touchSwept는 1단계(유저태그) 성공에만 찍는다</b> — direct 2단계 실패가 계정을 "수집
 	 * 준비 중"으로 되돌리면 안 된다(direct 실패는 그 게시물만의 문제이지 계정 전체의 문제가 아니다).
+	 *
+	 * <p>단계별 소요를 한 줄로 남긴다(2026-09-03) — 이번 병렬화 진단은 Loki 마커 3종으로 브랜드별
+	 * 소요를 역산해야 했다. 다음 진단은 이 한 줄이면 된다. 이 메서드는 예외를 밖으로 내지 않는다
+	 * (runSweep의 join()이 "전 브랜드 완료"를 뜻하는 전제).
 	 */
-	private void runSweep() {
-		LocalDate today = LocalDate.now(KST);
-		List<BrandRow> active = brands.findActive();
-		int failures = 0;
-		int directFailures = 0;
-		int hashtagFailures = 0;
-		for (BrandRow b : active) {
-			try {
-				collect.sweep(b);
-				brands.touchSwept(b.id(), today);   // 성공 시에만 — 실패 브랜드는 "준비 중"으로 남는다
-			} catch (RuntimeException e) {
-				failures++;
-				log.warn("브랜드 스윕 실패(격리) — {}: {}", b.username(), e.toString());
-			}
-			try {
-				directCollect.sweepUnenumerated(b);
-			} catch (RuntimeException e) {
-				directFailures++;
-				log.warn("브랜드 direct 스윕 실패(격리) — {}: {}", b.username(), e.toString());
-			}
-			try {
-				hashtagCollect.sweep(b);
-			} catch (RuntimeException e) {
-				hashtagFailures++;
-				log.warn("브랜드 해시태그 스윕 실패(격리) — {}: {}", b.username(), e.toString());
-			}
+	private void sweepOne(BrandRow b, LocalDate today, AtomicInteger failures,
+			AtomicInteger directFailures, AtomicInteger hashtagFailures) {
+		long t0 = System.nanoTime();
+		try {
+			collect.sweep(b);
+			brands.touchSwept(b.id(), today);   // 성공 시에만 — 실패 브랜드는 "준비 중"으로 남는다
+		} catch (RuntimeException e) {
+			failures.incrementAndGet();
+			log.warn("브랜드 스윕 실패(격리) — {}: {}", b.username(), e.toString());
 		}
-		log.info("브랜드 태그 스윕 완료 — 브랜드 {}건 중 실패 {}건, direct 실패 {}건, 해시태그 실패 {}건",
-				active.size(), failures, directFailures, hashtagFailures);
+		long t1 = System.nanoTime();
+		try {
+			directCollect.sweepUnenumerated(b);
+		} catch (RuntimeException e) {
+			directFailures.incrementAndGet();
+			log.warn("브랜드 direct 스윕 실패(격리) — {}: {}", b.username(), e.toString());
+		}
+		long t2 = System.nanoTime();
+		try {
+			hashtagCollect.sweep(b);
+		} catch (RuntimeException e) {
+			hashtagFailures.incrementAndGet();
+			log.warn("브랜드 해시태그 스윕 실패(격리) — {}: {}", b.username(), e.toString());
+		}
+		long t3 = System.nanoTime();
+		log.info("브랜드 스윕 완료 — {} {}ms (태그 {}ms · direct {}ms · 해시태그 {}ms)", b.username(),
+				(t3 - t0) / 1_000_000, (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000, (t3 - t2) / 1_000_000);
 	}
 
 	/**

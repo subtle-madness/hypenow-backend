@@ -55,6 +55,73 @@ public class BrandReadRepository {
 	}
 
 	/**
+	 * 브랜드 계정 배치 조회(2026-09-03 어드민 브랜드 목록 계정 API) — {@link #findAccount}와 같은
+	 * 컬럼 집합을 여러 브랜드에 대해 한 왕복으로 읽는다(유저별 크롤링 비용 카드의
+	 * {@link #findDailyCallCounts}와 같은 위상 — 링크 수만큼 반복 호출하면 N+1이 된다).
+	 */
+	public List<BrandAccountRow> findAccountsByIds(Collection<Long> brandIds) {
+		if (brandIds.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT id, username, last_swept_on, last_swept_at, registered_at, backfill_completed_at,
+				       backfill_error, followers, following, media_count, biography, full_name,
+				       profile_pic_url, is_verified, external_url, status, image_object_path,
+				       collection_months, collection_capped, covered_until,
+				       COALESCE(collection_started_at, registered_at) AS collection_started_at
+				FROM brand_account
+				WHERE id IN (:brandIds)
+				""")
+				.param("brandIds", brandIds)
+				.query(BrandAccountRow.class)
+				.list();
+	}
+
+	/**
+	 * 브랜드별 총 수집량(2026-09-03 어드민 브랜드 목록 계정 API) — tagged·direct·hashtag 전 소스,
+	 * 삭제·비공개({@code unavailable_at} 有) 행도 포함한 전체 행수다. 사용자 화면의 기간 창(365일
+	 * 컷)·정산(enriched) 필터가 적용된 postCount와는 다른 "총 수집량" 지표라는 점에 유의(계약 문서 참조).
+	 */
+	public List<PostCountRow> countPostsByBrand(Collection<Long> brandIds) {
+		if (brandIds.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT brand_id, count(*) AS post_count
+				FROM brand_tagged_post
+				WHERE brand_id IN (:brandIds)
+				GROUP BY brand_id
+				""")
+				.param("brandIds", brandIds)
+				.query(PostCountRow.class)
+				.list();
+	}
+
+	/**
+	 * 브랜드별 Hiker 콜 합(2026-09-03 어드민 브랜드 목록 계정 API) — {@link #findDailyCallCounts}(일별
+	 * 원본, 유저별 연결 기간 귀속용)와 달리 여기서는 계정 단위 합계(전체·이번 달)만 필요해 SQL에서
+	 * 미리 접는다. month는 호출부가 넘긴 {@code monthStart}(KST 이번 달 1일) 이후 콜만 필터
+	 * (FILTER 절)로 골라 더한다 — sum()은 numeric을 돌려주므로 ::bigint 캐스트가 필수(record가 long).
+	 */
+	public List<BrandCallSumRow> sumCallCountsByBrand(Collection<Long> brandIds, LocalDate monthStart) {
+		if (brandIds.isEmpty()) {
+			return List.of();   // IN () 은 SQL 오류 — 빈 입력 선처리
+		}
+		return jdbc.sql("""
+				SELECT brand_id,
+				       SUM(calls)::bigint AS total,
+				       COALESCE(SUM(calls) FILTER (WHERE called_on >= :monthStart), 0)::bigint AS month
+				FROM brand_call_count
+				WHERE brand_id IN (:brandIds)
+				GROUP BY brand_id
+				""")
+				.param("brandIds", brandIds)
+				.param("monthStart", monthStart)
+				.query(BrandCallSumRow.class)
+				.list();
+	}
+
+	/**
 	 * 브랜드 풀(tagged ∪ direct) 게시물 조회(2026-08-18 direct 통합 §3-3, T10 — 옛
 	 * {@code findTaggedPostsInWindow}/{@code findEnrichedTaggedPostsInWindow} 통합) — cutoff(365일
 	 * 컷) 이후 taken_at인 행 <b>또는</b> direct 등록 행(창 예외, direct는 등록 시점이 아무리 오래돼도
@@ -779,6 +846,14 @@ public class BrandReadRepository {
 
 	/** brand_call_count 1행 — calledOn은 KST 달력일(집계 경계 계산도 KST — 쓰는 쪽과 정합). */
 	public record BrandCallDailyRow(long brandId, LocalDate calledOn, long calls) {
+	}
+
+	/** 브랜드별 총 게시물 수({@link #countPostsByBrand}) — 어드민 목록 postCount("총 수집량")의 원천. */
+	public record PostCountRow(long brandId, long postCount) {
+	}
+
+	/** 브랜드별 콜 합계({@link #sumCallCountsByBrand}) — total은 전체 기간, month는 KST 이번 달분. */
+	public record BrandCallSumRow(long brandId, long total, long month) {
 	}
 
 	/**
