@@ -1,5 +1,7 @@
 package com.celfit.was.v1.account;
 
+import com.celfit.was.auth.UserRepository;
+import com.celfit.was.crypto.FieldCipher;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -23,22 +25,31 @@ public class PasswordResetRepository {
 	}
 
 	private final JdbcClient jdbcClient;
+	private final FieldCipher fieldCipher;
 
-	public PasswordResetRepository(JdbcClient jdbcClient) {
+	public PasswordResetRepository(JdbcClient jdbcClient, FieldCipher fieldCipher) {
 		this.jdbcClient = jdbcClient;
+		this.fieldCipher = fieldCipher;
 	}
 
-	/** 발송 성공 후에만 호출 — 기존 행이 있으면 코드 교체 + attempts·토큰 리셋(마지막 발송만 유효). */
+	/**
+	 * 발송 성공 후에만 호출 — 기존 행이 있으면 코드 교체 + attempts·토큰 리셋(마지막 발송만 유효).
+	 * email_enc/email_bidx도 INSERT·재발송 UPDATE 양쪽에서 함께 채운다(스펙 §전환 1 이중 쓰기).
+	 */
 	public void upsert(String email, String codeHash, Instant codeExpiresAt) {
+		String normalized = UserRepository.normalizeEmail(email);
 		jdbcClient.sql("""
-				INSERT INTO app.password_resets (email, code_hash, code_expires_at)
-				VALUES (:email, :codeHash, :codeExpiresAt)
+				INSERT INTO app.password_resets (email, code_hash, code_expires_at, email_enc, email_bidx)
+				VALUES (:email, :codeHash, :codeExpiresAt, :emailEnc, :emailBidx)
 				ON CONFLICT (email) DO UPDATE
 				SET code_hash = EXCLUDED.code_hash, code_expires_at = EXCLUDED.code_expires_at,
-				    attempts = 0, token_hash = NULL, token_expires_at = NULL, created_at = now()""")
+				    attempts = 0, token_hash = NULL, token_expires_at = NULL, created_at = now(),
+				    email_enc = EXCLUDED.email_enc, email_bidx = EXCLUDED.email_bidx""")
 				.param("email", email)
 				.param("codeHash", codeHash)
 				.param("codeExpiresAt", OffsetDateTime.ofInstant(codeExpiresAt, ZoneOffset.UTC))
+				.param("emailEnc", fieldCipher.encrypt(normalized))
+				.param("emailBidx", fieldCipher.blindIndex(normalized))
 				.update();
 	}
 

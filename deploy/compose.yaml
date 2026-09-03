@@ -252,6 +252,13 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       REDIS_HOST: redis
+      # 개인정보 봉투 암호화(트랙 A, deploy/README.md §6-3) — CryptoConfig가 prod 프로파일에서
+      # mode=local이면 기동을 막는다(가드), 그래서 vault가 필수. KEK OCID·crypto endpoint는
+      # 시크릿이 아니라 식별자 — 실제 접근 통제는 IAM 정책(hypenow-pii-kek-use, 이 키 1개
+      # use만 허용)이 하므로 값을 .env로 빼지 않고 여기 직접 기재한다(비밀 유출 리스크 없음).
+      CRYPTO_MODE: vault
+      CRYPTO_KEK_OCID: ocid1.key.oc1.ap-tokyo-1.ezvjprllaacng.abxhiljrxoa5bwu432rpge634dplnahnnwguxfca7dwwudwuzlm3chw72x6a
+      CRYPTO_CRYPTO_ENDPOINT: https://ezvjprllaacng-crypto.kms.ap-tokyo-1.oraclecloud.com
       # 이메일 인증 발송(Resend) — 서버 .env에 등록. 미설정 시 로깅 폴백(기동 WARN, 실발송 없음)
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       WEB_BASE_URL: ${WEB_BASE_URL:-https://www.hypenow.io}   # 주간 리포트 메일 딥링크 기준 주소
