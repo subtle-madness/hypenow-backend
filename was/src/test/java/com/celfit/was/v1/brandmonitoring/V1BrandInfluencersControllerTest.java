@@ -25,6 +25,7 @@ import com.celfit.was.monitoring.BrandReadRepository.LatestSnapshotRow;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
+import com.celfit.was.v1.influencer.V1InfluencerRepository;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import java.time.Clock;
 import java.time.Instant;
@@ -80,6 +81,9 @@ class V1BrandInfluencersControllerTest {
 	BrandHashtagTagRepository hashtagTagRepository;
 	@MockitoBean
 	MonitoringItemRepository monitoringItemRepository;
+	/** influencerId 배치 조회(2026-09-03) — DI 충족 목적, Mockito 기본값(빈 Map)이면 전원 null. */
+	@MockitoBean
+	V1InfluencerRepository influencerRepository;
 	@MockitoBean
 	Clock clock;
 	/** 인덱스 캐시({@link BrandIndexCache})의 무효화 키 산지 — 캐시 자체는 실 빈으로 붙인다. */

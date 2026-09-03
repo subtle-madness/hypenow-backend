@@ -256,7 +256,7 @@ public class V1BrandInfluencersController {
 		return new BrandInfluencerAggregator.InfluencerPost(ref.shortcode(), ref.authorUsername(),
 				ref.authorFullName(), ref.authorProfilePicUrl(), ref.authorFollowers(),
 				ref.takenAtKst(), BrandSponsorshipClassifier.SPONSORED.equals(ref.sponsorship()),
-				views, likes, likesHidden, comments);
+				views, likes, likesHidden, comments, ref.influencerId());
 	}
 
 	// ---------- 파라미터 ----------

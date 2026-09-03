@@ -61,6 +61,7 @@ public class V1ContentRepository {
 				JOIN accounts a ON a.handle = c.account_handle
 				LEFT JOIN image_assets it ON it.kind = 'thumbnail' AND it.key = c.short_code
 				LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
+				LEFT JOIN group_purchase_judgments gpj ON gpj.short_code = c.short_code
 				WHERE c.posted_at >= :start AND c.posted_at < :end
 				  AND c.content_type = :contentType
 				  -- 랭킹은 시점 편향 없는 분만 노출 (2026-07-21 PO 결정): late_backfill(늦크롤 지표 상향

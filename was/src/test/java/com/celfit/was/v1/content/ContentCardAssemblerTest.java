@@ -20,6 +20,7 @@ class ContentCardAssemblerTest {
 				"[{\"name\":\"머지\",\"evidence\":\"e\"}]",
 				"[{\"name\":\"삼각형 웨지 퍼프\",\"brand\":\"머지\"}]",
 				"[\"다이소\"]",
+				true, // groupPurchase(2026-09-03) — 서버 판정 테이블 verdict=true를 흉내
 				"zingdong__", "현징이", "/avatars/z.jpg", 33325L, new BigDecimal("62.4321"));
 	}
 
@@ -37,13 +38,14 @@ class ContentCardAssemblerTest {
 		// hypeScore는 2026-07-30부터 hypeScorePrecise(소수, 출력 매핑 반영)를 그대로 싣는다 —
 		// hype_score(정수, 62)가 아니라 hype_score_precise(62.4321)와 일치해야 한다(스펙 §10).
 		assertThat(card.hypeScore()).isEqualByComparingTo("62.4321");
+		assertThat(card.groupPurchase()).isTrue(); // ContentCardRow.groupPurchase 그대로 전달(2026-09-03)
 	}
 
 	@Test
 	void jsonb_null은_빈_배열로_내린다() {
 		ContentCardRow r = new ContentCardRow("SC2", null, "c", OffsetDateTime.now(), "feed",
 				null, "u", null, 10L, 2L, 30L, OffsetDateTime.now(),
-				"skincare", null, "organic", null, null, null, "h", "d", "p", 100L, null);
+				"skincare", null, "organic", null, null, null, false, "h", "d", "p", 100L, null);
 		ContentCard card = assembler.toCard(r);
 		assertThat(card.brands()).isEmpty();
 		assertThat(card.products()).isEmpty();
@@ -51,5 +53,6 @@ class ContentCardAssemblerTest {
 		assertThat(card.subCategories()).isEmpty();
 		assertThat(card.views()).isNull(); // 피드 views null 규약 (스펙 3.6)
 		assertThat(card.hypeScore()).isNull();
+		assertThat(card.groupPurchase()).isFalse(); // 미판정(행 없음 상당) 기본값
 	}
 }

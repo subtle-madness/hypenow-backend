@@ -44,6 +44,7 @@ public class ContentCardAssembler {
 				r.metricCapturedAt() == null ? null : ISO_Z.format(r.metricCapturedAt().toInstant()),
 				r.hypeScorePrecise(), r.views(), r.likes(), r.comments(),
 				names(r.brandsJson()), names(r.productsJson()), strings(r.distributorsJson()),
+				r.groupPurchase(),
 				new ContentCard.Influencer(r.handle(), r.handle(), r.displayName(),
 						r.profileImageUrl(), r.followers()),
 				saved);
