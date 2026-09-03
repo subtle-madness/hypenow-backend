@@ -127,7 +127,7 @@ class V1BrandAiMessagesControllerTest {
 	}
 
 	private static BrandLinkRow link() {
-		return new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", 12, OffsetDateTime.now(), null);
+		return new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", 12, OffsetDateTime.now(), null, null);
 	}
 
 	private static AppUserDetails principal() {

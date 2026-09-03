@@ -14,12 +14,15 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandCallSumRow;
 import com.celfit.was.monitoring.BrandReadRepository.PostCountRow;
 import com.celfit.was.v1.common.V1ApiException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -47,7 +50,7 @@ class AdminBrandAccountServiceTest {
 	private static BrandLinkRow link(long id, long userId, long brandId, String username, String accountType,
 			int months, String createdAt) {
 		return new BrandLinkRow(id, userId, brandId, username, accountType, months,
-				OffsetDateTime.parse(createdAt), null);
+				OffsetDateTime.parse(createdAt), null, null);
 	}
 
 	private static AdminUserRow user(long id, String email, String name, String companyName) {
@@ -329,6 +332,79 @@ class AdminBrandAccountServiceTest {
 		assertThat(result.rows()).extracting(r -> r.user().email())
 				.containsExactly("first@test.io", "second@test.io");
 		assertThat(result.rows()).extracting(AdminBrandAccountRow::mode).containsExactly("own", "competitor");
+	}
+
+	// --- 60초 캐시(2026-09-04, staging monitoring-ro 풀 경합 실측 대응) ---
+
+	@Test
+	void 조립_결과는_60초_안에_재조회하면_리포지토리를_다시_부르지_않는다() {
+		given(links.findAllActive()).willReturn(List.of(
+				link(1, 10, 100, "a", "own", 12, "2026-08-01T00:00:00+09:00")));
+		given(users.findByIds(anyCollection())).willReturn(List.of(user(10, "u1@test.io", "", "")));
+		given(reads.findAccountsByIds(anyCollection())).willReturn(List.of());
+		given(reads.countPostsByBrand(anyCollection())).willReturn(List.of());
+		given(reads.sumCallCountsByBrand(anyCollection(), org.mockito.ArgumentMatchers.any())).willReturn(List.of());
+
+		AdminBrandAccountService service = service();   // 같은 인스턴스를 재사용해야 캐시가 걸린다
+		service.list(allPage(), null, null);
+		// 정렬·검색이 바뀌어도 조립(4쿼리)은 캐시된 목록에서 재사용돼야 한다.
+		service.list(allPage(), "username:asc", "a");
+
+		org.mockito.Mockito.verify(links, org.mockito.Mockito.times(1)).findAllActive();
+		org.mockito.Mockito.verify(reads, org.mockito.Mockito.times(1)).findAccountsByIds(anyCollection());
+	}
+
+	@Test
+	void TTL_60초가_지나면_다시_조회한다() {
+		given(links.findAllActive()).willReturn(List.of(
+				link(1, 10, 100, "a", "own", 12, "2026-08-01T00:00:00+09:00")));
+		given(users.findByIds(anyCollection())).willReturn(List.of(user(10, "u1@test.io", "", "")));
+		given(reads.findAccountsByIds(anyCollection())).willReturn(List.of());
+		given(reads.countPostsByBrand(anyCollection())).willReturn(List.of());
+		given(reads.sumCallCountsByBrand(anyCollection(), org.mockito.ArgumentMatchers.any())).willReturn(List.of());
+
+		MutableClock clock = new MutableClock(Instant.parse("2026-08-20T01:00:00Z"));
+		AdminBrandAccountService service = new AdminBrandAccountService(links, users, Optional.of(reads), clock);
+
+		service.list(allPage(), null, null);
+		clock.advance(Duration.ofSeconds(61));   // CACHE_TTL(60초) 경과
+		service.list(allPage(), null, null);
+
+		org.mockito.Mockito.verify(links, org.mockito.Mockito.times(2)).findAllActive();
+	}
+
+	/** 테스트 전용 가변 Clock — {@link AdminBrandAccountService#CACHE_TTL} 경과를 재현한다. */
+	private static final class MutableClock extends Clock {
+		private final AtomicReference<Instant> instant;
+		private final ZoneId zone;
+
+		MutableClock(Instant start) {
+			this(new AtomicReference<>(start), ZoneOffset.UTC);
+		}
+
+		private MutableClock(AtomicReference<Instant> instant, ZoneId zone) {
+			this.instant = instant;
+			this.zone = zone;
+		}
+
+		@Override
+		public ZoneId getZone() {
+			return zone;
+		}
+
+		@Override
+		public Clock withZone(ZoneId zone) {
+			return new MutableClock(instant, zone);
+		}
+
+		@Override
+		public Instant instant() {
+			return instant.get();
+		}
+
+		void advance(Duration duration) {
+			instant.updateAndGet(i -> i.plus(duration));
+		}
 	}
 
 	@Test

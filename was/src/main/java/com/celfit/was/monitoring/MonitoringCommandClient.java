@@ -138,6 +138,20 @@ public class MonitoringCommandClient {
 	}
 
 	/**
+	 * 해시태그 자동 시드 제안 조회(2026-09-03 자동 시드 재설계 §3-1, monitoring BrandController
+	 * hashtag-suggestion) — monitoring이 계산만 해서 돌려주는 값이다(그쪽은 아무것도 쓰지 않는다).
+	 * {@code tag}는 항상 비어 있지 않다(FREQ → AI → FALLBACK 3단).
+	 *
+	 * <p>404(BRAND_NOT_FOUND)는 다른 브랜드 조회 경로와 동형으로 MonitoringApiException으로 승격된다 —
+	 * 호출부({@code V1BrandAccountService.ensureAutoSeeded})가 best-effort로 격리한다.
+	 */
+	public HashtagSuggestionBody getHashtagSuggestion(String username) {
+		return exchange(() -> restClient.get()
+				.uri("/api/brands/{username}/hashtag-suggestion", username)
+				.retrieve().body(HashtagSuggestionBody.class));
+	}
+
+	/**
 	 * 태그 셋 전체 교체(PUT 계약) — tags는 monitoring이 정규화(trim·#제거·소문자·중복 제거) 후 저장.
 	 * 빈 목록도 허용(2026-08-12부터 — monitoring PUT 하한 가드 폐지, 단건·전체 삭제 API 참조).
 	 */
@@ -259,6 +273,15 @@ public class MonitoringCommandClient {
 
 	/** monitoring BrandController.HashtagRunStateBody와 동형. */
 	record HashtagRunStateBody(List<TagRunState> tags) {
+	}
+
+	/**
+	 * 제안 응답(§3-1) — path는 FREQ|AI|FALLBACK, tag는 항상 비어 있지 않다.
+	 * topCount·candidatePosts는 운영 판단 재료(FALLBACK 비율이 높으면 AI 경로가 죽은 것이다)라
+	 * 저장하지 않고 로그·검토용으로만 쓴다. Integer인 이유는 필드 누락 응답에서 NPE가 아니라
+	 * null로 들어오게 하기 위함이다.
+	 */
+	public record HashtagSuggestionBody(String path, String tag, Integer topCount, Integer candidatePosts) {
 	}
 
 	/** monitoring BrandController.DirectPostRegisterRequest와 동형. */
