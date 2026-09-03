@@ -47,6 +47,9 @@ class FeedUserPostsFetcherTest {
 		assertThat(image.takenAt()).isEqualTo(1_787_148_707L);
 		assertThat(image.ownerUserId()).isEqualTo("528817151");
 		assertThat(image.caption()).isEqualTo("A stunning view of Earth from orbit.");
+		// S14 — image_versions2.candidates[0].url(HikerBackend와 동일 필드, media 노드 공통 셰이프).
+		assertThat(image.thumbnailUrl())
+				.isEqualTo("https://scontent-gmp1-1.cdninstagram.com/v/t51.29350-15/img_1080.jpg?oe=6A9B20B6");
 
 		PostInfo reel = posts.stream()
 				.filter(p -> "DReelBBBBBB".equals(p.shortCode()))
@@ -165,6 +168,33 @@ class FeedUserPostsFetcherTest {
 		assertThat(posts).hasSize(1);
 		assertThat(posts.get(0).likes()).isNull();
 		assertThat(posts.get(0).likesHidden()).isTrue();
+	}
+
+	/** S14 — image_versions2 자체가 없으면(예상외 셰이프) 예외 없이 thumbnailUrl을 null로 남긴다. */
+	@Test
+	void image_versions2가_없으면_썸네일은_null이다() {
+		String body = """
+				{"items":[{"code":"NOIMG","media_type":1,"product_type":"feed","like_count":10,
+				"comment_count":2,"taken_at":1700000000,"caption":null,"user":{"username":"nasa"}}]}
+				""";
+		List<PostInfo> posts = fetcher(body, 200).fetchRecentPosts("nasa", "528817151");
+
+		assertThat(posts).hasSize(1);
+		assertThat(posts.get(0).thumbnailUrl()).isNull();
+	}
+
+	/** S14 — candidates가 빈 배열이면 마찬가지로 null(첫 후보 부재). */
+	@Test
+	void candidates가_빈_배열이면_썸네일은_null이다() {
+		String body = """
+				{"items":[{"code":"EMPTYIMG","media_type":1,"product_type":"feed","like_count":10,
+				"comment_count":2,"taken_at":1700000000,"caption":null,"user":{"username":"nasa"},
+				"image_versions2":{"candidates":[]}}]}
+				""";
+		List<PostInfo> posts = fetcher(body, 200).fetchRecentPosts("nasa", "528817151");
+
+		assertThat(posts).hasSize(1);
+		assertThat(posts.get(0).thumbnailUrl()).isNull();
 	}
 
 	@Test

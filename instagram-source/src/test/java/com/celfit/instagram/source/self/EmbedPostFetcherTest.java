@@ -42,6 +42,21 @@ class EmbedPostFetcherTest {
 	}
 
 	/**
+	 * S14 — embed HTML의 게시물 커버 이미지({@code class="EmbeddedMediaImage"})에서 thumbnailUrl을
+	 * 뽑는다. 과거엔 이 필드가 항상 null이라, 저장 계층의 COALESCE 보호(PostMetaRepository)가
+	 * "일시적 미취득"으로 오인해 기존(만료 예정) CDN URL을 영구 보존했다 — 서명 만료 후 아카이브
+	 * 잡이 선행되지 않으면 썸네일이 조용히 깨진다(07-30 프로필 이미지 만료 사건 동형).
+	 */
+	@Test
+	void 이미지_게시물의_썸네일_URL을_파싱한다() {
+		PostInfo p = fetcher(fixture("embed_image_en.html"), 200).fetch("DcOX3hWFiey");
+		assertThat(p.thumbnailUrl())
+				.startsWith("https://scontent-gmp1-1.cdninstagram.com/v/t51.82787-15/780550892_18639053554049152_7611034912661011809_n.jpg")
+				.contains("_nc_cat=1")
+				.doesNotContain("&amp;");
+	}
+
+	/**
 	 * S7 — 캡션 div가 `<a class="CaptionUsername">nasa</a><br/><br/>본문` 구조라 태그를 통째로
 	 * 벗기면 작성자 username이 캡션 앞에 "nasa\n\n"으로 섞여 들어간다(09-03 운영 실측 23건, 캡션
 	 * 해시 요동→광고 재판정 반복 유발). CaptionUsername 앵커를 내용째 제거한 뒤 본문만 남아야 한다.
@@ -65,6 +80,24 @@ class EmbedPostFetcherTest {
 		assertThat(p.viewsTrusted()).isTrue();
 		assertThat(p.likesHidden()).isFalse();   // 좋아요 숫자를 실제로 봤으니 확정 비숨김
 		assertThat(p.sharesHidden()).isNull();   // S9 — 공유는 embed에 구조적으로 안 실려 항상 미확정
+	}
+
+	/** S14 — 릴스도 커버 프레임을 같은 클래스로 렌더한다(embed_reel_en.html 실측). */
+	@Test
+	void 릴스_게시물의_썸네일_URL도_파싱한다() {
+		PostInfo p = fetcher(fixture("embed_reel_en.html"), 200).fetch("DcMXl1IPNtB");
+		assertThat(p.thumbnailUrl())
+				.startsWith("https://scontent-gmp1-1.cdninstagram.com/v/t51.82787-15/779017700_18615481711026724_2930580986888954454_n.jpg")
+				.doesNotContain("&amp;");
+	}
+
+	/** S14 — 커버 이미지 태그 자체가 없으면(예상외 셰이프) 예외 없이 null로 남긴다. */
+	@Test
+	void 커버_이미지_태그가_없으면_썸네일은_null이다() {
+		String body = "<html><body><span class=\"UsernameText\">nasa</span>"
+				+ "<a data-log-event=\"likeCountClick\">100 likes</a></body></html>";
+		PostInfo p = fetcher(body, 200).fetch("SC5");
+		assertThat(p.thumbnailUrl()).isNull();
 	}
 
 	/**

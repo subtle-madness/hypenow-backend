@@ -37,6 +37,13 @@ import org.slf4j.LoggerFactory;
  * (CollectService#assumeZeroForOmittedKeys 참조) — 단건 재시도(항상 Hiker 직결)가 진짜 확정값을
  * 관측하면 {@link com.celfit.instagram.source.PostInfo#mergedMetrics(Long, Long, Long, Boolean)}가
  * 그 값을 되싣는다.
+ *
+ * <p><b>썸네일 갱신(S14, 2026-09-03 감사 수정)</b> — 과거엔 thumbnailUrl이 항상 null이라, 저장
+ * 계층의 COALESCE 보호(PostMetaRepository — thumbnailUrl이 null이면 기존 값을 안 덮는다)가
+ * "일시적 미취득"으로 오인해 기존(만료 예정인) CDN 서명 URL을 영구 보존하는 결과를 냈다 — 아카이브
+ * 잡(PostThumbnailArchiveJob)이 만료 전에 못 따라잡으면 썸네일이 조용히 깨진다(07-30 프로필
+ * 이미지 만료 사건 동형). 커버 이미지({@code class="EmbeddedMediaImage"})는 이미지·릴스 픽스처
+ * 둘 다에 렌더되므로(실측) 여기서 뽑아 매 스윕 갱신되게 한다.
  */
 public class EmbedPostFetcher {
 
@@ -81,6 +88,12 @@ public class EmbedPostFetcher {
 	// 같은 경우)가 아니라 앵커 태그 자체를 기준으로 제거해 오삭제를 막는다.
 	private static final Pattern CAPTION_USERNAME_ANCHOR =
 			Pattern.compile("<a class=\"CaptionUsername\"[^>]*>.*?</a>", Pattern.DOTALL);
+	// S14 — 게시물 커버 이미지: <img class="EmbeddedMediaImage" ... src="...">. 릴스도 커버 프레임을
+	// 같은 클래스로 렌더한다(embed_reel_en.html 실측). class·src 속성 순서가 바뀔 수 있어 img 태그
+	// 전체를 먼저 통으로 잡고 그 안에서 src를 뽑는다(속성 순서 의존 제거).
+	private static final Pattern EMBEDDED_MEDIA_IMG =
+			Pattern.compile("(<img\\b[^>]*class=\"EmbeddedMediaImage\"[^>]*>)");
+	private static final Pattern SRC_ATTR = Pattern.compile("\\bsrc=\"([^\"]+)\"");
 	private static final Pattern NUMERIC_ENTITY = Pattern.compile("&#(\\d+);");
 
 	private final SelfFetch http;
@@ -123,6 +136,7 @@ public class EmbedPostFetcher {
 		Long comments = number(first(COMMENTS, body));
 		Long views = number(first(VIEWS, body));
 		String caption = caption(body);
+		String thumbnailUrl = thumbnailUrl(body);
 		String productType = first(PRODUCT_TYPE, body);
 		boolean reels = views != null || "clips".equals(productType);
 		String contentType = reels ? "REELS" : "FEED";
@@ -130,8 +144,25 @@ public class EmbedPostFetcher {
 		Boolean likesHidden = likes == null ? null : false;
 
 		return new PostInfo(shortCode, username, null, null, null, contentType, caption,
-				null, null, likes, comments, views, null, null, null, null, null, null, null,
+				thumbnailUrl, null, likes, comments, views, null, null, null, null, null, null, null,
 				views != null, likesHidden, null);
+	}
+
+	/**
+	 * S14 — 커버 이미지 URL(post_meta 표시 메타, {@link PostInfo} javadoc 참조). 과거엔 이 필드가
+	 * 항상 null이라, 저장 계층의 COALESCE 보호(PostMetaRepository)가 "일시적 미취득"으로 오인해
+	 * 기존(만료 예정) CDN URL을 영구 보존했다 — 인스타 CDN 서명 만료 후 아카이브 잡이 선행되지
+	 * 않으면 썸네일이 조용히 깨진다(07-30 프로필 이미지 만료 사건 동형). 태그 자체가 없으면
+	 * (예상외 셰이프) 예외 없이 null(미취득)을 반환한다 — 이 콜 전체를 실패시킬 정도로 중대한
+	 * 결손은 아니다(캡션과 달리 저장 계층이 COALESCE로 안전하게 흡수한다).
+	 */
+	private static String thumbnailUrl(String body) {
+		String imgTag = first(EMBEDDED_MEDIA_IMG, body);
+		if (imgTag == null) {
+			return null;
+		}
+		String src = first(SRC_ATTR, imgTag);
+		return src == null ? null : decodeEntities(src);
 	}
 
 	private static String first(Pattern p, String body) {

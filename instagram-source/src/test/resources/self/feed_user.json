@@ -8,7 +8,13 @@
       "comment_count": 3359,
       "taken_at": 1787148707,
       "user": {"username": "nasa"},
-      "caption": {"text": "A stunning view of Earth from orbit."}
+      "caption": {"text": "A stunning view of Earth from orbit."},
+      "image_versions2": {
+        "candidates": [
+          {"url": "https://scontent-gmp1-1.cdninstagram.com/v/t51.29350-15/img_1080.jpg?oe=6A9B20B6", "width": 1080, "height": 1080},
+          {"url": "https://scontent-gmp1-1.cdninstagram.com/v/t51.29350-15/img_480.jpg?oe=6A9B20B6", "width": 480, "height": 480}
+        ]
+      }
     },
     {
       "code": "DReelBBBBBB",
