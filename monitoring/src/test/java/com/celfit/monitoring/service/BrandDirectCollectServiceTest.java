@@ -152,6 +152,7 @@ class BrandDirectCollectServiceTest {
 		final List<String> unavailable = new ArrayList<>();
 		Instant nthNewestHashtag;                       // 스텁 floor 응답(null = 세트 미포화)
 		Instant capturedFloor;                          // unenumeratedDuePosts에 전달된 floor 캡처
+		Instant capturedRecheckBefore;                  // 부재 재검증 스로틀 컷 캡처(2026-09-03)
 		final List<Instant> frozenTouches = new ArrayList<>();  // touchFrozenHashtag(floor) 호출 캡처
 
 		InMemoryTagged() {
@@ -164,9 +165,11 @@ class BrandDirectCollectServiceTest {
 		}
 
 		@Override
-		public List<TrackedPost> unenumeratedDuePosts(long brandId, Instant minTakenAt, Instant hashtagFloor) {
+		public List<TrackedPost> unenumeratedDuePosts(long brandId, Instant minTakenAt, Instant hashtagFloor,
+				Instant unavailableRecheckBefore) {
 			capturedFloor = hashtagFloor;
-			return unenumeratedDuePosts(brandId, minTakenAt);   // 필터 자체는 Task 1 DB 테스트가 고정
+			capturedRecheckBefore = unavailableRecheckBefore;
+			return unenumeratedDuePosts(brandId, minTakenAt);   // 필터 자체는 store DB 테스트가 고정
 		}
 
 		@Override
@@ -518,6 +521,24 @@ class BrandDirectCollectServiceTest {
 
 		assertThat(tagged.frozenTouches).containsExactly(floor);
 		assertThat(tagged.capturedFloor).isEqualTo(floor);
+	}
+
+	/**
+	 * 부재 재검증 스로틀(2026-09-03) — 2단계 모수 선정에 "지금 − ABSENCE_RECHECK(7일)" 컷을
+	 * 넘긴다. 컷의 실제 필터링은 store DB 테스트가 고정하고, 여기서는 배선(태그 부재 검증과
+	 * 같은 주기를 쓰는지)만 잡는다.
+	 */
+	@Test
+	void 스윕2단계는_부재_재검증_컷을_ABSENCE_RECHECK_주기로_넘긴다() {
+		tagged.due.add(new TaggedPostRepository.TrackedPost("AAA", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("AAA", postJson("AAA", RECENT, 501));
+
+		Instant before = Instant.now().minus(BrandCollectService.ABSENCE_RECHECK);
+		serviceWithLimit(0).sweepUnenumerated(brand);
+		Instant after = Instant.now().minus(BrandCollectService.ABSENCE_RECHECK);
+
+		assertThat(tagged.capturedRecheckBefore).isNotNull();
+		assertThat(tagged.capturedRecheckBefore).isBetween(before, after);
 	}
 
 	/** 세트 미포화(floor 없음)면 동결 touch를 부르지 않고 기존 전체 모수 그대로다. */

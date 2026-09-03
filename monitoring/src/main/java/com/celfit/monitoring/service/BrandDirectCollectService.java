@@ -159,8 +159,12 @@ public class BrandDirectCollectService {
 			// 영구 제외된 행까지 매 스윕마다 갱신 대상으로 훑어 불필요한 UPDATE 범위가 무계로 자란다.
 			taggedPosts.touchFrozenHashtag(brand.id(), minTakenAt, floor, now);
 		}
+		// 부재 확정 행 재검증 스로틀(2026-09-03) — 삭제·비공개로 확정된(unavailable_at) 행에 매일 밤
+		// 404 단건 콜을 재과금하지 않도록, 태그 부재 검증과 같은 주기(ABSENCE_RECHECK, 7일)로만
+		// 생존 재확인한다. 재관측이 unavailable_at을 해제하므로 부활(재공개) 경로는 유지된다.
 		List<TaggedPostRepository.TrackedPost> dueAll = taggedPosts
-				.unenumeratedDuePosts(brand.id(), minTakenAt, floor).stream()
+				.unenumeratedDuePosts(brand.id(), minTakenAt, floor,
+						now.minus(BrandCollectService.ABSENCE_RECHECK)).stream()
 				.filter(t -> BrandCrawlPolicy.due(t.takenAt(), t.lastCrawledAt(), now))
 				.toList();
 		// 스윕당 상한(2026-08-27 설계 §5, F6 주석 정정 2026-09-02) — 구 감지 데이터 이관분은
