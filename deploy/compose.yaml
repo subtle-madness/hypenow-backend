@@ -134,10 +134,10 @@ services:
       ANALYTICS_SCHEDULE_ENABLED: "true"
       ANALYTICS_SCHEDULE_MIRROR_CRON: "0 30 19 * * *"
       ANALYTICS_SCHEDULE_ARCHIVE_CRON: "0 50 19 * * *"
-      # 파트 A(사실) — 2026-09-03 2단계 분리. app_setting analytics.analyze-mode=unified면
+      # 파트 A(사실) - 2026-09-03 2단계 분리. app_setting analytics.analyze-mode=unified면
       # 잡이 no-op 로그만 남긴다(토글을 켜기 전까지 이 크론은 무해).
       ANALYTICS_SCHEDULE_FACT_ANALYZE_CRON: "0 0 20 * * *"
-      # 파트 B(해석). unified 모드에서는 현행 통합 1콜 그대로다. 파트 A 제출과 15~30분 띄운다 —
+      # 파트 B(해석). unified 모드에서는 현행 통합 1콜 그대로다. 파트 A 제출과 15~30분 띄운다 -
       # 제출 직전 pending 수거가 겹치면 BATCH_COLLECT 락에서 한쪽이 BUSY로 건너뛴다(30분 뒤
       # 정기 수거가 받쳐 주므로 무해하지만 로그가 어지럽다).
       ANALYTICS_SCHEDULE_ANALYZE_CRON: "0 30 20 * * *"

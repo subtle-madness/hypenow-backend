@@ -212,10 +212,13 @@ public class ContentAnalysisJob {
 					"analytics.analyze-mode=split은 gemini/vertex 프로바이더에서만 지원한다 - "
 					+ "롤백하려면 app_setting analytics.analyze-mode를 unified로");
 		}
-		// submitBatch가 실제로 채택할 경로와 동일한 조건 - SYNTHESIS는 이미지를 안 보내 vlm-enabled과
-		// 무관하게 배치를 탄다(아래 if/else와 동형, 분기별 경고 문구가 달라 하나로 합치지 않는다).
-		boolean useBatch = settings.batchTransportEnabled() && batchApi != null
-				&& !(thumbnailEnabled && phase != Phase.SYNTHESIS);
+		// batchTransportEnabled()는 여기 한 번만 읽는다 - 아래 스윕 게이트와 디스패치 분기가 같은
+		// 스냅샷을 봐야 둘이 어긋나지 않는다(2026-09-03 리뷰). captionOnlyBlocked는 썸네일 첨부가
+		// 필요한 캡션 전용 배치를 못 타는 경우(파트 B는 이미지를 안 보내 무관) - 아래 if/else의
+		// 첫 분기와 동형이라 경고 문구를 따로 두되 조건 자체는 useBatch 계산에 흡수한다.
+		boolean batchTransport = settings.batchTransportEnabled();
+		boolean captionOnlyBlocked = thumbnailEnabled && phase != Phase.SYNTHESIS;
+		boolean useBatch = batchTransport && batchApi != null && !captionOnlyBlocked;
 		if (useBatch) {
 			// 배치 제출 전 pending 잔여를 먼저 수거한다(전날 미수거분 회수) - resolveTargets보다
 			// 반드시 먼저 실행해야 한다. SYNTHESIS는 "pending 집합"으로 대상을 고르는데, 순서가
@@ -230,18 +233,19 @@ public class ContentAnalysisJob {
 		Baselines baselines = phase == Phase.FACTS ? EMPTY_BASELINES : loadBaselines();
 		List<Map<String, Object>> targets = resolveTargets(phase, timely);
 
-		if (settings.batchTransportEnabled()) {
-			// 썸네일 첨부는 사실 추출(파트 A·통합)에만 의미가 있다 - 파트 B는 이미지를 안 보내므로
-			// vlm-enabled=true여도 배치로 내려가는 게 정상이다.
-			if (thumbnailEnabled && phase != Phase.SYNTHESIS) {
+		// 제출 여부는 위 스윕 게이트와 같은 useBatch 하나로만 판단한다 - 조건을 여기서 다시 조립하면
+		// 스윕은 돌았는데 제출은 온라인으로 새는(또는 그 반대) 경우가 생길 수 있다(2026-09-03 리뷰).
+		if (useBatch) {
+			return submitBatch(phase, timely, targets, baselines);
+		}
+		if (batchTransport) {
+			if (captionOnlyBlocked) {
 				// 배치 JSONL은 캡션 전용(백필과 동일 - 익일 수거 시점엔 서명 URL이 대부분 만료돼
 				// 애초에 첨부하지 않는다). vlm-enabled=true(썸네일 첨부 게이트 on)인데 배치로
 				// 내려가면 조용히 이미지 없이 분석돼 온라인과 산출물이 갈린다 - 잡을 죽이지 않고
 				// 온라인으로 폴백해 멀티모달 분석을 보존한다(2026-08-11 리뷰 반영).
 				log.warn("analytics.analyze-transport=batch인데 vlm-enabled=true - 배치는 캡션 전용이라"
 						+ " 온라인 경로로 폴백(썸네일 첨부 보존)");
-			} else if (batchApi != null) {
-				return submitBatch(phase, timely, targets, baselines);
 			} else {
 				// provider가 배치 미지원(무료 gemini 폴백 등)이면 잡을 죽이지 않고 온라인으로 내려간다
 				// (LlmConfig.geminiApi()의 vertex→gemini 폴백과 같은 안전망 원칙).
@@ -366,14 +370,15 @@ public class ContentAnalysisJob {
 		// 잠기므로 pending 행 전량을 1회 조회로 받아 둔다(기준선 로딩과 같은 이유).
 		Map<String, Map<String, Object>> storedFacts = phase == Phase.SYNTHESIS
 				? StoredFacts.loadPending(analysis) : Map.of();
-		if (phase == Phase.SYNTHESIS) {
-			// C1 2차 방어선: resolveTargets가 고른 pending 집합과 이 storedFacts 조회 사이의 좁은
-			// 창에서도 어긋날 수 있다 - 빈 "확인된 사실"로 내보내는 대신 걸러 다음 실행에 맡긴다.
-			targets = requireStoredFacts(targets, storedFacts);
-			if (targets.isEmpty()) {
-				log.info("배치 제출 대상 없음 - 사실 누락으로 전량 제외 (phase={}, timely={})", phase, timely);
-				return new JobResult(0, 0, false);
-			}
+		// C1 2차 방어선: resolveTargets가 고른 pending 집합과 이 storedFacts 조회 사이의 좁은
+		// 창에서도 어긋날 수 있다 - 빈 "확인된 사실"로 내보내는 대신 걸러 다음 실행에 맡긴다.
+		// 원 파라미터 targets는 손대지 않고 새 로컬에 담는다(runOnline의 resolvedTargets와 동형).
+		List<Map<String, Object>> resolvedTargets = phase == Phase.SYNTHESIS
+				? requireStoredFacts(targets, storedFacts) : targets;
+		if (phase == Phase.SYNTHESIS && resolvedTargets.isEmpty()) {
+			log.info("배치 제출 대상 없음 - 사실 누락으로 전량 제외 (phase={}, timely={})", phase,
+					timelyLogValue(phase, timely));
+			return new JobResult(0, 0, false);
 		}
 		// 청크 분할(2026-08-31): 대상 전량을 배치 1건으로 밀면 sidecar_jsonl 한 컬럼에 수십 MB가
 		// 들어가고 Vertex 배치 파일 한도에도 걸린다(백로그 일괄 개방 대비). 수거는 배치 행 단위라
@@ -381,9 +386,9 @@ public class ContentAnalysisJob {
 		int chunkSize = settings.batchChunkSize();
 		int submitted = 0;
 		int chunks = 0;
-		for (int from = 0; from < targets.size(); from += chunkSize) {
+		for (int from = 0; from < resolvedTargets.size(); from += chunkSize) {
 			List<Map<String, Object>> chunk =
-					targets.subList(from, Math.min(from + chunkSize, targets.size()));
+					resolvedTargets.subList(from, Math.min(from + chunkSize, resolvedTargets.size()));
 			// 업로드 이름은 청크마다 유일해야 한다 - 실구현(VertexHttpApi)의 GCS 객체 경로가
 			// displayName 그대로라, 같은 이름이면 뒤 청크가 앞 청크 입력 파일을 덮어쓴다
 			// (2026-08-31 운영 실발생 - 3,000건 배치가 795건 결과·전원 사이드카 매칭 실패).
@@ -397,12 +402,17 @@ public class ContentAnalysisJob {
 		return new JobResult(submitted, 0, false);
 	}
 
+	/** 드롭 로그에 나열할 short_code 상한 - 대량 드롭 시 로그 한 줄이 수천 건을 물고 늘어지지 않게. */
+	private static final int DROPPED_LOG_LIMIT = 20;
+
 	/**
 	 * SYNTHESIS 대상 중 저장된 사실이 없는 short_code를 제거한다(2026-09-03 리뷰 C1). 파트 B
 	 * 프롬프트의 전제는 "A 행이 존재한다"이므로, 빈 사실로 내보내 좋은 기존 해석을 덮어쓰는 대신
 	 * 여기서 걸러 다음 실행에서 자연 재대상되게 한다.
+	 *
+	 * <p>package-private - 테스트가 targets/storedFacts 어긋남 케이스를 직접 호출로 검증한다.
 	 */
-	private static List<Map<String, Object>> requireStoredFacts(List<Map<String, Object>> targets,
+	static List<Map<String, Object>> requireStoredFacts(List<Map<String, Object>> targets,
 			Map<String, Map<String, Object>> storedFacts) {
 		List<Map<String, Object>> kept = new ArrayList<>();
 		List<String> dropped = new ArrayList<>();
@@ -415,7 +425,12 @@ public class ContentAnalysisJob {
 			}
 		}
 		if (!dropped.isEmpty()) {
-			log.warn("SYNTHESIS 대상인데 저장된 사실이 없어 제외 - {}건: {}", dropped.size(), dropped);
+			// 로그 한 줄에는 건수 + 앞 20개만 - 나머지는 "...(N건 생략)"으로 요약한다.
+			List<String> shown = dropped.size() > DROPPED_LOG_LIMIT
+					? dropped.subList(0, DROPPED_LOG_LIMIT) : dropped;
+			String suffix = dropped.size() > DROPPED_LOG_LIMIT
+					? " ...(%d건 생략)".formatted(dropped.size() - DROPPED_LOG_LIMIT) : "";
+			log.warn("SYNTHESIS 대상인데 저장된 사실이 없어 제외 - {}건: {}{}", dropped.size(), shown, suffix);
 		}
 		return kept;
 	}
@@ -749,11 +764,13 @@ public class ContentAnalysisJob {
 	/**
 	 * 스택트레이스 없이 warn으로만 집계할 실패 신호 - 이미 원인 로그를 남긴(또는 남길) 예상 범주의
 	 * 실패(M5의 파트 A null 속성 응답, M9의 파트 B UPDATE 0행)가 공유한다. runOnline의 전용
-	 * catch 절이 처리한다.
+	 * catch 절이 처리한다. {@code super(message, null, false, false)}로 스택트레이스 채집·
+	 * suppression 등록을 둘 다 끈다 - 예상 범주 실패라 원인 프레임이 필요 없고, 병렬 처리(콘텐츠당
+	 * 스레드 태스크)에서 매번 스택트레이스를 채우는 비용도 아낀다.
 	 */
 	private static final class QuietFailure extends RuntimeException {
 		QuietFailure(String message) {
-			super(message);
+			super(message, null, false, false);
 		}
 	}
 

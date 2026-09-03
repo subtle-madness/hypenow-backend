@@ -95,7 +95,7 @@ final class GeminiBatchLines {
 	}
 
 	/**
-	 * JSONL 요청 라인 조립 공통 뼈대 — key·systemInstruction·contents(userText)·generationConfig
+	 * JSONL 요청 라인 조립 공통 뼈대 - key·systemInstruction·contents(userText)·generationConfig
 	 * (temperature 0 결정론·responseMimeType=JSON·responseSchema·maxOutputTokens). kind 3종이 공유.
 	 */
 	private static ObjectNode buildLine(ObjectMapper om, String shortCode, String systemText,
@@ -225,7 +225,7 @@ final class GeminiBatchLines {
 		}
 	}
 
-	/** {@link #shortCodeAndText}의 반환값 — 결과 라인에서 꺼낸 (short_code, 응답 텍스트). */
+	/** {@link #shortCodeAndText}의 반환값 - 결과 라인에서 꺼낸 (short_code, 응답 텍스트). */
 	private record ParsedResult(String shortCode, String text) {
 	}
 

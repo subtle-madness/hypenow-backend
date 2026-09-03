@@ -39,7 +39,7 @@ public class ScheduleRunner {
 		log.info("스케줄 analyze: {}", jobService.trigger(JobName.ANALYZE, TriggerType.SCHEDULED));
 	}
 
-	/** 파트 A(사실) 배치 — 2026-09-03 2단계 분리. analytics.analyze-mode=unified면 잡이 no-op이라
+	/** 파트 A(사실) 배치 - 2026-09-03 2단계 분리. analytics.analyze-mode=unified면 잡이 no-op이라
 	 * 크론이 돌아도 로그 한 줄만 남는다(토글 전 무해). */
 	@Scheduled(cron = "${analytics.schedule.fact-analyze-cron:-}")
 	void factAnalyze() {

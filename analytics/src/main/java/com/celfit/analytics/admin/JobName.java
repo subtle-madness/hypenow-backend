@@ -5,7 +5,7 @@ public enum JobName {
 	MIRROR("미러 — 분석 뷰 → analysis DB"),
 	CLASSIFY("댓글 분류 (LLM)"),
 	ANALYZE("콘텐츠 분석 (LLM)"),
-	FACT_ANALYZE("콘텐츠 사실 분석 (LLM) — 파트 A, 캡션 전용"),
+	FACT_ANALYZE("콘텐츠 사실 분석 (LLM) - 파트 A, 캡션 전용"),
 	ACCOUNT_ANALYZE("계정 카피 (LLM)"),
 	SYNTHESIS_REFRESH("해석 문구 갱신 (LLM) — 사실 보존"),
 	ARCHIVE("이미지 아카이브 — CDN→오브젝트 스토리지"),

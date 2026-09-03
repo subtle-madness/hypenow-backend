@@ -62,7 +62,7 @@ public final class GeminiContentAnalyzer implements ContentInsightPort, ContentF
 	 * 파트 A(사실) 전용 스키마 - 통합 스키마({@link #RESPONSE_SCHEMA})에서 해석 5필드
 	 * (aiContentSummary·contentsPattern·aiCommentInsight·commentAuthenticityGrade·
 	 * commentAuthenticityNote)를 properties·required·propertyOrdering 세 곳에서 뺀 것이다.
-	 * 나머지 11필드의 정의·순서는 통합과 완전히 같다(2026-09-03 2단계 분리 설계 §4-4).
+	 * 나머지 12필드의 정의·순서는 통합과 완전히 같다(2026-09-03 2단계 분리 설계 §4-4).
 	 */
 	public static final String RESPONSE_SCHEMA_FACTS = """
 			{"type":"object","properties":{

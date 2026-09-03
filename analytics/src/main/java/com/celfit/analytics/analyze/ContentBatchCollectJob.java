@@ -140,7 +140,7 @@ public class ContentBatchCollectJob {
 		analysis.update("""
 				UPDATE content_batch_jobs SET status = 'collected', collected_at = now(), sidecar_jsonl = NULL
 				WHERE id = ?""", id);
-		log.info("배치 수거 완료 — batch_name={}, kind={}, {}건 저장, {}건 실패",
+		log.info("배치 수거 완료 - batch_name={}, kind={}, {}건 저장, {}건 실패",
 				batchName, kind, saved.get(), lineFailed.get());
 		return saved.get();
 	}

@@ -46,7 +46,7 @@ public class AnalyticsJobService {
 	private final DerivedViewRefresher derivedViewRefresher;
 
 	/** 파생 matview 입력(account_content_series·content_analyses)을 쓰는 잡 — 완료 후 사전집계를 갱신한다.
-	 *  FACT_ANALYZE(2026-09-03)는 사실 컬럼(is_beauty·main_category·ad_type)을 채우므로 같은 대상이다 —
+	 *  FACT_ANALYZE(2026-09-03)는 사실 컬럼(is_beauty·main_category·ad_type)을 채우므로 같은 대상이다 -
 	 *  배치 경로에서는 BATCH_COLLECT가 갱신하지만 온라인 폴백 경로에는 이 후크뿐이다. */
 	private static final Set<JobName> DERIVED_INPUT_JOBS = EnumSet.of(
 			JobName.MIRROR, JobName.ANALYZE, JobName.FACT_ANALYZE,
@@ -159,7 +159,7 @@ public class AnalyticsJobService {
 				yield new JobResult(n, 0, false);
 			}
 			case ANALYZE -> analyzeJob.getObject().run();
-			// 파트 A(사실) — 같은 빈의 다른 진입점. analyze-mode=unified면 잡 안에서 no-op이다.
+			// 파트 A(사실) - 같은 빈의 다른 진입점. analyze-mode=unified면 잡 안에서 no-op이다.
 			case FACT_ANALYZE -> analyzeJob.getObject().runFacts();
 			case LATE_BACKFILL_ANALYZE -> analyzeJob.getObject().runLateBackfill();
 			// 수거는 종류 불문 한 트리거로 — 각 잡은 자기 pending이 없으면 no-op라 겹쳐 돌아도 무해.

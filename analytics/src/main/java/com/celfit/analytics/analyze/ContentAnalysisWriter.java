@@ -20,6 +20,7 @@ final class ContentAnalysisWriter {
 	static void insert(JdbcTemplate analysis, ObjectMapper json, String shortCode, String model,
 			Baseline b, ContentAttributes attrs, Synthesis s, boolean conflictIgnore,
 			String metricTimeliness) {
+		FactParams fp = factParams(json, attrs);
 		analysis.update("""
 				INSERT INTO content_analyses (short_code, model,
 				  ai_content_summary, contents_pattern, ai_comment_insight,
@@ -40,19 +41,11 @@ final class ContentAnalysisWriter {
 				b.recentReelsAvgViews(), b.rankInRecentReels(), b.recentReelsCount(), b.recentContentsCount(),
 				b.recent12AvgEngagementRate(), b.recent12AvgLikeCount(), b.recent12AvgCommentCount(),
 				b.categoryTopPercentile(), b.categoryAvgViews(), b.categorySampleSize(),
-				toJson(json, attrs == null ? null : attrs.detectedBrands()),
-				attrs == null ? null : attrs.sponsoredSignalLevel(),
-				toJson(json, attrs == null ? null : attrs.sponsoredSignalReasons()),
-				attrs == null ? null : attrs.adDisclosure(),
-				toJson(json, attrs == null ? null : attrs.detectedProductCategories()),
-				toJson(json, attrs == null ? null : attrs.detectedProducts()),
-				toJson(json, attrs == null ? null : attrs.vlmAttributes()),
-				attrs == null ? null : attrs.mainCategory(),
-				toJson(json, attrs == null ? null : attrs.subCategories()),
-				toJson(json, attrs == null ? null : attrs.detectedDistributors()),
-				attrs == null ? null : attrs.adType(),
+				fp.detectedBrands(), fp.sponsoredSignalLevel(), fp.sponsoredSignalReasons(), fp.adDisclosure(),
+				fp.detectedProductCategories(), fp.detectedProducts(), fp.vlmAttributes(), fp.mainCategory(),
+				fp.subCategories(), fp.detectedDistributors(), fp.adType(),
 				s.commentAuthenticityGrade(), s.commentAuthenticityNote(), metricTimeliness,
-				attrs == null ? null : attrs.isBeauty(), Synthesis.VERSION);
+				fp.isBeauty(), Synthesis.VERSION);
 	}
 
 	/**
@@ -72,6 +65,7 @@ final class ContentAnalysisWriter {
 	 */
 	static int insertFacts(JdbcTemplate analysis, ObjectMapper json, String shortCode, String model,
 			ContentAttributes attrs) {
+		FactParams fp = factParams(json, attrs);
 		return analysis.update("""
 				INSERT INTO content_analyses (short_code, model,
 				  detected_brands, sponsored_signal_level, sponsored_signal_reasons, ad_disclosure,
@@ -81,18 +75,9 @@ final class ContentAnalysisWriter {
 				        ?::jsonb, ?::jsonb, ?, ?, 'pending')
 				ON CONFLICT (short_code) DO NOTHING""",
 				shortCode, model,
-				toJson(json, attrs == null ? null : attrs.detectedBrands()),
-				attrs == null ? null : attrs.sponsoredSignalLevel(),
-				toJson(json, attrs == null ? null : attrs.sponsoredSignalReasons()),
-				attrs == null ? null : attrs.adDisclosure(),
-				toJson(json, attrs == null ? null : attrs.detectedProductCategories()),
-				toJson(json, attrs == null ? null : attrs.detectedProducts()),
-				toJson(json, attrs == null ? null : attrs.vlmAttributes()),
-				attrs == null ? null : attrs.mainCategory(),
-				toJson(json, attrs == null ? null : attrs.subCategories()),
-				toJson(json, attrs == null ? null : attrs.detectedDistributors()),
-				attrs == null ? null : attrs.adType(),
-				attrs == null ? null : attrs.isBeauty());
+				fp.detectedBrands(), fp.sponsoredSignalLevel(), fp.sponsoredSignalReasons(), fp.adDisclosure(),
+				fp.detectedProductCategories(), fp.detectedProducts(), fp.vlmAttributes(), fp.mainCategory(),
+				fp.subCategories(), fp.detectedDistributors(), fp.adType(), fp.isBeauty());
 	}
 
 	/**
@@ -130,6 +115,29 @@ final class ContentAnalysisWriter {
 				b.recent12AvgLikeCount(), b.recent12AvgCommentCount(),
 				b.categoryTopPercentile(), b.categoryAvgViews(), b.categorySampleSize(),
 				model, metricTimeliness, Synthesis.VERSION, shortCode);
+	}
+
+	/**
+	 * {@link ContentAttributes} → SQL 파라미터 11개 매핑 - {@link #insert}·{@link #insertFacts}가
+	 * 공유한다(2026-09-03 리뷰). attrs가 null(캡션도 썸네일도 없어 속성 근거가 전무한 콘텐츠)이면
+	 * 전부 null — 신규 사실 컬럼을 추가할 때 고칠 곳이 이 한 메서드로 좁혀진다.
+	 */
+	private record FactParams(String detectedBrands, String sponsoredSignalLevel, String sponsoredSignalReasons,
+			String adDisclosure, String detectedProductCategories, String detectedProducts, String vlmAttributes,
+			String mainCategory, String subCategories, String detectedDistributors, String adType,
+			Boolean isBeauty) {}
+
+	private static FactParams factParams(ObjectMapper json, ContentAttributes attrs) {
+		if (attrs == null) {
+			return new FactParams(null, null, null, null, null, null, null, null, null, null, null, null);
+		}
+		return new FactParams(
+				toJson(json, attrs.detectedBrands()), attrs.sponsoredSignalLevel(),
+				toJson(json, attrs.sponsoredSignalReasons()), attrs.adDisclosure(),
+				toJson(json, attrs.detectedProductCategories()), toJson(json, attrs.detectedProducts()),
+				toJson(json, attrs.vlmAttributes()), attrs.mainCategory(),
+				toJson(json, attrs.subCategories()), toJson(json, attrs.detectedDistributors()),
+				attrs.adType(), attrs.isBeauty());
 	}
 
 	private static String toJson(ObjectMapper json, Object value) {
