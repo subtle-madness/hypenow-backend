@@ -58,9 +58,44 @@ class FeedUserPostsFetcherTest {
 				.filter(p -> "DCaroCCCCCC".equals(p.shortCode()))
 				.findFirst()
 				.orElseThrow();
-		// media_type 8(캐러셀)은 2가 아니라 FEED로 분류된다.
+		// product_type "carousel_container"(clips 아님)은 FEED로 분류된다.
 		assertThat(carousel.contentType()).isEqualTo("FEED");
 		assertThat(carousel.likes()).isEqualTo(12_000L);
+	}
+
+	/**
+	 * S4 — media_type==2는 일반 비디오 피드도 포함해 릴스 단독 판별 신호가 아니다(HikerBackend와
+	 * 동일 결론, findings §4). Hiker와 같은 신호(product_type == "clips")로 판정해야 media_type==2인
+	 * 일반 비디오 게시물을 REELS로 오판정하지 않는다.
+	 */
+	@Test
+	void media_type가_2여도_product_type이_clips가_아니면_REELS가_아니다() {
+		String body = """
+				{"items":[{"code":"VID1","media_type":2,"product_type":"feed",
+				"like_count":10,"comment_count":2,"taken_at":1700000000,
+				"caption":{"text":"일반 비디오"},"user":{"username":"nasa"}}]}
+				""";
+		List<PostInfo> posts = fetcher(body, 200).fetchRecentPosts("nasa", "528817151");
+
+		assertThat(posts).hasSize(1);
+		assertThat(posts.get(0).contentType()).isEqualTo("FEED");
+	}
+
+	/**
+	 * S4 — product_type 필드 자체가 없으면(예상외 셰이프) media_type만으로 REELS/FEED를 단정하지
+	 * 않고 null(판별 불가)로 남긴다 — 저장 계층(PostMetaRepository)이 기존 값을 COALESCE로 보존한다.
+	 */
+	@Test
+	void product_type이_없으면_콘텐츠_타입은_null이다() {
+		String body = """
+				{"items":[{"code":"NOPT","media_type":2,
+				"like_count":10,"comment_count":2,"taken_at":1700000000,
+				"caption":{"text":"셰이프 이상"},"user":{"username":"nasa"}}]}
+				""";
+		List<PostInfo> posts = fetcher(body, 200).fetchRecentPosts("nasa", "528817151");
+
+		assertThat(posts).hasSize(1);
+		assertThat(posts.get(0).contentType()).isNull();
 	}
 
 	@Test

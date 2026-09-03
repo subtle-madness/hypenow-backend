@@ -36,6 +36,13 @@ public class PostMetaRepository {
 	 * <p>트랙 KK(profile_meta 결함 ②)와 동형 — thumbnailUrl도 저장 전 스킴을 정규화한다. Hiker
 	 * 업스트림이 이따금 무효 스킴을 줄 수 있는 구조가 profile_pic_url과 동일하므로, http(s)가 아니면
 	 * null로 강등해 COALESCE 보존 시맨틱에 자연히 태운다(무효값이 오면 기존 유효 썸네일을 지우지 않음).
+	 *
+	 * <p><b>content_type도 COALESCE 보존(S4, 2026-09-03 배포 전 감사 수정)</b> — self(embed·
+	 * feed/user)는 REELS/FEED를 구조적으로 확정하지 못하면 contentType을 null로 반환한다
+	 * (EmbedPostFetcher·FeedUserPostsFetcher 참조). EXCLUDED로 무조건 덮으면 Hiker(또는 확정
+	 * 가능했던 self 관측)가 이미 확정한 content_type을 self의 미확정 재수집이 강등 지운다 — 하류
+	 * (CollectService.needsMetricsRetry의 REELS 전제, AdDisclosureJudgeService의 isVideo 판정)가
+	 * 조용히 오동작하는 근본 원인이라 caption·thumbnail_url과 같은 보호로 통일한다.
 	 */
 	public void upsert(String shortCode, String username, String contentType, LocalDate uploadedAt,
 			String caption, String thumbnailUrl) {
@@ -45,7 +52,7 @@ public class PostMetaRepository {
 				VALUES (?, ?, ?, ?, ?, ?, now())
 				ON CONFLICT (short_code) DO UPDATE SET
 				  username = EXCLUDED.username,
-				  content_type = EXCLUDED.content_type,
+				  content_type = COALESCE(EXCLUDED.content_type, post_meta.content_type),
 				  uploaded_at = EXCLUDED.uploaded_at,
 				  caption = COALESCE(EXCLUDED.caption, post_meta.caption),
 				  thumbnail_url = COALESCE(EXCLUDED.thumbnail_url, post_meta.thumbnail_url)""",

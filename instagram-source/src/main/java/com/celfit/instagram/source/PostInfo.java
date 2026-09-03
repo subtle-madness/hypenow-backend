@@ -95,6 +95,11 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 	 * <p>likes만 예외로 정본의 숨김 판정을 따른다 — 숨김 게시물의 likes는 마스킹값이라 null로 비웠는데
 	 * (레코드 주석 참조), 폴백의 값으로 coalesce하면 비워둔 마스킹값이 되살아난다.
 	 * views는 값과 viewsTrusted 플래그가 한 몸이라 같은 쪽에서 함께 가져온다.
+	 *
+	 * <p>contentType도 non-null 우선(S4, 2026-09-03 배포 전 감사 수정) — self(embed·feed/user)는
+	 * REELS/FEED를 구조적으로 확정하지 못하면 null을 반환한다(EmbedPostFetcher·FeedUserPostsFetcher
+	 * 참조). 과거엔 정본의 contentType을 무조건 채택해, 정본이 self의 미확정 null이고 폴백(Hiker)이
+	 * 이미 확정값을 들고 있어도 null로 덮어 버렸다.
 	 */
 	public PostInfo mergedWith(PostInfo fallback) {
 		boolean viewsFromFallback = views == null && fallback.views != null;
@@ -102,7 +107,7 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 				coalesce(ownerFullName, fallback.ownerFullName),
 				coalesce(ownerProfilePicUrl, fallback.ownerProfilePicUrl),
 				coalesce(ownerUserId, fallback.ownerUserId),
-				contentType,
+				coalesce(contentType, fallback.contentType),
 				coalesce(caption, fallback.caption),
 				coalesce(thumbnailUrl, fallback.thumbnailUrl),
 				coalesce(takenAt, fallback.takenAt),

@@ -3,6 +3,7 @@
     {
       "code": "DImageAAAAA",
       "media_type": 1,
+      "product_type": "feed",
       "like_count": 485267,
       "comment_count": 3359,
       "taken_at": 1787148707,
@@ -12,6 +13,7 @@
     {
       "code": "DReelBBBBBB",
       "media_type": 2,
+      "product_type": "clips",
       "like_count": 95971,
       "comment_count": 1204,
       "play_count": 560359,
@@ -22,6 +24,7 @@
     {
       "code": "DCaroCCCCCC",
       "media_type": 8,
+      "product_type": "carousel_container",
       "like_count": 12000,
       "comment_count": 210,
       "taken_at": 1786900000,

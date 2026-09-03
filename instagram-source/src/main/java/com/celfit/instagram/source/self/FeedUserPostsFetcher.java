@@ -65,8 +65,7 @@ public class FeedUserPostsFetcher {
 	}
 
 	private static PostInfo toPost(JsonNode item, String username, String userId) {
-		int mediaType = item.path("media_type").asInt(0);
-		String contentType = mediaType == 2 ? "REELS" : "FEED";
+		String contentType = contentType(item);
 
 		JsonNode likeCount = item.path("like_count");
 		// -1은 IG의 좋아요 숨김 센티널 — 부재도 동일 취급.
@@ -91,6 +90,22 @@ public class FeedUserPostsFetcher {
 				likes, comments, views,
 				null, null, null, null, null, null, null,
 				views != null, likesHidden, false);
+	}
+
+	/**
+	 * S4 — HikerBackend와 같은 신호(product_type == "clips")로 판정한다. media_type==2는 일반
+	 * 비디오 피드도 포함해 REELS 단독 판별 신호가 아니다(HikerBackend 주석 "media_type==2는 일반
+	 * 비디오 피드도 포함 → 릴스 판별은 product_type" 동일 결론, findings §4). product_type 필드
+	 * 자체가 없으면(예상외 셰이프) media_type만으로 단정하지 않고 null(판별 불가)을 반환한다 —
+	 * 저장 계층(PostMetaRepository)이 COALESCE로 기존 값을 보존하므로, 콜 전체를 실패시켜 Hiker
+	 * 폴백을 강제할 필요가 없는 항목이다(캡션과 달리 결손이 저장 계층에서 안전하게 흡수된다).
+	 */
+	private static String contentType(JsonNode item) {
+		JsonNode productType = item.path("product_type");
+		if (!productType.isString()) {
+			return null;
+		}
+		return "clips".equals(productType.asString()) ? "REELS" : "FEED";
 	}
 
 	/**

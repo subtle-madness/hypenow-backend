@@ -731,6 +731,31 @@ class StoreTest {
 		assertThat(row.get("thumbnail_url")).isEqualTo("https://cdn/thumb1.jpg");
 	}
 
+	/**
+	 * S4 — self(embed·feed/user)는 콘텐츠 타입을 구조적으로 확정 못 하면 null을 넘긴다
+	 * (EmbedPostFetcher·FeedUserPostsFetcher 참조). Hiker가 이미 REELS/FEED를 확정 저장한 행을
+	 * self의 미확정 null 재수집이 강등 덮어쓰기하면 안 된다 — caption·thumbnail_url과 동일한
+	 * COALESCE 보호.
+	 */
+	@Test
+	void content_type_null_수집은_기존_content_type을_보존한다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션", "https://cdn/thumb1.jpg");
+
+		postMeta.upsert("SC1", "acct_a", null, LocalDate.of(2026, 7, 29), "캡션 갱신", "https://cdn/thumb1.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("content_type")).isEqualTo("REELS");
+	}
+
+	/** 신규 게시물 최초 수집이 content_type 미확정(null)이면 null로 그대로 삽입된다 — NOT NULL 제약 없음. */
+	@Test
+	void 최초_수집이_content_type_null이면_null로_삽입된다() {
+		postMeta.upsert("SC2", "acct_a", null, LocalDate.of(2026, 7, 28), "캡션", "https://cdn/thumb1.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC2'");
+		assertThat(row.get("content_type")).isNull();
+	}
+
 	// ── hidden/error 신호·matched_keywords(v2.2) ────────────────────────────
 
 	@Test

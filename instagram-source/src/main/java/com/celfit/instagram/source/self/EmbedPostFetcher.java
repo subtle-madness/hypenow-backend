@@ -51,6 +51,12 @@ public class EmbedPostFetcher {
 	private static final Pattern COMMENTS = Pattern.compile(">(?:View all )?([\\d,]+) comments<");
 	// 릴스 전용 — 이스케이프된 JSON(video_view_count\":560365)이라 구분자를 느슨히 잡는다.
 	private static final Pattern VIEWS = Pattern.compile("video_view_count[^0-9]{0,4}([0-9]+)");
+	// S4 — Hiker와 같은 신호(product_type)를 값 전체를 캡처해 뽑는다. 과거엔 리터럴 부분문자열
+	// "product_type\":\"clips"의 존재 여부만 봐서, 실값이 "clips_v2"처럼 "clips"로 시작만 하고
+	// 실제로는 다른 product_type이어도 접두 일치로 REELS 오판정됐다. gql_data JSON 블롭 자체가
+	// 릴스에만 실리므로(클래스 javadoc) product_type이 아예 안 잡히는 건 파싱 실패가 아니라
+	// "릴스가 아니다"라는 구조적 신호다 — null 강등 대상이 아니다.
+	private static final Pattern PRODUCT_TYPE = Pattern.compile("product_type\\\\\":\\\\\"([a-z_0-9]+)");
 	// 헤더 소유자: <span class="UsernameText">nasa</span> — 정확히 이 클래스만.
 	// 콜라보 공동작성자는 "UsernameText CollabUsernameText"라 닫는 따옴표 즉시 매칭으로
 	// 배제된다(매치 순서 의존 제거).
@@ -106,7 +112,8 @@ public class EmbedPostFetcher {
 		Long comments = number(first(COMMENTS, body));
 		Long views = number(first(VIEWS, body));
 		String caption = caption(body);
-		boolean reels = views != null || body.contains("product_type\\\":\\\"clips");
+		String productType = first(PRODUCT_TYPE, body);
+		boolean reels = views != null || "clips".equals(productType);
 		String contentType = reels ? "REELS" : "FEED";
 
 		return new PostInfo(shortCode, username, null, null, null, contentType, caption,

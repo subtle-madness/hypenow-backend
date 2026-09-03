@@ -88,4 +88,37 @@ class PostInfoTest {
 		// 유료협찬도 coalesce — 관측된 판정이 unknown(null)보다 낫다
 		assertThat(merged.isPaidPartnership()).isTrue();
 	}
+
+	private static PostInfo withContentType(String contentType) {
+		return new PostInfo("ReelA", "acct", null, null, "999", contentType, "캡션", "https://cdn/thumb.jpg",
+				1_700_000_000L, 10L, 2L, 222L, null, null, null, null,
+				null, null, null, true, false, false);
+	}
+
+	/**
+	 * S4 — self(embed/feed-user)가 콘텐츠 타입을 확정하지 못하면(구조적 신호 부재) contentType이
+	 * null로 온다(EmbedPostFetcher·FeedUserPostsFetcher 참조). 과거 mergedWith는 정본의 contentType을
+	 * 무조건 채택해 정본이 null이면 폴백(Hiker)이 이미 확정한 값까지 버렸다 — 다른 표시 메타 필드
+	 * (캡션·썸네일·videoUrl 등)와 동일한 non-null 우선 규칙으로 통일한다.
+	 */
+	@Test
+	void mergedWith는_정본에_없는_콘텐츠_타입을_폴백에서_가져온다() {
+		PostInfo primary = withContentType(null);
+		PostInfo fallback = withContentType("REELS");
+
+		PostInfo merged = primary.mergedWith(fallback);
+
+		assertThat(merged.contentType()).isEqualTo("REELS");
+	}
+
+	/** 정본이 이미 확정 콘텐츠 타입(REELS/FEED)을 가지면 폴백과 무관하게 정본이 이긴다(non-null 우선). */
+	@Test
+	void mergedWith는_정본의_확정된_콘텐츠_타입을_보존한다() {
+		PostInfo primary = withContentType("FEED");
+		PostInfo fallback = withContentType("REELS");
+
+		PostInfo merged = primary.mergedWith(fallback);
+
+		assertThat(merged.contentType()).isEqualTo("FEED");
+	}
 }

@@ -113,4 +113,37 @@ class EmbedPostFetcherTest {
 				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
 						.isEqualTo(SelfErrorClass.NOT_FOUND));
 	}
+
+	/**
+	 * S4 — 과거 판정은 {@code body.contains("product_type\":\"clips")}로 접두사만 봤다. 실값이
+	 * "clips_v2"처럼 "clips"로 시작만 하고 다른 product_type이어도 접두 일치로 REELS 오판정됐다.
+	 * 구조적 파싱(값 전체를 캡처해 "clips"와 완전 일치 비교)이면 이 오탐이 사라진다.
+	 */
+	@Test
+	void product_type_접두사만_같고_실값이_다르면_REELS로_오판정하지_않는다() {
+		// 런타임 텍스트: <script>{\"product_type\":\"clips_v2\"}</script> — embed 실 HTML의
+		// 이스케이프된 JSON 블롭(VIEWS 패턴 주석 참조)과 같은 셰이프.
+		String escapedJson = "{\\\"product_type\\\":\\\"clips_v2\\\"}";
+		String body = "<html><body><span class=\"UsernameText\">nasa</span>"
+				+ "<a data-log-event=\"likeCountClick\">100 likes</a>"
+				+ "<script>" + escapedJson + "</script></body></html>";
+
+		PostInfo p = fetcher(body, 200).fetch("SC3");
+
+		assertThat(p.contentType()).isEqualTo("FEED");
+		assertThat(p.views()).isNull();
+	}
+
+	/** product_type이 정확히 "clips"면(views 신호 없이도) REELS로 확정한다 — 구조적 추출의 정상 경로. */
+	@Test
+	void product_type이_정확히_clips면_views_없이도_REELS로_확정한다() {
+		String escapedJson = "{\\\"product_type\\\":\\\"clips\\\"}";
+		String body = "<html><body><span class=\"UsernameText\">nasa</span>"
+				+ "<a data-log-event=\"likeCountClick\">100 likes</a>"
+				+ "<script>" + escapedJson + "</script></body></html>";
+
+		PostInfo p = fetcher(body, 200).fetch("SC4");
+
+		assertThat(p.contentType()).isEqualTo("REELS");
+	}
 }
