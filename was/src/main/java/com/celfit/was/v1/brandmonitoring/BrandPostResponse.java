@@ -25,6 +25,13 @@ import java.util.List;
  * 일 때만 값이 있고, tagged·direct는 항상 null이다. 노출된 hashtag 게시물은 격리 규칙상 이 교집합이
  * 구조적으로 비지 않는다 — 교집합이 없으면 애초에 이 조회자에게 이 게시물 자체가 보이지 않는다
  * (visibility가 이미 그 조건을 강제하므로).
+ *
+ * <p>{@code influencerId}(2026-09-03, FE "인플루언서 저장" 버튼 연동) 작성자 username을 소문자
+ * 정규화한 값이 발굴 상세 조회(GET /v1/influencers/{influencerId})가 성공하는 계정 집합
+ * (analysis DB {@code accounts})에 있으면 그 handle 원본, 없으면 명시적 null이다. FE는 이 값을
+ * {@code POST /v1/saved-influencers} body의 {@code influencerId}로 그대로 쓴다. null이면 저장
+ * 버튼을 비활성화해야 발굴 색인 밖 계정 저장 시도의 404를 막는다. 조립은
+ * {@link BrandPostAssembler#attachInfluencerIds}(배치 1회 조회, N+1 금지) 참조.
  */
 public record BrandPostResponse(
 		String id,
@@ -68,7 +75,9 @@ public record BrandPostResponse(
 		List<AdEvidence> adEvidence,
 		@Schema(description = "캡션 추출 해시태그(등장 순, 정규화 키 dedup) — BrandCaptionHashtags")
 		List<String> hashtags,
-		boolean seededAuthor) {
+		boolean seededAuthor,
+		@Schema(description = "작성자 handle이 발굴 상세 조회(GET /v1/influencers/{influencerId})가 성공하는 계정이면 그 handle, 아니면 null. POST /v1/saved-influencers 저장에 그대로 쓴다.")
+		String influencerId) {
 
 	/** 판정 근거 문구 1건 — monitoring ad_evidence jsonb 원소와 1:1(스펙 §4). */
 	public record AdEvidence(String phrase, String category, int offset) {}
@@ -85,7 +94,7 @@ public record BrandPostResponse(
 				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
 				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
 				commentsHidden, commentsCollectedCount, recentComments, campaignIds, createdAt, updatedAt,
-				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor);
+				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor, influencerId);
 	}
 
 	/**
@@ -100,7 +109,7 @@ public record BrandPostResponse(
 				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
 				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
 				commentsHidden, 0L, List.of(), campaignIds, createdAt, updatedAt,
-				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor);
+				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor, influencerId);
 	}
 
 	/**
@@ -117,7 +126,7 @@ public record BrandPostResponse(
 				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
 				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
 				commentsHidden, commentsCollectedCount, recentComments, campaignIds, createdAt, updatedAt,
-				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor);
+				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor, influencerId);
 	}
 
 	/**
@@ -133,6 +142,21 @@ public record BrandPostResponse(
 				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
 				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
 				commentsHidden, commentsCollectedCount, recentComments, campaignIds, createdAt, updatedAt,
-				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor);
+				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor, influencerId);
+	}
+
+	/**
+	 * influencerId만 교체한 사본(2026-09-03, 브랜드 모니터링 저장 연동) — {@link BrandPostAssembler#brandPost}는
+	 * 순수 판정 함수라 발굴 존재 판정(DB 조회)을 모른 채 influencerId를 항상 null로 채운 카드를 만들고,
+	 * {@link BrandPostAssembler#attachInfluencerIds}가 배치 조회 결과로 이 메서드를 통해 값을 얹는다
+	 * ({@link #withMatchedTags}와 같은 사후 교체 관용구).
+	 */
+	public BrandPostResponse withInfluencerId(String influencerId) {
+		return new BrandPostResponse(id, brandAccountId, source, matchedTags, postUrl, shortcode, contentType, takenAt,
+				caption, thumbnailUrl, videoUrl, videoDuration, authorProfileUrl, authorUsername, authorFullName,
+				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
+				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
+				commentsHidden, commentsCollectedCount, recentComments, campaignIds, createdAt, updatedAt,
+				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor, influencerId);
 	}
 }

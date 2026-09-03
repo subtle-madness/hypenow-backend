@@ -1059,7 +1059,7 @@ class PerformanceContentAssemblerTest {
 				"sponsored", true, "hidden", "2026-08-04T09:30:00+09:00", null, latest, List.of(latest),
 				latest.comments(), false, 0L, List.of(), List.of("7", "8"),
 				"2026-08-04T09:30:00+09:00", "2026-08-07T03:00:00+09:00",
-				null, List.of(), List.of(), List.of(), false);
+				null, List.of(), List.of(), List.of(), false, null);
 	}
 
 	/** 태그 감지 행(전원 노출) — 캡션·유료협찬 관측은 브랜드 풀 픽스처와 같은 값(협찬 unknown). */
@@ -1218,6 +1218,6 @@ class PerformanceContentAssemblerTest {
 				"unknown", null, trackingStatus, "2026-08-06T09:30:00+09:00", null, latest, snapshots,
 				latest == null ? null : latest.comments(), commentsHidden, 0L, List.of(), campaignIds,
 				"2026-08-06T09:30:00+09:00", "2026-08-07T03:00:00+09:00",
-				null, List.of(), List.of(), List.of(), false);
+				null, List.of(), List.of(), List.of(), false, null);
 	}
 }

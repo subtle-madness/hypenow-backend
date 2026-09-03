@@ -137,6 +137,7 @@ public class BrandHashtagPostAssembler {
 				post.sponsorship(),
 				post.createdAt(),
 				// 해시태그 게시물은 이제 전부 성과 측정 풀 소속이다 — 배지는 항상 켜진다.
-				post.shortcode());
+				post.shortcode(),
+				post.influencerId());
 	}
 }

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.celfit.was.IntegrationTest;
 import com.celfit.was.v1.content.ContentCardRow;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -202,6 +203,25 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 
 		profile = repository.findProfile("alpha").orElseThrow();
 		assertThat(profile.profileImageUrl()).isEqualTo("/img/profile/alpha.jpg");
+	}
+
+	/**
+	 * 브랜드 모니터링 influencerId 배치 조회(2026-09-03, 2026-09-03 리뷰 반영) — IG username은
+	 * 소문자만 허용돼 accounts.handle이 항상 소문자라, PK 정확 일치({@code handle IN (...)})로
+	 * 조회한다. 입력은 호출부가 이미 소문자 정규화했다는 계약이다(메서드명·javadoc). 존재하지 않는
+	 * handle은 결과 맵에 아예 없다(null 채움 아님).
+	 */
+	@Test
+	void 배치_존재_확인은_소문자_정규화_입력으로_PK_정확_일치_조회한다() {
+		Map<String, String> result = repository.findExistingHandlesByLower(List.of("alpha", "ghost"));
+
+		assertThat(result).hasSize(1);
+		assertThat(result).containsEntry("alpha", "alpha");
+	}
+
+	@Test
+	void 배치_존재_확인은_빈_입력이면_조회_없이_빈_맵이다() {
+		assertThat(repository.findExistingHandlesByLower(List.of())).isEmpty();
 	}
 
 	/** email은 account_summaries.email — 발굴 목록(6.21)·유사 카드(6.23)와 같은 소스(2026-09-03 FE 피드백 #1). */

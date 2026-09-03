@@ -61,10 +61,13 @@ public final class BrandInfluencerAggregator {
 	 * 집계 입력 1행(게시물 단위) — 컨트롤러가 {@code PostRef} + 최신 지표를 접어 만든다.
 	 *
 	 * @param likesHidden 게시자가 좋아요를 숨겼는지. true면 {@code likes} 값이 있어도 합산하지 않는다.
+	 * @param influencerId 2026-09-03 — {@code username}의 발굴 존재 판정 결과({@link
+	 *                     BrandPostAssembler.PostRef#influencerId}에서 그대로 옮겨 온다). username
+	 *                     단위 값이라 이 작성자의 모든 게시물에서 항상 같다.
 	 */
 	public record InfluencerPost(String shortcode, String username, String fullName,
 			String profilePicUrl, Long followers, String takenAtKst, boolean sponsored,
-			Long views, Long likes, boolean likesHidden, Long comments) {
+			Long views, Long likes, boolean likesHidden, Long comments, String influencerId) {
 	}
 
 	/**
@@ -104,6 +107,9 @@ public final class BrandInfluencerAggregator {
 			Accumulator acc = byUsername.get(post.username());
 			if (acc == null) {
 				acc = new Accumulator(post.username());
+				// influencerId는 username으로 결정되는 값이라(발굴 존재 판정) 최초 생성 시 1회만
+				// 설정한다 — followers·fullName과 달리 "최근 게시물 값으로 갱신"할 이유가 없다.
+				acc.influencerId = post.influencerId();
 				acc.fullName = post.fullName();
 				acc.profilePicUrl = post.profilePicUrl();
 				acc.followers = post.followers();
@@ -283,6 +289,7 @@ public final class BrandInfluencerAggregator {
 	/** FE가 스프레드로 새 객체를 만드는 자리 — Java는 가변 누적기 한 벌로 접고 마지막에 record로 굳힌다. */
 	private static final class Accumulator {
 		private final String username;
+		private String influencerId;
 		private String fullName;
 		private String profilePicUrl;
 		private Long followers;
@@ -301,7 +308,7 @@ public final class BrandInfluencerAggregator {
 		private BrandInfluencerResponse toResponse() {
 			return new BrandInfluencerResponse(username, fullName, profilePicUrl,
 					PROFILE_URL_PREFIX + username + "/", followers, postCount, sponsoredCount, views,
-					likes, comments, likesKnownCount, latestPostAt);
+					likes, comments, likesKnownCount, latestPostAt, influencerId);
 		}
 	}
 }
