@@ -102,6 +102,9 @@ class V1BrandPostsControllerTest {
 	/** 직접 등록(§6-4)의 판정 로직은 V1BrandDirectPostServiceTest가 본다 — 여기는 표면 계약만. */
 	@MockitoBean
 	V1BrandDirectPostService directPostService;
+	/** 자동 시드 훅(2026-09-03 §4-2 호출 지점 3) 전용 — 분기 로직은 V1BrandAccountServiceAutoSeedTest가 본다. */
+	@MockitoBean
+	V1BrandAccountService brandAccountService;
 	@MockitoBean
 	Clock clock;
 	/** 인덱스 캐시({@link BrandIndexCache})의 무효화 키 산지 — 캐시 자체는 실 빈으로 붙인다. */
@@ -1103,6 +1106,34 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
 	}
 
+	// ---------- 자동 시드 훅(2026-09-03 §4-2 호출 지점 3) ----------
+
+	@Test
+	void 해시태그_목록_조회는_자동_시드_훅을_먼저_태운다() throws Exception {
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
+				.andExpect(status().isOk());
+
+		// 훅은 requireOwnership이 이미 읽은 링크를 그대로 받는다(2026-09-03 팔로업 — 재조회 없음).
+		then(brandAccountService).should().ensureAutoSeeded(link());
+	}
+
+	@Test
+	void 해시태그_개수_조회도_자동_시드_훅을_태운다() throws Exception {
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts/count").with(user(principal())))
+				.andExpect(status().isOk());
+
+		then(brandAccountService).should().ensureAutoSeeded(link());
+	}
+
+	/** 메인 목록은 수집 중 초 단위 폴링 경로라 훅을 걸지 않는다(§4-2·§7). */
+	@Test
+	void 메인_게시물_목록은_자동_시드_훅을_태우지_않는다() throws Exception {
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk());
+
+		then(brandAccountService).should(never()).ensureAutoSeeded(any());
+	}
+
 	// ---------- 상세 ----------
 
 	@Test
@@ -1307,12 +1338,12 @@ class V1BrandPostsControllerTest {
 
 	private static BrandLinkRow link() {
 		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", BrandAccountType.OWN, 12,
-				OffsetDateTime.parse("2026-08-01T00:00:00Z"), null);
+				OffsetDateTime.parse("2026-08-01T00:00:00Z"), null, null);
 	}
 
 	private static BrandLinkRow linkWithMonths(int months) {
 		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", BrandAccountType.OWN, months,
-				OffsetDateTime.parse("2026-08-01T00:00:00Z"), null);
+				OffsetDateTime.parse("2026-08-01T00:00:00Z"), null, null);
 	}
 
 	private static BrandAccountRow account() {
@@ -1424,6 +1455,8 @@ class V1BrandPostsControllerTest {
 		V1InfluencerRepository influencerRepository;
 		@MockitoBean
 		V1BrandDirectPostService directPostService;
+		@MockitoBean
+		V1BrandAccountService brandAccountService;
 		@MockitoBean
 		Clock clock;
 		@MockitoBean

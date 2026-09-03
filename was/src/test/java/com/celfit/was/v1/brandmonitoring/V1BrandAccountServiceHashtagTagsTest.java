@@ -12,6 +12,7 @@ import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
 import com.celfit.was.auth.UserRepository;
+import com.celfit.was.monitoring.BrandHashtagSeedRepository;
 import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
@@ -52,34 +53,36 @@ class V1BrandAccountServiceHashtagTagsTest {
 	UserRepository userRepository;
 	@Mock
 	BrandHashtagTagRepository hashtagTagRepository;
+	@Mock
+	BrandHashtagSeedRepository seedRepository;
 
 	V1BrandAccountService service;
 
 	@BeforeEach
 	void setUp() {
 		service = new V1BrandAccountService(linkRepository, new BrandLinkTransaction(linkRepository), commandClient,
-				brandReadRepository, new BrandAccountAssembler(3), userRepository, hashtagTagRepository);
+				brandReadRepository, new BrandAccountAssembler(3), userRepository, hashtagTagRepository,
+				seedRepository);
 		given(linkRepository.findActiveByUserAndBrand(USER_ID, BRAND_ID)).willReturn(Optional.of(link()));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account()));
 	}
 
-	// ---------- 링크 생성 시딩(2026-08-27 태그 장부 갭 수정 §4, 2026-08-28 태그 생성 권한 was 일원화) ----------
+	// ---------- 링크 생성 시딩(2026-08-27 태그 장부 갭 수정 §4, 2026-09-03 자동 시드 재설계로 제거) ----------
 
 	/**
-	 * 신규 브랜드 링크를 만들면 그 사용자의 장부에 계정명 유도 태그가 남고(08-27 갭 수정), <b>같은
-	 * 태그를 monitoring에도 일반 태그 add로 push</b>한다(2026-08-28~) — monitoring이 등록 시점에
-	 * 스스로 {@code brand_hashtag}를 시드하던 것을 대체한다(태그 생성 권한 was 일원화). push는
-	 * 일반 add와 같은 엔드포인트라 tombstone 재활성 의미론까지 그대로 적용된다.
+	 * 링크 생성은 더 이상 태그를 심지 않는다(2026-09-03 자동 시드 재설계 §4-3) — 계정명 절삭 유도
+	 * 규칙이 삭제됐다. 자동 태그는 초기 백필 완료 뒤 첫 조회에서 훅({@code ensureAutoSeeded})이
+	 * monitoring 제안을 받아 심는다.
 	 */
 	@Test
-	void 신규_링크_생성은_유도_태그를_monitoring에_push하고_장부에도_시딩한다() {
+	void 신규_링크_생성은_태그를_시딩하지_않는다() {
 		given(commandClient.registerBrand(USERNAME, null, 12, BrandAccountType.OWN))
 				.willReturn(new MonitoringCommandClient.BrandRegisterResult(BRAND_ID, USERNAME, 100L, "ACTIVE"));
 
 		service.register(USER_ID, USERNAME, BrandAccountType.OWN, 12);
 
-		then(commandClient).should().addHashtagTags(USERNAME, List.of(USERNAME));
-		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of(USERNAME));
+		then(commandClient).should(never()).addHashtagTags(anyString(), any());
+		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
 	}
 
 	/** 멱등 재-POST(이미 연결된 브랜드)는 시딩하지 않는다 — 사용자가 지운 태그가 되살아나면 안 된다. */
@@ -92,56 +95,6 @@ class V1BrandAccountServiceHashtagTagsTest {
 		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
 		then(commandClient).should(never()).registerBrand(anyString(), any(), anyInt(), anyString());
 		then(commandClient).should(never()).addHashtagTags(anyString(), any());
-	}
-
-	/** 계정명이 무효 문자로 시작해 유도 태그가 0개면 push도 원장 호출도 없다(빈 목록 삽입·push 금지). */
-	@Test
-	void 유도_태그가_없으면_push도_시딩도_건너뛴다() {
-		given(commandClient.registerBrand(".beauty", null, 12, BrandAccountType.OWN))
-				.willReturn(new MonitoringCommandClient.BrandRegisterResult(BRAND_ID, ".beauty", 100L, "ACTIVE"));
-
-		service.register(USER_ID, ".beauty", BrandAccountType.OWN, 12);
-
-		then(commandClient).should(never()).addHashtagTags(anyString(), any());
-		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
-	}
-
-	/**
-	 * 시딩 실패 격리 회귀(품질 리뷰 지적) — 링크는 이미 커밋됐으므로 장부 시딩이 던져도 등록 응답은
-	 * 그대로 나가야 한다({@code seedLedgerTagsSafely}의 try-catch 격리 대상,
-	 * {@code V1BrandAccountsControllerTest.own_link_push_실패는_PATCH_응답에_영향_없다}와 동형).
-	 */
-	@Test
-	void 장부_시딩_실패는_등록_응답에_영향이_없다() {
-		given(commandClient.registerBrand(USERNAME, null, 12, BrandAccountType.OWN))
-				.willReturn(new MonitoringCommandClient.BrandRegisterResult(BRAND_ID, USERNAME, 100L, "ACTIVE"));
-		willThrow(new RuntimeException("장부 실패"))
-				.given(hashtagTagRepository).addTags(USER_ID, BRAND_ID, List.of(USERNAME));
-
-		BrandAccountResponse response = service.register(USER_ID, USERNAME, BrandAccountType.OWN, 12);
-
-		assertThat(response).isNotNull();
-		assertThat(response.id()).isEqualTo(String.valueOf(BRAND_ID));
-	}
-
-	/**
-	 * push 실패 격리(2026-08-28) — monitoring push(commandClient.addHashtagTags)가 던져도 등록
-	 * 응답은 그대로 나가고, <b>장부 쓰기는 push 실패와 무관하게 계속 진행</b>된다(push 먼저 시도 →
-	 * 실패해도 장부는 규정대로 채운다). 장부만 채워진 드리프트는 다음 사용자의 등록이나 태그
-	 * 관리 API 수동 추가로 자연히 복구된다.
-	 */
-	@Test
-	void monitoring_push_실패는_등록_응답도_장부_시딩도_깨지_않는다() {
-		given(commandClient.registerBrand(USERNAME, null, 12, BrandAccountType.OWN))
-				.willReturn(new MonitoringCommandClient.BrandRegisterResult(BRAND_ID, USERNAME, 100L, "ACTIVE"));
-		willThrow(new RuntimeException("monitoring push 실패"))
-				.given(commandClient).addHashtagTags(USERNAME, List.of(USERNAME));
-
-		BrandAccountResponse response = service.register(USER_ID, USERNAME, BrandAccountType.OWN, 12);
-
-		assertThat(response).isNotNull();
-		assertThat(response.id()).isEqualTo(String.valueOf(BRAND_ID));
-		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of(USERNAME));   // push 실패와 무관하게 진행
 	}
 
 	// ---------- 조회(2026-08-31 태그별 실행 상태 확장) ----------
@@ -366,9 +319,15 @@ class V1BrandAccountServiceHashtagTagsTest {
 
 	// ---------- 픽스처 ----------
 
+	/**
+	 * hashtagSeededAt은 non-null로 채운다 — 이 클래스는 태그 관리 판정 로직을 보는 테스트라 자동
+	 * 시드 훅(2026-09-03 §4-2)의 관심사가 아니다. null이면 getHashtagTags 호출마다 훅이 돌아
+	 * seedRepository·commandClient에 이 테스트가 스텁하지 않은 호출이 섞여든다.
+	 */
 	private static BrandLinkRow link() {
 		return new BrandLinkRow(1L, USER_ID, BRAND_ID, USERNAME, BrandAccountType.OWN, 12,
-				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null,
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"));
 	}
 
 	private static BrandAccountRow account() {

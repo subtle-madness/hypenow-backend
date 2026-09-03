@@ -526,7 +526,7 @@ class V1BrandInfluencersControllerTest {
 
 	private static BrandLinkRow link(long brandId, int collectionMonths) {
 		return new BrandLinkRow(brandId, 7L, brandId, "brand" + brandId, BrandAccountType.OWN,
-				collectionMonths, OffsetDateTime.parse("2026-08-01T00:00:00Z"), null);
+				collectionMonths, OffsetDateTime.parse("2026-08-01T00:00:00Z"), null, null);
 	}
 
 	private static BrandAccountRow account(long brandId) {

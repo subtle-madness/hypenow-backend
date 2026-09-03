@@ -47,7 +47,7 @@ class AdminBrandAccountServiceTest {
 	private static BrandLinkRow link(long id, long userId, long brandId, String username, String accountType,
 			int months, String createdAt) {
 		return new BrandLinkRow(id, userId, brandId, username, accountType, months,
-				OffsetDateTime.parse(createdAt), null);
+				OffsetDateTime.parse(createdAt), null, null);
 	}
 
 	private static AdminUserRow user(long id, String email, String name, String companyName) {

@@ -18,7 +18,8 @@ import org.springframework.stereotype.Repository;
 public class BrandLinkRepository {
 
 	private static final String SELECT_COLUMNS =
-			"id, user_id, brand_id, username, account_type, collection_months, created_at, deleted_at";
+			"id, user_id, brand_id, username, account_type, collection_months, created_at, deleted_at, "
+					+ "hashtag_seeded_at";
 
 	private final JdbcClient jdbcClient;
 
@@ -109,6 +110,20 @@ public class BrandLinkRepository {
 				.param("collectionMonths", collectionMonths)
 				.query(Long.class)
 				.single();
+	}
+
+	/**
+	 * 자동 태그 반영 표식(2026-09-03 자동 시드 재설계 §4-2) — 이 링크에 자동 태그를 장부에 넣었거나
+	 * 넣을 것이 없다고 판정한 시점을 찍는다. 이미 찍혀 있으면 갱신하지 않는다(IS NULL 가드) —
+	 * 최초 반영 시각이 밀리면 "언제부터 사용자에게 보였나"를 잃는다.
+	 */
+	public void markHashtagSeeded(long linkId) {
+		jdbcClient.sql("""
+				UPDATE app.brand_monitorings SET hashtag_seeded_at = now()
+				WHERE id = :id AND hashtag_seeded_at IS NULL
+				""")
+				.param("id", linkId)
+				.update();
 	}
 
 	/**

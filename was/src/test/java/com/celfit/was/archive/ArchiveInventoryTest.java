@@ -42,6 +42,8 @@ class ArchiveInventoryTest extends IntegrationTest {
 					+ "없어 재식별 편의보다 개인정보 최소 보존을 택한 의도된 결정(설계 §4-4)"),
 			Map.entry("inquiries", "삭제 경로 없음"),
 			Map.entry("admin_audit_logs", "삭제 경로 없음. target_user_id에 FK가 없어 탈퇴에도 남는다"),
+			Map.entry("brand_hashtag_seed", "브랜드 단위 계산 캐시(2026-09-03 자동 시드 재설계 §4-1) — "
+					+ "user_id 없음(브랜드당 1행), 개인정보 아님, 삭제 경로 없음(브랜드 탈퇴에도 재계산 방지용으로 보존)"),
 			Map.entry("encryption_keys", "시스템 암호화 키(DEK) 저장소. 사용자 스코프 데이터가 아니라 전역 키 관리용"));
 
 	@Autowired
