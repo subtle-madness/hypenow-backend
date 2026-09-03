@@ -1366,3 +1366,167 @@ CD가 scp + `docker compose restart alloy`/grafana로 반영, §15 말미 참조
 `config.alloy`를 고칠 때는 `deploy/alloy/test/`의 리그로 먼저 확인한다 — 운영과 같은 compose
 서비스명·네트워크 이름을 흉내내 relabel과 multiline 병합이 실제로 걸리는지 본다. 사용법은
 [deploy/alloy/test/README.md](alloy/test/README.md). **서버에서 실행 금지**(운영과 같은 이름 공간).
+
+## 17. 콘텐츠 분석 2단계 분리 (파트 A 사실 D+1 · 파트 B 해석 D+4)
+
+설계: [docs/superpowers/specs/2026-09-03-content-analysis-two-phase-split-design.md](../docs/superpowers/specs/2026-09-03-content-analysis-two-phase-split-design.md)
+
+코드 배포만으로는 아무 것도 바뀌지 않는다(`analytics.analyze-mode` 기본값 `unified`, crawler
+Flyway가 `app_setting`에 시드). 아래 순서로 켠다.
+
+### 17-1. 배포 순서 (하드 순서 - 어겨서 되는 것 아님)
+
+1. **뷰 적용**(운영 raw DB, 1회) - 분석 뷰는 Flyway가 아니라 수동 적용이다(런북은 메모리
+   `analytics-prod-view-apply-mirror`).
+
+   ```bash
+   ssh <host> 'docker exec -i deploy-postgres-raw-1 psql -U crawler -d crawler -v ON_ERROR_STOP=1 -q' \
+       < analytics/views/04_analysis_candidates.sql
+   ```
+
+2. **적용 직후 EXPLAIN** - 07-20에 배리어가 무력화돼 152ms에서 9초대로 폭주한 전례가 있다.
+   `v_fact_candidates`는 이번에 새로 생긴 뷰이므로 반드시 같이 잰다.
+
+   ```bash
+   docker exec -i deploy-postgres-raw-1 psql -U crawler -d crawler -c \
+     "EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM analytics.v_fact_candidates;"
+   docker exec -i deploy-postgres-raw-1 psql -U crawler -d crawler -c \
+     "EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM analytics.v_analysis_candidates;"
+   ```
+
+   기준: 수백 ms 대(~150ms). 초 단위로 튀면 **③ 이후 단계로 진행하지 말고** 배리어부터 확인한다.
+   어드민 퍼널(`PipelineStatsService`)이 `v_fact_candidates`를 조건 없이 직접 읽으므로, 뷰가
+   깨진 채로 코드를 배포하면 어드민 화면이 바로 죽는다 - 순서 ①→③을 반드시 지킨다.
+
+3. **analytics 이미지 배포** - Flyway `V20260903093312__content_analyses_timeliness_pending.sql`·
+   `V20260903093412__content_batch_jobs_kind.sql`이 자동 적용된다. `content_analyses.metric_timeliness`
+   CHECK 재정의는 V38 전례와 동일하게 짧은 ACCESS EXCLUSIVE 락을 잡는다(초 단위, 트래픽 낮은 시간대
+   권장).
+
+4. **crawler 이미지 배포** - `app_setting` 시드 마이그레이션
+   `V20260903093512__analytics_analyze_mode.sql`(`ON CONFLICT DO NOTHING`, 값은 `unified`)이 자동
+   적용된다.
+
+5. **확인**:
+
+   ```bash
+   docker exec -it deploy-postgres-raw-1 psql -U crawler -d crawler -c \
+     "SELECT value FROM app_setting WHERE key='analytics.analyze-mode';"
+   ```
+
+   `unified`가 나오면 배포는 끝 - 이 시점까지 운영 행동은 하나도 안 바뀐다.
+
+### 17-2. 전환 전제조건
+
+- `analytics.analyze-transport = batch`(온라인이면 split 이득이 작다 - 이 트랙은 배치 경로가 정본).
+- `analytics.vlm-enabled = false`. split과 vlm을 동시에 켜면 첫날 미성숙 백로그(~1만 건)가 전부
+  온라인 + 썸네일 경로로 나가 버려 배치 이득이 사라진다.
+- 프로바이더가 `gemini`/`vertex`여야 한다 - `anthropic`이면 `factsPort`/`synthesisPort`가 null이라
+  FACT_ANALYZE·SYNTHESIS가 `IllegalStateException`으로 죽는다(조용한 no-op이 아니라 명시적 실패 -
+  의도된 동작). 프로바이더를 바꾼 직후라면 analytics를 재기동한 뒤에 전환한다(포트는 기동 시
+  1회 결선).
+- 광고 표기 트랙 골드셋 20~30건으로 통합 프롬프트 출력과 파트 A 출력을 대조해 adType·mainCategory·
+  adDisclosure가 어긋나지 않는지 확인한다(스펙 §9-3, 지표·기준선·댓글 분포 줄이 빠진 입력에서
+  사실 판정이 달라지는지가 관건).
+
+### 17-3. 전환
+
+```sql
+-- raw DB (crawler)
+UPDATE app_setting SET value = 'split' WHERE key = 'analytics.analyze-mode';
+```
+
+0행이면 시드가 아직 안 도달한 것 - 17-1④를 다시 확인하고 중단한다. 재기동 불필요(잡 시작마다
+읽는다). 다음 새벽부터 KST 05:00 파트 A(FACT_ANALYZE), 05:30 파트 B(ANALYZE), 06:00
+LATE_BACKFILL_ANALYZE(파트 B 늦크롤)가 돈다.
+
+### 17-4. 첫날 기대치
+
+- **FACT_ANALYZE(05:00)**가 미성숙 3일치(D+1~D+3, ~1만 건) + 성숙인데 아직 미분석인 잔여를 한꺼번에
+  후보로 잡아 배치 청크 상한(`analytics.batch-chunk-size`, 기본 3,000)으로 자동 분할 제출한다
+  (≈$5, 1회성).
+- **같은 날 ANALYZE(05:30)는 "대상 없음"으로 끝난다** - pending 행이 아직 수거되지 않았거나 막
+  생겼을 뿐이라 SYNTHESIS 후보(A 존재 ∩ B 미완)가 비어 있다. 이건 실패가 아니라 정상이다.
+- 그 첫 코호트의 파트 B는 **다음 날 아침**(D+2 05:30, 즉 대상 관점에서는 제출 다음 날)부터
+  순차적으로 채워진다.
+
+### 17-5. 둘째 날 확인 쿼리
+
+```bash
+# ① pending 건수 ≈ 첫날 FACT_ANALYZE 제출 건수
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis -c \
+  "SELECT count(*) FROM content_analyses WHERE metric_timeliness = 'pending';"
+
+# ② kind별 배치 상태 - facts pending 잔존이 없어야 한다(수거 완료)
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis -c \
+  "SELECT kind, status, count(*) FROM content_batch_jobs
+   WHERE submitted_at > now() - interval '1 day' GROUP BY 1, 2 ORDER BY 1, 2;"
+
+# ③ 상태 분해 정본
+PG_CONTAINER=deploy-postgres-raw-1 analytics/check/pending.sh
+```
+
+`pending.sh`의 상태 11(미성숙·사실만)이 미성숙 백로그와 비슷한 규모, 24/34(랭킹·상세 트랙·사실만)는
+아직 소수여야 한다. `/ui/coverage` 18(드로어 AI 카피 3종)·19(드로어 성과 비교 기준선)·22(댓글 신뢰도
+판정) 세 행이 배포 즉시 "준비됨"으로 뛰는 것은 분리 자체와 무관한 **분모 변경**(파트 B 미완 행을
+분모에서 빼도록 재정의됨)에 따른 정상 변화다 - 놀랄 것 없다.
+
+### 17-6. 3일 후 확인
+
+pending 추이가 D+4마다 파트 B로 빠지며 정체해야 한다(유입과 유출이 균형).
+
+```bash
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis -c \
+  "SELECT count(*) FROM content_analyses WHERE metric_timeliness = 'pending';"
+```
+
+하루치 파트 A 제출 건수 × 3(D+1~D+3 누적) 근처에서 안정되면 정상. 계속 단조 증가하면 파트 B가
+안 돌고 있다는 뜻이니 17-5②의 `synthesis` kind 수거 결과부터 본다.
+
+### 17-7. 롤백
+
+두 갈래다.
+
+```sql
+-- raw DB (crawler) - 한 줄, 재기동 불필요, 다음 잡부터 즉시 반영
+UPDATE app_setting SET value = 'unified' WHERE key = 'analytics.analyze-mode';
+```
+
+다음 잡부터 FACT_ANALYZE는 no-op, ANALYZE/LATE_BACKFILL은 통합 콜로 복귀한다. 뷰·마이그레이션은
+롤백 불요(추가만이라 구 코드와 호환).
+
+**롤백이 되돌리지 않는 것: 이미 만들어진 파트 A만(`pending`) 행.** 통합 잡은 "행 존재"를 제외로
+보므로 이 행들은 파트 B를 영영 못 받는다.
+
+- **(a) split 재전환 예정이면 그냥 둔다** - SYNTHESIS가 자연 재대상한다.
+- **(b) 통합으로 영구 복귀면** 사용자 확인 후 순서대로 실행한다. 순서가 중요하다 - `updateSynthesis`
+  계열이 `updateSynthesisPending`(WHERE `metric_timeliness = 'pending'`)로 가드돼 있어서, DELETE
+  전에 진행 중인 배치를 먼저 죽여야 사고를 막는다.
+
+  ```sql
+  -- (1) 위 unified 전환을 먼저 실행했는지 확인
+
+  -- (2) 아직 수거 안 된 파트 A/B 배치를 취소 - 순서 필수
+  UPDATE content_batch_jobs SET status = 'failed', note = '롤백 취소', sidecar_jsonl = NULL
+    WHERE status = 'pending' AND kind IN ('facts', 'synthesis');
+
+  -- (3) (2) 이후에만 실행 - pending 행 삭제(파트 A는 다음 통합 잡이 다시 만든다)
+  DELETE FROM content_analyses WHERE metric_timeliness = 'pending';
+  ```
+
+  (2)를 건너뛰고 바로 (3)을 실행하면, 그 뒤에 뒤늦게 수거되는 파트 A 배치(`insertFacts`,
+  `ON CONFLICT DO NOTHING`)가 방금 지운 것과 같은 `short_code`로 고아 `pending` 행을 다시 만들어
+  버린다 - 통합 잡은 "행 존재"를 제외로 보므로 이 좀비 행은 조용히 방치된다.
+
+### 17-8. 알려진 한계
+
+- **스윕 3중 실행**: `ContentAnalysisJob.runQuery`가 배치 제출 전 pending 수거를 `JobLock` 없이
+  직접 호출한다(§2 정정). FACT_ANALYZE(05:00) 직전 스윕·정기 BATCH_COLLECT(05:10)·ANALYZE(05:30)
+  직전 스윕이 겹치면 같은 배치를 최대 3번 중복 조회할 수 있다 - 비용만 든다(수용, 데이터는
+  ON CONFLICT DO NOTHING / 멱등 UPDATE로 안전).
+- **RUNNING 배치 잔류**: 수거 시점에 아직 `RUNNING`인 배치는 다음 잡 실행까지 no-op으로 남는데,
+  그사이 같은 short_code가 다시 후보로 잡히면 같은 콘텐츠가 새 배치로 재제출될 수 있다(LLM 콜
+  1회 중복, 데이터 무해 - 나중 수거가 먼저 것을 덮어써도 같은 값).
+- **`ContentSynthesisRefreshJob`은 pending 행을 구제하지 않는다** - 대상 SQL에
+  `AND metric_timeliness IS DISTINCT FROM 'pending'` 가드가 있어, 아직 파트 A만 있는 행은 이
+  재생성 잡(어드민 수동 트리거 전용)의 대상이 아니다.
