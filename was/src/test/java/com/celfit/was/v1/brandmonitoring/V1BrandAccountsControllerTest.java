@@ -42,6 +42,8 @@ import java.util.List;
 import java.util.Optional;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -115,6 +117,16 @@ class V1BrandAccountsControllerTest {
 		return new BrandLinkRow(brandId, userId, brandId, username, accountType, months,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null,
 				OffsetDateTime.parse("2026-08-07T00:00:00Z"));
+	}
+
+	/**
+	 * hashtagSeededAt=null 링크 — 자동 시드 훅(2026-09-03 §4-2) 호출 지점 1·2 전용 픽스처.
+	 * 다른 모든 테스트가 쓰는 {@link #link} 계열은 훅을 무력화하려고 non-null로 고정돼 있어서 훅
+	 * 자체를 검증하려면 별도로 null을 채운 링크가 필요하다.
+	 */
+	private static BrandLinkRow linkNotSeeded(long brandId) {
+		return new BrandLinkRow(brandId, 7L, brandId, "lizda_official", BrandAccountType.OWN, 12,
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null);
 	}
 
 	/** 한도 검증용 — 서로 다른 브랜드 n개에 연결된 상태(요청 계정명과 겹치지 않는 이름). */
@@ -977,6 +989,32 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.collectionError.message").value("초기 수집에 실패했어요. 자동으로 재시도 중이에요."));
 	}
 
+	// ---------- 자동 시드 훅(2026-09-03 §4-2 호출 지점 1·2, 팔로업 검증) ----------
+
+	/** 백필이 끝난 브랜드는 단건 폴링에서 자동 시드 훅이 브랜드 시드를 조회한다(호출 지점 1). */
+	@Test
+	void 단건_조회는_백필_완료_브랜드에서_자동_시드_훅을_태운다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(linkNotSeeded(100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
+				.andExpect(status().isOk());
+
+		then(seedRepository).should().find(100L);
+	}
+
+	/** 아직 수집 중(backfillCompletedAt == null)이면 훅 자체를 태우지 않는다 — 폴링 왕복 낭비 방지. */
+	@Test
+	void 단건_조회는_수집_중이면_자동_시드_훅을_태우지_않는다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(linkNotSeeded(100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(collectingRow(100L, "lizda_official")));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100").with(user(principal())))
+				.andExpect(status().isOk());
+
+		then(seedRepository).should(never()).find(anyLong());
+	}
+
 	@Test
 	void 남의_브랜드_단건은_403이다() throws Exception {
 		given(linkRepository.findActiveByUserAndBrand(7L, 999L)).willReturn(Optional.empty());
@@ -1264,6 +1302,27 @@ class V1BrandAccountsControllerTest {
 				.andExpect(jsonPath("$.data.tags[1].lastRunAt").value(Matchers.nullValue()));
 
 		then(commandClient).should(never()).getHashtagTags(anyString());
+	}
+
+	/**
+	 * 자동 시드 훅(2026-09-03 §4-2 호출 지점 2, 팔로업 검증) — 장부를 읽기 전에 브랜드 시드를
+	 * 조회하고, 이미 있는 시드 태그를 장부에 반영(addTags)한 <b>뒤에</b> 그 장부를 읽는다. 순서가
+	 * 뒤집히면(장부를 먼저 읽고 나중에 심으면) 방금 자동 시드된 태그가 이번 응답에는 빠진다.
+	 */
+	@Test
+	void 태그_조회는_자동_시드_훅을_먼저_태우고_장부_반영_후_장부를_읽는다() throws Exception {
+		given(linkRepository.findActiveByUserAndBrand(7L, 100L)).willReturn(Optional.of(linkNotSeeded(100L)));
+		given(brandReadRepository.findAccount(100L)).willReturn(Optional.of(readyRow(100L)));
+		given(seedRepository.find(100L)).willReturn(Optional.of(new BrandHashtagSeedRepository.SeedRow(100L, "AI",
+				"닥터피엘", OffsetDateTime.parse("2026-09-01T00:00:00Z"))));
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-tags").with(user(principal())))
+				.andExpect(status().isOk());
+
+		then(seedRepository).should().find(100L);
+		InOrder order = Mockito.inOrder(hashtagTagRepository);
+		order.verify(hashtagTagRepository).addTags(7L, 100L, List.of("닥터피엘"));
+		order.verify(hashtagTagRepository).findByUserAndBrand(7L, 100L);
 	}
 
 	@Test

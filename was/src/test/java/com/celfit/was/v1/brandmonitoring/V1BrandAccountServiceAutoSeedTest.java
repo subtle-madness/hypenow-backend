@@ -232,7 +232,7 @@ class V1BrandAccountServiceAutoSeedTest {
 
 		service.ensureAutoSeeded(USER_ID, BRAND_ID);
 
-		then(seedRepository).should(never()).insertIgnore(anyLong(), anyString(), anyString());
+		then(seedRepository).should(never()).insertIgnore(anyLong(), anyString(), any());
 		then(linkRepository).should(never()).markHashtagSeeded(anyLong());
 	}
 
@@ -258,8 +258,28 @@ class V1BrandAccountServiceAutoSeedTest {
 
 		service.ensureAutoSeeded(USER_ID, BRAND_ID);
 
-		then(seedRepository).should(never()).insertIgnore(anyLong(), anyString(), anyString());
+		then(seedRepository).should(never()).insertIgnore(anyLong(), anyString(), any());
 		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
 		then(linkRepository).should(never()).markHashtagSeeded(anyLong());
+	}
+
+	// ---------- 등록은 훅을 동기로 태우지 않는다(2026-09-03 팔로업) ----------
+
+	/**
+	 * 이미 백필이 끝난 브랜드에 두 번째 사용자가 멱등 재-POST로 연결해도, 등록 응답 조립은 훅을
+	 * 태우지 않는다({@code getWithoutAutoSeed}) — 태우면 monitoring 제안 계산(AI 호출 포함)이
+	 * 등록 요청 처리 안에서 동기로 실행된다. 시드는 등록 직후 FE의 단건 폴링(get)에서 반영된다.
+	 */
+	@Test
+	void 이미_연결된_브랜드_재등록은_자동_시드_훅을_동기로_태우지_않는다() {
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(link(null)));
+		given(linkRepository.findActiveByUserAndBrand(USER_ID, BRAND_ID)).willReturn(Optional.of(link(null)));
+		stubAccount(NOW);   // 백필 완료 브랜드 — 훅이 살아 있었다면 여기서 계산이 돌았을 상황.
+
+		service.register(USER_ID, USERNAME, BrandAccountType.OWN, null);
+
+		then(seedRepository).should(never()).find(anyLong());
+		then(commandClient).should(never()).getHashtagSuggestion(anyString());
+		then(commandClient).should(never()).getHashtagTags(anyString());
 	}
 }

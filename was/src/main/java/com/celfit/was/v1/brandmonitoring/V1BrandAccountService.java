@@ -123,7 +123,7 @@ public class V1BrandAccountService {
 			if (rawCollectionMonths != null) {
 				linkRepository.updateCollectionMonths(userId, brandId, months);
 			}
-			return get(userId, brandId);
+			return getWithoutAutoSeed(userId, brandId);
 		}
 
 		String brandName = BrandAccountType.OWN.equals(accountType) ? brandNameOf(userId) : null;
@@ -142,7 +142,21 @@ public class V1BrandAccountService {
 		// 태그는 초기 백필 완료 뒤 첫 조회에서 ensureAutoSeeded가 monitoring 제안을 받아 심는다.
 		// 등록 응답의 status는 monitoring이 "ACTIVE"로 하드코딩해 보내므로 준비 상태 판정에 쓸 수 없다 —
 		// 상태는 항상 brand_account 조회가 정본이다(§5-2).
-		return get(userId, registered.brandId());
+		return getWithoutAutoSeed(userId, registered.brandId());
+	}
+
+	/**
+	 * 등록 응답 조립 전용(2026-09-03 팔로업) — {@link #get}과 같은 셰이프를 돌려주지만 자동 시드
+	 * 훅을 태우지 <b>않는다</b>. 등록(§5-1)의 멱등 분기(이미 다른 사용자가 연결해 백필이 끝난
+	 * 브랜드에 두 번째 사용자가 연결)를 {@link #get}으로 마감하면, monitoring 제안 계산(AI 호출
+	 * 포함)이 등록 요청 처리 안에서 동기로 실행돼 등록 API 응답이 그만큼 느려지고 실패 사유도
+	 * 늘어난다. 시드는 등록 직후 FE가 바로 잇따라 부르는 단건 폴링({@code GET .../accounts/{id}},
+	 * §4-2 호출 지점 1)에서 자연히 반영되므로 등록 응답 자체에서 태울 필요가 없다.
+	 */
+	private BrandAccountResponse getWithoutAutoSeed(long userId, long brandId) {
+		BrandLinkRow link = requireOwnership(userId, brandId);
+		BrandAccountRow account = findAccountOrThrow(brandId);
+		return assembler.toResponse(account, link.accountType(), link.collectionMonths());
 	}
 
 	/**
@@ -192,7 +206,8 @@ public class V1BrandAccountService {
 		BrandLinkRow link = requireOwnership(userId, brandId);
 		BrandAccountRow account = findAccountOrThrow(brandId);
 		if (account.backfillCompletedAt() != null) {
-			ensureAutoSeeded(userId, brandId);
+			// 링크를 이미 들고 있으니 링크 오버로드로 — 훅 안에서 같은 링크를 또 조회하지 않는다.
+			ensureAutoSeeded(link);
 		}
 		return assembler.toResponse(account, link.accountType(), link.collectionMonths());
 	}
@@ -284,10 +299,10 @@ public class V1BrandAccountService {
 	 * 곧장 AI·FALLBACK으로 떨어져 그 결과가 브랜드 생애 유일한 시드로 굳는다. {@code
 	 * backfill_completed_at}이 null이면 아무것도 하지 않고 다음 조회로 미룬다.
 	 *
-	 * <p>monitoring push는 <b>먼저</b> 시도하되 실패해도 장부는 진행한다(구 {@code
-	 * seedLedgerTagsSafely}와 같은 순서·격리) — 여기서 멈추면 표식이 안 찍혀 매 조회마다 재시도하는
-	 * 것 같지만, 실제로는 그 사용자에게 태그가 영영 안 보이는 상태가 길어진다. 장부만 채워진
-	 * 상태는 다음 사용자의 push나 수동 추가로 자연 복구된다.
+	 * <p>monitoring push는 <b>먼저</b> 시도하되 실패해도 장부는 진행한다(구 태그 자동 시딩과 같은
+	 * 순서·격리 — 09-03 이전에는 링크 생성 시점에 있던 로직이 여기로 옮겨왔다) — 여기서 멈추면
+	 * 표식이 안 찍혀 매 조회마다 재시도하는 것 같지만, 실제로는 그 사용자에게 태그가 영영 안
+	 * 보이는 상태가 길어진다. 장부만 채워진 상태는 다음 사용자의 push나 수동 추가로 자연 복구된다.
 	 *
 	 * <p><b>전체가 best-effort다</b> — 어떤 예외도 밖으로 내지 않는다. 호출 지점 3곳이 전부 사용자
 	 * 대면 조회라, 자동 시드 실패가 화면을 깨뜨리면 안 된다. 소유권 검증은 이 메서드 안의 활성
@@ -295,18 +310,35 @@ public class V1BrandAccountService {
 	 */
 	public void ensureAutoSeeded(long userId, long brandId) {
 		try {
-			doEnsureAutoSeeded(userId, brandId);
+			Optional<BrandLinkRow> link = linkRepository.findActiveByUserAndBrand(userId, brandId);
+			if (link.isPresent()) {
+				doEnsureAutoSeeded(link.get());
+			}
 		} catch (RuntimeException e) {
 			log.warn("해시태그 자동 시드 실패(격리) — userId={}, brandId={}", userId, brandId, e);
 		}
 	}
 
-	private void doEnsureAutoSeeded(long userId, long brandId) {
-		Optional<BrandLinkRow> link = linkRepository.findActiveByUserAndBrand(userId, brandId);
-		if (link.isEmpty() || link.get().hashtagSeededAt() != null) {
+	/**
+	 * 링크를 이미 들고 있는 호출부용 오버로드(2026-09-03 팔로업) — {@link #get}처럼 소유권 검증에서
+	 * 이미 활성 링크를 읽은 경우, 훅 안에서 같은 링크를 또 조회하지 않는다(폴링마다 쿼리 1회 절감).
+	 * 그 외 동작·best-effort 격리는 위 {@link #ensureAutoSeeded(long, long)}와 동일하다.
+	 */
+	public void ensureAutoSeeded(BrandLinkRow link) {
+		try {
+			doEnsureAutoSeeded(link);
+		} catch (RuntimeException e) {
+			log.warn("해시태그 자동 시드 실패(격리) — userId={}, brandId={}", link.userId(), link.brandId(), e);
+		}
+	}
+
+	private void doEnsureAutoSeeded(BrandLinkRow link) {
+		if (link.hashtagSeededAt() != null) {
 			return;
 		}
-		String username = link.get().username();
+		long userId = link.userId();
+		long brandId = link.brandId();
+		String username = link.username();
 		Optional<BrandHashtagSeedRepository.SeedRow> seed = seedRepository.find(brandId);
 		if (seed.isEmpty()) {
 			seed = computeSeed(brandId, username);
@@ -324,7 +356,7 @@ public class V1BrandAccountService {
 			}
 			hashtagTagRepository.addTags(userId, brandId, List.of(tag));
 		}
-		linkRepository.markHashtagSeeded(link.get().id());
+		linkRepository.markHashtagSeeded(link.id());
 	}
 
 	/**
