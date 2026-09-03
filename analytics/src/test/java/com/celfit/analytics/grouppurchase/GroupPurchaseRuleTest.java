@@ -31,8 +31,28 @@ class GroupPurchaseRuleTest {
 	}
 
 	@Test
-	void 드릴게요_류_오분류는_애매로_무해하게_흡수된다() {
-		assertEquals(Verdict.AMBIGUOUS, GroupPurchaseRule.evaluate("드릴게요 공구 오픈").verdict());
+	void 드릴게요_류_동사_활용은_도구_어휘가_아니라_확정_참() {
+		assertEquals(Verdict.CONFIRMED_TRUE, GroupPurchaseRule.evaluate("알려드릴게요 공구 오픈").verdict());
+		assertEquals(Verdict.CONFIRMED_TRUE, GroupPurchaseRule.evaluate("보여드릴까요 공구 마감").verdict());
+		assertEquals(Verdict.CONFIRMED_TRUE, GroupPurchaseRule.evaluate("안내드릴 수 있어요 공구 진행").verdict());
+	}
+
+	@Test
+	void 명사형_드릴은_도구_어휘로_애매() {
+		assertEquals(Verdict.AMBIGUOUS, GroupPurchaseRule.evaluate("전동드릴로 공구 세트 리뷰").verdict());
+		assertEquals(Verdict.AMBIGUOUS, GroupPurchaseRule.evaluate("드릴을 공구함에서 꺼내").verdict());
+	}
+
+	@Test
+	void 부담없이_류_일상어_없이는_도구_어휘가_아니라_확정_참() {
+		assertEquals(Verdict.CONFIRMED_TRUE, GroupPurchaseRule.evaluate("부담없이 공구 참여하세요").verdict());
+		assertEquals(Verdict.CONFIRMED_TRUE, GroupPurchaseRule.evaluate("고민 없이 공구 오픈").verdict());
+	}
+
+	@Test
+	void 공구_없이는_도구_문맥이라_애매() {
+		assertEquals(Verdict.AMBIGUOUS, GroupPurchaseRule.evaluate("공구 없이 완성").verdict());
+		assertEquals(Verdict.AMBIGUOUS, GroupPurchaseRule.evaluate("공구없이 돌려서 끼우기만").verdict());
 	}
 
 	@Test
