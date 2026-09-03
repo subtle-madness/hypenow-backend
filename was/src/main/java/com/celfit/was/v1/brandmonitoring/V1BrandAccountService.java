@@ -2,6 +2,7 @@ package com.celfit.was.v1.brandmonitoring;
 
 import com.celfit.was.auth.UserProfile;
 import com.celfit.was.auth.UserRepository;
+import com.celfit.was.monitoring.BrandHashtagSeedRepository;
 import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
@@ -53,11 +54,13 @@ public class V1BrandAccountService {
 	private final BrandAccountAssembler assembler;
 	private final UserRepository userRepository;
 	private final BrandHashtagTagRepository hashtagTagRepository;
+	/** 브랜드 단위 자동 시드 기록(2026-09-03 §4-1) — 계산을 브랜드당 1회로 묶는다. */
+	private final BrandHashtagSeedRepository seedRepository;
 
 	public V1BrandAccountService(BrandLinkRepository linkRepository, BrandLinkTransaction linkTransaction,
 			MonitoringCommandClient commandClient, BrandReadRepository brandReadRepository,
 			BrandAccountAssembler assembler, UserRepository userRepository,
-			BrandHashtagTagRepository hashtagTagRepository) {
+			BrandHashtagTagRepository hashtagTagRepository, BrandHashtagSeedRepository seedRepository) {
 		this.linkRepository = linkRepository;
 		this.linkTransaction = linkTransaction;
 		this.commandClient = commandClient;
@@ -65,6 +68,7 @@ public class V1BrandAccountService {
 		this.assembler = assembler;
 		this.userRepository = userRepository;
 		this.hashtagTagRepository = hashtagTagRepository;
+		this.seedRepository = seedRepository;
 	}
 
 	/**
@@ -178,10 +182,19 @@ public class V1BrandAccountService {
 	public record Listing(List<BrandAccountResponse> accounts, Map<String, Long> counts) {
 	}
 
-	/** 단건 폴링(§5-2) — 소유권은 활성 연결로 검증(남의 brandId는 403). 타입도 그 연결에서 읽는다. */
+	/** 단건 폴링(§5-2) — 소유권은 활성 연결로 검증(남의 brandId는 403). 타입도 그 연결에서 읽는다.
+	 *
+	 * <p>수집이 끝난 브랜드면 자동 시드 훅을 태운다(2026-09-03 자동 시드 재설계 §4-2 호출 지점 1) —
+	 * FE가 등록 직후 이 API를 폴링하므로, 백필 완료 폴링이 그대로 시드 시점이 된다. 미완일 때
+	 * 부르지 않는 이유는 훅 안에서도 같은 판정을 하지만 폴링 왕복마다 링크·시드 조회를 태울
+	 * 이유가 없어서다. */
 	public BrandAccountResponse get(long userId, long brandId) {
 		BrandLinkRow link = requireOwnership(userId, brandId);
-		return assembler.toResponse(findAccountOrThrow(brandId), link.accountType(), link.collectionMonths());
+		BrandAccountRow account = findAccountOrThrow(brandId);
+		if (account.backfillCompletedAt() != null) {
+			ensureAutoSeeded(userId, brandId);
+		}
+		return assembler.toResponse(account, link.accountType(), link.collectionMonths());
 	}
 
 	/**
@@ -224,6 +237,8 @@ public class V1BrandAccountService {
 	 */
 	public List<BrandHashtagTagsResponse.TagStatus> getHashtagTags(long userId, long brandId) {
 		requireOwnership(userId, brandId);
+		// 자동 시드 훅(2026-09-03 §4-2 호출 지점 2) — 장부를 읽기 전에 태운다.
+		ensureAutoSeeded(userId, brandId);
 		List<String> ledgerTags = List.copyOf(hashtagTagRepository.findByUserAndBrand(userId, brandId));
 		if (ledgerTags.isEmpty()) {
 			findAccountOrThrow(brandId);   // 소유권 통과 후에도 브랜드 자체는 존재해야 한다(기존 계약 유지)
@@ -254,6 +269,93 @@ public class V1BrandAccountService {
 			log.warn("해시태그 실행 상태 조회 실패(격리, 전체 collecting으로 폴백) — username={}", username, e);
 			return Map.of();
 		}
+	}
+
+	/**
+	 * 브랜드 해시태그 자동 시드 훅(2026-09-03 자동 시드 재설계 §4-2) — <b>was가 유일한 작성자다</b>
+	 * (08-28 "태그 생성 권한 was 일원화" 유지). monitoring은 계산만 해 주고 아무것도 쓰지 않는다.
+	 *
+	 * <p>두 단계 멱등: 계산은 브랜드당 1회({@code app.brand_hashtag_seed} 1행), 장부 삽입은
+	 * 사용자당 1회({@code brand_monitorings.hashtag_seeded_at}). 두 번째 사용자가 같은 브랜드에
+	 * 링크하면 계산 없이 시드 행의 태그를 자기 장부에 복사한다. 사용자가 자동 태그를 지운 뒤 다시
+	 * 조회해도 표식이 찍혀 있어 되살아나지 않는다.
+	 *
+	 * <p>호출은 초기 백필이 끝난 뒤여야 의미가 있다 — 캡션이 하나도 없으면 FREQ가 성립하지 못하고
+	 * 곧장 AI·FALLBACK으로 떨어져 그 결과가 브랜드 생애 유일한 시드로 굳는다. {@code
+	 * backfill_completed_at}이 null이면 아무것도 하지 않고 다음 조회로 미룬다.
+	 *
+	 * <p>monitoring push는 <b>먼저</b> 시도하되 실패해도 장부는 진행한다(구 {@code
+	 * seedLedgerTagsSafely}와 같은 순서·격리) — 여기서 멈추면 표식이 안 찍혀 매 조회마다 재시도하는
+	 * 것 같지만, 실제로는 그 사용자에게 태그가 영영 안 보이는 상태가 길어진다. 장부만 채워진
+	 * 상태는 다음 사용자의 push나 수동 추가로 자연 복구된다.
+	 *
+	 * <p><b>전체가 best-effort다</b> — 어떤 예외도 밖으로 내지 않는다. 호출 지점 3곳이 전부 사용자
+	 * 대면 조회라, 자동 시드 실패가 화면을 깨뜨리면 안 된다. 소유권 검증은 이 메서드 안의 활성
+	 * 링크 조회가 겸한다(남의 brandId면 링크가 없어 조용히 반환).
+	 */
+	public void ensureAutoSeeded(long userId, long brandId) {
+		try {
+			doEnsureAutoSeeded(userId, brandId);
+		} catch (RuntimeException e) {
+			log.warn("해시태그 자동 시드 실패(격리) — userId={}, brandId={}", userId, brandId, e);
+		}
+	}
+
+	private void doEnsureAutoSeeded(long userId, long brandId) {
+		Optional<BrandLinkRow> link = linkRepository.findActiveByUserAndBrand(userId, brandId);
+		if (link.isEmpty() || link.get().hashtagSeededAt() != null) {
+			return;
+		}
+		String username = link.get().username();
+		Optional<BrandHashtagSeedRepository.SeedRow> seed = seedRepository.find(brandId);
+		if (seed.isEmpty()) {
+			seed = computeSeed(brandId, username);
+			if (seed.isEmpty()) {
+				return;   // 백필 미완·계산 실패 — 표식을 찍지 않고 다음 조회로 미룬다.
+			}
+		}
+		String tag = seed.get().tag();
+		if (tag != null && !tag.isBlank()) {
+			try {
+				commandClient.addHashtagTags(username, List.of(tag));
+			} catch (RuntimeException e) {
+				log.warn("해시태그 자동 시드 monitoring push 실패(격리, 장부는 진행) — userId={}, brandId={}",
+						userId, brandId, e);
+			}
+			hashtagTagRepository.addTags(userId, brandId, List.of(tag));
+		}
+		linkRepository.markHashtagSeeded(link.get().id());
+	}
+
+	/**
+	 * 브랜드 단위 계산 1회 — 백필 미완이면 empty(다음 조회로 미룸). 이미 사용자 관리 태그가 있는
+	 * 브랜드는 자동 태그를 얹지 않고 SKIP만 기록한다(그 브랜드는 사용자가 이미 태그를 관리 중이다).
+	 *
+	 * <p>INSERT는 {@code ON CONFLICT DO NOTHING} 뒤 <b>재조회</b>한다 — 동시 호출 둘이 각자 계산해도
+	 * 먼저 커밋한 값이 정본이 되고, 진 쪽은 자기 계산 결과가 아니라 그 값을 심는다(두 사용자의
+	 * 장부가 갈리지 않는다).
+	 */
+	private Optional<BrandHashtagSeedRepository.SeedRow> computeSeed(long brandId, String username) {
+		BrandAccountRow account = findAccountOrThrow(brandId);
+		if (account.backfillCompletedAt() == null) {
+			return Optional.empty();
+		}
+		if (!commandClient.getHashtagTags(username).isEmpty()) {
+			seedRepository.insertIgnore(brandId, "SKIP", null);
+			return seedRepository.find(brandId);
+		}
+		MonitoringCommandClient.HashtagSuggestionBody suggestion =
+				commandClient.getHashtagSuggestion(username);
+		if (suggestion == null || suggestion.tag() == null || suggestion.tag().isBlank()) {
+			// monitoring 계약(tag는 비지 않는다) 위반 — 심지 않고 다음 조회로 미룬다.
+			log.warn("해시태그 제안 응답에 태그가 없다(계약 위반) — brandId={}, username={}", brandId, username);
+			return Optional.empty();
+		}
+		log.info("해시태그 자동 시드 계산 — brandId={}, username={}, path={}, tag={}, topCount={}, candidatePosts={}",
+				brandId, username, suggestion.path(), suggestion.tag(),
+				suggestion.topCount(), suggestion.candidatePosts());
+		seedRepository.insertIgnore(brandId, suggestion.path(), suggestion.tag());
+		return seedRepository.find(brandId);
 	}
 
 	/**

@@ -12,6 +12,7 @@ import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
 import com.celfit.was.auth.UserRepository;
+import com.celfit.was.monitoring.BrandHashtagSeedRepository;
 import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
@@ -52,13 +53,16 @@ class V1BrandAccountServiceHashtagTagsTest {
 	UserRepository userRepository;
 	@Mock
 	BrandHashtagTagRepository hashtagTagRepository;
+	@Mock
+	BrandHashtagSeedRepository seedRepository;
 
 	V1BrandAccountService service;
 
 	@BeforeEach
 	void setUp() {
 		service = new V1BrandAccountService(linkRepository, new BrandLinkTransaction(linkRepository), commandClient,
-				brandReadRepository, new BrandAccountAssembler(3), userRepository, hashtagTagRepository);
+				brandReadRepository, new BrandAccountAssembler(3), userRepository, hashtagTagRepository,
+				seedRepository);
 		given(linkRepository.findActiveByUserAndBrand(USER_ID, BRAND_ID)).willReturn(Optional.of(link()));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account()));
 	}
@@ -315,9 +319,15 @@ class V1BrandAccountServiceHashtagTagsTest {
 
 	// ---------- 픽스처 ----------
 
+	/**
+	 * hashtagSeededAt은 non-null로 채운다 — 이 클래스는 태그 관리 판정 로직을 보는 테스트라 자동
+	 * 시드 훅(2026-09-03 §4-2)의 관심사가 아니다. null이면 getHashtagTags 호출마다 훅이 돌아
+	 * seedRepository·commandClient에 이 테스트가 스텁하지 않은 호출이 섞여든다.
+	 */
 	private static BrandLinkRow link() {
 		return new BrandLinkRow(1L, USER_ID, BRAND_ID, USERNAME, BrandAccountType.OWN, 12,
-				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null);
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null,
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"));
 	}
 
 	private static BrandAccountRow account() {

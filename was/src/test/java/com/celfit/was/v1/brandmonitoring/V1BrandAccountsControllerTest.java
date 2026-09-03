@@ -25,6 +25,7 @@ import com.celfit.was.auth.AppUserDetails;
 import com.celfit.was.auth.UserProfile;
 import com.celfit.was.auth.UserRepository;
 import com.celfit.was.config.SecurityConfig;
+import com.celfit.was.monitoring.BrandHashtagSeedRepository;
 import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
@@ -77,6 +78,8 @@ class V1BrandAccountsControllerTest {
 	UserRepository userRepository;
 	@MockitoBean
 	BrandHashtagTagRepository hashtagTagRepository;
+	@MockitoBean
+	BrandHashtagSeedRepository seedRepository;
 
 	private static AppUserDetails principal() {
 		return new AppUserDetails(new AppUser(7L, "user@example.com", "hash", "USER",
@@ -102,9 +105,16 @@ class V1BrandAccountsControllerTest {
 		return link(userId, brandId, username, accountType, 12);
 	}
 
+	/**
+	 * hashtagSeededAt은 non-null로 채운다 — 이 파일은 연결·타입 변경·삭제 표면 계약을 보는
+	 * 테스트라 자동 시드 훅(2026-09-03 §4-2)의 관심사가 아니다. null이면 이미 백필이 끝난
+	 * readyRow류 계정을 조회하는 테스트마다 훅이 돌아 이 테스트가 스텁하지 않은 monitoring 호출이
+	 * 섞여든다(예: getHashtagTags never() 검증이 깨진다).
+	 */
 	private static BrandLinkRow link(long userId, long brandId, String username, String accountType, int months) {
 		return new BrandLinkRow(brandId, userId, brandId, username, accountType, months,
-				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null);
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null,
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"));
 	}
 
 	/** 한도 검증용 — 서로 다른 브랜드 n개에 연결된 상태(요청 계정명과 겹치지 않는 이름). */
