@@ -580,6 +580,23 @@ class StoreTest {
 		assertThat(updated.get("last_uploaded_at")).isEqualTo(java.sql.Date.valueOf(LocalDate.of(2026, 7, 25)));
 	}
 
+	/**
+	 * og 표면은 fullName을 프로필 문서의 quoted-string 마커에서만 뽑는다(OgProfileFetcher.FULL_NAME) —
+	 * 키가 JSON null이거나 부재하면 관측 실패로 null을 반환한다(빈 문자열 ""과는 다른 경로, S15 후속).
+	 * 이 null이 이전에 Hiker가 채운 표시명을 지우면 안 된다 — profile_image_url·last_uploaded_at과
+	 * 동일 원칙(#725, 7a701f9c의 SnapshotRepository.upsertProfile COALESCE 보호와 동형).
+	 */
+	@Test
+	void 프로필_메타_display_name_null_관측은_기존값을_보호한다() {
+		profileMeta.upsert("acct_a", "표시이름", "https://img/1.jpg", LocalDate.of(2026, 7, 20));
+
+		profileMeta.upsert("acct_a", null, "https://img/1.jpg", LocalDate.of(2026, 7, 25));
+
+		assertThat(db.queryForObject(
+				"SELECT display_name FROM profile_meta WHERE username='acct_a'", String.class))
+				.isEqualTo("표시이름");
+	}
+
 	/** 열거 0건(POST 단독 스윕 등)으로 lastUploadedAt이 null이면 기존 최근 게시일을 지우지 않는다. */
 	@Test
 	void last_uploaded_at이_null이면_기존_값을_보존한다() {
