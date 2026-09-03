@@ -1,12 +1,12 @@
 package com.celfit.was.crypto;
 
-import java.util.Arrays;
 import java.util.Base64;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 /**
@@ -47,7 +47,9 @@ public class CryptoConfig {
 	}
 
 	private void guardAgainstLocalModeInProd(String mode, boolean allowLocalInProd, Environment environment) {
-		boolean isProd = Arrays.asList(environment.getActiveProfiles()).contains("prod");
+		// acceptsProfiles는 프로파일 그룹·include(예: prod를 활성화하는 상위 그룹)까지 커버한다 —
+		// getActiveProfiles()의 정확 일치보다 넓은 판정이라 프로파일 구성이 바뀌어도 가드가 안전 측으로 남는다.
+		boolean isProd = environment.acceptsProfiles(Profiles.of("prod"));
 		if (isProd && "local".equals(mode) && !allowLocalInProd) {
 			throw new IllegalStateException(
 					"운영 프로파일(prod)은 crypto.mode=vault 필수 — local 더미 키로 기동하는 것을 차단한다. "
