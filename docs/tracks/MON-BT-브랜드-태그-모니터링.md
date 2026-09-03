@@ -210,7 +210,7 @@ onVisible 훅(nullable `Runnable`)을 추가해 markEnriched와 **같은 finally
 첫 페이지분(~21건)만 보이고 나머지는 스트리밍으로 채워진다.
 
 캡션 기반 광고 표기 판정(2026-08-18 — 구현 완료, 브랜치 `feat/brand-ad-disclosure`,
-[spec 2026-08-17](../superpowers/specs/2026-08-17-brand-ad-disclosure-design.md) ·
+[spec 2026-08-17](../superpowers/specs/archive/2026-08-17-brand-ad-disclosure-design.md) ·
 [plan 2026-08-17](../superpowers/plans/archive/2026-08-17-brand-ad-disclosure.md)): 브랜드 태그 게시물
 캡션이 공정위예규 제499호 Ⅴ.6 광고 표기 규정을 지켰는지 게시물 단위로 자동 판정한다. 규칙
 선처리(Tier0 메타·Tier1 고신뢰 사전) → LLM은 문구 추출만(Tier2, `AdDisclosureExtractorGemini`,

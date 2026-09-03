@@ -8,7 +8,7 @@
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · 기존 mock 기반 테스트 스타일(`@WebMvcTest`·Mockito).
 
-**스펙:** [2026-08-27-perf-dashboard-list-api-optimization-design.md](../../specs/2026-08-27-perf-dashboard-list-api-optimization-design.md) §4
+**스펙:** [2026-08-27-perf-dashboard-list-api-optimization-design.md](../../specs/archive/2026-08-27-perf-dashboard-list-api-optimization-design.md) §4
 
 ## Global Constraints
 
@@ -256,7 +256,7 @@ public final class PerformanceInfluencerAggregator {
 ### Task 5: 문서·전체 검증
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-08-27-perf-dashboard-list-api-optimization-design.md` (상태 헤더만)
+- Modify: `docs/superpowers/specs/archive/2026-08-27-perf-dashboard-list-api-optimization-design.md` (상태 헤더만)
 - Modify: `DECISIONS.md` (기존 행의 구현 상태 문구만)
 
 - [ ] **Step 1: 상태 갱신** — 스펙 헤더 `§1~§3(PR ①) 구현됨 · §4~§6 미구현` → `§1~§4(PR ①·②) 구현됨 · §5~§6 미구현`. DECISIONS.md 해당 행의 `(PR ① 목록·비교 구현됨 · ②~④ 미구현)` → `(PR ①·② 구현됨 · ③~④ 미구현)`.

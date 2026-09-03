@@ -8,7 +8,7 @@
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · 기존 mock 기반 테스트 스타일.
 
-**스펙:** [2026-08-27-perf-dashboard-list-api-optimization-design.md](../../specs/2026-08-27-perf-dashboard-list-api-optimization-design.md) §5 (선행: PR ① ref 인덱스, PR ② DashboardQueries)
+**스펙:** [2026-08-27-perf-dashboard-list-api-optimization-design.md](../../specs/archive/2026-08-27-perf-dashboard-list-api-optimization-design.md) §5 (선행: PR ① ref 인덱스, PR ② DashboardQueries)
 
 ## Global Constraints
 
@@ -217,7 +217,7 @@ GET /v1/performance-dashboard/growth
 ### Task 3: 문서·전체 검증
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-08-27-perf-dashboard-list-api-optimization-design.md` (상태 헤더만: `§1~§4(PR ①·②) 구현됨 · §5~§6 미구현` → `§1~§5(PR ①~③) 구현됨 · §6 미구현`)
+- Modify: `docs/superpowers/specs/archive/2026-08-27-perf-dashboard-list-api-optimization-design.md` (상태 헤더만: `§1~§4(PR ①·②) 구현됨 · §5~§6 미구현` → `§1~§5(PR ①~③) 구현됨 · §6 미구현`)
 - Modify: `DECISIONS.md` (`(PR ①·② 구현됨 · ③~④ 미구현)` → `(PR ①~③ 구현됨 · ④ 미구현)`)
 
 - [ ] **Step 1: 상태 갱신** — 위 두 줄만.

@@ -904,7 +904,7 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 재편한 뒤, 같은 날 브랜드 탭을 별도 폴더로 떼어냈고(3장), 08-23에 그중 운영 건강·수집 현황을
 한 장으로 합쳐 지금은 **HypeNow 5탭 + 브랜드 모니터링 폴더 2장**(총 7장) 체제다(설계:
 `docs/superpowers/specs/2026-08-18-grafana-dashboard-redesign-design.md`, 폴더 분리:
-`docs/superpowers/specs/2026-08-18-grafana-brand-folder-design.md`, 합본 근거: DECISIONS 08-23).
+`docs/superpowers/specs/archive/2026-08-18-grafana-brand-folder-design.md`, 합본 근거: DECISIONS 08-23).
 **레포에서 대시보드 JSON을 지우거나 옮기면 서버 파일은 CD가 지우지 않는다**(cd.yml의 프로비저닝
 동기화가 `scp -r` 추가 전용) — 잔존 파일은 수동으로 정리해야 한다(§14-2-2 ④).
 **Caddy 라우트가 없다** — 호스트 루프백(`127.0.0.1:3000`)에만 열고 analytics 어드민(§8)·crawler
