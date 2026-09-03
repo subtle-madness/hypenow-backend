@@ -10,9 +10,9 @@
 
 ---
 
-> 상태: 🟢 활성 · 구현 중 (2026-09-03)
+> 상태: ✅ 구현됨 (2026-09-03, PR 개설 — 운영 정리 §5는 배포 후 수동)
 >
-> 정본 설계: [2026-09-03 브랜드 해시태그 자동 시드 재설계(2차 개정)](../specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md)
+> 정본 설계: [2026-09-03 브랜드 해시태그 자동 시드 재설계(2차 개정)](../../specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md)
 
 ## 사전 준비 (모든 Task 공통)
 
@@ -2994,7 +2994,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 - [ ] **DECISIONS.md 갱신** — `| 날짜 | 결정 | 근거/상세 |` 표의 **첫 데이터 행 앞**에 아래 한 행을 넣는다(기존 행과 같은 3열·같은 " - " 구분 관용구).
 
 ```
-| 2026-09-03 | **브랜드 해시태그 자동 시드 재설계 - 계정명 절삭 폐기, monitoring은 계산만 / was가 유일한 작성자** - 자동 태그 재료를 "계정명 소문자화 후 첫 무효 문자 앞까지 절삭"(2026-08-17 be39cbd7, 08-27 §4로 was에 이식)에서 **3단 계산**으로 바꾼다: ① 그 브랜드에 태그된 게시물 캡션의 해시태그 빈도(최다 태그의 등장 게시물 수 ≥ 7) ② 미달이면 AI가 **IG 표시명(brand_account.full_name)** + 계정명에서 브랜드 상호를 뽑아 1개 ③ 그래도 없으면 계정명에서 점·언더스코어를 뺀 값. **결과는 브랜드당 항상 1개**이고 경쟁사도 같다. 절삭은 점이 든 계정명에서 계정과 무관한 일반어를 만들었다(`dr.piel_official` → `#dr` 전량 스윕 = 무관 게시물 대량 유입 + Hiker 콜 낭비) - 점 든 계정명은 그 자체로 해시태그가 될 수 없어 문자열을 어떻게 잘라도 결과가 추측이고, 실제 소비자가 쓰는 태그는 `#닥터피엘` 같은 상호다. AI 입력에서 **회사명(app.users.company_name)·바이오는 제외** - 회사명은 등록자 소속이라 경쟁사 브랜드에 남의 이름을 붙인다. **역할 분담: monitoring은 계산만 하고 DB에 쓰지 않는다**(내부 조회 API `GET /api/brands/{username}/hashtag-suggestion` 1개, 응답 `{path, tag, topCount, candidatePosts}`) - **08-28 "태그 생성 권한 was 일원화" 결정을 그대로 유지**한다. 1차 초안이던 A안(monitoring이 직접 `brand_hashtag`에 심고 was도 자기 장부에 쓰는 구조)은 **같은 태그를 두 모듈이 각자 쓰게 만들어** 폐기했다(사용자 지적) - 쓰기 주체가 갈리면 "누가 심었나"가 불명확해지고 08-28에 정리한 권한 경계가 도로 무너진다. **시점은 링크 생성이 아니라 초기 백필 완료 뒤**(그때야 캡션 모수가 존재한다) - was 단건 폴링(수집 완료 시)·태그 목록 조회·해시태그 게시물 목록/개수 조회에 같은 훅(`ensureAutoSeeded`). 중복·부활 방지는 브랜드당 시드 기록 1행(`app.brand_hashtag_seed`, 계산 1회) + 링크별 `hashtag_seeded_at`(장부 삽입 사용자당 1회) - 사용자가 지운 자동 태그는 되살아나지 않고, 이미 사용자 관리 태그가 있는 브랜드는 SKIP만 기록한다. 임계·stoplist·AI 킬스위치는 monitoring app_setting 런타임 토글. FE 계약 변화 없음(자동 태그가 "등록 즉시"가 아니라 "수집 완료 뒤 첫 조회"에 나타나는 타이밍만 바뀜 - FE 통지 1건). 운영 정리는 이미 심긴 절삭 태그를 monitoring·was 양쪽에서 삭제하는 것뿐이고, **재시드는 훅이 자동으로 한다**(스크립트·replay 호출 불요). | [spec 2026-09-03](docs/superpowers/specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md), [plan](docs/superpowers/plans/2026-09-03-brand-hashtag-auto-seed-redesign.md) |
+| 2026-09-03 | **브랜드 해시태그 자동 시드 재설계 - 계정명 절삭 폐기, monitoring은 계산만 / was가 유일한 작성자** - 자동 태그 재료를 "계정명 소문자화 후 첫 무효 문자 앞까지 절삭"(2026-08-17 be39cbd7, 08-27 §4로 was에 이식)에서 **3단 계산**으로 바꾼다: ① 그 브랜드에 태그된 게시물 캡션의 해시태그 빈도(최다 태그의 등장 게시물 수 ≥ 7) ② 미달이면 AI가 **IG 표시명(brand_account.full_name)** + 계정명에서 브랜드 상호를 뽑아 1개 ③ 그래도 없으면 계정명에서 점·언더스코어를 뺀 값. **결과는 브랜드당 항상 1개**이고 경쟁사도 같다. 절삭은 점이 든 계정명에서 계정과 무관한 일반어를 만들었다(`dr.piel_official` → `#dr` 전량 스윕 = 무관 게시물 대량 유입 + Hiker 콜 낭비) - 점 든 계정명은 그 자체로 해시태그가 될 수 없어 문자열을 어떻게 잘라도 결과가 추측이고, 실제 소비자가 쓰는 태그는 `#닥터피엘` 같은 상호다. AI 입력에서 **회사명(app.users.company_name)·바이오는 제외** - 회사명은 등록자 소속이라 경쟁사 브랜드에 남의 이름을 붙인다. **역할 분담: monitoring은 계산만 하고 DB에 쓰지 않는다**(내부 조회 API `GET /api/brands/{username}/hashtag-suggestion` 1개, 응답 `{path, tag, topCount, candidatePosts}`) - **08-28 "태그 생성 권한 was 일원화" 결정을 그대로 유지**한다. 1차 초안이던 A안(monitoring이 직접 `brand_hashtag`에 심고 was도 자기 장부에 쓰는 구조)은 **같은 태그를 두 모듈이 각자 쓰게 만들어** 폐기했다(사용자 지적) - 쓰기 주체가 갈리면 "누가 심었나"가 불명확해지고 08-28에 정리한 권한 경계가 도로 무너진다. **시점은 링크 생성이 아니라 초기 백필 완료 뒤**(그때야 캡션 모수가 존재한다) - was 단건 폴링(수집 완료 시)·태그 목록 조회·해시태그 게시물 목록/개수 조회에 같은 훅(`ensureAutoSeeded`). 중복·부활 방지는 브랜드당 시드 기록 1행(`app.brand_hashtag_seed`, 계산 1회) + 링크별 `hashtag_seeded_at`(장부 삽입 사용자당 1회) - 사용자가 지운 자동 태그는 되살아나지 않고, 이미 사용자 관리 태그가 있는 브랜드는 SKIP만 기록한다. 임계·stoplist·AI 킬스위치는 monitoring app_setting 런타임 토글. FE 계약 변화 없음(자동 태그가 "등록 즉시"가 아니라 "수집 완료 뒤 첫 조회"에 나타나는 타이밍만 바뀜 - FE 통지 1건). 운영 정리는 이미 심긴 절삭 태그를 monitoring·was 양쪽에서 삭제하는 것뿐이고, **재시드는 훅이 자동으로 한다**(스크립트·replay 호출 불요). | [spec 2026-09-03](../../specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md), [plan](docs/superpowers/plans/archive/2026-09-03-brand-hashtag-auto-seed-redesign.md) |
 ```
 
 - [ ] **트랙 문서 갱신** — `docs/tracks/MON-BT-브랜드-태그-모니터링.md` **파일 끝**에 아래 절을 덧붙인다.
@@ -3002,7 +3002,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ```markdown
 ## 해시태그 자동 시드 재설계(2026-09-03) — 계정명 절삭 폐기
 
-- 상태: 구현 완료·**운영 정리 미실행**. 설계 정본은 [spec 2026-09-03](../superpowers/specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md), 실행 계획은 [plan](../superpowers/plans/2026-09-03-brand-hashtag-auto-seed-redesign.md).
+- 상태: 구현 완료·**운영 정리 미실행**. 설계 정본은 [spec 2026-09-03](../superpowers/specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md), 실행 계획은 [plan](../superpowers/plans/archive/2026-09-03-brand-hashtag-auto-seed-redesign.md).
 - 자동 태그가 계정명 절삭 → **3단 계산**으로 바뀌었다. ① FREQ: 태그된 게시물 캡션의 해시태그 빈도(최다 태그의 등장 게시물 수 ≥ `brand.hashtag-seed.min-posts`, 기본 7) ② AI: IG 표시명(`brand_account.full_name`) + 계정명으로 상호 해시태그 1개 ③ FALLBACK: 계정명에서 점·언더스코어를 뺀 소문자. **결과는 브랜드당 항상 1개**(경쟁사 포함).
 - **역할 분담**: monitoring은 `GET /api/brands/{username}/hashtag-suggestion`으로 **계산만** 하고 DB에 쓰지 않는다. 저장·push·장부 반영은 was `V1BrandAccountService.ensureAutoSeeded`가 전담한다(08-28 태그 생성 권한 was 일원화 유지).
 - **시점**: 링크 생성이 아니라 **초기 백필 완료 뒤 첫 조회**. 훅은 단건 폴링 `GET /accounts/{id}`(수집 완료일 때만)·`GET /accounts/{id}/hashtag-tags`·`GET /accounts/{id}/hashtag-posts`·`.../hashtag-posts/count` 4개 표면에 걸려 있다. 메인 목록 `GET /accounts/{id}/posts`에는 없다(수집 중 초 단위 폴링 경로).
@@ -3087,7 +3087,7 @@ WHERE path IN ('AI', 'FALLBACK') ORDER BY seeded_at DESC;
 
 ```
 ls docs/superpowers/specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md \
-   docs/superpowers/plans/2026-09-03-brand-hashtag-auto-seed-redesign.md
+   docs/superpowers/plans/archive/2026-09-03-brand-hashtag-auto-seed-redesign.md
 ```
 
 - [ ] **커밋**

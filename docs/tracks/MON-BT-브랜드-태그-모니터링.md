@@ -619,7 +619,7 @@ DB 측 전송분이 ~7.5ms뿐이라 로컬 하니스로는 ~1.9초 고정비의 
 
 ## 해시태그 자동 시드 재설계(2026-09-03) — 계정명 절삭 폐기
 
-- 상태: 구현 완료·**운영 정리 미실행**. 설계 정본은 [spec 2026-09-03](../superpowers/specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md), 실행 계획은 [plan](../superpowers/plans/2026-09-03-brand-hashtag-auto-seed-redesign.md).
+- 상태: 구현 완료·**운영 정리 미실행**. 설계 정본은 [spec 2026-09-03](../superpowers/specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md), 실행 계획은 [plan](../superpowers/plans/archive/2026-09-03-brand-hashtag-auto-seed-redesign.md).
 - 자동 태그가 계정명 절삭 → **3단 계산**으로 바뀌었다. ① FREQ: 태그된 게시물 캡션의 해시태그 빈도(최다 태그의 등장 게시물 수 ≥ `brand.hashtag-seed.min-posts`, 기본 7) ② AI: IG 표시명(`brand_account.full_name`) + 계정명으로 상호 해시태그 1개 ③ FALLBACK: 계정명에서 점·언더스코어를 뺀 소문자. **결과는 브랜드당 항상 1개**(경쟁사 포함).
 - **역할 분담**: monitoring은 `GET /api/brands/{username}/hashtag-suggestion`으로 **계산만** 하고 DB에 쓰지 않는다. 저장·push·장부 반영은 was `V1BrandAccountService.ensureAutoSeeded`가 전담한다(08-28 태그 생성 권한 was 일원화 유지).
 - **시점**: 링크 생성이 아니라 **초기 백필 완료 뒤 첫 조회**. 훅은 단건 폴링 `GET /accounts/{id}`(수집 완료일 때만)·`GET /accounts/{id}/hashtag-tags`·`GET /accounts/{id}/hashtag-posts`·`.../hashtag-posts/count` 4개 표면에 걸려 있다. 메인 목록 `GET /accounts/{id}/posts`에는 없다(수집 중 초 단위 폴링 경로).
