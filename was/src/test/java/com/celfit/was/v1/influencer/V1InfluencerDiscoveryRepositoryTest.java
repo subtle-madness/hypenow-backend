@@ -563,6 +563,28 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		assertThat(muteThumbs.get(0).contentType()).isEqualTo("feed");
 	}
 
+	/**
+	 * 분석 전 게시물은 썸네일에서 제외(2026-09-03, FE 피드백 #3) — contentId가 6.3(contents ⋈
+	 * content_analyses)으로 곧장 가므로, 분석이 없는 창 게시물을 내려주면 hover 프리페치가 404를 낸다.
+	 */
+	@Test
+	void 보강_썸네일은_분석_완료_게시물만_담는다() {
+		// g0: 창에는 있지만(미러 직후 최신 게시물) 아직 content_analyses가 없다 — 가장 최신이어도 빠져야 한다.
+		jdbcTemplate.update("""
+				INSERT INTO account_content_series (short_code, account_handle, posted_at,
+				  content_type, views, likes, comments, sponsored)
+				VALUES ('g0', 'glow', now() - interval '1 hour', 'reels', 100, 5, 1, false)
+				""");
+		jdbcTemplate.update(
+				"INSERT INTO contents (short_code, caption, thumbnail_url) VALUES ('g0', '방금 올림', 'https://cdn/g0.jpg')");
+
+		var glowThumbs = repository.findThumbs(List.of("glow"));
+
+		assertThat(glowThumbs).hasSize(4);
+		assertThat(glowThumbs).extracting(V1InfluencerDiscoveryRepository.ThumbRow::shortCode)
+				.containsExactly("g1", "g2", "g3", "g4"); // g0 제외, g5는 상한(4)에 밀림
+	}
+
 	@Test
 	void 보강_유효팔로워_재료는_시계열_전량을_핸들별로_반환() {
 		// glow 5행(g1~g5) + calm 3행(c1~c3) — 순서는 무관(EffectiveFollowers 산식이 평균이라)

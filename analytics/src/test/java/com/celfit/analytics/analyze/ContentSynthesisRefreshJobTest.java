@@ -71,6 +71,7 @@ class ContentSynthesisRefreshJobTest {
 				CREATE VIEW analytics.v_analysis_account_baseline AS
 				SELECT * FROM analytics.account_baseline_fixture""");
 		db.update("INSERT INTO analytics.baseline_fixture VALUES ('old_c', 9000, 2, 3, 3, 0.0812, 940, 61, 67, 19333, 3)");
+		db.update("INSERT INTO analytics.baseline_fixture VALUES ('facts_c', 7000, 1, 3, 3, 0.06, 800, 50, 60, 15000, 3)");
 		db.update("INSERT INTO analytics.account_baseline_fixture VALUES ('acct1', 8000, 3, 3, 0.0777, 900, 55, 70, 18000, 3)");
 
 		db.update("""
@@ -94,6 +95,8 @@ class ContentSynthesisRefreshJobTest {
 				   0.0311,'makeup','organic','[{"name":"브랜드B"}]'::jsonb,true,'late_backfill',NULL),
 				  ('orphan_c','old-model','옛 요약3','옛 패턴3','옛 댓글3','normal','옛 근거3',
 				   0.0222,'makeup','organic','[]'::jsonb,true,'timely',NULL),
+				  ('facts_c','facts-model',NULL,NULL,NULL,NULL,NULL,
+				   NULL,'cleansing','sponsored','[{"name":"브랜드C"}]'::jsonb,true,'pending',NULL),
 				  ('fresh_c','new-model','최신 요약','최신 패턴','최신 댓글','high','최신 근거',
 				   0.0800,'haircare','organic','[]'::jsonb,true,'timely',%d)"""
 				.formatted(Synthesis.VERSION));
@@ -112,7 +115,7 @@ class ContentSynthesisRefreshJobTest {
 		// orphan_c는 앵커가 없어 손대지 않는다 — 낡은 채 남지만 빈 근거로 나빠지진 않는다
 		assertEquals("옛 요약3", db.queryForObject(
 				"SELECT ai_content_summary FROM content_analyses WHERE short_code='orphan_c'", String.class));
-		assertEquals(1L, db.queryForObject(
+		assertEquals(2L, db.queryForObject(
 				"SELECT count(*) FROM content_analyses WHERE synthesis_version IS NULL", Long.class));
 	}
 
@@ -203,5 +206,35 @@ class ContentSynthesisRefreshJobTest {
 		assertEquals(1, job.run().processed()); // gone_c만 성공 (old_c 빈 문구 실패, orphan_c 보존)
 		assertEquals("옛 요약", db.queryForObject(
 				"SELECT ai_content_summary FROM content_analyses WHERE short_code='old_c'", String.class));
+	}
+
+	/**
+	 * 파트 A만 채워진 행(metric_timeliness='pending')은 재생성 대상이 아니다.
+	 * synthesis_version이 NULL이라 가드가 없으면 이 잡이 낚아채 온라인으로 파트 B를 돌려버리는데,
+	 * 이 잡에는 성숙 가드가 없어 D+1 미성숙 지표를 인용한 문구가 만들어지고 일 3,500건이
+	 * 동기 호출로 나간다(2026-09-03 2단계 분리 §4-4).
+	 */
+	@Test
+	void 파트A만_있는_pending_행은_재생성_대상이_아니다() {
+		job.run();
+
+		assertTrue(calls.stream().noneMatch(c -> c.shortCode().equals("facts_c")));
+		assertNull(db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code='facts_c'", String.class));
+		assertEquals("pending", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code='facts_c'", String.class));
+	}
+
+	/** 시점이 NULL인 레거시 행(V33 이전 기분석분)은 계속 재생성 대상이다 - IS DISTINCT FROM이 필요한 이유. */
+	@Test
+	void 시점_NULL_레거시_행은_여전히_재생성_대상이다() {
+		db.update("UPDATE content_analyses SET metric_timeliness = NULL WHERE short_code = 'old_c'");
+
+		job.run();
+
+		assertEquals("새 요약: old_c", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code='old_c'", String.class));
+		assertNull(db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code='old_c'", String.class));
 	}
 }

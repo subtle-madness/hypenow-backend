@@ -11,7 +11,11 @@ import org.springframework.session.Session;
 import org.springframework.stereotype.Service;
 
 /**
- * 세션 목록·무효화(스펙 6.14) — Spring Session의 principal_name(=email) 인덱스로 본인 세션만 다룬다.
+ * 세션 목록·무효화(스펙 6.14) — Spring Session의 principal_name(=userId 문자열, 트랙 A 09-03) 인덱스로
+ * 본인 세션만 다룬다. 배포 이전 발급된 구 email-principal 세션은 첫 요청 시 spring-session-jdbc가
+ * principal_name을 자가 재기록해 이전되고, 한 번도 안 쓰인 나머지는 마이그레이션
+ * (V20260903080645__session_principal_email_to_user_id.sql)이 전량 이전한다 — 전환기 잔존 없이
+ * deleteOthers/deleteAll(userId)가 배포 이전 세션까지 지운다.
  *
  * 노출 id는 실 세션 id가 아니라 **alias(sha-256 hex 앞 16자)** — XSS로 목록 응답을 읽혀도
  * 세션 쿠키 값을 복원할 수 없어 세션 탈취로 이어지지 않는다. 삭제도 alias를 본인 목록에서
@@ -31,8 +35,8 @@ public class SessionService {
 	}
 
 	/** 현재 세션 포함 전체, loginAt 내림차순(최근 로그인 먼저). */
-	public List<SessionView> listSessions(String email, String currentSessionId) {
-		return sessionRepository.findByPrincipalName(email).values().stream()
+	public List<SessionView> listSessions(String principalName, String currentSessionId) {
+		return sessionRepository.findByPrincipalName(principalName).values().stream()
 				.sorted(Comparator.comparing(Session::getCreationTime).reversed())
 				.map(session -> new SessionView(
 						alias(session.getId()),
@@ -47,8 +51,8 @@ public class SessionService {
 	 * alias가 본인 세션과 매칭되면 삭제 후 true, 아니면 false(호출부가 404로 은닉 — 스펙의 타 유저 403은
 	 * alias 방식에선 존재 여부 자체가 불명이라 구분할 수 없다). 현재 세션을 지우면 로그아웃과 동일 효과.
 	 */
-	public boolean deleteByAlias(String email, String alias) {
-		for (String sessionId : sessionRepository.findByPrincipalName(email).keySet()) {
+	public boolean deleteByAlias(String principalName, String alias) {
+		for (String sessionId : sessionRepository.findByPrincipalName(principalName).keySet()) {
 			if (alias(sessionId).equals(alias)) {
 				sessionRepository.deleteById(sessionId);
 				return true;
@@ -58,8 +62,8 @@ public class SessionService {
 	}
 
 	/** 비밀번호 변경용(스펙 6.13) — 현재 세션만 남기고 전부 무효화. */
-	public void deleteOthers(String email, String currentSessionId) {
-		for (String sessionId : sessionRepository.findByPrincipalName(email).keySet()) {
+	public void deleteOthers(String principalName, String currentSessionId) {
+		for (String sessionId : sessionRepository.findByPrincipalName(principalName).keySet()) {
 			if (!sessionId.equals(currentSessionId)) {
 				sessionRepository.deleteById(sessionId);
 			}
@@ -67,8 +71,8 @@ public class SessionService {
 	}
 
 	/** 탈퇴용(스펙 6.13) — 본인 세션 전부 무효화. */
-	public void deleteAll(String email) {
-		for (String sessionId : sessionRepository.findByPrincipalName(email).keySet()) {
+	public void deleteAll(String principalName) {
+		for (String sessionId : sessionRepository.findByPrincipalName(principalName).keySet()) {
 			sessionRepository.deleteById(sessionId);
 		}
 	}

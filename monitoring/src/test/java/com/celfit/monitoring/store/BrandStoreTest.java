@@ -559,6 +559,36 @@ class BrandStoreTest {
 				.isEqualTo(1L);
 	}
 
+	@Test
+	void 브랜드_프로필_스냅샷_null_관측은_기존값을_보호한다() {
+		// og 표면은 media_count가 og:description 영어 정규식 파싱 의존이라 부분 파싱 실패(null)가 흔하다
+		// (S15 보완) — 그 null이 이미 Hiker·wpi가 채운 good value를 지우면 안 된다(SnapshotRepository와 동형).
+		snapshots.upsertBrandProfile("brand_b", LocalDate.of(2026, 9, 3),
+				new ProfileInfo("brand_b", "1", 100L, 10L, 5L, "이름", "https://img", null, null, null));
+		snapshots.upsertBrandProfile("brand_b", LocalDate.of(2026, 9, 3),
+				new ProfileInfo("brand_b", "1", null, null, null, "이름", "https://img", null, null, null));
+		assertThat(db.queryForObject(
+				"SELECT followers FROM brand_profile_snapshot WHERE username='brand_b'", Long.class)).isEqualTo(100);
+		assertThat(db.queryForObject(
+				"SELECT following FROM brand_profile_snapshot WHERE username='brand_b'", Long.class)).isEqualTo(10);
+		assertThat(db.queryForObject(
+				"SELECT media_count FROM brand_profile_snapshot WHERE username='brand_b'", Long.class)).isEqualTo(5);
+	}
+
+	@Test
+	void 브랜드_프로필_스냅샷_실제_관측값은_null_보호와_무관하게_덮는다() {
+		snapshots.upsertBrandProfile("brand_c", LocalDate.of(2026, 9, 3),
+				new ProfileInfo("brand_c", "1", 100L, 10L, 5L, "이름", "https://img", null, null, null));
+		snapshots.upsertBrandProfile("brand_c", LocalDate.of(2026, 9, 3),
+				new ProfileInfo("brand_c", "1", 200L, 20L, 8L, "이름", "https://img", null, null, null));
+		assertThat(db.queryForObject(
+				"SELECT followers FROM brand_profile_snapshot WHERE username='brand_c'", Long.class)).isEqualTo(200);
+		assertThat(db.queryForObject(
+				"SELECT following FROM brand_profile_snapshot WHERE username='brand_c'", Long.class)).isEqualTo(20);
+		assertThat(db.queryForObject(
+				"SELECT media_count FROM brand_profile_snapshot WHERE username='brand_c'", Long.class)).isEqualTo(8);
+	}
+
 	// ── brand_post_meta / brand_post_comment ─────────────────────────────────
 
 	@Test
@@ -1027,5 +1057,28 @@ class BrandStoreTest {
 	private static PostInfo post(String code, long takenAt, Long views, Long fbPlays) {
 		return new PostInfo(code, "creator", null, null, "999", "REELS", "캡션", null,
 				takenAt, 10L, 2L, views, fbPlays, null, null, null, null, null, null, true, false, false);
+	}
+
+	/**
+	 * 브랜드 스윕 병렬화(2026-09-03 설계 §3-1) — LPT 배정 입력. 전날 콜 수가 "그 브랜드가 실제로
+	 * 얼마나 무거웠나"의 정본이라 별도 추정 컬럼 없이 이 순서로 제출한다.
+	 */
+	@Test
+	void findActiveHeaviestFirst는_해당일_콜_수_내림차순이고_이력_없는_브랜드는_뒤로_간다() {
+		long light = brands.insertOrReactivate("light", profile("light", "1", 10L, ""), 12, true);
+		long heavy = brands.insertOrReactivate("heavy", profile("heavy", "2", 10L, ""), 12, true);
+		long none = brands.insertOrReactivate("none", profile("none", "3", 10L, ""), 12, true);
+		long closed = brands.insertOrReactivate("closed", profile("closed", "4", 10L, ""), 12, true);
+		brands.close("closed");
+		var calls = new BrandCallCountRepository(db);
+		LocalDate day = LocalDate.of(2026, 9, 2);
+		calls.add(light, day, 5);
+		calls.add(heavy, day, 500);
+		calls.add(closed, day, 9_999);          // 닫힌 브랜드는 콜이 많아도 제외
+		calls.add(none, day.minusDays(1), 800); // 다른 날짜 콜은 무시
+
+		List<Long> ids = brands.findActiveHeaviestFirst(day).stream().map(BrandRow::id).toList();
+
+		assertThat(ids).containsExactly(heavy, light, none);
 	}
 }

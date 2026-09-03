@@ -28,9 +28,10 @@ import org.springframework.context.annotation.Configuration;
  * <p>캠페인 등록의 metricsBackfillExecutor와 분리하는 이유: 브랜드 백필 1건은 수십 초~분 단위
  * 콜 체인이라 공유하면 캠페인 등록 백필(최대 ~1분)이 그 뒤에 줄을 선다. Hiker 콜 병렬화는
  * enrich 내부의 brandEnrichWorkerPool(동시 10)이 담당한다. 전역 동시 콜은 스윕과 등록 백필이
- * 겹치는 최악의 경우 워커 10 + 스윕 core 1 + 등록 core 2 + 해시태그 스윕 1 = <b>최대 14</b>이다
- * (08-18 해시태그 스윕 전용 executor 분리 반영 — 태그당 최대 4페이지 열거뿐이라 +1로 최소화했다.
- * 08-13 워커 상향 전에는 9였다). 08-12 운영 서버 동시성 램프 실측(레벨당 30콜)에서는 동시 20까지
+ * 겹치는 최악의 경우 워커 10 + 스윕 core 4 + 등록 core 2 + 해시태그 스윕 1 = <b>최대 17</b>이다
+ * (2026-09-03 브랜드 스윕 병렬화로 스윕 core 1 → 4. 08-18 해시태그 스윕 전용 executor 분리 시점엔
+ * 14 — 태그당 최대 4페이지 열거뿐이라 +1로 최소화했다. 08-13 워커 상향 전에는 9였다). 08-12 운영
+ * 서버 동시성 램프 실측(레벨당 30콜)에서는 동시 20까지
  * 429·5xx 0건으로 하드 리밋이 없는 대신 동시 12부터 15~22초 꼬리가 상시화돼 안전 구간을 ~10으로
  * 잡았지만, <b>08-13 재실측에서 그 상한 근거가 서지 않았다</b>: 정상 브랜드로 워커 6/8/10 세
  * 레벨을 돌려 5초 초과 콜이 세 레벨 모두 0건이었다(레벨 간 증가 없음). 관측되는 꼬리는 동시성에
@@ -96,6 +97,26 @@ public class BrandBackfillConfig {
 		AtomicInteger seq = new AtomicInteger();
 		return Executors.newFixedThreadPool(concurrency, r -> {
 			Thread t = new Thread(r, "brand-hashtag-sweep-" + seq.incrementAndGet());
+			t.setDaemon(true);
+			return t;
+		});
+	}
+
+	/**
+	 * 야간 브랜드 스윕의 브랜드 단위 병렬 풀(2026-09-03 설계 §3-1) — 브랜드 1건 = 태스크 1건.
+	 * 스윕 6시간 44분(139브랜드, 직렬)의 본체는 Hiker 응답 대기라 CPU는 거의 안 쓴다(컨테이너 평균
+	 * 0.03코어). 브랜드 간 의존이 없으므로 4스레드로 105~140분을 기대한다. 전역 Hiker 동시 콜은
+	 * 스윕 core 1 → 4로 최악 17(클래스 javadoc) — 08-12 램프 실측 안전 구간(20) 안. 힙은 in-flight
+	 * 콜당 ~10MB로 +30MB. 무제한 큐(다른 executor들과 같은 이유 — 유계 큐 + AbortPolicy는 제출
+	 * 루프에서 동기 예외가 터져 격리 규칙을 깬다). 롤백은 동시성 1(env
+	 * {@code MONITORING_BRAND_SWEEP_CONCURRENCY=1}) — 코드 경로가 같아 현행 직렬과 동일하게 돈다.
+	 */
+	@Bean(name = "brandSweepExecutor")
+	public Executor brandSweepExecutor(
+			@Value("${monitoring.brand.sweep-concurrency:4}") int concurrency) {
+		AtomicInteger seq = new AtomicInteger();
+		return Executors.newFixedThreadPool(concurrency, r -> {
+			Thread t = new Thread(r, "brand-sweep-" + seq.incrementAndGet());
 			t.setDaemon(true);
 			return t;
 		});

@@ -129,11 +129,18 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       # Vertex SA 키 — provider=vertex일 때만 읽힘(빈 생성 시점), 파일은 secrets/ 볼륨
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
-      # 스케줄(KST=UTC+9): 미러 04:30 → 아카이브 04:50 → 분석 05:00 → 백필 06:00 → 계정 카피 07:00 (백업 04:10 이후)
+      # 스케줄(KST=UTC+9): 미러 04:30 → 아카이브 04:50 → 사실 분석 05:00 → 해석 분석 05:30
+      #                    → 늦크롤 백필 06:00 → 계정 카피 07:00 (백업 04:10 이후)
       ANALYTICS_SCHEDULE_ENABLED: "true"
       ANALYTICS_SCHEDULE_MIRROR_CRON: "0 30 19 * * *"
       ANALYTICS_SCHEDULE_ARCHIVE_CRON: "0 50 19 * * *"
-      ANALYTICS_SCHEDULE_ANALYZE_CRON: "0 0 20 * * *"
+      # 파트 A(사실) - 2026-09-03 2단계 분리. app_setting analytics.analyze-mode=unified면
+      # 잡이 no-op 로그만 남긴다(토글을 켜기 전까지 이 크론은 무해).
+      ANALYTICS_SCHEDULE_FACT_ANALYZE_CRON: "0 0 20 * * *"
+      # 파트 B(해석). unified 모드에서는 현행 통합 1콜 그대로다. 파트 A 제출과 15~30분 띄운다 -
+      # 제출 직전 pending 수거가 겹치면 BATCH_COLLECT 락에서 한쪽이 BUSY로 건너뛴다(30분 뒤
+      # 정기 수거가 받쳐 주므로 무해하지만 로그가 어지럽다).
+      ANALYTICS_SCHEDULE_ANALYZE_CRON: "0 30 20 * * *"
       # 늦크롤 백필 — timely와 예산 독립(2026-07-23 분리). 신규 계정 온보딩 백카탈로그가 주 대상
       ANALYTICS_SCHEDULE_LATE_BACKFILL_ANALYZE_CRON: "0 0 21 * * *"
       ANALYTICS_SCHEDULE_ACCOUNT_ANALYZE_CRON: "0 0 22 * * *"
@@ -252,6 +259,13 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       REDIS_HOST: redis
+      # 개인정보 봉투 암호화(트랙 A, deploy/README.md §6-3) — CryptoConfig가 prod 프로파일에서
+      # mode=local이면 기동을 막는다(가드), 그래서 vault가 필수. KEK OCID·crypto endpoint는
+      # 시크릿이 아니라 식별자 — 실제 접근 통제는 IAM 정책(hypenow-pii-kek-use, 이 키 1개
+      # use만 허용)이 하므로 값을 .env로 빼지 않고 여기 직접 기재한다(비밀 유출 리스크 없음).
+      CRYPTO_MODE: vault
+      CRYPTO_KEK_OCID: ocid1.key.oc1.ap-tokyo-1.ezvjprllaacng.abxhiljrxoa5bwu432rpge634dplnahnnwguxfca7dwwudwuzlm3chw72x6a
+      CRYPTO_CRYPTO_ENDPOINT: https://ezvjprllaacng-crypto.kms.ap-tokyo-1.oraclecloud.com
       # 이메일 인증 발송(Resend) — 서버 .env에 등록. 미설정 시 로깅 폴백(기동 WARN, 실발송 없음)
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       WEB_BASE_URL: ${WEB_BASE_URL:-https://www.hypenow.io}   # 주간 리포트 메일 딥링크 기준 주소

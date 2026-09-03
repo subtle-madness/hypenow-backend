@@ -82,4 +82,52 @@ class CoverageRepositoryTest {
 		assertThat(row27.filled()).isEqualTo("1 / 2");
 		assertThat(row27.status()).isEqualTo("부분");
 	}
+
+	/**
+	 * 18·19·22행(드로어 AI 카피 3종·성과 비교 기준선·댓글 신뢰도 판정)은 전부 파트 B
+	 * ({@code ContentAnalysisWriter.updateSynthesis})에서만 채워지는 필드다 — 파트 A
+	 * ({@code insertFacts})는 사실 컬럼만 넣고 {@code metric_timeliness='pending'}으로 남긴다
+	 * (2026-09-03 2단계 분리). 세 행 모두 분모를 anb(= pending 제외 행)로 두므로, pending
+	 * 전용 행 하나를 추가해도 분자·분모 어느 쪽에도 잡히지 않아야 한다("부분"으로 새지 않음).
+	 *
+	 * <p>19행은 5f51912a에서 18·22행과 함께 anb로 옮기지 않고 an/c.total(전체 콘텐츠)에
+	 * 남아 있던 결손이었다 — 파트 A 행이 쌓이면 상시 "부분"으로 보이는 회귀를 이 테스트로 막는다.
+	 *
+	 * <p>20행(main_category)은 대조군: 파트 A 단계에서 이미 채워지는 사실 컬럼이라 분모가
+	 * 여전히 c.total(contents 전체)이고, pending 행도 정상적으로 분자·분모 양쪽에 잡혀야 한다
+	 * ("2 / 2" 준비됨) — anb로 옮긴 게 파트 A 필드까지 걷어내지 않았음을 확인한다.
+	 */
+	@Test
+	void 매트릭스_18_19_22행은_pending_행을_분모에서_제외하고_20행은_그대로_센다() {
+		db.update("""
+				INSERT INTO contents (short_code, account_handle) VALUES
+				  ('cov_pending', 'cov_acct'), ('cov_timely', 'cov_acct')""");
+		// 파트 A만 채워진 행(insertFacts 흉내) — 사실 컬럼(main_category)만 있고
+		// 해석 5필드·기준선 10컬럼은 NULL, metric_timeliness='pending'.
+		db.update("""
+				INSERT INTO content_analyses (short_code, model, main_category, metric_timeliness)
+				VALUES ('cov_pending', 'm', '뷰티', 'pending')""");
+		// 파트 B까지 완주한 행(updateSynthesis 흉내) — 해석 5필드 + 기준선 컬럼까지 채움.
+		db.update("""
+				INSERT INTO content_analyses (short_code, model, main_category, metric_timeliness,
+				  ai_content_summary, contents_pattern, ai_comment_insight, comment_authenticity_grade,
+				  recent_reels_avg_views, recent12_avg_engagement_rate)
+				VALUES ('cov_timely', 'm', '뷰티', 'timely',
+				  '요약', '패턴', '댓글 인사이트', 'high', 100, 0.05)""");
+
+		List<CoverageRow> matrix = repository.matrix();
+		CoverageRow row18 = matrix.stream().filter(r -> r.ord() == 18).findFirst().orElseThrow();
+		CoverageRow row19 = matrix.stream().filter(r -> r.ord() == 19).findFirst().orElseThrow();
+		CoverageRow row20 = matrix.stream().filter(r -> r.ord() == 20).findFirst().orElseThrow();
+		CoverageRow row22 = matrix.stream().filter(r -> r.ord() == 22).findFirst().orElseThrow();
+
+		assertThat(row18.filled()).isEqualTo("1 / 1");
+		assertThat(row18.status()).isEqualTo("준비됨");
+		assertThat(row19.filled()).isEqualTo("1 / 1");
+		assertThat(row19.status()).isEqualTo("준비됨");
+		assertThat(row22.filled()).isEqualTo("1 / 1");
+		assertThat(row22.status()).isEqualTo("준비됨");
+		assertThat(row20.filled()).isEqualTo("2 / 2");
+		assertThat(row20.status()).isEqualTo("준비됨");
+	}
 }

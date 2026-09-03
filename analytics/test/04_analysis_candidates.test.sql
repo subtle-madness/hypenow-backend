@@ -68,6 +68,65 @@ BEGIN
     'date-guard 기본(slack=1) 후보 != 6 (f1·cl·r1·r2·ra1·fb1)';
 END $$;
 
+-- ── 2026-09-03 2단계 분리: 파트 A 입구 뷰(v_fact_candidates) ─────────────────────
+-- 파트 A(사실 추출)는 캡션만 의존하므로 성숙(제때창 완전 경과)을 기다릴 이유가 없다.
+-- v_fact_candidates = 04 배리어 안쪽은 동일하고, 성숙 가드를 WHERE에서 mature 컬럼으로
+-- 승격한 뒤 바깥 조건을 `NOT mature OR timely OR in_window`로 넓힌 뷰다.
+-- v_analysis_candidates(파트 B 입구)는 그 위의 `WHERE mature` 투영이라 기존과 동치다.
+DO $$
+BEGIN
+  -- ① 미성숙 신규 게시물이 파트 A 후보에 든다 (이 트랙의 목표).
+  --    dummy_rn은 어제 업로드라 제때창이 아직 안 닫혔다 - 현행 v_analysis_candidates에선 제외다.
+  ASSERT EXISTS (SELECT 1 FROM analytics.v_fact_candidates WHERE short_code = 'dummy_rn'),
+    'rn(미성숙 신규)이 v_fact_candidates에 없음 - 파트 A가 D+1에 못 돈다';
+  ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_analysis_candidates WHERE short_code = 'dummy_rn'),
+    'rn(미성숙)이 v_analysis_candidates에 새어들어옴 - 파트 B 성숙 가드 회귀';
+
+  -- ② mature 컬럼 경계: 업로드 오늘-4는 창이 어제 닫혀 true, 오늘-3은 창이 오늘이라 false.
+  --    식은 현행 성숙 가드와 동일: 업로드일(KST) + pin(3) + slack(1) <= 오늘(KST).
+  ASSERT (SELECT mature FROM analytics.v_fact_candidates WHERE short_code = 'dummy_cl') IS TRUE,
+    'dummy_cl(업로드 오늘-4)의 mature가 true가 아님';
+  ASSERT (SELECT mature FROM analytics.v_fact_candidates WHERE short_code = 'dummy_op') IS FALSE,
+    'dummy_op(업로드 오늘-3)의 mature가 false가 아님';
+  ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_analysis_candidates WHERE short_code = 'dummy_op'),
+    'dummy_op(미성숙)이 파트 B 후보에 있음';
+
+  -- ③ 성숙·제때 크롤분은 양쪽 뷰에 그대로 남는다 (회귀 고정).
+  ASSERT EXISTS (SELECT 1 FROM analytics.v_fact_candidates WHERE short_code = 'dummy_f1' AND timely),
+    'f1(성숙·timely)이 v_fact_candidates에서 빠짐';
+  -- ④ 성숙·늦크롤·윈도우 안도 그대로 남는다.
+  ASSERT EXISTS (SELECT 1 FROM analytics.v_fact_candidates WHERE short_code = 'dummy_r1' AND NOT timely),
+    'r1(성숙·늦크롤·윈도우 안)이 v_fact_candidates에서 빠짐';
+  -- ⑤ 캡션 결측은 배리어 안쪽 WHERE라 파트 A에서도 제외된다 (LLM 입력이 없다).
+  ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_fact_candidates WHERE short_code = 'dummy_r3'),
+    'r3(캡션 결측)이 v_fact_candidates에 있음';
+
+  -- ⑥ 건수: 파트 B 후보 6건(f1·cl·r1·r2·ra1·fb1) + 미성숙 2건(rn·op) = 8건.
+  ASSERT (SELECT count(*) FROM analytics.v_fact_candidates WHERE account_handle LIKE 'dummy_%') = 8,
+    'v_fact_candidates 기본 후보 != 8 (파트 B 6건 + 미성숙 rn·op)';
+  -- ⑦ 항등식: v_analysis_candidates = v_fact_candidates 중 mature인 것.
+  ASSERT (SELECT count(*) FROM analytics.v_analysis_candidates WHERE account_handle LIKE 'dummy_%')
+       = (SELECT count(*) FROM analytics.v_fact_candidates
+          WHERE account_handle LIKE 'dummy_%' AND mature),
+    'v_analysis_candidates != v_fact_candidates WHERE mature (투영 정의 깨짐)';
+
+  -- ⑧ 컬럼 계약: 기존 소비자(잡·pending.sh·어드민 퍼널)가 무수정이려면 파트 B 뷰의 컬럼이
+  --    현행 그대로여야 한다. mature는 파트 A 뷰에만 노출한다.
+  ASSERT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'analytics' AND table_name = 'v_fact_candidates'
+                   AND column_name = 'mature'),
+    'v_fact_candidates에 mature 컬럼이 없음';
+  ASSERT NOT EXISTS (SELECT 1 FROM information_schema.columns
+                     WHERE table_schema = 'analytics' AND table_name = 'v_analysis_candidates'
+                       AND column_name = 'mature'),
+    'v_analysis_candidates에 mature 컬럼이 노출됨 - 기존 소비자 계약 변경';
+  ASSERT (SELECT count(*) FROM information_schema.columns
+          WHERE table_schema = 'analytics' AND table_name = 'v_fact_candidates')
+       = (SELECT count(*) FROM information_schema.columns
+          WHERE table_schema = 'analytics' AND table_name = 'v_analysis_candidates') + 1,
+    'v_fact_candidates 컬럼 수가 v_analysis_candidates + 1(mature)이 아님';
+END $$;
+
 -- 비-usable 가드: D+3 당일에 스냅이 있어도 지표 미완비면 timely=false. 07-20 개정으로 그 자체가
 -- 후보 배제 사유는 아니게 됐다 — 최근 윈도우 안이면 timely=false 백필 후보로 포함된다.
 -- dummy_pd = 업로드 06-01, D+3=06-04 당일 스냅 1건인데 play_count 없어 views NULL(릴스 비-usable).
@@ -129,6 +188,10 @@ DO $$
 BEGIN
   ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_analysis_candidates WHERE short_code = 'dummy_pd'),
     'recent-window=1인데 늦크롤 pd가 여전히 후보에 있음 (창 밖 제외 실패)';
+  -- 2026-09-03: 성숙했는데 timely도 아니고 윈도우 밖인 건 파트 A도 열지 않는다.
+  -- 열면 운영 백로그(계정당 12개 밖 옛 게시물 수만 건)가 한 번에 파트 A 후보가 된다.
+  ASSERT NOT EXISTS (SELECT 1 FROM analytics.v_fact_candidates WHERE short_code = 'dummy_pd'),
+    'recent-window=1인데 성숙·늦크롤·윈도우 밖 pd가 v_fact_candidates에 있음 (옛 백로그 개방)';
 END $$;
 
 -- 킬스위치: recent-window=0이면 늦크롤 백필 후보가 전량 차단된다 (timely 후보만 남음).

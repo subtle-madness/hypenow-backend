@@ -3,6 +3,7 @@ package com.celfit.instagram.source.self;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.instagram.source.PrivateAccountException;
 import com.celfit.instagram.source.ProfileInfo;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -71,6 +72,47 @@ class OgProfileFetcherTest {
 				.isInstanceOf(SelfCrawlException.class)
 				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
 						.isEqualTo(SelfErrorClass.LOGIN_WALL));
+	}
+
+	@Test
+	void 비공개_계정은_PrivateAccountException() {
+		// og 문서 JSON 블롭도 wpi(web_profile_info)와 동일하게 is_private 마커를 싣는다(og_profile.html
+		// 실측 픽스처에 "is_private":false가 실제로 있다) — S15: wpi와 동일 계약으로 승격해야
+		// 표면 토글(og↔wpi)이 비공개 판정 예외 계약을 바꾸지 않는다.
+		String html = "<!DOCTYPE html><html><body>"
+				+ "{\"follower_count\":500,\"username\":\"secret\",\"is_private\":true}</body></html>";
+		assertThatThrownBy(() -> fetcher(html, 200).fetchProfile("secret"))
+				.isInstanceOf(PrivateAccountException.class);
+	}
+
+	@Test
+	void is_private가_true로_2회_반복되면_비공개로_확정한다() {
+		String html = "<!DOCTYPE html><html><body>"
+				+ "{\"follower_count\":500,\"username\":\"secret\",\"is_private\":true}"
+				+ "{\"is_private\":true}</body></html>";
+		assertThatThrownBy(() -> fetcher(html, 200).fetchProfile("secret"))
+				.isInstanceOf(PrivateAccountException.class);
+	}
+
+	@Test
+	void is_private가_false_다음_true로_혼재하면_비공개_확정하지_않는다() {
+		// 다른 user 객체가 혼재해 값이 갈리면 첫 매치가 대상 계정 소속임을 보장할 수 없다 —
+		// 보수적으로 비공개 판정을 보류하고 정상 ProfileInfo를 반환한다(S15 보강).
+		String html = "<!DOCTYPE html><html><body>"
+				+ "{\"follower_count\":500,\"username\":\"secret\",\"is_private\":false}"
+				+ "{\"is_private\":true}</body></html>";
+		ProfileInfo p = fetcher(html, 200).fetchProfile("secret");
+		assertThat(p.username()).isEqualTo("secret");
+	}
+
+	@Test
+	void is_private가_true_다음_false로_혼재하면_비공개_확정하지_않는다() {
+		// 회귀 핵심 케이스 — 첫 매치가 true라도 뒤에 false가 섞이면(모호) 확정 금지.
+		String html = "<!DOCTYPE html><html><body>"
+				+ "{\"follower_count\":500,\"username\":\"secret\",\"is_private\":true}"
+				+ "{\"is_private\":false}</body></html>";
+		ProfileInfo p = fetcher(html, 200).fetchProfile("secret");
+		assertThat(p.username()).isEqualTo("secret");
 	}
 
 	@Test

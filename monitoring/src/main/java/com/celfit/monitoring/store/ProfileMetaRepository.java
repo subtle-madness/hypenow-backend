@@ -25,6 +25,13 @@ public class ProfileMetaRepository {
 	/**
 	 * lastUploadedAt이 null이면(열거 0건·taken_at 전부 미상) 기존 값을 덮지 않는다 — 게시물 열거가
 	 * 없었을 뿐인데 "최근 게시일 없음"으로 보이면 안 되므로 COALESCE(EXCLUDED, 기존값) 패턴을 쓴다.
+	 *
+	 * <p>display_name도 동일 이유로 COALESCE 보호한다(S15 보완) — og 표면(OgProfileFetcher)은
+	 * fullName을 quoted-string 마커에서만 뽑는데, 문서 JSON에서 그 키가 null이거나 부재하면
+	 * 관측 실패로 null을 반환한다. 이 null을 그대로 덮으면 이전에 Hiker가 채운 표시명이 조용히
+	 * 지워진다 — profile_image_url·last_uploaded_at, SnapshotRepository.upsertProfile(#725,
+	 * 7a701f9c)과 동형 원칙. 빈 문자열("")은 이와 달리 "표시명 없음"이라는 실제 관측값이라
+	 * COALESCE 대상이 아니다 — 그대로 덮어써야 한다(COALESCE는 null만 걸러낸다).
 	 */
 	public void upsert(String username, String displayName, String profileImageUrl, LocalDate lastUploadedAt) {
 		String normalizedImageUrl = normalizeImageUrl(username, profileImageUrl);
@@ -32,7 +39,7 @@ public class ProfileMetaRepository {
 				INSERT INTO profile_meta (username, display_name, profile_image_url, last_uploaded_at, updated_at)
 				VALUES (?, ?, ?, ?, now())
 				ON CONFLICT (username) DO UPDATE SET
-				  display_name = EXCLUDED.display_name,
+				  display_name = COALESCE(EXCLUDED.display_name, profile_meta.display_name),
 				  -- 업스트림이 일시적으로 무효 스킴을 주면 정규화 결과가 null이 되는데, 그대로 덮으면
 				  -- 기존 유효 이미지가 날아간다 — POST 모드(upsertOwnerFromPost)와 보존 시맨틱을 통일.
 				  profile_image_url = COALESCE(EXCLUDED.profile_image_url, profile_meta.profile_image_url),

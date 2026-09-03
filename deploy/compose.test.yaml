@@ -121,6 +121,12 @@ services:
       # 일반 계정 인증코드는 종전대로 docker logs deploy-test-was-1 에서 확인.
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       WEB_BASE_URL: ${DEV_WEB_BASE_URL:-https://dev.hypenow.io}   # 주간 리포트 메일 딥링크 기준 주소(스테이징)
+      # 개인정보 봉투 암호화(트랙 A, deploy/README.md §6-3) — 운영 compose.yaml was 블록과 동일
+      # 관용구(KEK·endpoint는 비밀 아닌 식별자, IAM이 접근 통제). test-postgres의 app DB는
+      # 운영과 별개 DB라 DEK도 최초 기동 시 독립적으로 자동 부트스트랩된다(환경별 DEK 분리).
+      CRYPTO_MODE: vault
+      CRYPTO_KEK_OCID: ocid1.key.oc1.ap-tokyo-1.ezvjprllaacng.abxhiljrxoa5bwu432rpge634dplnahnnwguxfca7dwwudwuzlm3chw72x6a
+      CRYPTO_CRYPTO_ENDPOINT: https://ezvjprllaacng-crypto.kms.ap-tokyo-1.oraclecloud.com
       # 주간 다이제스트 생성·발송 크론(README §13-5-3) — 운영과 동일 관용구, DEV_* 오버라이드
       MONITORING_DIGEST_WEEKLY_CRON: "${DEV_MONITORING_DIGEST_WEEKLY_CRON:-0 0 9 * * MON}"
       MONITORING_DIGEST_WEEKLY_CATCHUP_CRON: "${DEV_MONITORING_DIGEST_WEEKLY_CATCHUP_CRON:-0 10,20,30,40,50 9-23 * * *}"

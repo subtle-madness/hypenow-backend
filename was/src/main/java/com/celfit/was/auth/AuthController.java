@@ -55,7 +55,12 @@ public class AuthController {
 			session.setAttribute("session.browser", UserAgentParser.browser(ua));
 			session.setAttribute("session.os", UserAgentParser.os(ua));
 
-			return UserResponse.from((AppUserDetails) authResult.getPrincipal());
+			AppUserDetails principal = (AppUserDetails) authResult.getPrincipal();
+			// 트랙 A(09-03) — principal.getUsername()은 이제 userId 문자열이라 이메일은 DB에서 다시 읽는다
+			String email = userRepository.findById(principal.getUserId())
+					.map(AppUser::email)
+					.orElse(null);
+			return UserResponse.from(principal, email);
 		} catch (AuthenticationException e) {
 			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "이메일 또는 비밀번호가 올바르지 않습니다");
 		}
@@ -74,6 +79,10 @@ public class AuthController {
 
 	@GetMapping("/api/me")
 	public UserResponse me(@AuthenticationPrincipal AppUserDetails principal) {
-		return UserResponse.from(principal);
+		// 트랙 A(09-03) — principal.getUsername()은 이제 userId 문자열이라 이메일은 DB에서 다시 읽는다
+		String email = userRepository.findById(principal.getUserId())
+				.map(AppUser::email)
+				.orElse(null);
+		return UserResponse.from(principal, email);
 	}
 }

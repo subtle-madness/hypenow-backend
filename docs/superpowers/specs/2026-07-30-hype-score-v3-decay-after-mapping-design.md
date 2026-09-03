@@ -1,6 +1,6 @@
 # 하입 스코어 v3 — 감쇠를 매핑 뒤로 (타입 편향 해소)
 
-> 상태: 🟢 활성 · ✅ 구현/반영됨(콘텐츠 v3는 develop·staging 반영, 운영 배포 대기) — §9는 계정 점수
+> 상태: 🟢 활성 — 하입 스코어 v3·계정 점수(§9)의 설계 기준, 트랙 Z(콘텐츠 v3 구현·반영 완료)
 > 척도 재교정 후속(구현 완료, 별도 브랜치), §10은 소수점 노출 후속(구현 완료, develop PR)
 > 날짜: 2026-07-30
 > 선행 스펙: `2026-07-20-hype-score-v2-redesign-design.md`(v2), `2026-07-20-reels-hype-engage-follower-normalization-design.md`(v2.1)

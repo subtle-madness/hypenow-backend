@@ -173,6 +173,23 @@ public class BrandRepository {
 				BrandRepository::toRow);
 	}
 
+	/**
+	 * 활성 브랜드를 <b>무거운 순</b>으로 — 브랜드 스윕 병렬화(2026-09-03 설계 §3-1)의 LPT 배정 입력.
+	 * 무거움의 정본은 {@code calledOn}(KST 달력일)의 {@code brand_call_count.calls}다: 직전 스윕(전날
+	 * KST 02:00~)의 콜이 그 날짜에 계상되므로 호출부는 "KST 오늘 − 1일"을 넘긴다. 이력 없는 브랜드는
+	 * 0으로 맨 뒤, 동률은 id 순(결정적). 전날 등록된 브랜드는 백필 콜로 앞에 서는데 무해하다(먼저 돌
+	 * 뿐). 다른 호출처(기동 러너들)는 순서가 무의미해 {@link #findActive()}를 그대로 쓴다.
+	 */
+	public List<BrandRow> findActiveHeaviestFirst(LocalDate calledOn) {
+		return db.query("""
+				SELECT b.id, b.username, b.ig_user_id, b.status, b.last_swept_on, b.collection_months, b.has_own_link
+				FROM brand_account b
+				LEFT JOIN brand_call_count c ON c.brand_id = b.id AND c.called_on = ?
+				WHERE b.status = 'ACTIVE'
+				ORDER BY COALESCE(c.calls, 0) DESC, b.id""",
+				BrandRepository::toRow, calledOn);
+	}
+
 	/** 탈퇴 — ACTIVE였던 행만 닫는다. @return 실제로 전이됐으면 true(이미 닫힘·미존재는 false). */
 	public boolean close(String username) {
 		return db.update("""
