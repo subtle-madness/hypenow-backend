@@ -14,6 +14,7 @@ import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.hiker.CountingHikerHttp;
 import com.celfit.monitoring.hiker.TargetCallContext;
+import com.celfit.monitoring.store.AppSettingRepository;
 import com.celfit.monitoring.store.AuthorProfileRepository;
 import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandCommentRepository;
@@ -53,9 +54,11 @@ class BrandDirectCollectServiceTest {
 	private final InMemoryTagged tagged = new InMemoryTagged();
 	private final InMemoryAuthors authors = new InMemoryAuthors();
 
-	private final List<String> calls = new ArrayList<>();
-	private final Map<String, String> postResponses = new HashMap<>();
-	private final Set<String> notFoundCodes = new HashSet<>();
+	private final List<String> calls = java.util.Collections.synchronizedList(new ArrayList<>());
+	private final Map<String, String> postResponses = new java.util.concurrent.ConcurrentHashMap<>();
+	private final Set<String> notFoundCodes = java.util.concurrent.ConcurrentHashMap.newKeySet();
+	/** 단건 콜 진입 훅 — 동시성 테스트가 여기서 블로킹·계수한다(기본 no-op). */
+	private volatile java.util.function.Consumer<String> onPostFetch = code -> { };
 
 	private final BrandRow brand = new BrandRow(1L, "brandx", "111", BrandStatus.ACTIVE, LocalDate.now(), 12, true);
 
@@ -97,7 +100,7 @@ class BrandDirectCollectServiceTest {
 	}
 
 	private static final class RecordingWriter extends BrandSnapshotWriter {
-		final List<PostInfo> saved = new ArrayList<>();
+		final List<PostInfo> saved = java.util.Collections.synchronizedList(new ArrayList<>());
 
 		RecordingWriter() {
 			super(null, null, null);
@@ -126,7 +129,7 @@ class BrandDirectCollectServiceTest {
 	}
 
 	private static final class StubComments extends BrandCommentRepository {
-		final List<String> upserted = new ArrayList<>();
+		final List<String> upserted = java.util.Collections.synchronizedList(new ArrayList<>());
 
 		StubComments() {
 			super(null);
@@ -144,12 +147,12 @@ class BrandDirectCollectServiceTest {
 	}
 
 	private static final class InMemoryTagged extends TaggedPostRepository {
-		final List<String> upsertedDirect = new ArrayList<>();
-		final Map<String, Instant> touched = new HashMap<>();
+		final List<String> upsertedDirect = java.util.Collections.synchronizedList(new ArrayList<>());
+		final Map<String, Instant> touched = new java.util.concurrent.ConcurrentHashMap<>();
 		final List<String> enriched = java.util.Collections.synchronizedList(new ArrayList<>());
 		final List<TrackedPost> due = new ArrayList<>();
 		final List<TrackedPost> unenrichedDue = new ArrayList<>();
-		final List<String> unavailable = new ArrayList<>();
+		final List<String> unavailable = java.util.Collections.synchronizedList(new ArrayList<>());
 		Instant nthNewestHashtag;                       // 스텁 floor 응답(null = 세트 미포화)
 		Instant capturedFloor;                          // unenumeratedDuePosts에 전달된 floor 캡처
 		Instant capturedRecheckBefore;                  // 부재 재검증 스로틀 컷 캡처(2026-09-03)
@@ -244,6 +247,7 @@ class BrandDirectCollectServiceTest {
 			calls.add(path);
 			if (path.startsWith("/v2/media/info/by/code")) {
 				String code = path.substring(path.indexOf("?code=") + "?code=".length());
+				onPostFetch.accept(code);   // 병렬 관측 훅(동시성 테스트 전용, 기본 no-op)
 				if (notFoundCodes.contains(code)) {
 					throw new SubjectNotFoundException("게시물 없음: " + code);
 				}
@@ -268,6 +272,26 @@ class BrandDirectCollectServiceTest {
 		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
 	}
 
+	/** 2단계 단건 콜 병렬 워커 풀(운영 brandUnenumeratedWorkerPool 대역) — 데몬이라 종료 훅 불필요. */
+	private static final java.util.concurrent.ExecutorService WORKER = java.util.concurrent.Executors
+			.newFixedThreadPool(8, r -> {
+				Thread t = new Thread(r, "test-unenumerated-worker");
+				t.setDaemon(true);
+				return t;
+			});
+
+	/** app_setting 없이 코드 기본값(=인자)만 쓰는 병렬도 토글 스텁. */
+	private static BrandSweepSettings sweepSettings(int unenumeratedK) {
+		AppSettingRepository empty = new AppSettingRepository(null) {
+			@Override
+			public java.util.Optional<String> find(String key) {
+				return java.util.Optional.empty();
+			}
+		};
+		return new BrandSweepSettings(empty, 3, unenumeratedK, java.time.Clock.systemUTC(),
+				java.time.Duration.ofSeconds(5));
+	}
+
 	private BrandDirectCollectService service() {
 		return serviceWithLimit(300);
 	}
@@ -276,7 +300,16 @@ class BrandDirectCollectServiceTest {
 		return serviceWithLimit(sweepLimit, 2000);
 	}
 
+	/** 병렬도만 바꾼 서비스 — K=1이면 개정 전과 같은 직렬 경로(킬스위치). */
+	private BrandDirectCollectService serviceWithConcurrency(int unenumeratedK) {
+		return serviceWithLimit(300, 2000, unenumeratedK);
+	}
+
 	private BrandDirectCollectService serviceWithLimit(int sweepLimit, int monitoringSetSize) {
+		return serviceWithLimit(sweepLimit, monitoringSetSize, 8);
+	}
+
+	private BrandDirectCollectService serviceWithLimit(int sweepLimit, int monitoringSetSize, int unenumeratedK) {
 		// adDisclosureEnabled=false — 이 테스트는 direct 단건 수집 경로만 검증한다. 킬 스위치가
 		// 꺼져 있으면 judgeAdDisclosuresSafely가 adJudge를 아예 호출하지 않으므로(BrandCollectService
 		// 클래스 주석) null을 넘겨도 안전하다.
@@ -284,8 +317,8 @@ class BrandDirectCollectServiceTest {
 		// 커버리지 조회·기록 지점에 닿지 않는다(collect는 adjustLotteryMetrics 재사용 목적).
 		BrandCollectService collect = new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments,
 				tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
-		return new BrandDirectCollectService(client(), client(), callContext, writer, tagged, collect, sweepLimit,
-				monitoringSetSize);
+		return new BrandDirectCollectService(client(), client(), callContext, writer, tagged, collect,
+				sweepSettings(unenumeratedK), WORKER, sweepLimit, monitoringSetSize);
 	}
 
 	/** service()가 collect·direct 각자 별도 HikerBackend(별도 fake 인스턴스)를 갖지만 같은 calls 리스트를 공유한다. */
@@ -386,7 +419,8 @@ class BrandDirectCollectServiceTest {
 	private BrandDirectCollectService serviceWithSeparateSources(InstagramSource hiker, InstagramSource syncHiker) {
 		BrandCollectService collect = new BrandCollectService(client(), client(), client(), callContext, writer, snapshots,
 				comments, tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
-		return new BrandDirectCollectService(hiker, syncHiker, callContext, writer, tagged, collect, 300, 2000);
+		return new BrandDirectCollectService(hiker, syncHiker, callContext, writer, tagged, collect,
+				sweepSettings(8), WORKER, 300, 2000);
 	}
 
 	// ── sweepUnenumerated — 격리 ───────────────────────────────────────────────────
@@ -486,7 +520,8 @@ class BrandDirectCollectServiceTest {
 		serviceWithLimit(2).sweepUnenumerated(brand);
 
 		assertThat(postCalls()).isEqualTo(2);
-		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("M0", "M1");
+		// 병렬(K>1) 처리라 저장 순서는 완주 순서 — 상한이 고른 "어느 2건"인지만 계약이다.
+		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactlyInAnyOrder("M0", "M1");
 	}
 
 	/**
@@ -630,7 +665,7 @@ class BrandDirectCollectServiceTest {
 		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("Busy", Instant.ofEpochSecond(RECENT), null));
 		postResponses.put("Busy", postJson("Busy", RECENT, 403));
 		BrandDirectCollectService svc = service();
-		svc.unenumeratedBusy.set(true);   // sweepUnenumerated가 다른 브랜드를 처리 중이라고 가정
+		svc.unenumeratedBusy.add(brand.id());   // sweepUnenumerated가 같은 브랜드를 처리 중이라고 가정
 
 		int backfilled = svc.backfillUnenriched(brand);
 
@@ -650,6 +685,192 @@ class BrandDirectCollectServiceTest {
 
 		assertThat(backfilled).isEqualTo(1);
 		assertThat(tagged.enriched).containsExactly("Free");
-		assertThat(svc.unenumeratedBusy.get()).isFalse();   // 처리 후 해제됨 — 다음 호출을 막지 않는다
+		assertThat(svc.unenumeratedBusy).isEmpty();   // 처리 후 해제됨 — 다음 호출을 막지 않는다
+	}
+
+	// ── 2단계 단건 콜 병렬화(2026-09-03 스윕 단축) ─────────────────────────────
+
+	/**
+	 * K개의 단건 콜이 <b>실제로 동시에</b> 나가는지 — 각 콜이 진입 래치를 내리고 K개가 모두
+	 * 도달할 때까지 서로를 기다린다. 직렬이면 첫 콜이 래치를 못 채워 타임아웃으로 실패한다
+	 * (sleep 기반 추정이 아니라 결정적 판정 — 통과했다면 K개가 겹친 순간이 실재했다).
+	 */
+	@Test
+	void K가_1보다_크면_2단계_단건_콜이_동시에_나간다() throws Exception {
+		int k = 3;
+		java.util.concurrent.CountDownLatch arrived = new java.util.concurrent.CountDownLatch(k);
+		java.util.concurrent.atomic.AtomicBoolean overlapped = new java.util.concurrent.atomic.AtomicBoolean();
+		onPostFetch = code -> {
+			arrived.countDown();
+			try {
+				if (arrived.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+					overlapped.set(true);
+				}
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		};
+		for (int i = 0; i < k; i++) {
+			tagged.due.add(new TaggedPostRepository.TrackedPost("P" + i, Instant.ofEpochSecond(RECENT), null));
+			postResponses.put("P" + i, postJson("P" + i, RECENT, 500 + i));
+		}
+
+		serviceWithConcurrency(k).sweepUnenumerated(brand);
+
+		assertThat(overlapped).isTrue();
+		assertThat(tagged.enriched).containsExactlyInAnyOrder("P0", "P1", "P2");
+	}
+
+	/** 킬스위치 — K=1이면 executor를 아예 안 쓰고 호출 스레드에서 한 건씩(개정 전과 같은 경로). */
+	@Test
+	void K가_1이면_단건_콜이_한_번에_하나씩만_나간다() {
+		java.util.concurrent.atomic.AtomicInteger inFlight = new java.util.concurrent.atomic.AtomicInteger();
+		java.util.concurrent.atomic.AtomicInteger peak = new java.util.concurrent.atomic.AtomicInteger();
+		java.util.Set<String> threads = java.util.concurrent.ConcurrentHashMap.newKeySet();
+		onPostFetch = code -> {
+			threads.add(Thread.currentThread().getName());
+			peak.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+			try {
+				Thread.sleep(10);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+			inFlight.decrementAndGet();
+		};
+		for (int i = 0; i < 5; i++) {
+			tagged.due.add(new TaggedPostRepository.TrackedPost("S" + i, Instant.ofEpochSecond(RECENT), null));
+			postResponses.put("S" + i, postJson("S" + i, RECENT, 600 + i));
+		}
+
+		serviceWithConcurrency(1).sweepUnenumerated(brand);
+
+		assertThat(peak.get()).isEqualTo(1);
+		assertThat(threads).hasSize(1);   // 워커 풀로 나가지 않는다 — 호출 스레드 그대로
+		assertThat(tagged.enriched).containsExactly("S0", "S1", "S2", "S3", "S4");
+	}
+
+	/**
+	 * 배치 정합(08-13 완결 배치 서빙 규율) — 병렬로 모아도 보강 제출 단위는 그대로 20건이고,
+	 * 결과 순서는 입력(due) 순서를 유지한다(완주 순서가 아니다).
+	 */
+	@Test
+	void 병렬_처리에서도_보강은_20건_배치로_제출되고_입력_순서를_유지한다() {
+		RecordingCollect collect = recordingCollect();
+		BrandDirectCollectService svc = new BrandDirectCollectService(client(), client(), callContext, writer,
+				tagged, collect, sweepSettings(8), WORKER, 300, 2000);
+		List<String> expected = new ArrayList<>();
+		for (int i = 0; i < 25; i++) {
+			String code = "B%02d".formatted(i);
+			tagged.due.add(new TaggedPostRepository.TrackedPost(code, Instant.ofEpochSecond(RECENT), null));
+			postResponses.put(code, postJson(code, RECENT, 700 + i));
+			expected.add(code);
+		}
+
+		svc.sweepUnenumerated(brand);
+
+		assertThat(collect.batchSizes).containsExactly(20, 5);
+		assertThat(collect.enrichedCodes).containsExactlyElementsOf(expected);
+	}
+
+	/**
+	 * 과금 귀속(2026-08-12 어드민 크롤링 비용) — BrandCallContext는 ThreadLocal이라 워커 스레드로
+	 * 저절로 전파되지 않는다. 병렬 태스크 본문마다 다시 scoped로 감싸지 않으면 brandId가 null이 돼
+	 * brand_call_count가 통째로 비는데, 조용히 0이 되는 회귀라 테스트로 못박는다.
+	 */
+	@Test
+	void 병렬_처리에서도_콜이_브랜드_몫으로_계상된다() {
+		for (int i = 0; i < 5; i++) {
+			tagged.due.add(new TaggedPostRepository.TrackedPost("C" + i, Instant.ofEpochSecond(RECENT), null));
+			postResponses.put("C" + i, postJson("C" + i, RECENT, 800 + i));
+		}
+
+		serviceWithConcurrency(8).sweepUnenumerated(brand);
+
+		assertThat(callCounts.byBrand).containsOnlyKeys(brand.id());
+		assertThat(callCounts.byBrand.get(brand.id())).isGreaterThanOrEqualTo(5L);
+	}
+
+	/** 기동 백필도 같은 병렬 골격을 쓴다 — 이관 재고 소진이 스윕과 같은 속도여야 한다. */
+	@Test
+	void 기동_백필도_K병렬로_단건_콜을_낸다() {
+		int k = 3;
+		java.util.concurrent.CountDownLatch arrived = new java.util.concurrent.CountDownLatch(k);
+		java.util.concurrent.atomic.AtomicBoolean overlapped = new java.util.concurrent.atomic.AtomicBoolean();
+		onPostFetch = code -> {
+			arrived.countDown();
+			try {
+				if (arrived.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+					overlapped.set(true);
+				}
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		};
+		for (int i = 0; i < k; i++) {
+			tagged.unenrichedDue.add(
+					new TaggedPostRepository.TrackedPost("F" + i, Instant.ofEpochSecond(RECENT), null));
+			postResponses.put("F" + i, postJson("F" + i, RECENT, 900 + i));
+		}
+
+		int backfilled = serviceWithConcurrency(k).backfillUnenriched(brand);
+
+		assertThat(overlapped).isTrue();
+		assertThat(backfilled).isEqualTo(k);
+	}
+
+	/**
+	 * 브랜드 단위 가드(2026-09-03 브랜드 N병렬) — 가드가 서비스 전역 AtomicBoolean이면 브랜드
+	 * 병렬 스윕에서 둘째 브랜드부터 통째로 스킵된다. 원 목적(같은 브랜드의 스윕 2단계 × 기동
+	 * 백필 겹침 차단)은 그대로 두고 범위만 브랜드로 좁힌다.
+	 */
+	@Test
+	void 다른_브랜드가_처리_중이어도_이_브랜드는_스킵되지_않는다() {
+		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("Mine", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("Mine", postJson("Mine", RECENT, 950));
+		BrandDirectCollectService svc = service();
+		svc.unenumeratedBusy.add(999L);   // 다른 브랜드가 처리 중
+
+		int backfilled = svc.backfillUnenriched(brand);
+
+		assertThat(backfilled).isEqualTo(1);
+		assertThat(tagged.enriched).containsExactly("Mine");
+	}
+
+	/** 같은 브랜드가 이미 처리 중이면 종전대로 스킵 — 이중 과금 차단이라는 원 목적은 보존한다. */
+	@Test
+	void 같은_브랜드가_처리_중이면_여전히_스킵된다() {
+		tagged.due.add(new TaggedPostRepository.TrackedPost("Dup", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("Dup", postJson("Dup", RECENT, 951));
+		BrandDirectCollectService svc = service();
+		svc.unenumeratedBusy.add(brand.id());
+
+		svc.sweepUnenumerated(brand);
+
+		assertThat(postCalls()).isZero();
+		assertThat(tagged.enriched).isEmpty();
+	}
+
+	/** 보강 제출 단위·순서만 관측하는 스텁 — adjustLotteryMetrics 등 나머지는 실제 구현 그대로. */
+	private static final class RecordingCollect extends BrandCollectService {
+		final List<Integer> batchSizes = java.util.Collections.synchronizedList(new ArrayList<>());
+		final List<String> enrichedCodes = java.util.Collections.synchronizedList(new ArrayList<>());
+
+		RecordingCollect(InstagramSource source, BrandCallContext callContext, BrandSnapshotWriter writer,
+				BrandSnapshotRepository snapshots, BrandCommentRepository comments, TaggedPostRepository tagged,
+				AuthorProfileRepository authors, BrandRepository brands) {
+			super(source, source, source, callContext, writer, snapshots, comments, tagged, authors, brands, null,
+					Runnable::run, 2000, 10000, 3, 30, false);
+		}
+
+		@Override
+		public void enrich(BrandRow brand, List<PostInfo> posts) {
+			batchSizes.add(posts.size());
+			posts.forEach(p -> enrichedCodes.add(p.shortCode()));
+		}
+	}
+
+	private RecordingCollect recordingCollect() {
+		return new RecordingCollect(client(), callContext, writer, snapshots, comments, tagged, authors,
+				new InertBrands());
 	}
 }

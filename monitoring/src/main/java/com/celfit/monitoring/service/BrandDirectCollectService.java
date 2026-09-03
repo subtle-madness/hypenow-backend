@@ -13,7 +13,9 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -51,6 +53,10 @@ public class BrandDirectCollectService {
 	private final BrandSnapshotWriter writer;
 	private final TaggedPostRepository taggedPosts;
 	private final BrandCollectService collect;
+	/** 2단계 단건 콜 병렬도(K) 런타임 토글 — 1이면 개정 전과 같은 직렬 경로. */
+	private final BrandSweepSettings sweepSettings;
+	/** 2단계 단건 콜 전용 워커 풀 — self(프록시) 1순위 경로라 Hiker 동시 예산과 별개 예산이다. */
+	private final Executor unenumeratedWorker;
 	/** 스윕당 브랜드당 단건 수집 상한(설계 §5) — 0 이하는 무제한. */
 	private final int sweepLimit;
 	/** 해시태그 감시 세트 크기(2026-09-02 설계 §1) — 편입 쪽(BrandHashtagCollectService)과 같은 키. */
@@ -58,22 +64,26 @@ public class BrandDirectCollectService {
 	/**
 	 * unenumerated 처리 동시 실행 가드(2026-08-28 리뷰 지적) — {@link #sweepUnenumerated}(야간 스윕
 	 * 2단계)와 {@link #backfillUnenriched}(기동 즉시 백필)는 같은 모수(direct∪hashtag 미크롤 행)를
-	 * 겹쳐 건드릴 수 있다(배포 재기동이 새벽 스윕 시간대 근처에 걸리면). {@link
-	 * com.celfit.monitoring.ad.AdDisclosureJudgeService#backfillRunning}과 같은 단일 공유
-	 * AtomicBoolean으로 겹침을 막는다 — 두 진입점 다 브랜드 1건 처리 단위로 획득·해제하므로, 겹치면
-	 * 그 브랜드(그 호출) 한 건만 스킵되고 데이터가 깨지지는 않는다(같은 게시물을 두 콜이 동시에
-	 * Hiker에 이중 과금하는 것만 막는 목적 — upsert·markEnriched 자체는 멱등이라 스킵된 쪽은 다음
-	 * 스윕이나 다음 기동이 다시 잡는다).
+	 * 겹쳐 건드릴 수 있다(배포 재기동이 새벽 스윕 시간대 근처에 걸리면). 겹치면 그 브랜드(그 호출)
+	 * 한 건만 스킵되고 데이터가 깨지지는 않는다(같은 게시물을 두 콜이 동시에 Hiker에 이중 과금하는
+	 * 것만 막는 목적 — upsert·markEnriched 자체는 멱등이라 스킵된 쪽은 다음 스윕이나 다음 기동이
+	 * 다시 잡는다).
+	 *
+	 * <p><b>2026-09-03 브랜드 단위로 좁힘</b> — 종전엔 서비스 전역 단일 AtomicBoolean이었는데,
+	 * 브랜드 루프가 병렬({@link BrandSweepJob}, N)이 되면 첫 브랜드가 가드를 쥔 동안 나머지 브랜드의
+	 * 2단계가 통째로 스킵된다(조용히 수집이 비는 회귀). 원 목적은 "같은 모수를 두 진입점이 동시에
+	 * 건드리지 않기"이고 그 모수는 브랜드로 분할되므로, 가드도 브랜드 단위가 정확한 범위다.
 	 *
 	 * <p>package-private으로 열어 테스트가 겹침 상태를 직접 주입할 수 있게 한다(동시 호출 타이밍을
 	 * 실제 스레드 경합으로 재현하지 않고 결정적으로 검증하기 위함 — {@code judgeOne}과 같은 이유).
 	 */
-	final AtomicBoolean unenumeratedBusy = new AtomicBoolean(false);
+	final Set<Long> unenumeratedBusy = ConcurrentHashMap.newKeySet();
 
 	public BrandDirectCollectService(InstagramSource hiker,
 			@Qualifier("syncInstagramSource") InstagramSource syncHiker,
 			BrandCallContext callContext, BrandSnapshotWriter writer,
-			TaggedPostRepository taggedPosts, BrandCollectService collect,
+			TaggedPostRepository taggedPosts, BrandCollectService collect, BrandSweepSettings sweepSettings,
+			@Qualifier("brandUnenumeratedWorkerPool") Executor unenumeratedWorker,
 			@Value("${monitoring.brand.unenumerated-sweep-limit:2000}") int sweepLimit,
 			@Value("${monitoring.brand.hashtag.post-limit:2000}") int monitoringSetSize) {
 		this.hiker = hiker;
@@ -82,6 +92,8 @@ public class BrandDirectCollectService {
 		this.writer = writer;
 		this.taggedPosts = taggedPosts;
 		this.collect = collect;
+		this.sweepSettings = sweepSettings;
+		this.unenumeratedWorker = unenumeratedWorker;
 		this.sweepLimit = sweepLimit;
 		this.monitoringSetSize = monitoringSetSize;
 	}
@@ -129,7 +141,7 @@ public class BrandDirectCollectService {
 	 * 리뷰 지적) — 겹치면 이번 브랜드 호출은 즉시 스킵하고 정상 반환한다(다음 스윕이 자연 재시도).
 	 */
 	public void sweepUnenumerated(BrandRow brand) {
-		if (!unenumeratedBusy.compareAndSet(false, true)) {
+		if (!unenumeratedBusy.add(brand.id())) {
 			log.info("unenumerated 처리 겹침 - 이번 호출 스킵 brand={}", brand.username());
 			return;
 		}
@@ -139,7 +151,7 @@ public class BrandDirectCollectService {
 				return null;
 			});
 		} finally {
-			unenumeratedBusy.set(false);
+			unenumeratedBusy.remove(brand.id());
 		}
 	}
 
@@ -180,17 +192,7 @@ public class BrandDirectCollectService {
 			log.info("2단계 단건 수집 상한({}) 컷 — 브랜드 {} due {}건 중 {}건만 수집, 잔여는 다음 스윕",
 					sweepLimit, brand.username(), dueAll.size(), due.size());
 		}
-		List<PostInfo> batch = new ArrayList<>();
-		for (TaggedPostRepository.TrackedPost t : due) {
-			collectOne(brand, t.shortCode(), t.takenAt(), now).ifPresent(batch::add);
-			if (batch.size() >= SWEEP_BATCH_SIZE) {
-				collect.enrich(brand, List.copyOf(batch));
-				batch.clear();
-			}
-		}
-		if (!batch.isEmpty()) {
-			collect.enrich(brand, batch);
-		}
+		collectInBatches(brand, due, now);
 	}
 
 	/**
@@ -210,14 +212,14 @@ public class BrandDirectCollectService {
 	 * 합산 로그에 쓴다.
 	 */
 	public int backfillUnenriched(BrandRow brand) {
-		if (!unenumeratedBusy.compareAndSet(false, true)) {
+		if (!unenumeratedBusy.add(brand.id())) {
 			log.info("unenumerated 처리 겹침 - 이번 호출 스킵 brand={}", brand.username());
 			return 0;
 		}
 		try {
 			return callContext.scoped(brand.id(), () -> doBackfillUnenriched(brand));
 		} finally {
-			unenumeratedBusy.set(false);
+			unenumeratedBusy.remove(brand.id());
 		}
 	}
 
@@ -225,18 +227,42 @@ public class BrandDirectCollectService {
 		Instant now = Instant.now();
 		List<TaggedPostRepository.TrackedPost> due = taggedPosts
 				.unenrichedUnenumeratedPosts(brand.id(), now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE));
-		List<PostInfo> batch = new ArrayList<>();
-		for (TaggedPostRepository.TrackedPost t : due) {
-			collectOne(brand, t.shortCode(), t.takenAt(), now).ifPresent(batch::add);
-			if (batch.size() >= SWEEP_BATCH_SIZE) {
+		collectInBatches(brand, due, now);
+		return due.size();
+	}
+
+	/**
+	 * 단건 수집 → 배치 보강 골격(스윕 2단계·기동 백필 공용) — 2026-09-03 병렬화. 종전엔 due를 1건씩
+	 * 완전 직렬로 돌았고, 야간 스윕 실측에서 이 구간이 전체 6.7시간의 61%(6,724콜 × p50 1.9초)를
+	 * 차지하면서 동시성 활용률이 5%에 그쳤다.
+	 *
+	 * <p>병렬 단위는 <b>보강 배치와 같은 20건</b>이다: 한 배치분의 단건 콜을 K병렬로 모두 끝낸 뒤
+	 * 그 결과를 한 번에 {@link BrandCollectService#enrich}로 넘긴다. 배치 경계가 종전의 "성공 20건"
+	 * 에서 "시도 20건"으로 바뀌므로 실패가 섞이면 배치가 20보다 작아지지만, 상한(20)과 정산
+	 * 보장(markEnriched를 finally로)이라는 08-13 완결 배치 서빙 규율은 그대로다.
+	 *
+	 * <p>이 콜들은 self(자체크롤 프록시) 1순위 경로라 <b>Hiker 동시 콜 예산(14)과 무관한 별도
+	 * 예산</b>이다 — 상한은 전용 풀({@code brandUnenumeratedWorkerPool}) 크기이고, self 실패로
+	 * Hiker 폴백이 나갈 때만 그쪽 상한(전송 계층 세마포어)에 합류한다.
+	 *
+	 * <p><b>과금 컨텍스트는 태스크마다 다시 감싼다</b>({@link BrandCallContext}는 ThreadLocal이라
+	 * 워커 스레드로 전파되지 않는다 — enrich의 워커 팬아웃이 이미 쓰는 규율과 같다). 빠뜨리면
+	 * brand_call_count가 조용히 0이 된다.
+	 */
+	private void collectInBatches(BrandRow brand, List<TaggedPostRepository.TrackedPost> due, Instant now) {
+		int concurrency = sweepSettings.unenumeratedConcurrency();
+		long brandId = brand.id();
+		for (int from = 0; from < due.size(); from += SWEEP_BATCH_SIZE) {
+			List<TaggedPostRepository.TrackedPost> chunk =
+					due.subList(from, Math.min(from + SWEEP_BATCH_SIZE, due.size()));
+			List<Optional<PostInfo>> collected = ParallelRunner.map(chunk, concurrency, unenumeratedWorker,
+					t -> callContext.scoped(brandId, () -> collectOne(brand, t.shortCode(), t.takenAt(), now)));
+			List<PostInfo> batch = new ArrayList<>(chunk.size());
+			collected.forEach(o -> o.ifPresent(batch::add));
+			if (!batch.isEmpty()) {
 				collect.enrich(brand, List.copyOf(batch));
-				batch.clear();
 			}
 		}
-		if (!batch.isEmpty()) {
-			collect.enrich(brand, batch);
-		}
-		return due.size();
 	}
 
 	/**

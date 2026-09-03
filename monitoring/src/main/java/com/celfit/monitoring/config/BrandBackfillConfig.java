@@ -102,6 +102,55 @@ public class BrandBackfillConfig {
 	}
 
 	/**
+	 * 야간 스윕 2단계(unenumerated 단건 재수집) 전용 워커 풀 — 2026-09-03 신설(야간 스윕 6.7시간
+	 * 실측에서 이 구간이 61%를 차지하고 완전 직렬이었다: 6,724콜 × p50 1.9초).
+	 *
+	 * <p>이 콜들은 <b>self(자체크롤 프록시) 1순위 경로</b>라 위 클래스 javadoc의 "Hiker 동시 콜
+	 * 최대 14" 예산과 무관한 별도 예산이다(self 전송은 SelfHttpClient로 나가고 Hiker 전송 계층
+	 * 세마포어를 타지 않는다). self가 실패해 Hiker로 폴백하는 소수 콜만 그 예산에 합류하며, 그
+	 * 합류분은 전송 계층 상한이 구조적으로 막는다.
+	 *
+	 * <p>풀 크기가 <b>하드 상한</b>이고(변경은 재배포), 런타임 하향은
+	 * {@code brand-sweep.unenumerated-concurrency}(app_setting) 몫이다 — 1로 내리면 executor를
+	 * 아예 쓰지 않는 직렬 경로로 복원된다({@link com.celfit.monitoring.service.ParallelRunner}).
+	 * 브랜드가 병렬로 돌아도 이 풀은 전역 1개라 2단계 동시 콜의 총량이 풀 크기를 넘지 않는다.
+	 */
+	@Bean(name = "brandUnenumeratedWorkerPool")
+	public Executor brandUnenumeratedWorkerPool(
+			@Value("${monitoring.brand.unenumerated-concurrency:8}") int concurrency) {
+		AtomicInteger seq = new AtomicInteger();
+		return Executors.newFixedThreadPool(concurrency, r -> {
+			Thread t = new Thread(r, "brand-unenumerated-" + seq.incrementAndGet());
+			t.setDaemon(true);
+			return t;
+		});
+	}
+
+	/**
+	 * 야간 스윕 브랜드 루프 전용 워커 풀 — 2026-09-03 신설. 브랜드마다 ①태그 열거+보강 ②2단계
+	 * 단건 재수집 ③해시태그 수집을 순서대로 도는 단위를 브랜드끼리 겹쳐 돌린다(브랜드 내부 순서는
+	 * 그대로 — 3단계 편입이 2단계의 감시 세트 바닥을 보는 전제가 깨지면 안 된다).
+	 *
+	 * <p>브랜드 병렬이 늘리는 것은 <b>대기(외부 콜 응답 대기) 겹침</b>이지 콜 상한이 아니다:
+	 * 보강 콜은 {@code brandEnrichWorkerPool}(10), 2단계 단건 콜은
+	 * {@code brandUnenumeratedWorkerPool}, LLM 판정은 {@code adDisclosureWorkerPool}(4)이 전역
+	 * 상한을 각자 이미 쥐고 있고, Hiker 전송은 전송 계층 세마포어가 전역 in-flight를 못박는다.
+	 *
+	 * <p>풀 크기가 하드 상한이고 런타임 하향은 {@code brand-sweep.brand-concurrency}(app_setting)
+	 * 몫이다 — 1이면 브랜드 루프가 호출 스레드에서 직렬로 도는 개정 전 경로로 복원된다.
+	 */
+	@Bean(name = "brandSweepExecutor")
+	public Executor brandSweepExecutor(
+			@Value("${monitoring.brand.sweep-concurrency:3}") int concurrency) {
+		AtomicInteger seq = new AtomicInteger();
+		return Executors.newFixedThreadPool(concurrency, r -> {
+			Thread t = new Thread(r, "brand-sweep-" + seq.incrementAndGet());
+			t.setDaemon(true);
+			return t;
+		});
+	}
+
+	/**
 	 * enrich 내부 Hiker 콜(게시자 프로필·댓글) 병렬 실행용 워커 풀 — 전역 Hiker 동시 콜의 실질
 	 * 상한이다(brandEnrichExecutor를 늘려도 여기가 안 늘면 콜은 안 늘어난다). 반드시 brandEnrichExecutor와
 	 * <b>별도 풀</b>이어야 한다: enrich는 brandEnrichExecutor 스레드에서 join()으로 워커 완료를
