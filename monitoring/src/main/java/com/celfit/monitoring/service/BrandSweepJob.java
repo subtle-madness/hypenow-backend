@@ -12,8 +12,11 @@ import com.celfit.monitoring.store.BrandRow;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -27,6 +30,10 @@ import org.springframework.stereotype.Service;
  * 단건 수집({@link BrandDirectCollectService#sweepUnenumerated}, 2단계)이, 그 다음에 해시태그
  * 수집(3단계)이 각자 격리된 채로 돈다. 2026-08-27 해시태그 직접 수집 전환으로 2단계 모수는
  * direct ∪ hashtag(열거가 도달할 수 없는 행 전부)로 넓어졌고, 3단계는 "감지"가 아니라 "수집"이다.
+ *
+ * <p>2026-09-03 브랜드 루프 병렬화 — 브랜드끼리는 겹쳐 돌고(런타임 토글 N, 1이면 직렬 복원),
+ * 브랜드 안의 3단계 순서와 브랜드 단위 실패 격리는 그대로다. 2단계는 런 스코프 캐시
+ * ({@link SweepPostCache})를 브랜드끼리 공유해 같은 게시물의 중복 단건 콜을 접는다.
  *
  * <p>계정 삭제·비공개 전환(SubjectNotFound·PrivateAccount)도 상태 전이 없이 격리만 한다 —
  * 브랜드 추적은 탈퇴(CLOSED)까지가 정본이라(스펙 §8) 캠페인의 hidden 전이를 승계하지 않는다.
@@ -48,6 +55,9 @@ public class BrandSweepJob {
 	private final HashtagPostThumbnailArchiveJob hashtagPostThumbnailArchive;
 	private final HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchive;
 	private final AdDisclosureJudgeService adJudge;
+	/** 브랜드 루프 병렬도(N) 런타임 토글 — 1이면 개정 전과 같은 직렬 경로. */
+	private final BrandSweepSettings sweepSettings;
+	private final Executor brandWorker;
 	private final boolean adDisclosureEnabled;
 
 	public BrandSweepJob(BrandRepository brands, BrandCollectService collect,
@@ -56,6 +66,7 @@ public class BrandSweepJob {
 			BrandPostThumbnailArchiveJob brandPostThumbnailArchive,
 			HashtagPostThumbnailArchiveJob hashtagPostThumbnailArchive,
 			HashtagPostAuthorImageArchiveJob hashtagPostAuthorImageArchive, AdDisclosureJudgeService adJudge,
+			BrandSweepSettings sweepSettings, @Qualifier("brandSweepExecutor") Executor brandWorker,
 			@Value("${monitoring.brand.ad-disclosure.enabled:true}") boolean adDisclosureEnabled) {
 		this.brands = brands;
 		this.collect = collect;
@@ -67,6 +78,8 @@ public class BrandSweepJob {
 		this.hashtagPostThumbnailArchive = hashtagPostThumbnailArchive;
 		this.hashtagPostAuthorImageArchive = hashtagPostAuthorImageArchive;
 		this.adJudge = adJudge;
+		this.sweepSettings = sweepSettings;
+		this.brandWorker = brandWorker;
 		this.adDisclosureEnabled = adDisclosureEnabled;
 	}
 
@@ -108,32 +121,54 @@ public class BrandSweepJob {
 	private void runSweep() {
 		LocalDate today = LocalDate.now(KST);
 		List<BrandRow> active = brands.findActive();
-		int failures = 0;
-		int directFailures = 0;
-		int hashtagFailures = 0;
-		for (BrandRow b : active) {
-			try {
-				collect.sweep(b);
-				brands.touchSwept(b.id(), today);   // 성공 시에만 — 실패 브랜드는 "준비 중"으로 남는다
-			} catch (RuntimeException e) {
-				failures++;
-				log.warn("브랜드 스윕 실패(격리) — {}: {}", b.username(), e.toString());
-			}
-			try {
-				directCollect.sweepUnenumerated(b);
-			} catch (RuntimeException e) {
-				directFailures++;
-				log.warn("브랜드 direct 스윕 실패(격리) — {}: {}", b.username(), e.toString());
-			}
-			try {
-				hashtagCollect.sweep(b);
-			} catch (RuntimeException e) {
-				hashtagFailures++;
-				log.warn("브랜드 해시태그 스윕 실패(격리) — {}: {}", b.username(), e.toString());
-			}
+		AtomicInteger failures = new AtomicInteger();
+		AtomicInteger directFailures = new AtomicInteger();
+		AtomicInteger hashtagFailures = new AtomicInteger();
+		// 런 스코프 캐시 — 여러 브랜드가 같은 게시물을 감시할 때 2단계 단건 콜을 한 번으로 접는다.
+		// 수명은 이 메서드 안뿐이라 다음 스윕은 항상 새로 받아온다(SweepPostCache javadoc).
+		SweepPostCache postCache = new SweepPostCache();
+		int concurrency = sweepSettings.brandConcurrency();
+		ParallelRunner.map(active, concurrency, brandWorker, b -> {
+			sweepBrand(b, today, postCache, failures, directFailures, hashtagFailures);
+			return null;
+		});
+		log.info("브랜드 태그 스윕 완료 — 브랜드 {}건(동시 {}) 중 실패 {}건, direct 실패 {}건, 해시태그 실패 {}건"
+						+ " (2단계 중복 단건 콜 {}건 절약, 실콜 {}건)",
+				active.size(), concurrency, failures.get(), directFailures.get(), hashtagFailures.get(),
+				postCache.hits(), postCache.loads());
+	}
+
+	/**
+	 * 브랜드 1건분 — 브랜드 <b>안</b>의 단계 순서(①유저태그 ②2단계 ③해시태그)는 병렬화 뒤에도
+	 * 그대로다. 2단계가 보는 감시 세트 바닥이 "어제까지의 편입" 기준이라는 전제(2026-09-02 설계 §3)가
+	 * ③을 뒤에 두는 데 걸려 있어, 겹쳐도 되는 것은 브랜드끼리뿐이다.
+	 *
+	 * <p>브랜드 병렬이 늘리는 것은 외부 콜 <b>대기 겹침</b>이지 콜 상한이 아니다: 보강 콜은
+	 * brandEnrichWorkerPool(10), 2단계 단건 콜은 brandUnenumeratedWorkerPool, LLM 판정은
+	 * adDisclosureWorkerPool(4)이 각자 전역 상한을 쥐고 있고, Hiker 전송은
+	 * {@link com.celfit.monitoring.hiker.HikerConcurrencyLimiter}가 총 in-flight를 못박는다.
+	 */
+	private void sweepBrand(BrandRow b, LocalDate today, SweepPostCache postCache, AtomicInteger failures,
+			AtomicInteger directFailures, AtomicInteger hashtagFailures) {
+		try {
+			collect.sweep(b);
+			brands.touchSwept(b.id(), today);   // 성공 시에만 — 실패 브랜드는 "준비 중"으로 남는다
+		} catch (RuntimeException e) {
+			failures.incrementAndGet();
+			log.warn("브랜드 스윕 실패(격리) — {}: {}", b.username(), e.toString());
 		}
-		log.info("브랜드 태그 스윕 완료 — 브랜드 {}건 중 실패 {}건, direct 실패 {}건, 해시태그 실패 {}건",
-				active.size(), failures, directFailures, hashtagFailures);
+		try {
+			directCollect.sweepUnenumerated(b, postCache);
+		} catch (RuntimeException e) {
+			directFailures.incrementAndGet();
+			log.warn("브랜드 direct 스윕 실패(격리) — {}: {}", b.username(), e.toString());
+		}
+		try {
+			hashtagCollect.sweep(b);
+		} catch (RuntimeException e) {
+			hashtagFailures.incrementAndGet();
+			log.warn("브랜드 해시태그 스윕 실패(격리) — {}: {}", b.username(), e.toString());
+		}
 	}
 
 	/**
