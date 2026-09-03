@@ -61,6 +61,12 @@ public class AnalyticsSettings {
 	 * (08-11 콘텐츠 전환 때 계정 카피는 의도적으로 제외 — 2026-08-17 후속 전환).
 	 */
 	public static final String KEY_ACCOUNT_ANALYZE_TRANSPORT = "analytics.account-analyze-transport";
+	/**
+	 * 콘텐츠 분석 단계 분리 토글 - unified(기본, 통합 1콜) | split(파트 A 사실 / 파트 B 해석 분리).
+	 * 2026-09-03 2단계 분리 설계. 전송 토글(analytics.analyze-transport)과 독립이며,
+	 * 잡 실행 시점마다 매번 읽으므로 재기동 없이 전환된다. 롤백은 값을 unified로 되돌리는 UPDATE 한 줄.
+	 */
+	public static final String KEY_ANALYZE_MODE = "analytics.analyze-mode";
 	/** 공동구매(공구) 판정 킬 스위치 — false면 GroupPurchaseJudgeJob이 즉시 반환한다. 기본값은
 	 * crawler Flyway 마이그레이션이 시드(true). 사전·프롬프트 수정 후 재판정은 리셋 SQL로 별도. */
 	public static final String KEY_GROUP_PURCHASE_ENABLED = "analytics.group-purchase.enabled";
@@ -83,6 +89,7 @@ public class AnalyticsSettings {
 	static final int DEFAULT_BATCH_CHUNK_SIZE = 3000;
 	static final String DEFAULT_ANALYZE_TRANSPORT = "online";
 	static final String DEFAULT_ACCOUNT_ANALYZE_TRANSPORT = "online";
+	static final String DEFAULT_ANALYZE_MODE = "unified";
 	static final boolean DEFAULT_GROUP_PURCHASE_ENABLED = true;
 
 	private final JdbcTemplate raw;
@@ -190,6 +197,19 @@ public class AnalyticsSettings {
 	/** true면 계정 카피(ACCOUNT_ANALYZE)가 Vertex 배치 제출 경로로 전환된다. */
 	public boolean accountBatchTransportEnabled() {
 		return "batch".equals(accountAnalyzeTransport());
+	}
+
+	/** 잡 실행 시점마다 매번 읽는다(캐시 없음) - 재기동 없이 unified↔split 전환. */
+	public String analyzeMode() {
+		return read(KEY_ANALYZE_MODE).orElse(DEFAULT_ANALYZE_MODE);
+	}
+
+	/**
+	 * true면 콘텐츠 분석이 파트 A(FACT_ANALYZE)와 파트 B(ANALYZE / LATE_BACKFILL_ANALYZE)로 갈린다.
+	 * false(기본)면 현행 통합 1콜이고 FACT_ANALYZE는 no-op이다.
+	 */
+	public boolean splitAnalyzeMode() {
+		return "split".equals(analyzeMode());
 	}
 
 	/** 공동구매 판정 킬 스위치 — 잡 실행 시점마다 매번 읽는다(캐시 없음). */

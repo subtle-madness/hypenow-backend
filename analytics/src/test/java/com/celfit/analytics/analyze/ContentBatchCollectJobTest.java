@@ -68,6 +68,13 @@ class ContentBatchCollectJobTest {
 				VALUES (?, ?, ?, 'pending', ?)""", batchName, timely, submittedCount, sidecarJsonl);
 	}
 
+	void insertPendingBatchJob(String batchName, boolean timely, int submittedCount,
+			String sidecarJsonl, String kind) {
+		db.update("""
+				INSERT INTO content_batch_jobs (batch_name, timely, submitted_count, status, sidecar_jsonl, kind)
+				VALUES (?, ?, ?, 'pending', ?, ?)""", batchName, timely, submittedCount, sidecarJsonl, kind);
+	}
+
 	/** 사이드카 라인(JSONL 1줄) — GeminiBatchLines.SIDECAR_KEYS와 같은 키로 기준선 스냅샷 + caption + timely. */
 	String sidecarLine(String shortCode, boolean timely) {
 		ObjectNode line = om.createObjectNode();
@@ -295,5 +302,180 @@ class ContentBatchCollectJobTest {
 				"SELECT status FROM content_batch_jobs WHERE batch_name = 'batches/ok'", String.class));
 		assertEquals("failed", db.queryForObject(
 				"SELECT status FROM content_batch_jobs WHERE batch_name = 'batches/lost'", String.class));
+	}
+
+	static final String FACTS_JSON = """
+			{"detectedBrands":null,"sponsoredSignalLevel":"low","sponsoredSignalReasons":null,
+			 "adDisclosure":"표기 없음","detectedProductCategories":["클렌징폼"],"detectedProducts":null,
+			 "vlmAttributes":null,"isRelevant":true,"mainCategory":"cleansing","subCategories":["클렌징폼"],
+			 "detectedDistributors":null,"adType":"organic"}"""
+			.replace("\n", "");
+
+	static final String SYNTHESIS_JSON = """
+			{"aiContentSummary":"평균 수준","contentsPattern":"루틴형","aiCommentInsight":"표본 부족",
+			 "commentAuthenticityGrade":"normal","commentAuthenticityNote":"근거"}"""
+			.replace("\n", "");
+
+	@Test
+	void kind_facts_배치는_사실만_저장하고_pending으로_남긴다() {
+		insertPendingBatchJob("batches/f1", false, 1, sidecarLine("cc_f", false), "facts");
+		String resultJsonl = """
+				{"key":"cc_f","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(FACTS_JSON));
+
+		JobResult result = collectJob(succeededApi("files/f1", resultJsonl)).run();
+
+		assertEquals(1, result.processed());
+		assertEquals("cleansing", db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'cc_f'", String.class));
+		assertEquals("pending", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'cc_f'", String.class));
+		assertNull(db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'cc_f'", String.class));
+		// 사이드카의 timely=false는 facts kind에서 무시된다(파트 B가 확정한다)
+		assertEquals("collected", db.queryForObject(
+				"SELECT status FROM content_batch_jobs WHERE batch_name = 'batches/f1'", String.class));
+	}
+
+	@Test
+	void kind_synthesis_배치는_해석을_UPDATE하고_시점을_확정한다() {
+		// 파트 A 행이 먼저 있어야 한다
+		db.update("""
+				INSERT INTO content_analyses (short_code, model, main_category, ad_type, is_beauty,
+				  metric_timeliness) VALUES ('cc_s', 'facts-model', 'cleansing', 'organic', true, 'pending')""");
+		insertPendingBatchJob("batches/s1", true, 1, sidecarLine("cc_s", true), "synthesis");
+		String resultJsonl = """
+				{"key":"cc_s","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(SYNTHESIS_JSON));
+
+		JobResult result = collectJob(succeededApi("files/s1", resultJsonl)).run();
+
+		assertEquals(1, result.processed());
+		assertEquals("평균 수준", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'cc_s'", String.class));
+		assertEquals("timely", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'cc_s'", String.class));
+		// 사이드카의 기준선 스냅샷이 그대로 복원된다
+		assertEquals(9000L, db.queryForObject(
+				"SELECT recent_reels_avg_views FROM content_analyses WHERE short_code = 'cc_s'", Long.class));
+		// 파트 A 컬럼은 보존
+		assertEquals("cleansing", db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'cc_s'", String.class));
+		assertEquals(1L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void kind_synthesis는_이미_확정된_행을_덮지_않고_라인_실패로_센다() {
+		// 2026-09-03 리뷰 시나리오: split ON → 파트 B 배치 제출 → 운영자가 롤백하며 pending 행 삭제
+		// → 통합 ANALYZE가 같은 short_code를 완결(non-pending) 행으로 재생성 → 그 뒤 옛 파트 B
+		// 배치 결과가 도착. pending 가드(updateSynthesisPending)가 없으면 이 수거가 방금 만든
+		// 완결 행을 조용히 덮어쓴다 - 가드가 있으면 UPDATE 0행 → 라인 실패로만 집계되고 행은 보존된다.
+		db.update("""
+				INSERT INTO content_analyses (short_code, model, ai_content_summary, main_category,
+				  ad_type, is_beauty, metric_timeliness)
+				VALUES ('cc_final', 'unified-model', '통합 재생성 요약', 'cleansing', 'organic', true, 'timely')""");
+		insertPendingBatchJob("batches/s4", true, 1, sidecarLine("cc_final", true), "synthesis");
+		String resultJsonl = """
+				{"key":"cc_final","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(SYNTHESIS_JSON));
+
+		JobResult result = collectJob(succeededApi("files/s4", resultJsonl)).run();
+
+		assertEquals(0, result.processed());
+		assertEquals(0, result.failed()); // 배치 수준 예외가 아니라 라인 실패(collectOne이 던지지 않음)
+		// 통합 ANALYZE가 이미 채운 완결 행이 옛 배치 결과로 덮이지 않는다
+		assertEquals("통합 재생성 요약", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'cc_final'", String.class));
+		assertEquals("timely", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'cc_final'", String.class));
+		assertEquals("unified-model", db.queryForObject(
+				"SELECT model FROM content_analyses WHERE short_code = 'cc_final'", String.class));
+		assertEquals("collected", db.queryForObject(
+				"SELECT status FROM content_batch_jobs WHERE batch_name = 'batches/s4'", String.class));
+	}
+
+	@Test
+	void kind_synthesis에서_대상_행이_없으면_저장_실패로_센다() {
+		// 제출~수거 사이에 행이 사라진 경우 - 0행 갱신은 성공이 아니다
+		insertPendingBatchJob("batches/s2", true, 1, sidecarLine("cc_gone", true), "synthesis");
+		String resultJsonl = """
+				{"key":"cc_gone","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(SYNTHESIS_JSON));
+
+		JobResult result = collectJob(succeededApi("files/s2", resultJsonl)).run();
+
+		assertEquals(0, result.processed());
+		assertEquals(0L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+		// 배치 자체는 수거 완료로 전이한다(라인 실패는 다음 후보 diff가 흡수)
+		assertEquals("collected", db.queryForObject(
+				"SELECT status FROM content_batch_jobs WHERE batch_name = 'batches/s2'", String.class));
+	}
+
+	@Test
+	void kind_기본값_analyze는_통합_파서로_처리된다() {
+		// 롤링 창·롤백 직후 구 코드가 남긴 pending 행 - kind 컬럼을 모르고 INSERT한다
+		insertPendingBatchJob("batches/legacy", true, 1, sidecarLine("cc_legacy", true));
+		String resultJsonl = """
+				{"key":"cc_legacy","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(INSIGHT_JSON));
+
+		JobResult result = collectJob(succeededApi("files/l1", resultJsonl)).run();
+
+		assertEquals(1, result.processed());
+		assertEquals("평균 수준", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'cc_legacy'", String.class));
+		assertEquals("cleansing", db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'cc_legacy'", String.class));
+		assertEquals("timely", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'cc_legacy'", String.class));
+	}
+
+	@Test
+	void kind_facts_대분류_미도출은_미분류로_종결_저장한다() {
+		// 분류 대상(isRelevant=true)이나 대분류를 못 얻은 경우 - asUnclassified()로 종결 저장
+		// (temperature 0 결정론이라 재대상해도 같은 결과 - 무한 재시도 방지, GeminiBatchLines 참고)
+		String unclassifiedJson = """
+				{"detectedBrands":null,"sponsoredSignalLevel":"low","sponsoredSignalReasons":null,
+				 "adDisclosure":"표기 없음","detectedProductCategories":null,"detectedProducts":null,
+				 "vlmAttributes":null,"isRelevant":true,"mainCategory":null,"subCategories":null,
+				 "detectedDistributors":null,"adType":"organic"}"""
+				.replace("\n", "");
+		insertPendingBatchJob("batches/f2", false, 1, sidecarLine("cc_f2", false), "facts");
+		String resultJsonl = """
+				{"key":"cc_f2","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(unclassifiedJson));
+
+		JobResult result = collectJob(succeededApi("files/f2", resultJsonl)).run();
+
+		assertEquals(1, result.processed());
+		assertNull(db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'cc_f2'", String.class));
+		assertEquals(Boolean.FALSE, db.queryForObject(
+				"SELECT is_beauty FROM content_analyses WHERE short_code = 'cc_f2'", Boolean.class));
+		assertEquals("pending", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'cc_f2'", String.class));
+		assertEquals("collected", db.queryForObject(
+				"SELECT status FROM content_batch_jobs WHERE batch_name = 'batches/f2'", String.class));
+	}
+
+	@Test
+	void kind_synthesis에서_candidate가_없으면_예외_없이_라인_실패로_센다() {
+		// 세이프티 차단 등으로 candidates[0]에 content가 없는 경우 - shortCodeAndText가 null을 돌려
+		// processSynthesisResultLine이 예외 대신 false를 반환한다(수거 잡 자체는 죽지 않는다).
+		db.update("""
+				INSERT INTO content_analyses (short_code, model, main_category, ad_type, is_beauty,
+				  metric_timeliness) VALUES ('cc_blocked', 'facts-model', 'cleansing', 'organic', true, 'pending')""");
+		insertPendingBatchJob("batches/s3", true, 1, sidecarLine("cc_blocked", true), "synthesis");
+		String resultJsonl = """
+				{"key":"cc_blocked","response":{"candidates":[{"finishReason":"SAFETY"}]}}""";
+
+		JobResult result = collectJob(succeededApi("files/s3", resultJsonl)).run();
+
+		assertEquals(0, result.processed());
+		assertEquals(0, result.failed()); // 배치 수준 예외가 아니라 라인 실패 - collectOne이 던지지 않았다
+		assertEquals("pending", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'cc_blocked'", String.class));
+		assertEquals("collected", db.queryForObject(
+				"SELECT status FROM content_batch_jobs WHERE batch_name = 'batches/s3'", String.class));
 	}
 }

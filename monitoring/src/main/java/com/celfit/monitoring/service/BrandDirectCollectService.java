@@ -14,7 +14,8 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -65,19 +66,21 @@ public class BrandDirectCollectService {
 	/** 해시태그 감시 세트 크기(2026-09-02 설계 §1) — 편입 쪽(BrandHashtagCollectService)과 같은 키. */
 	private final int monitoringSetSize;
 	/**
-	 * unenumerated 처리 동시 실행 가드(2026-08-28 리뷰 지적) — {@link #sweepUnenumerated}(야간 스윕
-	 * 2단계)와 {@link #backfillUnenriched}(기동 즉시 백필)는 같은 모수(direct∪hashtag 미크롤 행)를
-	 * 겹쳐 건드릴 수 있다(배포 재기동이 새벽 스윕 시간대 근처에 걸리면). {@link
-	 * com.celfit.monitoring.ad.AdDisclosureJudgeService#backfillRunning}과 같은 단일 공유
-	 * AtomicBoolean으로 겹침을 막는다 — 두 진입점 다 브랜드 1건 처리 단위로 획득·해제하므로, 겹치면
+	 * unenumerated 처리 동시 실행 가드(2026-08-28 리뷰 지적, 2026-09-03 브랜드 키화) — {@link
+	 * #sweepUnenumerated}(야간 스윕 2단계)와 {@link #backfillUnenriched}(기동 즉시 백필)는 같은 모수
+	 * (direct∪hashtag 미크롤 행)를 겹쳐 건드릴 수 있다(배포 재기동이 새벽 스윕 시간대 근처에 걸리면).
+	 * <b>같은 브랜드</b>의 겹침만 막는다 — 두 진입점 다 브랜드 1건 처리 단위로 획득·해제하므로, 겹치면
 	 * 그 브랜드(그 호출) 한 건만 스킵되고 데이터가 깨지지는 않는다(같은 게시물을 두 콜이 동시에
 	 * Hiker에 이중 과금하는 것만 막는 목적 — upsert·markEnriched 자체는 멱등이라 스킵된 쪽은 다음
 	 * 스윕이나 다음 기동이 다시 잡는다).
 	 *
+	 * <p>구 서비스 전역 AtomicBoolean은 브랜드 스윕 병렬화(2026-09-03 설계 §3-2)와 양립하지 않았다 —
+	 * 브랜드 4개가 동시에 돌면 서로의 2단계를 "겹침"으로 건너뛰어 그날 2단계가 통째로 빠진다.
+	 *
 	 * <p>package-private으로 열어 테스트가 겹침 상태를 직접 주입할 수 있게 한다(동시 호출 타이밍을
 	 * 실제 스레드 경합으로 재현하지 않고 결정적으로 검증하기 위함 — {@code judgeOne}과 같은 이유).
 	 */
-	final AtomicBoolean unenumeratedBusy = new AtomicBoolean(false);
+	final Set<Long> busyBrands = ConcurrentHashMap.newKeySet();
 
 	public BrandDirectCollectService(InstagramSource hiker,
 			@Qualifier("syncInstagramSource") InstagramSource syncHiker,
@@ -173,11 +176,11 @@ public class BrandDirectCollectService {
 	 * <p>게시자 프로필·댓글 병렬화는 {@code enrich} 안의 공유 워커 풀이 이미 한다 — 여기서 추가
 	 * 병렬화하지 않는다(전역 동시 콜 상한 계산이 깨진다).
 	 *
-	 * <p>{@link #unenumeratedBusy}로 {@link #backfillUnenriched}와의 동시 실행을 막는다(2026-08-28
+	 * <p>{@link #busyBrands}로 {@link #backfillUnenriched}와의 동시 실행을 막는다(2026-08-28
 	 * 리뷰 지적) — 겹치면 이번 브랜드 호출은 즉시 스킵하고 정상 반환한다(다음 스윕이 자연 재시도).
 	 */
 	public void sweepUnenumerated(BrandRow brand) {
-		if (!unenumeratedBusy.compareAndSet(false, true)) {
+		if (!busyBrands.add(brand.id())) {
 			log.info("unenumerated 처리 겹침 - 이번 호출 스킵 brand={}", brand.username());
 			return;
 		}
@@ -187,7 +190,7 @@ public class BrandDirectCollectService {
 				return null;
 			});
 		} finally {
-			unenumeratedBusy.set(false);
+			busyBrands.remove(brand.id());
 		}
 	}
 
@@ -249,7 +252,7 @@ public class BrandDirectCollectService {
 	 * 나이 티어 필터와 {@code sweepLimit} 스윕당 상한을 <b>적용하지 않는다</b> — 이 행들은 이관 직후
 	 * 한 번도 크롤된 적 없는 재고라 "천천히 갚아도 되는" 정상 운영 전제(점진 소진)가 성립하지 않는다.
 	 *
-	 * <p>{@link #unenumeratedBusy}로 {@link #sweepUnenumerated}와의 동시 실행을 막는다(2026-08-28
+	 * <p>{@link #busyBrands}로 {@link #sweepUnenumerated}와의 동시 실행을 막는다(2026-08-28
 	 * 리뷰 지적 — 배포 재기동이 새벽 스윕 시간대 근처에 걸리면 같은 게시물을 이중으로 Hiker에
 	 * 과금할 수 있다). 겹치면 이번 브랜드 호출은 즉시 0을 반환한다 — 스킵된 행은 멱등이라 데이터
 	 * 유실 없이 다음 야간 스윕(또는 다음 재기동)이 그대로 잡는다.
@@ -258,14 +261,14 @@ public class BrandDirectCollectService {
 	 * 합산 로그에 쓴다.
 	 */
 	public int backfillUnenriched(BrandRow brand) {
-		if (!unenumeratedBusy.compareAndSet(false, true)) {
+		if (!busyBrands.add(brand.id())) {
 			log.info("unenumerated 처리 겹침 - 이번 호출 스킵 brand={}", brand.username());
 			return 0;
 		}
 		try {
 			return callContext.scoped(brand.id(), () -> doBackfillUnenriched(brand));
 		} finally {
-			unenumeratedBusy.set(false);
+			busyBrands.remove(brand.id());
 		}
 	}
 

@@ -1058,4 +1058,27 @@ class BrandStoreTest {
 		return new PostInfo(code, "creator", null, null, "999", "REELS", "캡션", null,
 				takenAt, 10L, 2L, views, fbPlays, null, null, null, null, null, null, true, false, false);
 	}
+
+	/**
+	 * 브랜드 스윕 병렬화(2026-09-03 설계 §3-1) — LPT 배정 입력. 전날 콜 수가 "그 브랜드가 실제로
+	 * 얼마나 무거웠나"의 정본이라 별도 추정 컬럼 없이 이 순서로 제출한다.
+	 */
+	@Test
+	void findActiveHeaviestFirst는_해당일_콜_수_내림차순이고_이력_없는_브랜드는_뒤로_간다() {
+		long light = brands.insertOrReactivate("light", profile("light", "1", 10L, ""), 12, true);
+		long heavy = brands.insertOrReactivate("heavy", profile("heavy", "2", 10L, ""), 12, true);
+		long none = brands.insertOrReactivate("none", profile("none", "3", 10L, ""), 12, true);
+		long closed = brands.insertOrReactivate("closed", profile("closed", "4", 10L, ""), 12, true);
+		brands.close("closed");
+		var calls = new BrandCallCountRepository(db);
+		LocalDate day = LocalDate.of(2026, 9, 2);
+		calls.add(light, day, 5);
+		calls.add(heavy, day, 500);
+		calls.add(closed, day, 9_999);          // 닫힌 브랜드는 콜이 많아도 제외
+		calls.add(none, day.minusDays(1), 800); // 다른 날짜 콜은 무시
+
+		List<Long> ids = brands.findActiveHeaviestFirst(day).stream().map(BrandRow::id).toList();
+
+		assertThat(ids).containsExactly(heavy, light, none);
+	}
 }

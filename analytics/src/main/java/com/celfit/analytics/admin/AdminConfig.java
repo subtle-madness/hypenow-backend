@@ -85,8 +85,10 @@ public class AdminConfig {
 			@Value("${analytics.schedule.classify-cron:-}") String classifyCron,
 			@Value("${analytics.schedule.analyze-cron:-}") String analyzeCron,
 			@Value("${analytics.schedule.account-analyze-cron:-}") String accountCron,
-			@Value("${analytics.schedule.archive-cron:-}") String archiveCron) {
-		return new ScheduleInfo(enabled, mirrorCron, classifyCron, analyzeCron, accountCron, archiveCron);
+			@Value("${analytics.schedule.archive-cron:-}") String archiveCron,
+			@Value("${analytics.schedule.fact-analyze-cron:-}") String factAnalyzeCron) {
+		return new ScheduleInfo(enabled, mirrorCron, classifyCron, analyzeCron, accountCron,
+				archiveCron, factAnalyzeCron);
 	}
 
 	@Bean
