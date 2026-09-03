@@ -370,4 +370,52 @@ class MonitoringBrandCommandClientTest {
 		server.verify();
 	}
 
+	// ---------- 해시태그 자동 시드 제안 조회(2026-09-03 자동 시드 재설계 §3-1) ----------
+
+	@Test
+	void 제안_조회는_응답을_그대로_반환한다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-suggestion"))
+				.andExpect(method(HttpMethod.GET))
+				.andRespond(withSuccess("""
+						{ "path": "FREQ", "tag": "리즈다", "topCount": 5, "candidatePosts": 12 }
+						""", MediaType.APPLICATION_JSON));
+
+		var suggestion = client.getHashtagSuggestion("brand_official");
+
+		assertThat(suggestion.path()).isEqualTo("FREQ");
+		assertThat(suggestion.tag()).isEqualTo("리즈다");
+		assertThat(suggestion.topCount()).isEqualTo(5);
+		assertThat(suggestion.candidatePosts()).isEqualTo(12);
+		server.verify();
+	}
+
+	/** topCount·candidatePosts 누락은 Integer라 NPE 없이 null로 들어온다(로그·검토용 재료라 필수 아님). */
+	@Test
+	void 제안_조회는_topCount_누락시_null이다() {
+		server.expect(requestTo(BASE + "/api/brands/brand_official/hashtag-suggestion"))
+				.andRespond(withSuccess("""
+						{ "path": "FALLBACK", "tag": "brand_official" }
+						""", MediaType.APPLICATION_JSON));
+
+		var suggestion = client.getHashtagSuggestion("brand_official");
+
+		assertThat(suggestion.path()).isEqualTo("FALLBACK");
+		assertThat(suggestion.topCount()).isNull();
+		assertThat(suggestion.candidatePosts()).isNull();
+	}
+
+	@Test
+	void 제안_조회_404는_MonitoringApiException으로_승격된다() {
+		server.expect(requestTo(BASE + "/api/brands/gone_brand/hashtag-suggestion"))
+				.andRespond(withStatus(HttpStatus.NOT_FOUND)
+						.contentType(MediaType.APPLICATION_JSON)
+						.body("{ \"code\": \"BRAND_NOT_FOUND\", \"message\": \"브랜드를 찾을 수 없습니다.\" }"));
+
+		assertThatThrownBy(() -> client.getHashtagSuggestion("gone_brand"))
+				.isInstanceOfSatisfying(MonitoringApiException.class, e -> {
+					assertThat(e.code()).isEqualTo("BRAND_NOT_FOUND");
+					assertThat(e.httpStatus()).isEqualTo(404);
+				});
+	}
+
 }

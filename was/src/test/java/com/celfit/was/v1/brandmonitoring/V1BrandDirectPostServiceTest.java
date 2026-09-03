@@ -494,7 +494,7 @@ class V1BrandDirectPostServiceTest {
 
 	private static BrandLinkRow link(String accountType, int collectionMonths) {
 		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", accountType, collectionMonths,
-				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null);
 	}
 
 	private void poolStatus(String shortCode, boolean directRegistered, boolean tagDetected, OffsetDateTime takenAt) {

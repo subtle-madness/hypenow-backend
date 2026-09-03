@@ -8,6 +8,7 @@ import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
 import com.celfit.was.auth.UserRepository;
+import com.celfit.was.monitoring.BrandHashtagSeedRepository;
 import com.celfit.was.monitoring.BrandHashtagTagRepository;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
@@ -43,11 +44,13 @@ class V1BrandAccountServiceWithdrawalTest {
 	UserRepository userRepository;
 	@Mock
 	BrandHashtagTagRepository hashtagTagRepository;
+	@Mock
+	BrandHashtagSeedRepository seedRepository;
 
 	private V1BrandAccountService service() {
 		return new V1BrandAccountService(linkRepository, new BrandLinkTransaction(linkRepository),
 				commandClient, brandReadRepository, new BrandAccountAssembler(3), userRepository,
-				hashtagTagRepository);
+				hashtagTagRepository, seedRepository);
 	}
 
 	private static BrandLinkRow link() {
@@ -56,7 +59,7 @@ class V1BrandAccountServiceWithdrawalTest {
 
 	private static BrandLinkRow link(long brandId, String username) {
 		return new BrandLinkRow(brandId, 7L, brandId, username, BrandAccountType.OWN, 12,
-				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null);
 	}
 
 	private static BrandAccountRow account(String username) {
