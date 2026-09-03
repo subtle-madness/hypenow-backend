@@ -22,10 +22,21 @@ import org.slf4j.LoggerFactory;
  * (like_and_view_counts_disabled)로 숨김을 판정하지만, self는 그런 신호가 없다. 좋아요 카운트
  * 렌더 텍스트({@link #LIKES})가 안 잡히면 "진짜 숨김"과 "정규식 파싱 실패"(로케일 변경 등)를
  * 신뢰 가능하게 구분할 신호가 없다(실 픽스처·라이브 조사로도 확인 못 함 — 결함 보고서 참조).
- * 그래서 likesHidden을 단정하지 않고 항상 false를 반환한다 — "숨김 단정"이 틀리면 저장 계층에
- * 영구 오염(실제로는 숨김이 아닌데 likes_hidden=true로 굳음)을 남기지만, false로 두면 저장
- * 계층(SnapshotRepository.upsertPost)이 이 행을 "미확정 관측"으로 인식해 기존 likes·likes_hidden을
- * 보존한다 — 실패를 안전한 쪽(보수적 미확정)으로 접는다.
+ * 그래서 좋아요 카운트가 안 잡히면 likesHidden을 {@code null}(미확정)로 남긴다 — 카운트가
+ * 잡혔을 땐(렌더된 숫자를 실제로 봤으니) {@code false}(확정 비숨김)를 준다. 과거엔 파싱 성공
+ * 여부와 무관하게 항상 {@code false}를 반환해, self 기원 관측이 Hiker의 확정 false와 구분되지
+ * 않는 결함이 있었다(S9, 2026-09-03 감사 수정 — PostInfo.likesHidden javadoc 참조). 저장
+ * 계층(SnapshotRepository.upsertPost)은 여전히 false를 "미확정 보호" 신호로 쓰므로, 이 null은
+ * 저장 직전에 false로 접힌다 — 바뀐 건 재시도·0 간주 등 인메모리 판단이 이제 진짜 미확정과
+ * Hiker의 확정 false를 구분할 수 있다는 점이다.
+ *
+ * <p><b>공유 숨김은 구조적으로 판정 불가</b> — embed HTML에는 공유 횟수 자체가 안 실린다(shares는
+ * 항상 null). "숨김"과 "이 표면이 원래 못 주는 값"을 구분할 신호가 전혀 없으므로 sharesHidden은
+ * 항상 {@code null}(미확정)을 반환한다(S9). 과거엔 여기도 항상 {@code false}를 반환해, 공유 숨김
+ * 릴스가 self 관측 위에서 매일 재시도 상한까지 헛돌고 소진 시 공유 0으로 오기록되는 결함을 냈다
+ * (CollectService#assumeZeroForOmittedKeys 참조) — 단건 재시도(항상 Hiker 직결)가 진짜 확정값을
+ * 관측하면 {@link com.celfit.instagram.source.PostInfo#mergedMetrics(Long, Long, Long, Boolean)}가
+ * 그 값을 되싣는다.
  */
 public class EmbedPostFetcher {
 
@@ -105,8 +116,8 @@ public class EmbedPostFetcher {
 		}
 		if (likes == null) {
 			// 소유자는 있는데 좋아요 카운트만 안 잡힘 — 진짜 숨김인지 파싱 실패인지 구분할 신호가
-			// 없다(클래스 주석 참조). 숨김 단정 금지 — 저장 계층이 "미확정"으로 보호하도록 관측
-			// 가능하게 남긴다.
+			// 없다(클래스 주석 참조). 숨김 단정 금지 — likesHidden을 null(미확정)로 남겨 저장
+			// 계층이 보호하도록 한다(S9 — 과거엔 false 하드코딩이라 Hiker의 확정 false와 안 구분됐다).
 			log.warn("embed 좋아요 카운트 파싱 실패(숨김 여부 미확정) shortCode={}", shortCode);
 		}
 		Long comments = number(first(COMMENTS, body));
@@ -115,10 +126,12 @@ public class EmbedPostFetcher {
 		String productType = first(PRODUCT_TYPE, body);
 		boolean reels = views != null || "clips".equals(productType);
 		String contentType = reels ? "REELS" : "FEED";
+		// likes가 잡혔으면 렌더된 숫자를 실제로 봤으니 확정 비숨김(false), 안 잡혔으면 미확정(null).
+		Boolean likesHidden = likes == null ? null : false;
 
 		return new PostInfo(shortCode, username, null, null, null, contentType, caption,
 				null, null, likes, comments, views, null, null, null, null, null, null, null,
-				views != null, false, false);
+				views != null, likesHidden, null);
 	}
 
 	private static String first(Pattern p, String body) {

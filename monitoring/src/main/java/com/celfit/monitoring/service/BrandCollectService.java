@@ -631,6 +631,13 @@ public class BrandCollectService {
 	//    키가 오기 시작해 자동 해제된다.
 	// ③ 전부 꽝 세션(saves도 부재)은 근거가 없으므로 null(미관측) 유지.
 	//    fb 캐리포워드·역전파는 BrandSnapshotRepository.upsertPost가 처리한다 — 여기서 안 건드린다.
+	//
+	// sharesHidden이 Boolean(nullable)이 된 뒤(S9, 2026-09-03 감사 수정) 이 메서드의 두 용도가
+	// 갈린다: step1의 "①부재=0"은 CollectService#assumeZeroForOmittedKeys와 같은 근거 없는 맹목적
+	// 추정이라 확정 false(Boolean.FALSE)일 때만 적용한다 — 이 경로는 재시도 콜이 없어(비용 모델에
+	// 예산 없음) self 기원 미확정(null)을 걸러낼 기회가 이번 한 번뿐이다, 여기서 잘못 0으로 찍으면
+	// 다음 스윕도 saves가 다시 관측되지 않는 한 정정되지 않는다. 후보 수집·②0 캐리는 DB 이력이
+	// 뒷받침하는 조회라 CollectService#applyZeroCarry와 같은 관대한 !Boolean.TRUE.equals를 쓴다.
 
 	/**
 	 * package-private로 승격(2026-08-18 direct 통합 §2-2) — {@link BrandDirectCollectService}가
@@ -642,7 +649,7 @@ public class BrandCollectService {
 			if (!"REELS".equals(p.contentType()) || p.saves() == null) {
 				return p;
 			}
-			Long zeroShares = p.shares() == null && !p.sharesHidden() ? 0L : null;
+			Long zeroShares = p.shares() == null && Boolean.FALSE.equals(p.sharesHidden()) ? 0L : null;
 			Long zeroReposts = p.reposts() == null ? 0L : null;
 			return zeroShares == null && zeroReposts == null ? p
 					: p.mergedMetrics(null, zeroShares, zeroReposts);
@@ -656,7 +663,7 @@ public class BrandCollectService {
 			if (p.reposts() == null) {
 				repostsCandidates.add(p.shortCode());
 			}
-			if (p.shares() == null && !p.sharesHidden()) {
+			if (p.shares() == null && !Boolean.TRUE.equals(p.sharesHidden())) {
 				sharesCandidates.add(p.shortCode());
 			}
 		}
@@ -668,7 +675,7 @@ public class BrandCollectService {
 		Set<String> sharesCarry = snapshots.codesWithSharesZeroCarry(sharesCandidates, today);
 		return step1.stream().map(p -> {
 			Long zeroReposts = p.reposts() == null && repostsCarry.contains(p.shortCode()) ? 0L : null;
-			Long zeroShares = p.shares() == null && !p.sharesHidden()
+			Long zeroShares = p.shares() == null && !Boolean.TRUE.equals(p.sharesHidden())
 					&& sharesCarry.contains(p.shortCode()) ? 0L : null;
 			return zeroShares == null && zeroReposts == null ? p
 					: p.mergedMetrics(null, zeroShares, zeroReposts);

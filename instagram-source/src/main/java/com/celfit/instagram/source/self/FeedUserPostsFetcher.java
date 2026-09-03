@@ -89,7 +89,11 @@ public class FeedUserPostsFetcher {
 				item.path("taken_at").isNumber() ? item.path("taken_at").asLong() : null,
 				likes, comments, views,
 				null, null, null, null, null, null, null,
-				views != null, likesHidden, false);
+				// sharesHidden=null(미확정, S9) — feed/user 응답에는 공유 횟수 자체가 안 실려
+				// "숨김"과 "이 표면이 원래 못 주는 값"을 구분할 신호가 없다(EmbedPostFetcher와 동일
+				// 구조적 한계). 과거 false 하드코딩은 Hiker의 확정 false와 안 구분돼, 공유 숨김
+				// 릴스가 재시도 상한까지 헛돌고 소진 시 공유 0으로 오기록되는 결함을 냈다.
+				views != null, likesHidden, null);
 	}
 
 	/**

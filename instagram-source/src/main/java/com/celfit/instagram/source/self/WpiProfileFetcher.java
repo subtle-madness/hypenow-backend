@@ -95,7 +95,9 @@ public class WpiProfileFetcher {
 						? node.path("taken_at_timestamp").asLong() : null,
 				likes, count(node, "edge_media_to_comment"), views,
 				null, null, null, null, null, null, null,
-				views != null, likes == null, false);
+				// sharesHidden=null(미확정, S9) — web_profile_info 응답에도 공유 횟수가 안 실려
+				// EmbedPostFetcher·FeedUserPostsFetcher와 같은 구조적 한계다.
+				views != null, likes == null, null);
 	}
 
 	/** edge_* 래퍼의 count — 부재·비숫자는 null(HikerBackend firstLong과 같은 규칙). */

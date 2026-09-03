@@ -57,6 +57,12 @@ public class SnapshotRepository {
 	 * 보고 값·hidden 플래그를 함께 보존한다 — self가 hidden을 단정하지 않도록 고친 결과(수정 2)
 	 * 자연히 여기서 "관측 실패"로 흡수된다. EXCLUDED가 (값 null + hidden=true)면 진짜 숨김 관측이라
 	 * 정상적으로 덮는다.
+	 *
+	 * <p>PostInfo.likesHidden·sharesHidden은 인메모리에서 3상태(Boolean, null=미확정)를 쓰지만
+	 * (S9, 2026-09-03 감사 수정 — CollectService#assumeZeroForOmittedKeys가 미확정과 확정 false를
+	 * 구분해 오기록을 막는다), DB 컬럼은 boolean NOT NULL이고 위 CASE 보호는 원래도 false를
+	 * "미확정 관측" 신호로 썼다 — 그래서 저장 직전 null은 false로 접는다(Boolean.TRUE.equals),
+	 * 기존 계약 그대로다.
 	 */
 	public void upsertPost(LocalDate on, PostInfo p) {
 		Long fb = p.fbPlays() != null ? p.fbPlays() : latestFbPlays(p.shortCode(), on);
@@ -91,8 +97,8 @@ public class SnapshotRepository {
 				               THEN post_snapshot.shares_hidden ELSE EXCLUDED.shares_hidden END,
 				  reposts = COALESCE(EXCLUDED.reposts, post_snapshot.reposts)""",
 				p.username(), p.shortCode(), on, p.contentType(),
-				p.likes(), p.likesHidden(), p.comments(), views, fb,
-				p.saves(), p.shares(), p.sharesHidden(), p.reposts());
+				p.likes(), Boolean.TRUE.equals(p.likesHidden()), p.comments(), views, fb,
+				p.saves(), p.shares(), Boolean.TRUE.equals(p.sharesHidden()), p.reposts());
 	}
 
 	/**

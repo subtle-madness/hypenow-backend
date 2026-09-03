@@ -55,6 +55,8 @@ class WpiProfileFetcherTest {
 		assertThat(image.takenAt()).isEqualTo(1_787_148_707L);
 		assertThat(image.viewsTrusted()).isFalse();
 		assertThat(image.likesHidden()).isFalse();
+		// S9 — web_profile_info 응답에도 공유 횟수가 안 실려 embed·feed/user와 같은 구조적 한계다.
+		assertThat(image.sharesHidden()).isNull();
 
 		PostInfo reel = posts.stream()
 				.filter(p -> "DcMXl1IPNtB".equals(p.shortCode()))

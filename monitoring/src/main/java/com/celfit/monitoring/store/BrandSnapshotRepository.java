@@ -38,6 +38,10 @@ public class BrandSnapshotRepository {
 	 * likes·shares는 숨김 플래그(likes_hidden·shares_hidden)와 얽혀 있어, EXCLUDED가 (값 null +
 	 * hidden=false)인 행만 "미확정"으로 보고 값·hidden 플래그를 함께 보존하고, 진짜 숨김 관측
 	 * (hidden=true)은 정상적으로 덮는다.
+	 *
+	 * <p>PostInfo.likesHidden·sharesHidden은 인메모리 Boolean(nullable, null=미확정 — S9,
+	 * 2026-09-03 감사 수정)이지만 DB 컬럼은 boolean NOT NULL이라 저장 직전 null은 false로 접는다
+	 * (SnapshotRepository와 동형 — false가 원래도 위 CASE의 "미확정 관측" 신호였다).
 	 */
 	public void upsertPost(LocalDate on, PostInfo p) {
 		Long fb = p.fbPlays() != null ? p.fbPlays() : latestFbPlays(p.shortCode(), on);
@@ -68,8 +72,8 @@ public class BrandSnapshotRepository {
 				               THEN brand_post_snapshot.shares_hidden ELSE EXCLUDED.shares_hidden END,
 				  reposts = COALESCE(EXCLUDED.reposts, brand_post_snapshot.reposts)""",
 				p.username(), p.shortCode(), on, p.contentType(),
-				p.likes(), p.likesHidden(), p.comments(), views, fb,
-				p.saves(), p.shares(), p.sharesHidden(), p.reposts());
+				p.likes(), Boolean.TRUE.equals(p.likesHidden()), p.comments(), views, fb,
+				p.saves(), p.shares(), Boolean.TRUE.equals(p.sharesHidden()), p.reposts());
 	}
 
 	/** 브랜드 계정 프로필 추이 — 매일 스윕의 프로필 1콜을 일 1행으로(profile_snapshot 동형). */

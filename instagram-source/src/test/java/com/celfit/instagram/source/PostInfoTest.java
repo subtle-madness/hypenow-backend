@@ -121,4 +121,72 @@ class PostInfoTest {
 
 		assertThat(merged.contentType()).isEqualTo("FEED");
 	}
+
+	// ── S9(2026-09-03 감사 수정) — likesHidden·sharesHidden 3상태 병합 ─────────
+
+	private static PostInfo withHidden(Long likes, Boolean likesHidden, Boolean sharesHidden) {
+		return new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
+				1_700_000_000L, likes, 2L, 222L, null, null, null, null, null, null, null,
+				true, likesHidden, sharesHidden);
+	}
+
+	/**
+	 * 과거 버그(self 단독 채택) — 정본(self)이 likesHidden 미확정(null)이고 폴백(Hiker)이 이미
+	 * 확정 true를 들고 있으면, 정본 값만 채택하는 옛 규칙은 폴백의 확정을 버렸다. sharesHidden과
+	 * 같은 병합 규칙(둘 중 하나라도 확정 true면 true)을 적용해야 한다.
+	 */
+	@Test
+	void mergedWith는_정본이_미확정이고_폴백이_확정_숨김이면_숨김을_채택한다() {
+		PostInfo primary = withHidden(83L, null, null);      // self — 미확정
+		PostInfo fallback = withHidden(null, true, null);    // Hiker — 확정 숨김(likes도 마스킹 null)
+
+		PostInfo merged = primary.mergedWith(fallback);
+
+		assertThat(merged.likesHidden()).isTrue();
+		assertThat(merged.likes()).isNull();   // 합친 판정이 숨김이므로 likes는 마스킹 취급
+	}
+
+	/** 둘 다 미확정(self만 관측)이면 병합 결과도 미확정으로 남는다 — 근거 없이 false로 단정하지 않는다. */
+	@Test
+	void mergedWith는_양쪽_다_미확정이면_미확정을_유지한다() {
+		PostInfo primary = withHidden(83L, null, null);
+		PostInfo fallback = withHidden(83L, null, null);
+
+		PostInfo merged = primary.mergedWith(fallback);
+
+		assertThat(merged.likesHidden()).isNull();
+		assertThat(merged.sharesHidden()).isNull();
+		assertThat(merged.likes()).isEqualTo(83L);   // 미확정이므로 마스킹하지 않는다
+	}
+
+	/** mergedMetrics(3-arg)는 새 숨김 정보가 없다는 뜻 — 기존 sharesHidden(미확정 포함)을 그대로 보존한다. */
+	@Test
+	void mergedMetrics_3항은_기존_공유_숨김_상태를_보존한다() {
+		PostInfo unconfirmed = withHidden(83L, null, null).mergedMetrics(5L, null, 7L);
+
+		assertThat(unconfirmed.sharesHidden()).isNull();
+		assertThat(unconfirmed.saves()).isEqualTo(5L);
+	}
+
+	/**
+	 * S9 핵심 — 단건 재시도(항상 Hiker 직결)가 새로 관측한 공유 숨김 확정을 mergedMetrics가
+	 * 되싣어야 한다. 과거엔 이 정보가 버려져 self 기원 미확정 게시물이 매일 재시도 상한까지
+	 * 헛돌고 소진 시 공유가 0으로 잘못 기록됐다.
+	 */
+	@Test
+	void mergedMetrics_4항은_새로_관측된_공유_숨김_확정을_되싣는다() {
+		PostInfo merged = withHidden(83L, null, null).mergedMetrics(5L, null, 7L, true);
+
+		assertThat(merged.sharesHidden()).isTrue();
+		assertThat(merged.saves()).isEqualTo(5L);
+		assertThat(merged.reposts()).isEqualTo(7L);
+	}
+
+	/** 새로 관측된 값이 확정 false여도 이미 확정 true였다면 true가 이긴다(숨김은 관측되면 참). */
+	@Test
+	void mergedMetrics_4항은_이미_확정된_숨김을_비숨김_관측으로_덮지_않는다() {
+		PostInfo merged = withHidden(83L, null, true).mergedMetrics(5L, null, 7L, false);
+
+		assertThat(merged.sharesHidden()).isTrue();
+	}
 }

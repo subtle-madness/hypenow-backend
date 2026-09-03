@@ -41,6 +41,9 @@ class FeedUserPostsFetcherTest {
 		assertThat(image.views()).isNull();
 		assertThat(image.viewsTrusted()).isFalse();
 		assertThat(image.likesHidden()).isFalse();
+		// S9 — feed/user 응답에도 공유 횟수 자체가 안 실려 embed와 같은 구조적 한계다: 확정
+		// false(비숨김)로 단정하지 않고 미확정(null)을 반환한다.
+		assertThat(image.sharesHidden()).isNull();
 		assertThat(image.takenAt()).isEqualTo(1_787_148_707L);
 		assertThat(image.ownerUserId()).isEqualTo("528817151");
 		assertThat(image.caption()).isEqualTo("A stunning view of Earth from orbit.");

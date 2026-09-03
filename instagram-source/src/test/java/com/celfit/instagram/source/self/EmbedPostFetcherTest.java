@@ -36,6 +36,9 @@ class EmbedPostFetcherTest {
 		assertThat(p.caption()).contains("With your powers combined");
 		assertThat(p.viewsTrusted()).isFalse();
 		assertThat(p.likesHidden()).isFalse();
+		// S9 — 공유 횟수는 embed HTML에 구조적으로 안 실려 "숨김"과 "이 표면이 원래 못 주는 값"을
+		// 구분할 신호가 없다 — 확정 false(비숨김)로 단정하지 않고 미확정(null)을 반환한다.
+		assertThat(p.sharesHidden()).isNull();
 	}
 
 	/**
@@ -60,23 +63,27 @@ class EmbedPostFetcherTest {
 		assertThat(p.contentType()).isEqualTo("REELS");
 		assertThat(p.caption()).contains("Soothing spacewalk");
 		assertThat(p.viewsTrusted()).isTrue();
+		assertThat(p.likesHidden()).isFalse();   // 좋아요 숫자를 실제로 봤으니 확정 비숨김
+		assertThat(p.sharesHidden()).isNull();   // S9 — 공유는 embed에 구조적으로 안 실려 항상 미확정
 	}
 
 	/**
 	 * 좋아요 카운트 렌더 텍스트가 없으면(정규식 파싱 실패 — 로케일 변경 등) "숨김"으로 단정하면 안
 	 * 된다(수정 2 — 파싱 실패를 숨김으로 오분류하면 저장 계층에 영구 오염을 남긴다, findings 참조).
-	 * self는 숨김 여부를 확정할 신뢰 가능한 신호가 없으므로 항상 false를 반환하고, "미확정" 보호는
-	 * 저장 계층(SnapshotRepository)이 likes_hidden=false와 짝지어 담당한다.
+	 * self는 숨김 여부를 확정할 신뢰 가능한 신호가 없으므로 likesHidden을 null(미확정)로 남긴다
+	 * (S9, 2026-09-03 감사 수정 — 과거엔 항상 false를 반환해 Hiker의 확정 false와 안 구분됐다).
+	 * "미확정" 보호는 여전히 저장 계층(SnapshotRepository)이 담당하지만, 이제 인메모리 재시도·0
+	 * 간주 판단도 진짜 미확정과 확정 false를 구분할 수 있다.
 	 */
 	@Test
-	void 좋아요_파싱_실패는_숨김으로_단정하지_않는다() {
+	void 좋아요_파싱_실패는_미확정_null로_반환된다() {
 		// 좋아요 카운트 패턴이 없는 렌더 텍스트 — username은 있어 빈 셸(NOT_FOUND)로는 분류되지 않는다.
 		String body = "<html><body><span class=\"UsernameText\">nasa</span>"
 				+ "<a>View all 12 comments</a></body></html>";
 		PostInfo p = fetcher(body, 200).fetch("SC1");
 
 		assertThat(p.likes()).isNull();
-		assertThat(p.likesHidden()).isFalse();
+		assertThat(p.likesHidden()).isNull();
 	}
 
 	/**

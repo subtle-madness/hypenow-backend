@@ -954,6 +954,28 @@ class BrandCollectServiceTest {
 		assertThat(hidden.reposts()).isZero();
 	}
 
+	/**
+	 * S9(2026-09-03 감사 수정) — self(embed 등) 기원 게시물은 sharesHidden이 null(미확정)이다.
+	 * 태그 경로는 재시도 콜이 없어(비용 모델에 예산 없음) 이 한 번의 판정이 전부인데, 과거엔
+	 * self가 primitive false를 반환해 Hiker의 확정 false와 안 구분됐고 그 결과 진짜 숨김 게시물의
+	 * 공유가 0으로 영구 오기록됐다. {@link BrandCollectService#adjustLotteryMetrics}의 "①부재=0"은
+	 * 확정 false(Boolean.FALSE)일 때만 적용해야 한다 — 이 테스트는 sweep() 전체 경로 대신
+	 * adjustLotteryMetrics를 직접 호출해 self 미확정(null) PostInfo를 주입한다(HikerBackend JSON
+	 * 파싱은 항상 확정값을 주므로 sweep()으로는 이 셰이프를 재현할 수 없다).
+	 */
+	@Test
+	void 공유_숨김_미확정_self_관측은_부재_0_간주_대상에서_제외한다() {
+		PostInfo selfUnconfirmed = new PostInfo("SelfReel", "author", null, null, "101", "REELS", null, null,
+				RECENT, null, 2L, null, null, 7L, null, null, null, null, null, false, null, null);
+
+		List<PostInfo> adjusted = service(2000).adjustLotteryMetrics(List.of(selfUnconfirmed));
+
+		PostInfo result = adjusted.get(0);
+		assertThat(result.saves()).isEqualTo(7L);
+		assertThat(result.shares()).isNull();     // 미확정(self)이면 0으로 단정하지 않는다
+		assertThat(result.reposts()).isZero();    // 리포스트는 숨김 개념이 없어 그대로 0 간주
+	}
+
 	@Test
 	void 잔여_null은_0_캐리_이력으로_잇는다() {
 		snapshots.repostsCarry = Set.of("AllMiss");
