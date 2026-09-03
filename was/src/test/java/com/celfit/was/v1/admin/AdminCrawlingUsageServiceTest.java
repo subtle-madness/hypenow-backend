@@ -56,12 +56,12 @@ class AdminCrawlingUsageServiceTest {
 	/** 활성 연결(해제 없음). accountType은 집계와 무관 — own 고정. */
 	private static BrandLinkRow activeLink(long brandId, String createdAt) {
 		return new BrandLinkRow(brandId, USER_ID, brandId, "brand" + brandId, "own", 12,
-				OffsetDateTime.parse(createdAt), null);
+				OffsetDateTime.parse(createdAt), null, null);
 	}
 
 	private static BrandLinkRow closedLink(long brandId, String createdAt, String deletedAt) {
 		return new BrandLinkRow(brandId, USER_ID, brandId, "brand" + brandId, "own", 12,
-				OffsetDateTime.parse(createdAt), OffsetDateTime.parse(deletedAt));
+				OffsetDateTime.parse(createdAt), OffsetDateTime.parse(deletedAt), null);
 	}
 
 	private static BrandCallDailyRow row(long brandId, String calledOn, long calls) {

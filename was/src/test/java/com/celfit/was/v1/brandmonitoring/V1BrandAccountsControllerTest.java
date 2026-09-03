@@ -104,7 +104,7 @@ class V1BrandAccountsControllerTest {
 
 	private static BrandLinkRow link(long userId, long brandId, String username, String accountType, int months) {
 		return new BrandLinkRow(brandId, userId, brandId, username, accountType, months,
-				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null);
 	}
 
 	/** 한도 검증용 — 서로 다른 브랜드 n개에 연결된 상태(요청 계정명과 겹치지 않는 이름). */

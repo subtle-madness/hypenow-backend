@@ -41,7 +41,7 @@ class PerformanceComparisonAssemblerTest {
 
 	private static BrandLinkRow link(long brandId, String username, String accountType) {
 		return new BrandLinkRow(brandId, 7L, brandId, username, accountType, 12,
-				OffsetDateTime.parse("2026-05-14T00:12:00Z"), null);
+				OffsetDateTime.parse("2026-05-14T00:12:00Z"), null, null);
 	}
 
 	// ---------- 구간 산출 ----------

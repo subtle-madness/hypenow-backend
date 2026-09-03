@@ -258,7 +258,7 @@ class DashboardVersionTest {
 
 	private static BrandLinkRow link(long brandId) {
 		return new BrandLinkRow(brandId, USER_ID, brandId, "brand" + brandId, "own", 12,
-				odt("2026-08-01T00:00:00Z"), null);
+				odt("2026-08-01T00:00:00Z"), null, null);
 	}
 
 	private static BrandAccountRow account(long id, OffsetDateTime lastSweptAt, OffsetDateTime coveredUntil,

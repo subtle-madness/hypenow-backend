@@ -368,7 +368,7 @@ class V1BrandAccountServiceHashtagTagsTest {
 
 	private static BrandLinkRow link() {
 		return new BrandLinkRow(1L, USER_ID, BRAND_ID, USERNAME, BrandAccountType.OWN, 12,
-				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null);
+				OffsetDateTime.parse("2026-08-07T00:00:00Z"), null, null);
 	}
 
 	private static BrandAccountRow account() {

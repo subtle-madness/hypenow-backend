@@ -39,7 +39,9 @@ class ArchiveInventoryTest extends IntegrationTest {
 			Map.entry("signup_events", "삭제 경로 없음. 단 email + detail->>'userId'를 보존해 "
 					+ "탈퇴 유저의 가명화 아카이브를 재식별할 수 있다(설계 §4-4)"),
 			Map.entry("inquiries", "삭제 경로 없음"),
-			Map.entry("admin_audit_logs", "삭제 경로 없음. target_user_id에 FK가 없어 탈퇴에도 남는다"));
+			Map.entry("admin_audit_logs", "삭제 경로 없음. target_user_id에 FK가 없어 탈퇴에도 남는다"),
+			Map.entry("brand_hashtag_seed", "브랜드 단위 계산 캐시(2026-09-03 자동 시드 재설계 §4-1) — "
+					+ "user_id 없음(브랜드당 1행), 개인정보 아님, 삭제 경로 없음(브랜드 탈퇴에도 재계산 방지용으로 보존)"));
 
 	@Autowired
 	JdbcClient jdbcClient;

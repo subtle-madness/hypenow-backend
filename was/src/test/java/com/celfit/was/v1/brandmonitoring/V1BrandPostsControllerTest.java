@@ -1300,12 +1300,12 @@ class V1BrandPostsControllerTest {
 
 	private static BrandLinkRow link() {
 		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", BrandAccountType.OWN, 12,
-				OffsetDateTime.parse("2026-08-01T00:00:00Z"), null);
+				OffsetDateTime.parse("2026-08-01T00:00:00Z"), null, null);
 	}
 
 	private static BrandLinkRow linkWithMonths(int months) {
 		return new BrandLinkRow(1L, 7L, 100L, "lizda_official", BrandAccountType.OWN, months,
-				OffsetDateTime.parse("2026-08-01T00:00:00Z"), null);
+				OffsetDateTime.parse("2026-08-01T00:00:00Z"), null, null);
 	}
 
 	private static BrandAccountRow account() {

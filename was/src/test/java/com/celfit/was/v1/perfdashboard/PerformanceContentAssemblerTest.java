@@ -56,7 +56,7 @@ class PerformanceContentAssemblerTest {
 	private static final OffsetDateTime LAST_COLLECTED = OffsetDateTime.parse("2026-08-07T02:00:00+09:00");
 	private static final OffsetDateTime BRAND_SWEPT_AT = OffsetDateTime.parse("2026-08-07T03:00:00+09:00");
 	private static final BrandLinkRow OWN_LINK =
-			new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null);
+			new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null, null);
 	private static final BrandAccountRow OWN_ACCOUNT = brandAccount(BRAND_ID, "brand");
 	/** 아카이브 사본이 없는 작성자의 원본 CDN 프로필 URL(POOL1) — 폴백 경로 판별용. */
 	private static final String POOL1_PROFILE_PIC_URL = "https://cdn.example.com/creator.jpg";
@@ -392,7 +392,7 @@ class PerformanceContentAssemblerTest {
 	void 경쟁사_집합은_브랜드_풀_콘텐츠의_brandAccountId와_같은_값_공간이다() {
 		givenLegacy();
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
-				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null)));
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null, null)));
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
 		given(brandPostAssembler.assembleBrandPosts(USER_ID, rival, true, BrandPostScope.ALL, true, "competitor"))
@@ -411,8 +411,8 @@ class PerformanceContentAssemblerTest {
 	void 계정_행이_없는_경쟁사_링크도_집합에_남는다() {
 		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
-				new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null),
-				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null)));
+				new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null, null),
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null, null)));
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.empty());
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.empty());
 
@@ -428,8 +428,8 @@ class PerformanceContentAssemblerTest {
 		// 경쟁사 연결이 더 오래됐다(목록 앞) — 그래도 own 귀속이 이겨야 한다. 귀속이 이제 표시가
 		// 아니라 범위를 정하기 때문에, 연결 순서가 "내 게시물이 내 요약에 보이는지"를 정하면 안 된다.
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
-				new BrandLinkRow(1L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null),
-				new BrandLinkRow(2L, USER_ID, BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null)));
+				new BrandLinkRow(1L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null, null),
+				new BrandLinkRow(2L, USER_ID, BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null, null)));
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		BrandAccountRow mine = brandAccount(BRAND_ID, "brand");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
@@ -457,8 +457,8 @@ class PerformanceContentAssemblerTest {
 	void own_브랜드_direct_등록은_ownFirst로_경쟁사_tagged_관측에_귀속을_뺏기지_않는다() {
 		givenLegacy(legacyItem("900", "tracking", "https://www.instagram.com/reel/ABC/", List.of()));
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
-				new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null),
-				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null)));
+				new BrandLinkRow(1L, USER_ID, BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null, null),
+				new BrandLinkRow(2L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null, null)));
 		BrandAccountRow mine = brandAccount(BRAND_ID, "brand");
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(mine));
@@ -503,7 +503,7 @@ class PerformanceContentAssemblerTest {
 	void 슬림_조립은_브랜드_풀을_댓글_없이_조립한다() {
 		givenLegacy();
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(new BrandLinkRow(1L, USER_ID,
-				BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null)));
+				BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null, null)));
 		BrandAccountRow account = brandAccount(BRAND_ID, "brand");
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account));
 		given(brandPostAssembler.assembleBrandPosts(USER_ID, account, false, BrandPostScope.ALL, true, "own"))
@@ -884,7 +884,7 @@ class PerformanceContentAssemblerTest {
 	void index의_겹침_shortcode는_own_브랜드에_귀속된다() {
 		givenLegacy();
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(
-				new BrandLinkRow(1L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null),
+				new BrandLinkRow(1L, USER_ID, 99L, "rival", "competitor", 12, LAST_COLLECTED, null, null),
 				OWN_LINK));
 		BrandAccountRow rival = brandAccount(99L, "rival");
 		given(brandReadRepository.findAccount(99L)).willReturn(Optional.of(rival));
@@ -1110,7 +1110,7 @@ class PerformanceContentAssemblerTest {
 
 	private void givenBrandSweptAt(OffsetDateTime lastSweptAt, BrandPostResponse... brandPosts) {
 		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(new BrandLinkRow(1L, USER_ID,
-				BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null)));
+				BRAND_ID, "brand", "own", 12, LAST_COLLECTED, null, null)));
 		BrandAccountRow account = new BrandAccountRow(BRAND_ID, "brand", LocalDate.of(2026, 8, 7), lastSweptAt,
 				LAST_COLLECTED, LAST_COLLECTED, null, 10L, 1L, 2L, null, "브랜드", null, true, null, "active", null,
 				12, LAST_COLLECTED, false, null);
