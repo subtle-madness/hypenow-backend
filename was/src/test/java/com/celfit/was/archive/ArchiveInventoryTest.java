@@ -39,7 +39,8 @@ class ArchiveInventoryTest extends IntegrationTest {
 			Map.entry("signup_events", "삭제 경로 없음. 단 email + detail->>'userId'를 보존해 "
 					+ "탈퇴 유저의 가명화 아카이브를 재식별할 수 있다(설계 §4-4)"),
 			Map.entry("inquiries", "삭제 경로 없음"),
-			Map.entry("admin_audit_logs", "삭제 경로 없음. target_user_id에 FK가 없어 탈퇴에도 남는다"));
+			Map.entry("admin_audit_logs", "삭제 경로 없음. target_user_id에 FK가 없어 탈퇴에도 남는다"),
+			Map.entry("encryption_keys", "시스템 암호화 키(DEK) 저장소. 사용자 스코프 데이터가 아니라 전역 키 관리용"));
 
 	@Autowired
 	JdbcClient jdbcClient;
