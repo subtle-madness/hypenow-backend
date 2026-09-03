@@ -56,16 +56,60 @@ final class ContentAnalysisWriter {
 	}
 
 	/**
+	 * 파트 A(사실)만 INSERT - 해석 5필드·기준선 10컬럼은 NULL로 두고 {@code metric_timeliness}를
+	 * 신규 어휘 {@code 'pending'}으로 남긴다(2026-09-03 2단계 분리 설계 §3·§4-4).
+	 *
+	 * <p>기준선 스냅샷을 넣지 않는 이유: D+1 기준선은 미성숙 지표를 포함해 드로어 벤치마크에
+	 * 하향 편향을 주고, 어차피 파트 B가 D+4 기준선으로 덮는다. was의
+	 * {@code V1ContentReportAssembler.comparableMetric}은 timely 또는 NULL일 때만 비교 블록을
+	 * 만들므로 'pending'이면 자동 억제된다.
+	 *
+	 * <p>{@code ON CONFLICT DO NOTHING} 고정 - 같은 배치가 두 번 수거되거나 파트 A 제출이 겹쳐도
+	 * 이미 파트 B까지 채워진 행을 되돌리면 안 된다.
+	 */
+	static void insertFacts(JdbcTemplate analysis, ObjectMapper json, String shortCode, String model,
+			ContentAttributes attrs) {
+		analysis.update("""
+				INSERT INTO content_analyses (short_code, model,
+				  detected_brands, sponsored_signal_level, sponsored_signal_reasons, ad_disclosure,
+				  detected_product_categories, detected_products, vlm_attributes, main_category,
+				  sub_categories, detected_distributors, ad_type, is_beauty, metric_timeliness)
+				VALUES (?, ?, ?::jsonb, ?, ?::jsonb, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?,
+				        ?::jsonb, ?::jsonb, ?, ?, 'pending')
+				ON CONFLICT (short_code) DO NOTHING""",
+				shortCode, model,
+				toJson(json, attrs == null ? null : attrs.detectedBrands()),
+				attrs == null ? null : attrs.sponsoredSignalLevel(),
+				toJson(json, attrs == null ? null : attrs.sponsoredSignalReasons()),
+				attrs == null ? null : attrs.adDisclosure(),
+				toJson(json, attrs == null ? null : attrs.detectedProductCategories()),
+				toJson(json, attrs == null ? null : attrs.detectedProducts()),
+				toJson(json, attrs == null ? null : attrs.vlmAttributes()),
+				attrs == null ? null : attrs.mainCategory(),
+				toJson(json, attrs == null ? null : attrs.subCategories()),
+				toJson(json, attrs == null ? null : attrs.detectedDistributors()),
+				attrs == null ? null : attrs.adType(),
+				attrs == null ? null : attrs.isBeauty());
+	}
+
+	/**
 	 * 해석 문구만 갱신 — 사실 추출 컬럼(브랜드·카테고리·ad_type 등)은 손대지 않는다.
 	 *
 	 * <p>기준선 스냅샷도 함께 갱신한다: 문구가 인용하는 수치와 저장된 스냅샷이 갈리면
 	 * 동결의 의미("LLM이 본 것 = LLM이 말한 것")가 깨지기 때문이다.
-	 * metric_timeliness는 지표 수집 시점 사실이라 갱신 대상이 아니다.
 	 *
+	 * <p>2026-09-03(2단계 분리): {@code metric_timeliness}도 SET한다. 파트 A가 만든 'pending'
+	 * 행을 파트 B가 timely / late_backfill로 확정하는 지점이 여기다. 재생성 잡
+	 * ({@code ContentSynthesisRefreshJob})은 저장된 값을 그대로 넘겨 동작이 불변이다.
+	 * {@code WHERE ... AND metric_timeliness = 'pending'} 같은 조건은 걸지 않는다 -
+	 * 재생성 잡이 이미 확정된 행에 같은 메서드를 쓰기 때문이다.
+	 *
+	 * @param metricTimeliness 지표 시점 마킹(V33 어휘 + 09-03 'pending'). 파트 B 수거는
+	 *        사이드카의 timely로, 재생성 잡은 저장된 기존 값으로 넘긴다.
 	 * @return 갱신된 행 수 (0이면 그 사이 행이 사라진 것)
 	 */
 	static int updateSynthesis(JdbcTemplate analysis, String shortCode, String model,
-			Baseline b, Synthesis s) {
+			Baseline b, Synthesis s, String metricTimeliness) {
 		return analysis.update("""
 				UPDATE content_analyses SET
 				  ai_content_summary = ?, contents_pattern = ?, ai_comment_insight = ?,
@@ -74,7 +118,7 @@ final class ContentAnalysisWriter {
 				  recent_contents_count = ?, recent12_avg_engagement_rate = ?,
 				  recent12_avg_like_count = ?, recent12_avg_comment_count = ?,
 				  category_top_percentile = ?, category_avg_views = ?, category_sample_size = ?,
-				  model = ?, synthesis_version = ?, synthesized_at = now()
+				  model = ?, metric_timeliness = ?, synthesis_version = ?, synthesized_at = now()
 				WHERE short_code = ?""",
 				s.aiContentSummary(), s.contentsPattern(), s.aiCommentInsight(),
 				s.commentAuthenticityGrade(), s.commentAuthenticityNote(),
@@ -82,7 +126,7 @@ final class ContentAnalysisWriter {
 				b.recentContentsCount(), b.recent12AvgEngagementRate(),
 				b.recent12AvgLikeCount(), b.recent12AvgCommentCount(),
 				b.categoryTopPercentile(), b.categoryAvgViews(), b.categorySampleSize(),
-				model, Synthesis.VERSION, shortCode);
+				model, metricTimeliness, Synthesis.VERSION, shortCode);
 	}
 
 	private static String toJson(ObjectMapper json, Object value) {

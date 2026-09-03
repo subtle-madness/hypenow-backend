@@ -101,7 +101,7 @@ public class ContentSynthesisRefreshJob {
 		Map<String, Object> row = analysis.queryForMap("""
 				SELECT a.short_code, a.main_category, a.sub_categories, a.ad_type, a.ad_disclosure,
 				       a.detected_brands, a.detected_products, a.detected_product_categories,
-				       a.sponsored_signal_level, a.is_beauty,
+				       a.sponsored_signal_level, a.is_beauty, a.metric_timeliness,
 				       COALESCE(c.account_handle, s.account_handle) AS account_handle,
 				       COALESCE(c.content_type, s.content_type)     AS content_type,
 				       COALESCE(c.views, s.views)                   AS views,
@@ -130,26 +130,17 @@ public class ContentSynthesisRefreshJob {
 		Synthesis s = port.synthesize(new ContentToSynthesize(shortCode,
 				(String) row.get("account_handle"), (String) row.get("content_type"),
 				(Long) row.get("views"), (Long) row.get("likes"), (Long) row.get("comments"),
-				PromptBaseline.of(b), categoryCounts, facts(row)));
+				PromptBaseline.of(b), categoryCounts, StoredFacts.of(row)));
 
 		// 빈 종합은 저장하지 않는다 — 기존 문구가 낡았어도 빈 문구보다는 낫다(가드는 통합 잡과 동일 취지).
 		if (s.aiContentSummary() == null || s.aiContentSummary().isBlank()) {
 			throw new IllegalStateException("해석 문구가 비어 있음: " + shortCode);
 		}
-		ContentAnalysisWriter.updateSynthesis(analysis, shortCode, model, b, s);
+		// 지표 시점은 수집 시점 사실이라 재생성이 바꾸지 않는다 - 저장된 값을 그대로 되돌려 넣는다
+		// (2026-09-03 updateSynthesis가 metric_timeliness를 SET하게 되면서 생긴 호출 계약).
+		ContentAnalysisWriter.updateSynthesis(analysis, shortCode, model, b, s,
+				(String) row.get("metric_timeliness"));
 		return true;
-	}
-
-	/** 프롬프트에 싣는 "확인된 사실" — 저장된 파트 A 산출물. jsonb는 문자열 그대로 넘긴다. */
-	private static Map<String, Object> facts(Map<String, Object> row) {
-		Map<String, Object> facts = new LinkedHashMap<>();
-		for (String k : List.of("main_category", "sub_categories", "ad_type", "ad_disclosure",
-				"detected_brands", "detected_products", "detected_product_categories",
-				"sponsored_signal_level", "is_beauty")) {
-			Object v = row.get(k);
-			facts.put(k, v == null ? null : v.toString());
-		}
-		return facts;
 	}
 
 }
