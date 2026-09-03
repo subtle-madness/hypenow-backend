@@ -75,6 +75,25 @@ class BrandPostMetaRepositoryTest {
 				String.class)).contains("#광고");
 	}
 
+	/**
+	 * S3 — self(embed)는 is_paid_partnership을 취득할 수단이 없어 항상 null을 넘긴다. 과거엔
+	 * EXCLUDED로 무조건 덮어써서, Hiker가 먼저 관측한 협찬 판정(광고 판정 Tier0 최우선 신호,
+	 * AdDisclosureJudgeService)이 같은 날 self 재수집에 지워졌다 — COALESCE로 보존한다.
+	 */
+	@Test
+	void is_paid_partnership_null_관측은_기존_값을_보존한다() {
+		repo.upsert("AAA", "poster1", "REELS", LocalDate.of(2026, 8, 1), "캡션", null,
+				"https://video.example/a.mp4", 10.0, true);
+
+		// self 재수집 — is_paid_partnership 구조적으로 항상 null
+		repo.upsert("AAA", "poster1", "REELS", LocalDate.of(2026, 8, 1), "캡션", null,
+				"https://video.example/a.mp4", 10.0, null);
+
+		Boolean isPaidPartnership = db.queryForObject(
+				"SELECT is_paid_partnership FROM brand_post_meta WHERE short_code='AAA'", Boolean.class);
+		assertThat(isPaidPartnership).isTrue();
+	}
+
 	@Test
 	void 빈_코드_목록은_빈_맵() {
 		assertThat(repo.findAdJudgmentState(List.of())).isEmpty();

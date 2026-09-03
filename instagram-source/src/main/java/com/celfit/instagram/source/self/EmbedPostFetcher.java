@@ -13,7 +13,10 @@ import org.slf4j.LoggerFactory;
  * <p>이미지와 릴스의 공통분모는 <b>렌더된 텍스트</b>다: gql_data JSON 블롭은 릴스에만 실리므로
  * 좋아요·댓글·소유자·캡션은 렌더 텍스트에서, 조회수(video_view_count)만 릴스의 이스케이프된
  * JSON에서 뽑는다. 삭제·비공개 게시물은 302 리다이렉트(빈 본문) 또는 200 "빈 셸"(소유자·좋아요
- * 부재)로 온다 — 둘 다 NOT_FOUND로 분류해 폴백 없이 스킵시킨다.
+ * 부재)로 온다 — 하지만 IP 소프트블록/게이트 응답도 같은 모양으로 온다(09-03 운영 오탐 실측,
+ * 평시 17배). <b>부재 확정은 Hiker의 결정론적 404만</b>이라는 설계 불변식(BrandCollectService
+ * javadoc)에 따라 이 둘은 {@link SelfErrorClass#OTHER}로 강등해 FailoverInstagramSource가 Hiker로
+ * 재확인하게 한다 — 진짜 삭제면 Hiker가 404를 줘서 최종 판정은 동일하고 오탐만 사라진다.
  *
  * <p><b>좋아요 숨김 판정(데이터 보호 결함 수정)</b> — Hiker는 IG의 명시 플래그
  * (like_and_view_counts_disabled)로 숨김을 판정하지만, self는 그런 신호가 없다. 좋아요 카운트
@@ -56,6 +59,11 @@ public class EmbedPostFetcher {
 	// 캡션: <div class="Caption">…(중첩 div는 CaptionComments뿐 — 그 앞까지가 캡션 본문)
 	private static final Pattern CAPTION =
 			Pattern.compile("class=\"Caption\">(.*?)(?:<div |</div>)", Pattern.DOTALL);
+	// S7 — 캡션 본문 맨 앞의 <a class="CaptionUsername">…</a> 앵커(작성자 username, 내용 포함) —
+	// 태그 스트립 전에 통째로 제거해야 한다. 문자열 매치(예: 본문 첫 단어가 우연히 username과
+	// 같은 경우)가 아니라 앵커 태그 자체를 기준으로 제거해 오삭제를 막는다.
+	private static final Pattern CAPTION_USERNAME_ANCHOR =
+			Pattern.compile("<a class=\"CaptionUsername\"[^>]*>.*?</a>", Pattern.DOTALL);
 	private static final Pattern NUMERIC_ENTITY = Pattern.compile("&#(\\d+);");
 
 	private final SelfFetch http;
@@ -69,9 +77,10 @@ public class EmbedPostFetcher {
 		SelfResponse res = http.fetch(url, ProxyTier.RESIDENTIAL, HEADERS);
 		int status = res.status();
 		if (status >= 300 && status < 400) {
-			// 삭제·비공개 게시물은 리다이렉트(빈 본문)로 온다 — 폴백 없이 스킵.
-			throw new SelfCrawlException(SelfErrorClass.NOT_FOUND,
-					"embed 리다이렉트(" + status + ") — 게시물 부재/비공개: " + shortCode);
+			// S1 — 3xx는 삭제·비공개 게시물뿐 아니라 IP 소프트블록/게이트 응답에서도 온다. 부재
+			// 확정은 Hiker 404만이므로 NOT_FOUND로 단정하지 않고 OTHER로 강등해 재확인을 거치게 한다.
+			throw new SelfCrawlException(SelfErrorClass.OTHER,
+					"embed 리다이렉트(" + status + ") — 게이트/소프트블록 의심(부재 미확정): " + shortCode);
 		}
 		String body = res.body() == null ? "" : res.body();
 		if (status != 200) {
@@ -82,8 +91,11 @@ public class EmbedPostFetcher {
 		String username = first(USERNAME, body);
 		Long likes = number(first(LIKES, body));
 		if (username == null && likes == null) {
-			// 200인데 소유자·좋아요 둘 다 없는 빈 셸 — 삭제·비공개 게시물의 또 다른 응답 셰이프.
-			throw new SelfCrawlException(SelfErrorClass.NOT_FOUND, "embed 빈 셸: " + shortCode);
+			// S1 — 200인데 소유자·좋아요 둘 다 없는 빈 셸. 삭제·비공개 게시물의 응답 셰이프이기도
+			// 하지만 게이트 응답도 같은 모양이라(운영 오탐 실측) NOT_FOUND로 단정하지 않고 OTHER로
+			// 강등한다.
+			throw new SelfCrawlException(SelfErrorClass.OTHER,
+					"embed 200 빈 셸(부재 미확정): " + shortCode);
 		}
 		if (likes == null) {
 			// 소유자는 있는데 좋아요 카운트만 안 잡힘 — 진짜 숨김인지 파싱 실패인지 구분할 신호가
@@ -111,13 +123,18 @@ public class EmbedPostFetcher {
 		return s == null ? null : Long.valueOf(s.replace(",", ""));
 	}
 
-	/** Caption div 본문 → 태그 제거 + 엔티티 디코드. 소유자 username으로 시작하는 게 정상 셰이프다. */
+	/**
+	 * Caption div 본문 → 태그 제거 + 엔티티 디코드. 원 HTML은
+	 * {@code <a class="CaptionUsername">작성자</a><br/><br/>본문} 셰이프라, 그 앵커를 내용째
+	 * 먼저 제거하지 않으면(S7) 작성자 username이 캡션 본문 앞에 섞여 들어간다.
+	 */
 	private static String caption(String body) {
 		String raw = first(CAPTION, body);
 		if (raw == null) {
 			return null;
 		}
-		String text = raw.replaceAll("<br ?/?>", "\n").replaceAll("<[^>]*>", "");
+		String withoutUsername = CAPTION_USERNAME_ANCHOR.matcher(raw).replaceFirst("");
+		String text = withoutUsername.replaceAll("<br ?/?>", "\n").replaceAll("<[^>]*>", "");
 		return decodeEntities(text).strip();
 	}
 

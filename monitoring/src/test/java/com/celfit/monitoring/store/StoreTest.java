@@ -172,6 +172,25 @@ class StoreTest {
 				.containsEntry("saves", 3L).containsEntry("shares", 4L).containsEntry("reposts", 5L);
 	}
 
+	/**
+	 * S5(#715 보호 목록 누락 수정) — views도 saves·shares·reposts와 동형으로 보호해야 한다.
+	 * self 단건 재수집이 조회수를 못 채운 콜(fb 미관측·views 파싱 실패)이면 EXCLUDED.views가
+	 * null인데, 형제 필드처럼 COALESCE 보호가 없어 그날 이미 관측한 값을 null로 지워왔다.
+	 */
+	@Test
+	void 조회수_null_관측은_기존_값을_보존한다() {
+		var known = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 2L, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), known);
+
+		var selfRetryMiss = new PostInfo("SC1", "acct_a", null, null, null, "REELS", "캡션", null, 1753670000L,
+				10L, 2L, null, null, null, null, null, null, null, null, false, false, false);
+		snapshots.upsertPost(LocalDate.of(2026, 7, 28), selfRetryMiss);
+
+		assertThat(db.queryForMap("SELECT views FROM post_snapshot WHERE short_code='SC1'"))
+				.containsEntry("views", 100L);
+	}
+
 	/** comments의 null은 "파싱 실패"뿐이다(정상적으로 숨길 수 없는 값) — 동일 보호 적용. */
 	@Test
 	void 댓글수_null_관측은_기존_값을_보존한다() {
@@ -462,6 +481,39 @@ class StoreTest {
 		assertThat(db.queryForObject(
 				"SELECT owner_reply_text FROM post_comment WHERE short_code='SC1' AND id='2'", String.class))
 				.isEqualTo("답글");
+	}
+
+	/**
+	 * S6 — self 댓글(DirectCommentFetcher)은 ownerReplyText가 항상 null이다(로그아웃 GraphQL에
+	 * preview_child_comments가 없음). Hiker가 이미 채운 작성자 답글 위에 self가 같은 댓글을
+	 * 재관측하면 무조건 덮여 사라지던 결함 — COALESCE로 보존한다.
+	 */
+	@Test
+	void 댓글_작성자_답글_null_관측은_기존_값을_보존한다() {
+		comments.upsertForPost("SC1", List.of(
+				new CommentInfo("1", "user1", "본문", 5L, Instant.parse("2026-07-28T00:00:00Z"), "감사합니다")));
+
+		// self 재수집 — ownerReplyText 구조적으로 항상 null
+		comments.upsertForPost("SC1", List.of(
+				new CommentInfo("1", "user1", "본문", 5L, Instant.parse("2026-07-28T00:00:00Z"), null)));
+
+		assertThat(db.queryForObject(
+				"SELECT owner_reply_text FROM post_comment WHERE short_code='SC1' AND id='1'", String.class))
+				.isEqualTo("감사합니다");
+	}
+
+	/** S6 — like_count도 동형: self의 likeCount는 nullable(파싱 실패 시 null)이라 같은 보호가 필요하다. */
+	@Test
+	void 댓글_like_count_null_관측은_기존_값을_보존한다() {
+		comments.upsertForPost("SC1", List.of(
+				new CommentInfo("1", "user1", "본문", 5L, Instant.parse("2026-07-28T00:00:00Z"), null)));
+
+		comments.upsertForPost("SC1", List.of(
+				new CommentInfo("1", "user1", "본문", null, Instant.parse("2026-07-28T00:00:00Z"), null)));
+
+		assertThat(db.queryForObject(
+				"SELECT like_count FROM post_comment WHERE short_code='SC1' AND id='1'", Long.class))
+				.isEqualTo(5L);
 	}
 
 	@Test

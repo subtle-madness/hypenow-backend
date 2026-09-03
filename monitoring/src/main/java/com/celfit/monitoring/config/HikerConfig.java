@@ -151,4 +151,25 @@ public class HikerConfig {
 			@Qualifier("syncInstagramSource") InstagramSource hikerFirst, IgSourceSettings igSettings) {
 		return new ToggledInstagramSource(selfFirst, hikerFirst, igSettings::selfUserTriggered);
 	}
+
+	/**
+	 * 저장·공유·리포스트 단건 복권 재시도({@code CollectService.retrySinglesOnce}) 전용 — Hiker
+	 * 직결(self 완전 미경유, FailoverInstagramSource도 안 씌운다). 2026-09-03 self 셰이프 회귀 수정:
+	 * self(EmbedPostFetcher)는 embed HTML에 저장·공유·리포스트 키가 없어 3지표를 구조적으로 항상
+	 * null 반환하는데, 그 응답도 예외 없는 "성공"이라 {@link FailoverInstagramSource#route}가
+	 * 폴백하지 않는다 — self가 섞인 소스로 이 재시도를 돌리면 매 시도가 결정론적으로 꽝이라
+	 * {@code metricsRetryMax}(기본 6회) 재시도가 전부 무력화된다(운영 로그 15전 0승 실측). 창 밖
+	 * 판정({@code retryClipsOnce}, self 미지원 하드게이트로 이미 Hiker 폴백)은 이 빈을 쓰지 않는다
+	 * — self 절감 목적이 있는 경로라 그대로 호출부 소스(hiker/userTriggeredHiker)를 쓴다.
+	 */
+	@Bean("metricsRetryInstagramSource")
+	public InstagramSource metricsRetryInstagramSource(HikerHttp transport, RawPayloadRepository rawPayloads,
+			BrandCallContext brandContext, BrandCallCountRepository brandCounts,
+			TargetCallContext targetContext, TargetCallCountRepository targetCounts,
+			MeterRegistry meterRegistry) {
+		HikerHttp chain = new CountingHikerHttp(
+				new RecordingHikerHttp(new TimedHikerHttp(transport, meterRegistry), rawPayloads),
+				brandContext, brandCounts, targetContext, targetCounts);
+		return new HikerBackend(chain);
+	}
 }
