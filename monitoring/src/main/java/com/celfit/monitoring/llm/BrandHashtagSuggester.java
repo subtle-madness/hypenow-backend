@@ -23,7 +23,7 @@ import tools.jackson.databind.node.ObjectNode;
  * 클라이언트를 만들지 않는다, {@code AdDisclosureExtractorGemini}와 동형).
  *
  * <p><b>출력은 버리지 않고 정리한다</b> — 선행 {@code #} 제거 → strip → 소문자 → 허용 외 문자
- * ({@code [\p{L}\p{N}_]} 밖) <b>제거</b> → 30자 초과 절단. 그 결과가 비었거나 순수 숫자거나
+ * ({@code [\p{L}\p{N}_]} 밖) <b>제거</b> → 30자(코드 포인트 기준) 초과 절단. 그 결과가 비었거나 순수 숫자거나
  * stoplist면 빈 값을 돌려주고, 상위({@code BrandHashtagSuggestionService})가 FALLBACK으로 내린다.
  * "AI가 조금 틀린 형태로 답했다"는 이유로 브랜드를 계정명 안전장치까지 떨어뜨리지 않기 위함이다.
  *
@@ -40,7 +40,9 @@ public class BrandHashtagSuggester {
 			언급할 때 가장 흔히 쓸 해시태그를 정확히 1개 고르는 도구다.
 
 			규칙:
-			- 표시명에 브랜드 상호가 있으면 그 상호를 쓴다. 상호가 한글이면 한글로 쓴다.
+			- 표시명에 브랜드 상호가 있으면 그 상호를 쓴다. 상호가 한글이면 한글로, 영문이면(그
+			  자체가 이미 브랜드 이름이면) 영문 그대로 쓴다 — 영문 표시명이라고 계정명 접미사
+			  제거 규칙으로 넘어가지 않는다.
 			- 표시명이 비어 있거나 상호가 없으면(영문 약자·수식어뿐), 계정명에서 '_official',
 			  '.official', '_kr', '_korea' 같은 접미사와 장식을 떼고 남는 브랜드 핵심을 쓴다.
 			  점·언더스코어를 살릴지 뺄지는 해시태그로 자연스러운 쪽으로 네가 판단한다.
@@ -51,6 +53,7 @@ public class BrandHashtagSuggester {
 			- 표시명 "닥터피엘 Dr.PIEL", 계정명 "dr.piel_official" → {"hashtag": "닥터피엘"}
 			- 표시명 "", 계정명 "dr.piel_official" → {"hashtag": "drpiel"}
 			- 표시명 "", 계정명 "cclime_official" → {"hashtag": "cclime"}
+			- 표시명 "CCLIME", 계정명 "cclime_official" → {"hashtag": "cclime"}
 			""";
 
 	/** 허용 문자 — 글자(한글 포함)·숫자·언더스코어. 이 밖은 제거 대상이다. */
@@ -99,8 +102,9 @@ public class BrandHashtagSuggester {
 		gen.put("temperature", 0);
 		gen.put("responseMimeType", "application/json");
 		gen.set("responseSchema", responseSchema());
-		// 태그 1개만 담으면 되므로 광고 추출(512)보다 훨씬 작다 — 잘림은 파싱 실패로 드러난다.
-		gen.put("maxOutputTokens", 64);
+		// 태그 1개만 담으면 되므로 광고 추출(512)보다 훨씬 작다 — 한글 태그는 토큰 밀도가 높고
+		// JSON 래퍼 오버헤드도 있어 64는 얇게 잘릴 수 있어 128로 여유를 둔다.
+		gen.put("maxOutputTokens", 128);
 		return om.writeValueAsString(root);
 	}
 
@@ -139,8 +143,12 @@ public class BrandHashtagSuggester {
 			tag = tag.substring(1);
 		}
 		tag = NOT_ALLOWED.matcher(tag.strip().toLowerCase(Locale.ROOT)).replaceAll("");
-		if (tag.length() > MAX_LENGTH) {
-			tag = tag.substring(0, MAX_LENGTH);
+		// 코드 포인트 기준 절단 — char(UTF-16 코드 유닛) 기준이면 보충평면 문자(이모지 등, 허용
+		// 문자 제거 후에도 서로게이트 쌍으로 남는 경우) 경계에서 짝 잃은 서로게이트가 남을 수 있다.
+		if (tag.codePointCount(0, tag.length()) > MAX_LENGTH) {
+			tag = tag.codePoints().limit(MAX_LENGTH)
+					.collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+					.toString();
 		}
 		if (tag.isEmpty()) {
 			log.warn("AI 제안 해시태그 정리 결과 없음 — value={}", abbreviate(raw));

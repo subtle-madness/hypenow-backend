@@ -162,4 +162,24 @@ class BrandHashtagSuggesterTest {
 		assertThatThrownBy(() -> s.suggest("표시명", "brand", Set.of()))
 				.isInstanceOf(IllegalStateException.class);
 	}
+
+	/**
+	 * 표시명이 영문이라도 그 자체가 브랜드 상호면(장식·수식어 없이 브랜드명뿐) 계정명 접미사
+	 * 제거 규칙으로 넘어가지 않고 표시명을 그대로 써야 한다 — 프롬프트(systemInstruction)에 이
+	 * 분기를 위한 세 번째 예시("CCLIME"/"cclime_official")가 실려 있는지 확인한다. 호출 자체는
+	 * 다른 입력값을 써서, 이 문자열이 "이번 호출의 표시명·계정명"이 아니라 프롬프트에 박힌
+	 * 예시라는 것을 구분한다.
+	 */
+	@Test
+	void 프롬프트에_영문_표시명_예시가_실린다() {
+		AtomicReference<String> sent = new AtomicReference<>();
+		var s = new BrandHashtagSuggester((path, body) -> {
+			sent.set(body);
+			return geminiBody("{\"hashtag\": \"드르피엘\"}");
+		}, true, "model-x");
+
+		s.suggest("닥터피엘", "drpiel_kr", Set.of());
+
+		assertThat(sent.get()).contains("CCLIME").contains("cclime_official");
+	}
 }
