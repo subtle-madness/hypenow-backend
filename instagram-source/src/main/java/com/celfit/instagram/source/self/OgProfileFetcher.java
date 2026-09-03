@@ -29,6 +29,11 @@ import org.slf4j.LoggerFactory;
  * <p>비공개 계정(S15): 문서 JSON 블롭에도 wpi(web_profile_info)와 동일하게 {@code "is_private"}
  * 마커가 실린다(실측 픽스처 og_profile.html에 {@code "is_private":false} 확인) — wpi와 동일 계약으로
  * PrivateAccountException을 던진다. 프로필 표면 토글(og↔wpi)이 예외 계약을 바꾸면 안 되기 때문이다.
+ * 이 판정은 즉시 확정(FailoverInstagramSource가 Hiker 재확인 없이 그대로 전파)이라 오탐 가드가
+ * 필요하다: {@code "is_private"}가 문서에 여러 번 실리면(다른 user 객체가 혼재할 수 있음) 첫 매치가
+ * 대상 계정 소속임을 보장할 수 없다 — 전 출현이 true일 때만 비공개로 확정하고, 하나라도 false가
+ * 섞이면(모호) 확정하지 않고 보수적으로 정상 ProfileInfo를 반환한다. 단일 출현이면 그 값을 그대로
+ * 쓴다(현행 유지).
  */
 public class OgProfileFetcher {
 
@@ -95,7 +100,8 @@ public class OgProfileFetcher {
 		}
 
 		// 통계가 실린 정상 응답으로 확정된 뒤에만 비공개 판정 — wpi와 동일 계약(폴백 대상 아님).
-		if (Boolean.TRUE.equals(nullableBoolean(first(IS_PRIVATE, body)))) {
+		// 즉시 확정(전파)이라 오탐 가드 필요: 전 출현이 true일 때만 확정, 혼재는 보수적으로 보류.
+		if (isPrivateConfirmed(body)) {
 			throw new PrivateAccountException("비공개 계정: " + username);
 		}
 
@@ -134,6 +140,20 @@ public class OgProfileFetcher {
 	private static String first(Pattern p, String body) {
 		Matcher m = p.matcher(body);
 		return m.find() ? m.group(1) : null;
+	}
+
+	/** {@code "is_private"} 전 출현이 true일 때만 비공개로 확정한다 — 혼재(다른 값 섞임)는 대상 계정
+	 * 소속 보장이 안 돼 보수적으로 미확정(false) 처리한다(클래스 javadoc S15 참고). */
+	private static boolean isPrivateConfirmed(String body) {
+		Matcher m = IS_PRIVATE.matcher(body);
+		boolean found = false;
+		while (m.find()) {
+			found = true;
+			if (!Boolean.parseBoolean(m.group(1))) {
+				return false;
+			}
+		}
+		return found;
 	}
 
 	private static Long number(String s) {
