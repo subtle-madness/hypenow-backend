@@ -397,6 +397,36 @@ class StoreTest {
 	}
 
 	@Test
+	void 프로필_스냅샷_null_관측은_기존값을_보호한다() {
+		// og 표면은 media_count가 og:description 영어 정규식 파싱 의존이라 부분 파싱 실패(null)가 흔하다
+		// (S15) — 그 null이 이미 Hiker·wpi가 채운 good value를 지우면 안 된다(#725 COALESCE 패턴 동형).
+		snapshots.upsertProfile("acct_b", LocalDate.of(2026, 9, 3),
+				new ProfileInfo("acct_b", "1", 100L, 10L, 5L, "이름", "https://img", null, null, null));
+		snapshots.upsertProfile("acct_b", LocalDate.of(2026, 9, 3),
+				new ProfileInfo("acct_b", "1", null, null, null, "이름", "https://img", null, null, null));
+		assertThat(db.queryForObject(
+				"SELECT followers FROM profile_snapshot WHERE username='acct_b'", Long.class)).isEqualTo(100);
+		assertThat(db.queryForObject(
+				"SELECT following FROM profile_snapshot WHERE username='acct_b'", Long.class)).isEqualTo(10);
+		assertThat(db.queryForObject(
+				"SELECT media_count FROM profile_snapshot WHERE username='acct_b'", Long.class)).isEqualTo(5);
+	}
+
+	@Test
+	void 프로필_스냅샷_실제_관측값은_null_보호와_무관하게_덮는다() {
+		snapshots.upsertProfile("acct_c", LocalDate.of(2026, 9, 3),
+				new ProfileInfo("acct_c", "1", 100L, 10L, 5L, "이름", "https://img", null, null, null));
+		snapshots.upsertProfile("acct_c", LocalDate.of(2026, 9, 3),
+				new ProfileInfo("acct_c", "1", 200L, 20L, 8L, "이름", "https://img", null, null, null));
+		assertThat(db.queryForObject(
+				"SELECT followers FROM profile_snapshot WHERE username='acct_c'", Long.class)).isEqualTo(200);
+		assertThat(db.queryForObject(
+				"SELECT following FROM profile_snapshot WHERE username='acct_c'", Long.class)).isEqualTo(20);
+		assertThat(db.queryForObject(
+				"SELECT media_count FROM profile_snapshot WHERE username='acct_c'", Long.class)).isEqualTo(8);
+	}
+
+	@Test
 	void 만료_스윕은_활성만_EXPIRED로() {
 		targets.insert(TargetType.POST, null, "acct_a", "SC1", null,
 				TargetStatus.TRACKING, "SC1", "key-3", Instant.now().minusSeconds(60));
@@ -548,6 +578,23 @@ class StoreTest {
 		var updated = db.queryForMap("SELECT * FROM profile_meta WHERE username='acct_a'");
 		assertThat(updated.get("display_name")).isEqualTo("새이름");
 		assertThat(updated.get("last_uploaded_at")).isEqualTo(java.sql.Date.valueOf(LocalDate.of(2026, 7, 25)));
+	}
+
+	/**
+	 * og 표면은 fullName을 프로필 문서의 quoted-string 마커에서만 뽑는다(OgProfileFetcher.FULL_NAME) —
+	 * 키가 JSON null이거나 부재하면 관측 실패로 null을 반환한다(빈 문자열 ""과는 다른 경로, S15 후속).
+	 * 이 null이 이전에 Hiker가 채운 표시명을 지우면 안 된다 — profile_image_url·last_uploaded_at과
+	 * 동일 원칙(#725, 7a701f9c의 SnapshotRepository.upsertProfile COALESCE 보호와 동형).
+	 */
+	@Test
+	void 프로필_메타_display_name_null_관측은_기존값을_보호한다() {
+		profileMeta.upsert("acct_a", "표시이름", "https://img/1.jpg", LocalDate.of(2026, 7, 20));
+
+		profileMeta.upsert("acct_a", null, "https://img/1.jpg", LocalDate.of(2026, 7, 25));
+
+		assertThat(db.queryForObject(
+				"SELECT display_name FROM profile_meta WHERE username='acct_a'", String.class))
+				.isEqualTo("표시이름");
 	}
 
 	/** 열거 0건(POST 단독 스윕 등)으로 lastUploadedAt이 null이면 기존 최근 게시일을 지우지 않는다. */
@@ -729,6 +776,31 @@ class StoreTest {
 		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
 		assertThat(row.get("caption")).isEqualTo("캡션 갱신");
 		assertThat(row.get("thumbnail_url")).isEqualTo("https://cdn/thumb1.jpg");
+	}
+
+	/**
+	 * S4 — self(embed·feed/user)는 콘텐츠 타입을 구조적으로 확정 못 하면 null을 넘긴다
+	 * (EmbedPostFetcher·FeedUserPostsFetcher 참조). Hiker가 이미 REELS/FEED를 확정 저장한 행을
+	 * self의 미확정 null 재수집이 강등 덮어쓰기하면 안 된다 — caption·thumbnail_url과 동일한
+	 * COALESCE 보호.
+	 */
+	@Test
+	void content_type_null_수집은_기존_content_type을_보존한다() {
+		postMeta.upsert("SC1", "acct_a", "REELS", LocalDate.of(2026, 7, 28), "캡션", "https://cdn/thumb1.jpg");
+
+		postMeta.upsert("SC1", "acct_a", null, LocalDate.of(2026, 7, 29), "캡션 갱신", "https://cdn/thumb1.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC1'");
+		assertThat(row.get("content_type")).isEqualTo("REELS");
+	}
+
+	/** 신규 게시물 최초 수집이 content_type 미확정(null)이면 null로 그대로 삽입된다 — NOT NULL 제약 없음. */
+	@Test
+	void 최초_수집이_content_type_null이면_null로_삽입된다() {
+		postMeta.upsert("SC2", "acct_a", null, LocalDate.of(2026, 7, 28), "캡션", "https://cdn/thumb1.jpg");
+
+		var row = db.queryForMap("SELECT * FROM post_meta WHERE short_code='SC2'");
+		assertThat(row.get("content_type")).isNull();
 	}
 
 	// ── hidden/error 신호·matched_keywords(v2.2) ────────────────────────────
