@@ -81,14 +81,29 @@ public class JobConfig {
 			@Value("${analytics.vlm-enabled:false}") boolean thumbnailEnabled,
 			ObjectProvider<JobProgressRegistry> progressRegistry,
 			ObjectProvider<com.celfit.analytics.llm.GeminiApi> gemini,
-			com.celfit.analytics.llm.BeautyTaxonomyLoader taxonomyLoader) {
+			com.celfit.analytics.llm.BeautyTaxonomyLoader taxonomyLoader,
+			ObjectProvider<com.celfit.analytics.llm.ContentFactsPort> factsPort,
+			ObjectProvider<ContentSynthesisPort> synthesisPort) {
 		JobProgressRegistry registry = progressRegistry.getIfAvailable();
 		ProgressReporter reporter = registry != null ? registry.reporter(JobName.ANALYZE) : ProgressReporter.NOOP;
 		ProgressReporter backfillReporter = registry != null
 				? registry.reporter(JobName.LATE_BACKFILL_ANALYZE) : ProgressReporter.NOOP;
+		// factsReporter는 ProgressReporter.NOOP 고정 — JobName.FACT_ANALYZE(어드민 진행률 표기)는
+		// 스케줄·어드민 배선(Task 9) 몫이라 이번 태스크에서는 상수로 둔다(2026-09-03 계획 §Task 7 조정).
 		return new ContentAnalysisJob(rawJdbcTemplate, analysisDataSource, insight,
 				settings, thumbnailEnabled, headPrecheck(), reporter, backfillReporter,
-				batchApiOrNull(settings, gemini), taxonomyLoader);
+				batchApiOrNull(settings, gemini), taxonomyLoader,
+				ProgressReporter.NOOP, splitPortOrNull(settings, factsPort), splitPortOrNull(settings, synthesisPort));
+	}
+
+	/**
+	 * 2단계 분리(split) 전용 포트 - provider=anthropic이면 조회 자체를 하지 않는다.
+	 * batchApiOrNull과 같은 관용구: @Lazy 빈이라도 getIfAvailable()은 생성을 강제해,
+	 * GEMINI_API_KEY 없이 anthropic만으로 운영 중인 환경에서 불필요한 키 부재 예외를 낸다.
+	 * split은 gemini/vertex 전용이며, anthropic 경로는 unified 모드로 남는다.
+	 */
+	private static <T> T splitPortOrNull(AnalyticsSettings settings, ObjectProvider<T> port) {
+		return "anthropic".equals(settings.llmProvider()) ? null : port.getIfAvailable();
 	}
 
 	/**
