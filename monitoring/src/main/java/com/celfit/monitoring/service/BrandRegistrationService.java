@@ -44,8 +44,13 @@ import org.springframework.stereotype.Service;
  *
  * <p>ready(markServing)는 <b>첫 페이지의 게시자 보강이 끝나는 지점</b>에서 열리고(2026-08-18
  * 계정 게이트 단축 — 댓글 수집·광고 표기 판정은 기다리지 않는다), 완주 표식(touchSwept = 응답
- * collectionCompletedAt · FE 폴링 종료 조건)은 <b>모든 페이지 보강(댓글·판정 포함) 뒤</b>에
- * 찍힌다 — 목록에는 정산된 페이지만 오른다(스펙 §1·§2, {@link #runBackfillSafely} 참조).
+ * collectionCompletedAt · FE 폴링 종료 조건)은 <b>모든 페이지의 게시물·게시자 보강이 정산
+ * (markEnriched)된 뒤</b>에 찍힌다 — 목록·지표·게시자 정보는 그 시점에 완비된다(스펙 §1·§2,
+ * {@link #runBackfillSafely} 참조). <b>댓글 수집·광고 표기 판정은 2026-09부터 이 표식 밖</b>이다
+ * (완주 스탬프 축소 개정) — {@link BrandCollectService#enrichUserTriggeredDeferred}가 후행 전용
+ * executor에 detached 제출하고, 스탬프 뒤에 조용히 채워진다. was는 이 값을 해석 없이 통과시킬
+ * 뿐이라(계약 {@code docs/contracts/monitoring-was-contract.md} collectionCompletedAt 절 참조)
+ * 별도 스탬프 컬럼 없이 기존 컬럼의 의미만 좁혔다.
  *
  * <p>core 실패·앱 재시작으로 끊겨도 last_swept_on이 null로 남아 다음 스윕이 백스톱한다.
  * backfill은 동시 2스레드(브랜드 단위 태스크라 브랜드 안 순서는 유지), enrich는 전역 공유 풀
@@ -63,6 +68,20 @@ public class BrandRegistrationService {
 	/** 수집 창 값 공간(collectionMonths 스펙 §2) — DB CHECK 제약과 같은 집합이다. */
 	private static final Set<Integer> ALLOWED_MONTHS = Set.of(1, 3, 6, 12);
 	private static final int DEFAULT_MONTHS = 12;
+
+	/**
+	 * backfillError 문구 2종(2026-09 열거 실패 재시도 스케줄러, 계약 §11) — 사용자 대면이라 내부
+	 * 예외 문자열을 안 싣는다(기존 규칙 유지), 엠대시 금지(전역 지침). {@code code}는 둘 다
+	 * {@code BACKFILL_FAILED}로 불변이므로 was·FE는 문구 문자열로 분기하면 안 되고 표시만 한다.
+	 *
+	 * <p>재시도 예산이 남아 있을 때({@link #runBackfillSafely} 최초 실패)는
+	 * {@link #BACKFILL_FAILED_RETRY_PENDING}, {@link BrandBackfillRetryJob}이 상한 소진을 확인하면
+	 * {@link #BACKFILL_FAILED_RETRY_EXHAUSTED}로 교체한다. 킬 스위치
+	 * ({@code monitoring.brand.backfill-retry.enabled})가 꺼져 재시도 자체가 없으면 최초 실패도
+	 * 곧장 exhausted 문구를 쓴다 — "잠시 후 다시 시도해요"는 재시도가 없으면 과약속이라서다.
+	 */
+	static final String BACKFILL_FAILED_RETRY_PENDING = "초기 수집에 실패했어요. 잠시 후 자동으로 다시 시도해요.";
+	static final String BACKFILL_FAILED_RETRY_EXHAUSTED = "초기 수집에 실패했어요. 다음 새벽 정기 수집에서 다시 시도해요.";
 
 	/** 등록 결과 — replayed는 HTTP 코드(201/200) 결정용(RegistrationService.Result 관용구). */
 	public record Result(long brandId, String username, Long followers, boolean replayed) {}
@@ -86,6 +105,11 @@ public class BrandRegistrationService {
 	private final Executor backfill;
 	private final Executor enrich;
 	private final Executor hashtagSweep;
+	/** 재시도 킬 스위치(2026-09) — {@link #runBackfillSafely} catch 문구 분기 전용. 스케줄러 자체의
+	 * on/off는 {@link BrandBackfillRetryScheduler}의 {@code @ConditionalOnProperty}가 같은 키로
+	 * 별도로 본다(빈 등록 여부) — 여기는 "재시도가 실제로 돌 것이다"라는 사실을 문구에 반영하는
+	 * 용도라 값 자체(boolean)로 충분하다. */
+	private final boolean backfillRetryEnabled;
 
 	public BrandRegistrationService(@Qualifier("syncInstagramSource") InstagramSource hiker,
 			BrandRepository brands,
@@ -95,7 +119,8 @@ public class BrandRegistrationService {
 			@Value("${monitoring.brand.collection-post-limit:2000}") int collectionPostLimit,
 			@Qualifier("brandBackfillExecutor") Executor backfill,
 			@Qualifier("brandEnrichExecutor") Executor enrich,
-			@Qualifier("brandHashtagSweepExecutor") Executor hashtagSweep) {
+			@Qualifier("brandHashtagSweepExecutor") Executor hashtagSweep,
+			@Value("${monitoring.brand.backfill-retry.enabled:true}") boolean backfillRetryEnabled) {
 		this.hiker = hiker;
 		this.brands = brands;
 		this.collect = collect;
@@ -106,6 +131,7 @@ public class BrandRegistrationService {
 		this.backfill = backfill;
 		this.enrich = enrich;
 		this.hashtagSweep = hashtagSweep;
+		this.backfillRetryEnabled = backfillRetryEnabled;
 	}
 
 	/** competitor 계정 타입 리터럴(was BrandAccountType.COMPETITOR와 동형) — 이 값 외엔 전부 own 취급. */
@@ -249,10 +275,17 @@ public class BrandRegistrationService {
 	 * 없다), 뒤 페이지는 훅 없이(null) 돈다. served CAS는 방어적 1회 보장(재가입 등으로 이 메서드가
 	 * 다시 불려도 안전) — DB 쪽 IS NULL 가드(markServing)와 같은 이중 방어.
 	 *
-	 * <p>touchSwept는 <b>모든 페이지 보강이 끝난 뒤</b>에 찍는다 — 이 값이 곧 응답
-	 * collectionCompletedAt이고 FE의 폴링 종료 조건이라, 아직 정산 안 된 페이지가 남은 채로 찍으면
-	 * FE가 미완성 목록을 최종본으로 알고 폴링을 멈춘다. 열거 완주 ≠ 수집 완주로 의미가 갈렸다.
-	 * "열거가 끝났으니 여기서 찍자"로 되돌리면 그 회귀가 그대로 재현된다.
+	 * <p>touchSwept는 <b>모든 페이지의 게시자 보강 정산(markEnriched)이 끝난 뒤</b>에 찍는다 — 이
+	 * 값이 곧 응답 collectionCompletedAt이고 FE의 폴링 종료 조건이라, 아직 정산 안 된 페이지가 남은
+	 * 채로 찍으면 FE가 미완성 목록을 최종본으로 알고 폴링을 멈춘다. 열거 완주 ≠ 수집 완주로 의미가
+	 * 갈렸다. "열거가 끝났으니 여기서 찍자"로 되돌리면 그 회귀가 그대로 재현된다. <b>댓글 수집·광고
+	 * 표기 판정은 2026-09부터 이 join 경계 밖</b>이다 — {@code pages}(아래 futures)의 몸통은
+	 * ensureAuthors → markEnriched → touchProgress → onVisible까지로 끝나고
+	 * ({@link #runEnrichSafely} 참조), 댓글·판정은 그 안에서 후행 전용 executor에 detached
+	 * 제출되므로 이 allOf(pages).join()이 후행 완료를 기다리지 않는다. touchSwept가 댓글·판정
+	 * 완료를 기다리지 않게 된 것이 이 개정의 본체다 — 2,000건급 브랜드에서 신규 백필 시 모든
+	 * 게시물의 comments_collected_count가 0이라 댓글 게이트가 전부 열려(게시물당 최대 3콜) 스탬프
+	 * 앞을 최대 ~6,000콜이 막던 구간을 걷어낸다.
 	 *
 	 * <p>페이지 태스크는 enrich executor에서 돌고 여기(backfill executor 스레드)에서 join으로
 	 * 기다린다 — 두 층이 <b>별도 풀</b>이어야 한다(합치면 영구 자기 교착 — BrandBackfillConfig 참조).
@@ -267,6 +300,9 @@ public class BrandRegistrationService {
 	 * <p>열거·보강 모두 사용자 트리거 비동기 전용 라우팅(sweepCoreUserTriggered·아래 runEnrichSafely의
 	 * enrichUserTriggered)을 탄다 — 2026-09 도입 시점 토글(ig-source.self-user-triggered, 시드 false)이
 	 * 켜지기 전까지는 이 백필 경로가 Hiker 1순위로 남는다(새벽 스윕은 그대로 자체 1순위).
+	 *
+	 * <p>이 메서드는 최초 등록·기간 확장·{@link #retryBackfillAsync} 재시도 <b>공통</b> 진입점이다 —
+	 * 셋 다 같은 실패 격리·같은 완주 규율을 따른다(2026-09 열거 실패 재시도 스케줄러 신설).
 	 */
 	private void runBackfillSafely(BrandRow row) {
 		try {
@@ -291,21 +327,41 @@ public class BrandRegistrationService {
 			log.warn("브랜드 등록 백필 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 			// was 폴링 계약(§5-2) — collecting에서 빠져나올 신호. 다음 스윕 성공(touchSwept)이 클리어한다.
 			// markServing 이후 실패면 ready가 이미 열려 있고(정산된 페이지 서빙) 이 문구는 FE에서 무시된다.
-			brands.markBackfillError(row.id(), "초기 수집에 실패했어요. 자동으로 재시도 중이에요.");
+			// 문구는 재시도 킬 스위치를 본다(2026-09) — 꺼져 있으면 재시도가 없으니 "잠시 후 다시
+			// 시도해요"는 과약속이라 곧장 exhausted 문구(정기 수집 안내)를 쓴다.
+			String message = backfillRetryEnabled ? BACKFILL_FAILED_RETRY_PENDING : BACKFILL_FAILED_RETRY_EXHAUSTED;
+			brands.markBackfillError(row.id(), message);
 		}
+	}
+
+	/**
+	 * 열거 실패 재시도 제출(2026-09, {@link BrandBackfillRetryJob} 전용) — {@link #runBackfillSafely}를
+	 * {@code backfill} executor에서 비동기로 돌리고 완료를 관측 가능한 {@link CompletableFuture}로
+	 * 돌려준다. 호출부(재시도 잡)가 이 future의 {@code whenComplete}에서 브랜드 단위 in-flight
+	 * 표시를 해제한다 — 재시도 1회가 수 분 걸리므로 그게 없으면 다음 틱이 같은 브랜드를 또 제출한다.
+	 * 실패 격리·문구·완주 규율은 {@link #runBackfillSafely}와 완전히 같다(별도 catch 없음 — 이
+	 * 메서드는 제출만 하고 예외를 던지지 않는다).
+	 */
+	public CompletableFuture<Void> retryBackfillAsync(BrandRow row) {
+		return CompletableFuture.runAsync(() -> runBackfillSafely(row), backfill);
 	}
 
 	/**
 	 * 보강 실패는 backfill_error를 남기지 않는다 — 목록·지표는 이미 서빙 중(ready)이라 "초기 수집
 	 * 실패" 문구가 오히려 오보고, 미수집분(게시자 stale·댓글 워터마크)은 다음 스윕이 자동 재시도한다.
 	 *
-	 * <p>onVisible은 그대로 {@link BrandCollectService#enrich(BrandRow, List, Runnable)}에 위임한다
-	 * — markEnriched와 같은 finally 보장이라 여기서 별도로 재시도·대체 호출할 필요가 없다(ensureAuthors
-	 * 하드 실패 경로 포함).
+	 * <p>onVisible은 그대로 {@link BrandCollectService#enrichUserTriggeredDeferred}에 위임한다 —
+	 * markEnriched와 같은 finally 보장이라 여기서 별도로 재시도·대체 호출할 필요가 없다(ensureAuthors
+	 * 하드 실패 경로 포함). <b>2026-09부터 3-인자 {@code enrichUserTriggered}가 아니라 이 deferred
+	 * 진입점을 부른다</b> — 댓글 수집·광고 표기 판정을 후행 전용 executor에 detached 제출해, 이
+	 * 메서드가 반환한 뒤에도(= {@link #runBackfillSafely}의 페이지 future가 완료된 뒤에도) 그 둘이
+	 * 계속 돌 수 있다. try/catch는 이 메서드가 동기로 보는 구간(ensureAuthors·markEnriched·
+	 * touchProgress·onVisible)의 실패만 잡는다 — 댓글·판정은 이미 그 안에서 각자 격리돼 있어
+	 * 여기까지 예외가 올라오지 않는다.
 	 */
 	private void runEnrichSafely(BrandRow row, List<PostInfo> posts, Runnable onVisible) {
 		try {
-			collect.enrichUserTriggered(row, posts, onVisible);
+			collect.enrichUserTriggeredDeferred(row, posts, onVisible);
 		} catch (RuntimeException e) {
 			log.warn("브랜드 등록 보강 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 		}

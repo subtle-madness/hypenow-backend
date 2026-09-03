@@ -11,6 +11,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.annotation.Primary;
 
 /**
  * LLM 빈 배선. 게이트가 모두 꺼져 있으면 클라이언트를 아예 만들지 않는다 (API 키 불필요).
@@ -89,9 +90,18 @@ public class LlmConfig {
 	 * {@link ContentSynthesisPort}와 같은 이유로 Gemini/Vertex만 지원한다: split 모드 자체가
 	 * 배치 전송을 전제로 설계됐고, anthropic은 롤백 경로(unified)로 남는다.
 	 * 프로바이더가 anthropic이면 JobConfig가 이 빈을 조회하지 않는다(batchApiOrNull과 같은 관용구).
+	 *
+	 * <p>{@code @Primary} 필수: {@link GeminiContentAnalyzer}가 {@link ContentInsightPort}·
+	 * {@link ContentFactsPort} 둘 다 구현해서, {@code contentInsightPort} 빈의 실제 런타임 타입도
+	 * ContentFactsPort에 대입 가능하다 — JobConfig가 {@code ObjectProvider<ContentFactsPort>}로
+	 * 조회하면(getIfAvailable, 실제 인스턴스화를 강제) 후보가 2개(contentInsightPort·contentFactsPort)로
+	 * 잡혀 NoUniqueBeanDefinitionException이 난다(2026-09-03 스테이징 장애 — contentAnalysisJob 빈
+	 * 생성 실패, analyze-mode 무관하게 통합 ANALYZE까지 깨짐). ContentInsightPort 쪽은 직접(비
+	 * ObjectProvider) 주입이라 선언 타입만으로 후보가 하나로 좁혀져 영향 없다.
 	 */
 	@Bean
 	@Lazy
+	@Primary
 	public ContentFactsPort contentFactsPort(AnalyticsSettings settings,
 			ObjectProvider<GeminiApi> gemini, BeautyTaxonomyLoader taxonomyLoader) {
 		return new GeminiContentAnalyzer(gemini.getObject(), settings::geminiModel, taxonomyLoader::get);

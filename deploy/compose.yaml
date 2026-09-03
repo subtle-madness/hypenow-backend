@@ -362,6 +362,11 @@ services:
       # 기본 off. 실행할 때만 .env에 true를 넣고 up -d monitoring으로 개통(MONITORING_ENABLED 관용구),
       # 백필 완주 후 되돌린다. Hiker 재조회 콜 증폭 지점이라 상시 개방하지 않는다(limit 필수가 2차 방어).
       MONITORING_IMAGE_BACKFILL_TRIGGER_ENABLED: ${MONITORING_IMAGE_BACKFILL_TRIGGER_ENABLED:-false}
+      # 브랜드 등록 백필 열거 실패 재시도 스케줄러 킬 스위치(2026-09, 결함 3) — 기본 on(스케줄러
+      # 자체 기본값과 동일). 벤더 장애 중 재시도가 증폭으로 작용할 때 끄는 롤백 수단
+      # (application.yml monitoring.brand.backfill-retry.enabled 관용구). .env에 false를 넣고
+      # up -d monitoring으로 재기동해야 반영된다(재기동 없이는 안 먹음 — 다른 킬 스위치와 동일).
+      MONITORING_BRAND_BACKFILL_RETRY_ENABLED: ${MONITORING_BRAND_BACKFILL_RETRY_ENABLED:-true}
       # 해시태그 딥 재백필 1회 킬 스위치(2026-09-02 감시 세트 설계 §2) — 구 편입 하드스톱(1,000)
       # 기간에 버려진 게시물 회수용. 기본 off. 위 이미지 백필과 같은 관용구: 실행할 때만 .env에
       # true 넣고 up -d monitoring으로 개통(야간 스윕 창 KST 02~07시 회피), 완료 로그("해시태그

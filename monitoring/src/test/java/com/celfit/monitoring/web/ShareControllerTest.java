@@ -31,7 +31,8 @@ import org.springframework.web.context.WebApplicationContext;
  * share 단축 링크 해소 API — 계약 §2-6. RegistrationApiTest의 SwitchableHiker 패턴을 이 컨트롤러
  * 전용으로 축소한 fake를 쓴다(등록 플로우와 무관한 별도 API라 그쪽 fake를 재사용할 이유가 없다).
  */
-@SpringBootTest
+// 백필 재시도 스케줄러 틱 방지(2026-09, 결함 3) — @SpringBootTest 컨텍스트에서 5분 주기가 돌지 않게.
+@SpringBootTest(properties = "monitoring.brand.backfill-retry.enabled=false")
 class ShareControllerTest {
 
 	static class FakeShareHiker implements HikerHttp {

@@ -32,7 +32,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
-@SpringBootTest
+// 백필 재시도 스케줄러 틱 방지(2026-09, 결함 3) — @SpringBootTest 컨텍스트에서 5분 주기가 돌지 않게.
+@SpringBootTest(properties = "monitoring.brand.backfill-retry.enabled=false")
 class RegistrationApiTest {
 
 	/** 경로별 픽스처 fake — 열거는 clips(조회수 머지) → medias 두 콜을 쏜다. notFound=true면 전 경로 404. */

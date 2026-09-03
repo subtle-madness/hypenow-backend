@@ -36,7 +36,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.WebApplicationContext;
 
 /** 명령 API 2종(연장·해지) — 계약 v2 §2-2~2-3의 상태 전이 규칙. 승인·기각은 v2에서 폐지됐다. */
-@SpringBootTest
+// 백필 재시도 스케줄러 틱 방지(2026-09, 결함 3) — @SpringBootTest 컨텍스트에서 5분 주기가 돌지 않게.
+@SpringBootTest(properties = "monitoring.brand.backfill-retry.enabled=false")
 class CommandApiTest {
 
 	/** Hiker 픽스처 fake는 등록 테스트와 같은 것을 쓴다 — 컨텍스트 기동 시 실제 API를 타지 않게 막는다. */

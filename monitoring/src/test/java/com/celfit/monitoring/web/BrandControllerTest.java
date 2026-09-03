@@ -51,7 +51,7 @@ class BrandControllerTest {
 
 		StubService() {
 			super(null, null, null, null, null, null, 2000,
-					Runnable::run, Runnable::run, Runnable::run);
+					Runnable::run, Runnable::run, Runnable::run, true);
 		}
 
 		/**

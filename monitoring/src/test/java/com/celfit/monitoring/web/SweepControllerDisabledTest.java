@@ -21,7 +21,8 @@ import org.springframework.web.context.WebApplicationContext;
  * 404여야 한다({@link SweepController} 클래스 javadoc 참고). POST(수동 트리거 — Hiker 콜 증폭 지점)와
  * GET /latest(단순 조회) 둘 다 같은 컨트롤러에 묶여 함께 꺼지므로 같이 검증한다.
  */
-@SpringBootTest
+// 백필 재시도 스케줄러 틱 방지(2026-09, 결함 3) — @SpringBootTest 컨텍스트에서 5분 주기가 돌지 않게.
+@SpringBootTest(properties = "monitoring.brand.backfill-retry.enabled=false")
 class SweepControllerDisabledTest {
 
 	@DynamicPropertySource
