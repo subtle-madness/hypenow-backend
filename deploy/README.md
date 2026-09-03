@@ -444,6 +444,10 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
 - **환경별 DEK 분리**: 운영·스테이징은 서로 다른 app DB(각 `postgres`/`test-postgres` 컨테이너
   안의 별개 DB)를 쓰므로 `encryption_keys` 행도 각자 독립적으로 부트스트랩된다 — 같은 KEK를
   공유해도 운영 DEK와 스테이징 DEK 값은 다르다(한쪽 유출이 다른 쪽 데이터에 영향 없음).
+  **단서**: 이 분리는 각 환경이 스스로 부트스트랩한 채로 있을 때만 유효하다 — 스테이징 DB를
+  운영 덤프로 복원하면 `encryption_keys`의 운영 래핑본이 통째로 따라와 그 순간부터 스테이징도
+  운영과 같은 DEK를 쓰게 된다(같은 KEK로 언래핑하므로 동작 자체엔 문제없다 — 다만 "환경별로
+  DEK가 다르다"는 위 전제가 그 시점부터 깨진다는 점은 인지하고 있을 것).
 - **운영 fail-closed 가드**: `CryptoConfig`가 활성 프로파일에 `prod`가 있는데
   `crypto.mode=local`이면 기동 자체를 막는다(`crypto.allow-local-in-prod`라는 우회 플래그가
   있지만 테스트 전용이고 compose에는 없다). 즉 운영·스테이징 compose에서 `CRYPTO_MODE=vault`를
@@ -474,8 +478,10 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
   # 로그에 "PII 백필 완료 — users=NN, inquiries=NN, password_resets=NN, signup_events=NN"이
   # 찍히면 **그 즉시** Ctrl-C로 중단한다(--rm이 컨테이너를 자동 정리). PiiBackfillRunner는
   # ApplicationRunner라 백필 후에도 앱은 정상 기동 상태로 계속 살아있다 — 위 크론 무력화가
-  # 예약 배치의 위험만 상쇄할 뿐 이 컨테이너 자체가 무해해지는 건 아니므로, rollout.sh가
-  # 관리하지 않는 이 임시 컨테이너를 도커 DNS 라운드로빈(Caddy → was)에 계속 남겨둘 이유가 없다.
+  # 예약 배치의 위험만 상쇄할 뿐 이 컨테이너 자체가 무해해지는 건 아니므로 빨리 내린다.
+  # (docker compose run은 --use-aliases 없이는 서비스 별칭을 못 받아 도커 DNS에 안 실리므로
+  # Caddy → was 라운드로빈에는 애초에 안 들어간다 — 남겨두면 위험한 건 라운드로빈 진입이 아니라
+  # 예약 배치가 무력화된 채로 도는 정상 was 인스턴스가 불필요하게 떠 있는 것 자체다.)
   ```
   완료 확인: `SELECT count(*) FROM app.users WHERE email_enc IS NULL;`(0이어야 정상 — 나머지
   3테이블도 `<table>_enc IS NULL` 패턴으로 동일 확인).
