@@ -141,13 +141,23 @@ public class BrandDirectCollectService {
 	 * 리뷰 지적) — 겹치면 이번 브랜드 호출은 즉시 스킵하고 정상 반환한다(다음 스윕이 자연 재시도).
 	 */
 	public void sweepUnenumerated(BrandRow brand) {
+		sweepUnenumerated(brand, new SweepPostCache());
+	}
+
+	/**
+	 * 스윕 런 스코프 캐시를 공유받는 진입점(2026-09-03) — 여러 브랜드가 같은 게시물을 감시할 때
+	 * 브랜드마다 반복되던 단건 콜을 한 번으로 접는다(야간 실측 15%). 캐시는 <b>원시 fetch 결과만</b>
+	 * 공유하고 브랜드별 후처리는 그대로 각자 수행한다 — {@link SweepPostCache} 참조.
+	 * 인자 없는 오버로드는 런 스코프가 없는 호출(단독 실행·테스트)용으로 1회용 캐시를 만든다.
+	 */
+	public void sweepUnenumerated(BrandRow brand, SweepPostCache cache) {
 		if (!unenumeratedBusy.add(brand.id())) {
 			log.info("unenumerated 처리 겹침 - 이번 호출 스킵 brand={}", brand.username());
 			return;
 		}
 		try {
 			callContext.scoped(brand.id(), () -> {
-				doSweepUnenumerated(brand);
+				doSweepUnenumerated(brand, cache);
 				return null;
 			});
 		} finally {
@@ -155,7 +165,7 @@ public class BrandDirectCollectService {
 		}
 	}
 
-	private void doSweepUnenumerated(BrandRow brand) {
+	private void doSweepUnenumerated(BrandRow brand, SweepPostCache cache) {
 		Instant now = Instant.now();
 		Instant minTakenAt = now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE);
 		// 감시 세트 바닥(2026-09-02 설계 §3) — hashtag 행이 세트 크기 이상이면 바닥이 생기고,
@@ -192,7 +202,7 @@ public class BrandDirectCollectService {
 			log.info("2단계 단건 수집 상한({}) 컷 — 브랜드 {} due {}건 중 {}건만 수집, 잔여는 다음 스윕",
 					sweepLimit, brand.username(), dueAll.size(), due.size());
 		}
-		collectInBatches(brand, due, now);
+		collectInBatches(brand, due, now, cache);
 	}
 
 	/**
@@ -227,7 +237,8 @@ public class BrandDirectCollectService {
 		Instant now = Instant.now();
 		List<TaggedPostRepository.TrackedPost> due = taggedPosts
 				.unenrichedUnenumeratedPosts(brand.id(), now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE));
-		collectInBatches(brand, due, now);
+		// 기동 백필은 브랜드 1건 단위 호출이라 브랜드 간 중복이 없다 — 1회용 캐시로 골격만 공유한다.
+		collectInBatches(brand, due, now, new SweepPostCache());
 		return due.size();
 	}
 
@@ -249,14 +260,16 @@ public class BrandDirectCollectService {
 	 * 워커 스레드로 전파되지 않는다 — enrich의 워커 팬아웃이 이미 쓰는 규율과 같다). 빠뜨리면
 	 * brand_call_count가 조용히 0이 된다.
 	 */
-	private void collectInBatches(BrandRow brand, List<TaggedPostRepository.TrackedPost> due, Instant now) {
+	private void collectInBatches(BrandRow brand, List<TaggedPostRepository.TrackedPost> due, Instant now,
+			SweepPostCache cache) {
 		int concurrency = sweepSettings.unenumeratedConcurrency();
 		long brandId = brand.id();
 		for (int from = 0; from < due.size(); from += SWEEP_BATCH_SIZE) {
 			List<TaggedPostRepository.TrackedPost> chunk =
 					due.subList(from, Math.min(from + SWEEP_BATCH_SIZE, due.size()));
 			List<Optional<PostInfo>> collected = ParallelRunner.map(chunk, concurrency, unenumeratedWorker,
-					t -> callContext.scoped(brandId, () -> collectOne(brand, t.shortCode(), t.takenAt(), now)));
+					t -> callContext.scoped(brandId,
+							() -> collectOne(brand, t.shortCode(), t.takenAt(), now, cache)));
 			List<PostInfo> batch = new ArrayList<>(chunk.size());
 			collected.forEach(o -> o.ifPresent(batch::add));
 			if (!batch.isEmpty()) {
@@ -278,9 +291,11 @@ public class BrandDirectCollectService {
 	 * 갱신이 매 스윕 100% 폐기되던 회귀 — EmbedPostFetcher는 embed HTML에 taken_at이 없어 이 필드가
 	 * 구조적으로 항상 null이다).
 	 */
-	private Optional<PostInfo> collectOne(BrandRow brand, String shortCode, Instant dbTakenAt, Instant now) {
+	private Optional<PostInfo> collectOne(BrandRow brand, String shortCode, Instant dbTakenAt, Instant now,
+			SweepPostCache cache) {
 		try {
-			PostInfo post = hiker.fetchPost(shortCode);
+			// 원시 fetch만 런 스코프 캐시를 탄다 — 아래 후처리는 캐시 적중이든 아니든 브랜드마다 수행.
+			PostInfo post = cache.fetch(shortCode, () -> hiker.fetchPost(shortCode));
 			if (post.takenAt() == null && dbTakenAt != null) {
 				// self 셰이프 — DB taken_at 재사용(불변값이라 안전). WARN이 아니라 DEBUG: 매 스윕
 				// 정상적으로 반복되는 경로라 WARN이면 self 개통 중 로그가 상시 오염된다.

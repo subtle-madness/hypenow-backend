@@ -818,6 +818,60 @@ class BrandDirectCollectServiceTest {
 		assertThat(backfilled).isEqualTo(k);
 	}
 
+	// ── 스윕 런 스코프 중복 fetch 캐시(2026-09-03) ────────────────────────────
+
+	private static final BrandRow OTHER_BRAND =
+			new BrandRow(2L, "brandy", "222", BrandStatus.ACTIVE, LocalDate.now(), 12, true);
+
+	/**
+	 * 여러 브랜드가 같은 게시물을 감시하면 종전엔 브랜드 수만큼 같은 단건 콜이 나갔다(야간 실측
+	 * 2단계 콜의 15%). 런 스코프 캐시가 콜은 1회로 접되, 저장·크롤 워터마크 같은 브랜드별 후처리는
+	 * 브랜드마다 그대로 수행돼야 한다.
+	 */
+	@Test
+	void 런_스코프_캐시가_브랜드_간_중복_단건_콜을_제거한다() {
+		tagged.due.add(new TaggedPostRepository.TrackedPost("Shared", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("Shared", postJson("Shared", RECENT, 1000));
+		BrandDirectCollectService svc = service();
+		SweepPostCache cache = new SweepPostCache();
+
+		svc.sweepUnenumerated(brand, cache);
+		svc.sweepUnenumerated(OTHER_BRAND, cache);
+
+		assertThat(postCalls()).isEqualTo(1);                       // 콜은 1회
+		assertThat(cache.hits()).isEqualTo(1);
+		assertThat(writer.saved).hasSize(2);                        // 후처리는 브랜드마다
+		assertThat(tagged.enriched).containsExactly("Shared", "Shared");
+	}
+
+	/** 부재(404)도 캐시한다 — 브랜드마다 같은 404를 재과금하지 않되 마킹은 브랜드마다 남는다. */
+	@Test
+	void 런_스코프_캐시는_부재_결과도_중복_콜_없이_돌려준다() {
+		tagged.due.add(new TaggedPostRepository.TrackedPost("Gone", Instant.ofEpochSecond(RECENT), null));
+		notFoundCodes.add("Gone");
+		BrandDirectCollectService svc = service();
+		SweepPostCache cache = new SweepPostCache();
+
+		svc.sweepUnenumerated(brand, cache);
+		svc.sweepUnenumerated(OTHER_BRAND, cache);
+
+		assertThat(postCalls()).isEqualTo(1);
+		assertThat(tagged.unavailable).containsExactly("Gone", "Gone");
+	}
+
+	/** 캐시를 공유하지 않는 호출(인자 없는 오버로드)은 종전대로 브랜드마다 따로 받아온다. */
+	@Test
+	void 캐시를_공유하지_않으면_브랜드마다_각자_받아온다() {
+		tagged.due.add(new TaggedPostRepository.TrackedPost("Solo", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("Solo", postJson("Solo", RECENT, 1001));
+		BrandDirectCollectService svc = service();
+
+		svc.sweepUnenumerated(brand);
+		svc.sweepUnenumerated(OTHER_BRAND);
+
+		assertThat(postCalls()).isEqualTo(2);
+	}
+
 	/**
 	 * 브랜드 단위 가드(2026-09-03 브랜드 N병렬) — 가드가 서비스 전역 AtomicBoolean이면 브랜드
 	 * 병렬 스윕에서 둘째 브랜드부터 통째로 스킵된다. 원 목적(같은 브랜드의 스윕 2단계 × 기동
