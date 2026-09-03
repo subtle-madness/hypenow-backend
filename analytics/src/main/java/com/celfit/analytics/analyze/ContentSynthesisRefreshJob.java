@@ -24,6 +24,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * <b>후보 자격(최근창·성숙 가드)과 무관</b>하다 — 사실은 이미 있고 계정 평균 기준선은 언제나
  * 계산되므로, 재분석 후보에서 빠진 옛 콘텐츠도 갱신할 수 있다(전량 재분석으로는 손댈 수 없던 영역).
  *
+ * <p>2026-09-03(2단계 분리): {@code metric_timeliness = 'pending'} 행은 제외한다.
+ * 그건 파트 A만 채워진 "최초 생성 대기"라 이 잡의 재생성 대상이 아니다.
+ *
  * <p>rank_in_recent_reels는 최근창 안일 때만 채워진다 — 밖이면 null로, 통합 잡의 폴백과 같은 규칙.
  */
 public class ContentSynthesisRefreshJob {
@@ -53,6 +56,13 @@ public class ContentSynthesisRefreshJob {
 		List<String> targets = analysis.queryForList("""
 				SELECT short_code FROM content_analyses
 				WHERE synthesis_version IS DISTINCT FROM ?
+				  -- 파트 A만 채워진 행(2026-09-03 2단계 분리)은 재생성이 아니라 최초 생성 대상이다.
+				  -- 이 잡은 성숙 가드가 없고 온라인 전용이라, 낚아채면 D+1 미성숙 지표를 인용한
+				  -- 문구가 만들어지고 일 3,500건이 동기 호출로 나간다. 파트 B 배치(ContentAnalysisJob
+				  -- Phase.SYNTHESIS)가 성숙 후에 채운다.
+				  -- <> 가 아니라 IS DISTINCT FROM: 시점이 NULL인 레거시 행(V33 이전 기분석분)을
+				  -- 조용히 제외하면 안 된다.
+				  AND metric_timeliness IS DISTINCT FROM 'pending'
 				ORDER BY short_code
 				LIMIT ?""", String.class, Synthesis.VERSION, settings.analyzeBatchLimit());
 		if (targets.isEmpty()) {
