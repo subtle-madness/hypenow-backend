@@ -1,6 +1,7 @@
 # 인스타 DM 자동 발송 POC — 1단계 하네스 설계
 
-> 상태: 🟢 활성 · 설계(구현 착수 전) · 2026-09-02
+> 상태: ✅ 1단계 하네스 구현됨(브랜치 feat/instagram-dm-poc-phase1, poc/instagram-dm-harness) · 2026-09-04
+> 구현 계획(실행 완료): [plans/archive/2026-09-04-instagram-dm-poc-phase1-harness.md](../plans/archive/2026-09-04-instagram-dm-poc-phase1-harness.md)
 > 범위: **1단계(신규 계정 + 즉시 발송)** 만. "신규 계정으로 콜드 DM을 자동 발송하면 즉시 정지당하는가, 아니면 몇 건까지 버티는가"를 재는 최소 하네스.
 > 전제: 갈림길 ①~⑧ 결정([핸드오프](2026-09-01-instagram-dm-poc-handoff.md))을 근거로 함. 결정의 이유·기각 대안·재검토 트리거는 핸드오프 참조, 이 문서는 그 위에 얹는 실행 설계.
 > 병렬 트랙: 공식 API "합법 구간"([official-api-dm-poc](2026-09-02-instagram-official-api-dm-poc.md)), 계정 조달 방안(별도 세션)은 이 하네스와 분리.
