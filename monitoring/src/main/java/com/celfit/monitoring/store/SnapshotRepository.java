@@ -44,9 +44,13 @@ public class SnapshotRepository {
 	 *
 	 * <p><b>같은 날 재수집 시 null 관측의 덮어쓰기 보호(데이터 보호 결함 수정)</b> — self 단건(embed)은
 	 * saves·shares·reposts를 구조적으로 항상 null 반환한다. 같은 날 Hiker가 먼저 채운 값 위에 self가
-	 * 재수집하면 EXCLUDED가 무조건 이겨 null로 덮이던 결함이 있었다(views/fb_plays만 캐리포워드
-	 * 보호가 있었다). saves·shares·reposts·comments는 EXCLUDED가 null이면 기존값을 유지한다
+	 * 재수집하면 EXCLUDED가 무조건 이겨 null로 덮이던 결함이 있었다(fb_plays만 캐리포워드 보호가
+	 * 있었다). saves·shares·reposts·comments·views는 EXCLUDED가 null이면 기존값을 유지한다
 	 * (fb_plays 캐리포워드와 동일 원칙 — comments의 null은 "파싱 실패"뿐이라 안전하게 보호할 수 있다).
+	 * views도 같은 보호가 필요하다(S5, 2026-09-03 배포 전 감사 수정 — 애초 #715 보호 목록에서
+	 * 누락됐다): views가 null인 것 자체는 "피드 게시물은 항상 null" 계약이라 COALESCE(null, null)은
+	 * 그대로 null이라 무충돌이고, self 재수집이 릴스 조회수를 못 채운 콜(views 파싱 실패)에서만
+	 * Hiker가 이미 관측한 값을 지키는 효과를 낸다.
 	 *
 	 * <p>likes·shares는 "숨김"(likes_hidden·shares_hidden)과 얽혀 있어 단순 COALESCE로는 부족하다.
 	 * 숨김이면 값이 null인 게 정당하므로, EXCLUDED가 (값 null + hidden=false)인 행만 "미확정"으로
@@ -78,7 +82,7 @@ public class SnapshotRepository {
 				  likes_hidden = CASE WHEN EXCLUDED.likes IS NULL AND EXCLUDED.likes_hidden = false
 				               THEN post_snapshot.likes_hidden ELSE EXCLUDED.likes_hidden END,
 				  comments = COALESCE(EXCLUDED.comments, post_snapshot.comments),
-				  views=EXCLUDED.views,
+				  views = COALESCE(EXCLUDED.views, post_snapshot.views),
 				  fb_plays=EXCLUDED.fb_plays,
 				  saves = COALESCE(EXCLUDED.saves, post_snapshot.saves),
 				  shares = CASE WHEN EXCLUDED.shares IS NULL AND EXCLUDED.shares_hidden = false
