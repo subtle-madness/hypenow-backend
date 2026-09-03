@@ -16,9 +16,11 @@ import java.util.List;
  * 단순 평균이 아니다 — 수집 누락으로 창을 못 채운 계정은 자연히 감점된다. 자리수 조정은 프론트 몫.
  * minComments·maxComments(2026-09-03 발굴 카드 확장): avgComments와 동일 창(account_content_series,
  * comments_count NULL 제외)의 최소·최대 — 유효 표본이 0이면(창 전체 미수집) null.
- * groupPurchaseCount·hasGroupPurchase(2026-09-03): 상세(6.4) recentContents와 같은 모수(캡션 최근
- * 12개, contents 테이블 posted_at 내림차순)에서 GroupPurchaseSignal 규칙(celfit-front
- * group-purchase.ts와 동일 정규식)에 매칭되는 게시물 수와 그 존재 여부.
+ * groupPurchaseCount·hasGroupPurchase(2026-09-03): 상세(6.4) recentContents와 같은 모수(최근 12개,
+ * contents 테이블 posted_at 내림차순)에서 서버 판정 테이블 group_purchase_judgments.verdict=true인
+ * 게시물 수와 그 존재 여부(스펙 2026-09-03-group-purchase-judgment-design.md §6). 판정은 analytics
+ * GROUP_PURCHASE_JUDGE 잡(규칙 우선 + 애매분만 LLM, 30분 주기)이 채운다 — verdict가 NULL(미판정)이거나
+ * 판정 행이 아예 없는 게시물은 세지 않는다(신뢰성 우선).
  */
 public record InfluencerCard(String id, String handle, String displayName, String profileImageUrl,
 		Long followers, Long effectiveFollowers, Long postsCount, Long followingCount, String bio,

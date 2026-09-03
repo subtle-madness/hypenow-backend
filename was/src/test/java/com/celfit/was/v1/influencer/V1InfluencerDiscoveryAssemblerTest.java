@@ -3,9 +3,9 @@ package com.celfit.was.v1.influencer;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.BrandRow;
-import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.CaptionRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.CardRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.EngagementRow;
+import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.GroupPurchaseCountRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.ShareRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.ThumbRow;
 import java.math.BigDecimal;
@@ -132,19 +132,18 @@ class V1InfluencerDiscoveryAssemblerTest {
 	}
 
 	@Test
-	void 공동구매_카운트는_규칙에_매칭되는_캡션만_세고_존재여부는_카운트에서_파생된다() {
+	void 공동구매_카운트는_저장소_집계값을_그대로_싣고_존재여부는_카운트에서_파생된다() {
+		// 판정(규칙 vs LLM, 정규식 매칭 여부)은 analytics GROUP_PURCHASE_JUDGE 잡의 몫 — 어셈블러는
+		// 리포지토리가 이미 센 값(group_purchase_judgments.verdict=true 개수)을 그대로 옮길 뿐이다.
 		var rows = List.of(row("a", 10_000L));
-		var captions = List.of(
-				new CaptionRow("a", "이번 공동구매 오픈합니다"),
-				new CaptionRow("a", "#공구오픈 링크는 프로필에"),
-				new CaptionRow("a", "메이크업 공구 정리했어요")); // # 없는 맨몸 "공구"는 비매칭
-		var cards = assembler.toCards(rows, List.of(), List.of(), List.of(), List.of(), captions);
+		var counts = List.of(new GroupPurchaseCountRow("a", 2L));
+		var cards = assembler.toCards(rows, List.of(), List.of(), List.of(), List.of(), counts);
 		assertThat(cards.get(0).groupPurchaseCount()).isEqualTo(2);
 		assertThat(cards.get(0).hasGroupPurchase()).isTrue();
 	}
 
 	@Test
-	void 공동구매_캡션이_없으면_0건_false() {
+	void 공동구매_판정_행이_없으면_0건_false() {
 		var rows = List.of(row("a", 10_000L));
 		var cards = assembler.toCards(rows, List.of(), List.of(), List.of(), List.of(), List.of());
 		assertThat(cards.get(0).groupPurchaseCount()).isZero();

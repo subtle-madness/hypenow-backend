@@ -27,6 +27,7 @@ public final class ContentCacheSeed {
 		jdbc.execute("DROP TABLE IF EXISTS account_analyses");
 		jdbc.execute("DROP TABLE IF EXISTS account_content_series");
 		jdbc.execute("DROP TABLE IF EXISTS beauty_taxonomy");
+		jdbc.execute("DROP TABLE IF EXISTS group_purchase_judgments");
 		jdbc.execute("""
 				CREATE TABLE contents (
 				    short_code          text PRIMARY KEY,
@@ -64,6 +65,18 @@ public final class ContentCacheSeed {
 				    followers         bigint
 				)""");
 		jdbc.execute("CREATE TABLE image_assets (kind text NOT NULL, key text NOT NULL, object_path text)");
+		// ContentCardRow.SELECT의 gpj 조인 재료(2026-09-03 공동구매 판정 서버화) — 빈 테이블이면
+		// COALESCE(gpj.verdict, false)가 항상 false로 떨어져 캐시 경로 자체는 판정과 무관하게 검증된다.
+		jdbc.execute("""
+				CREATE TABLE group_purchase_judgments (
+				    short_code          text PRIMARY KEY,
+				    verdict             boolean,
+				    tier                text NOT NULL,
+				    reason              text,
+				    judged_caption_hash text NOT NULL,
+				    judged_at           timestamptz NOT NULL,
+				    model               text
+				)""");
 		// axis는 findDistributorOptions의 뷰티 축 필터가 읽는다 (2026-08-31 F&B 어휘 추가)
 		jdbc.execute("CREATE TABLE beauty_distributors (slug text PRIMARY KEY, name text,"
 				+ " axis text NOT NULL DEFAULT 'beauty')");

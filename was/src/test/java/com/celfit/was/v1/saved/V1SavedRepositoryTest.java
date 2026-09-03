@@ -42,6 +42,7 @@ class V1SavedRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("DROP TABLE IF EXISTS contents");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS accounts");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS image_assets");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS group_purchase_judgments");
 		jdbcTemplate.execute("""
 				CREATE TABLE accounts (
 				    handle            text PRIMARY KEY,
@@ -85,6 +86,18 @@ class V1SavedRepositoryTest extends IntegrationTest {
 				    source_name text NOT NULL,
 				    archived_at timestamptz NOT NULL DEFAULT now(),
 				    PRIMARY KEY (kind, key)
+				)""");
+		// ContentCardRow.SELECT의 gpj 조인 재료(2026-09-03 공동구매 판정 서버화) — 빈 테이블이면
+		// 카드의 groupPurchase는 항상 false(이 테스트의 관심사가 아니므로 형상만 갖춘다).
+		jdbcTemplate.execute("""
+				CREATE TABLE group_purchase_judgments (
+				    short_code          text PRIMARY KEY,
+				    verdict             boolean,
+				    tier                text NOT NULL,
+				    reason              text,
+				    judged_caption_hash text NOT NULL,
+				    judged_at           timestamptz NOT NULL,
+				    model               text
 				)""");
 		jdbcTemplate.update("""
 				INSERT INTO accounts (handle, display_name, profile_image_url, followers) VALUES

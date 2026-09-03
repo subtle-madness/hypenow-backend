@@ -1,9 +1,9 @@
 package com.celfit.was.v1.influencer;
 
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.BrandRow;
-import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.CaptionRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.CardRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.EngagementRow;
+import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.GroupPurchaseCountRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.ShareRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.ThumbRow;
 import java.math.BigDecimal;
@@ -27,7 +27,7 @@ public class V1InfluencerDiscoveryAssembler {
 
 	public List<InfluencerCard> toCards(List<CardRow> rows, List<ShareRow> shares,
 			List<BrandRow> brands, List<ThumbRow> thumbs, List<EngagementRow> engagements,
-			List<CaptionRow> captions) {
+			List<GroupPurchaseCountRow> groupPurchaseCounts) {
 		Map<String, List<ShareRow>> sharesBy = shares.stream()
 				.collect(Collectors.groupingBy(ShareRow::accountHandle));
 		Map<String, List<BrandRow>> brandsBy = brands.stream()
@@ -36,22 +36,22 @@ public class V1InfluencerDiscoveryAssembler {
 				.collect(Collectors.groupingBy(ThumbRow::accountHandle));
 		Map<String, List<EngagementRow>> engagementsBy = engagements.stream()
 				.collect(Collectors.groupingBy(EngagementRow::accountHandle));
-		Map<String, List<CaptionRow>> captionsBy = captions.stream()
-				.collect(Collectors.groupingBy(CaptionRow::accountHandle));
+		// 핸들당 최대 1행(리포지토리가 이미 GROUP BY account_handle) — 판정 행이 아예 없는 핸들은
+		// 맵에 없고, 그 경우 0건으로 취급한다(아래 getOrDefault).
+		Map<String, Long> groupPurchaseCountsBy = groupPurchaseCounts.stream()
+				.collect(Collectors.toMap(GroupPurchaseCountRow::accountHandle, GroupPurchaseCountRow::count));
 		return rows.stream().map(r -> toCard(r,
 				sharesBy.getOrDefault(r.handle(), List.of()),
 				brandsBy.getOrDefault(r.handle(), List.of()),
 				thumbsBy.getOrDefault(r.handle(), List.of()),
 				engagementsBy.getOrDefault(r.handle(), List.of()),
-				captionsBy.getOrDefault(r.handle(), List.of()))).toList();
+				groupPurchaseCountsBy.getOrDefault(r.handle(), 0L))).toList();
 	}
 
 	private InfluencerCard toCard(CardRow r, List<ShareRow> shares, List<BrandRow> brands,
-			List<ThumbRow> thumbs, List<EngagementRow> engagements, List<CaptionRow> captions) {
+			List<ThumbRow> thumbs, List<EngagementRow> engagements, long groupPurchaseCount) {
 		List<Long> windowComments = engagements.stream()
 				.map(EngagementRow::comments).filter(Objects::nonNull).toList();
-		long groupPurchaseCount = captions.stream()
-				.filter(c -> GroupPurchaseSignal.matches(c.caption())).count();
 		return new InfluencerCard(
 				r.handle(), r.handle(), r.displayName(), r.profileImageUrl(),
 				r.followers(),

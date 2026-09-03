@@ -53,10 +53,13 @@ class V1InfluencerControllerTest {
 	}
 
 	private static ContentCardRow row(String code) {
+		// groupPurchase는 code="c1"만 true — 로그인 개인화 필드 테스트가 recentContents[0]에서
+		// true/false 대비를 확인할 수 있도록(2026-09-03 6.4 groupPurchase 확장).
 		return new ContentCardRow(code, "https://thumb/" + code, "캡션",
 				OffsetDateTime.parse("2026-07-02T03:00:00Z"), "reels", new BigDecimal("20"),
 				"https://ig/" + code, 1000L, 100L, 10L, 500L,
 				OffsetDateTime.parse("2026-07-05T03:00:00Z"), "makeup", null, "organic", null, null, null,
+				"c1".equals(code),
 				"hype_official", "하입 오피셜", "https://pic/hype.jpg", 12345L, new BigDecimal("500"));
 	}
 
@@ -101,6 +104,8 @@ class V1InfluencerControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.isInfluencerSaved").value(true))
 				.andExpect(jsonPath("$.data.recentContents[0].isContentsSaved").value(true))
-				.andExpect(jsonPath("$.data.recentContents[1].isContentsSaved").value(false));
+				.andExpect(jsonPath("$.data.recentContents[1].isContentsSaved").value(false))
+				.andExpect(jsonPath("$.data.recentContents[0].groupPurchase").value(true))
+				.andExpect(jsonPath("$.data.recentContents[1].groupPurchase").value(false));
 	}
 }

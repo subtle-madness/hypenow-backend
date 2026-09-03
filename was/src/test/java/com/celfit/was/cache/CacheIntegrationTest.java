@@ -41,8 +41,8 @@ import com.celfit.was.v1.influencer.InfluencerCard;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryAssembler;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryPageService.DiscoveryPage;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.BrandRow;
-import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.CaptionRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.CardRow;
+import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.GroupPurchaseCountRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.ShareRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.ThumbRow;
 import com.celfit.was.v1.influencer.V1InfluencerReportService;
@@ -178,7 +178,7 @@ class CacheIntegrationTest extends IntegrationTest {
 	void OffsetDateTime은_왕복시_인스턴트는_보존되고_오프셋은_UTC로_정규화된다() {
 		OffsetDateTime kstTime = OffsetDateTime.now(ZoneOffset.ofHours(9)).withNano(0);
 		ContentCardRow row = new ContentCardRow("c1", null, "caption", kstTime, "reels", null, null,
-				100L, 10L, 1L, 50L, kstTime, null, null, null, null, null, null, "glow", "글로우",
+				100L, 10L, 1L, 50L, kstTime, null, null, null, null, null, null, false, "glow", "글로우",
 				null, 20000L, new BigDecimal("50"));
 		ContentPage page = new ContentPage(List.of(row), 1L);
 
@@ -216,8 +216,9 @@ class CacheIntegrationTest extends IntegrationTest {
 						OffsetDateTime.now(ZoneOffset.UTC), 1000L, 100L, 10L)),
 				List.of(),
 				// minComments·maxComments·groupPurchaseCount·hasGroupPurchase(2026-09-03 확장) 캐시
-				// 왕복 확인 재료 — 캡션 1건이 공동구매 규칙에 매칭돼야 count·boolean 둘 다 검증된다.
-				List.of(new CaptionRow("glow", "공동구매 오픈했어요")))
+				// 왕복 확인 재료 — 저장소 집계값 1건이 그대로 count·boolean 둘 다에 실려야 한다
+				// (판정 자체는 analytics group_purchase_judgments 몫이라 여기선 결과값만 왕복 검증).
+				List.of(new GroupPurchaseCountRow("glow", 1L)))
 				.get(0);
 		// 협업 브랜드는 어셈블러가 이미 불변 List(toList())로 넘기지만, categoryShares 재료 자체를
 		// List.of()로 명시해 불변 입력이 캐시 왕복 후에도 record equals(List 인터페이스 계약, 구현체

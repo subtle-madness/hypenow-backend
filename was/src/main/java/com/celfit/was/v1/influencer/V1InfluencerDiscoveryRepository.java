@@ -331,25 +331,33 @@ public class V1InfluencerDiscoveryRepository {
 	}
 
 	/**
-	 * groupPurchaseCount·hasGroupPurchase(6.21 확장) 재료 — 캡션 12개, postedAt 내림차순.
+	 * groupPurchaseCount·hasGroupPurchase(6.21 확장) 재료 — 판정은 서버 판정 테이블
+	 * group_purchase_judgments가 정본이다(2026-09-03, 스펙 2026-09-03-group-purchase-judgment-design.md
+	 * §6). 이전에는 캡션 12개를 가져와 was 쪽 정규식(GroupPurchaseSignal)으로 매칭했으나, "#" 없는
+	 * 맨몸 "공구" 등 규칙 정교화가 analytics GROUP_PURCHASE_JUDGE 잡(규칙 우선 + 애매분만 LLM)으로
+	 * 옮겨가면서 was는 그 결과를 세는 역할만 남는다.
 	 * 창은 avgComments(account_content_series)가 아니라 {@link V1InfluencerRepository#findRecentCards}
 	 * (상세 6.4 recentContents)와 같은 모수를 쓴다 — contents 테이블을 posted_at DESC로 직접 잘라,
-	 * FE가 상세 화면에서 뱃지를 그릴 때 보는 캡션 12개와 발굴 카드의 카운트가 반드시 일치하게 한다
+	 * FE가 상세 화면에서 뱃지를 그릴 때 보는 최근 12개와 발굴 카드의 카운트가 반드시 일치하게 한다
 	 * (account_content_series는 뷰티/F&B 축·QUALIFIED·ENUMERATION·지표 스냅샷 보유로 모수가 더 좁다).
+	 * verdict가 NULL(미판정 — LLM 실패·잡 대기, 최대 30분 지연)이거나 판정 행 자체가 없는 게시물은
+	 * count(*) FILTER (WHERE j.verdict)가 자연히 제외한다(스펙 §6: 신뢰성 우선, 잡 주기 30분).
 	 */
-	public List<CaptionRow> findCaptions(List<String> handles) {
+	public List<GroupPurchaseCountRow> findGroupPurchaseCounts(List<String> handles) {
 		if (handles.isEmpty()) {
 			return List.of();
 		}
 		return jdbcClient.sql("""
-						SELECT account_handle, caption
-						FROM (SELECT account_handle, caption,
+						SELECT x.account_handle, count(*) FILTER (WHERE j.verdict) AS count
+						FROM (SELECT account_handle, short_code,
 						             row_number() OVER (PARTITION BY account_handle
 						                                ORDER BY posted_at DESC, short_code) AS rn
 						      FROM contents
 						      WHERE account_handle IN (:handles)) x
-						WHERE rn <= 12
-						""").param("handles", handles).query(CaptionRow.class).list();
+						LEFT JOIN group_purchase_judgments j ON j.short_code = x.short_code
+						WHERE x.rn <= 12
+						GROUP BY x.account_handle
+						""").param("handles", handles).query(GroupPurchaseCountRow.class).list();
 	}
 
 	public record CardRow(String handle, String displayName, String profileImageUrl, Long followers,
@@ -378,6 +386,6 @@ public class V1InfluencerDiscoveryRepository {
 	public record EngagementRow(String accountHandle, Long views, Long likes, Long comments) {
 	}
 
-	public record CaptionRow(String accountHandle, String caption) {
+	public record GroupPurchaseCountRow(String accountHandle, long count) {
 	}
 }

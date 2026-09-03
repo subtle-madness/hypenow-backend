@@ -19,8 +19,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * calm  — 3만·ER 2.0·배율 5.0, 스킨케어 100%, 협찬 0, 10일 전
  * mute  — 4만·ER 1.0·릴스 없음(avg_views NULL), 피드만, 스킨케어 100%, 40일 전
  * tiny  — 1천·ER 3.0, 5일 전
- * gp    — findCaptions 전용(계정·창 픽스처 없이 contents 14행만) — posted_at DESC 상위 12개 컷·
- *         공동구매 매칭 검증 재료(gp2·gp4 창 안 매칭, gp13 창 밖 매칭 제외 확인)
+ * gp    — findGroupPurchaseCounts 전용(계정·창 픽스처 없이 contents 14행만) — posted_at DESC 상위
+ *         12개 컷·group_purchase_judgments 카운트 검증 재료(gp2·gp4 창 안 verdict=true 2건,
+ *         gp6 창 안 verdict NULL 제외, gp8 창 안 판정 행 없음 제외, gp13 창 밖 verdict=true 제외)
  * 유효 팔로워는 Java(EffectiveFollowers)가 계산 — 여기선 SQL 조회 자체(findEngagements)만 검증한다.
  * minComments·maxComments 계산 자체는 어셈블러 단위 테스트(V1InfluencerDiscoveryAssemblerTest)가 맡는다.
  */
@@ -57,6 +58,7 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("DROP TABLE IF EXISTS accounts");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS beauty_taxonomy");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS image_assets");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS group_purchase_judgments");
 		jdbcTemplate.execute("""
 				CREATE TABLE accounts (
 				    handle            text PRIMARY KEY,
@@ -111,7 +113,7 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				    ad_type         text,
 				    detected_brands jsonb
 				)""");
-		// account_handle·posted_at은 findCaptions(공동구매 재료, contents 테이블 posted_at DESC 컷)가
+		// account_handle·posted_at은 findGroupPurchaseCounts(공동구매 재료, contents 테이블 posted_at DESC 컷)가
 		// findRecentCards(6.4)와 같은 모수를 쓰기 위해 필요 — 운영 DDL(V1__serving_tables.sql)과 동일 컬럼.
 		jdbcTemplate.execute("""
 				CREATE TABLE contents (
@@ -139,6 +141,18 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				    key         text NOT NULL,
 				    object_path text NOT NULL,
 				    PRIMARY KEY (kind, key)
+				)""");
+		// analytics V20260903110541 그대로(컬럼만 — Task 1이 세운 판정 결과 테이블 사본).
+		// findGroupPurchaseCounts가 여기 verdict=true만 센다(스펙 §6 신뢰성 우선).
+		jdbcTemplate.execute("""
+				CREATE TABLE group_purchase_judgments (
+				    short_code          text PRIMARY KEY,
+				    verdict             boolean,
+				    tier                text NOT NULL,
+				    reason              text,
+				    judged_caption_hash text NOT NULL,
+				    judged_at           timestamptz NOT NULL,
+				    model               text
 				)""");
 		// analytics V45 그대로 — 뷰티 게시물 비율 게이트가 이 뷰를 조인한다.
 		jdbcTemplate.execute("""
@@ -253,22 +267,27 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				  ('g4', 'glow', now() - interval '4 days', '립 리뷰', 'https://cdn/g4.jpg'),
 				  ('g5', 'glow', now() - interval '5 days', '일상', 'https://cdn/g5.jpg'),
 				  ('m1', 'mute', now() - interval '40 days', '피드 글', 'https://cdn/m1.jpg')""");
-		// findCaptions 전용 픽스처 — account_content_series와 무관하게 contents.posted_at DESC로
-		// 직접 12개를 자른다(findRecentCards와 같은 모수). gp2·gp4는 창 안(2·4일 전), gp13은 13일
-		// 전이라 rn=13으로 컷 밖 — 공동구매 문구가 있어도 카운트되면 안 된다(윈도우 경계 검증).
+		// findGroupPurchaseCounts 전용 픽스처 — account_content_series와 무관하게 contents.posted_at
+		// DESC로 직접 12개를 자른다(findRecentCards와 같은 모수). 판정은 캡션 정규식이 아니라
+		// group_purchase_judgments 테이블이 정본(analytics GROUP_PURCHASE_JUDGE 잡의 산출물 사본) —
+		// 캡션 문구는 사람이 읽는 힌트일 뿐 세는 근거가 아니다.
 		for (int i = 1; i <= 14; i++) {
-			String caption = switch (i) {
-				case 2 -> "공동구매 오픈합니다";
-				case 4 -> "#공구오픈 확인해주세요";
-				case 13 -> "공동구매 특가"; // 창 밖(13일 전) — 미카운트 기대
-				case 14 -> "메이크업 공구 정리했어요"; // 창 밖 + 애초에 비매칭(맨몸 공구)
-				default -> "일상 기록 " + i;
-			};
 			jdbcTemplate.update("""
 					INSERT INTO contents (short_code, account_handle, posted_at, caption, thumbnail_url)
-					VALUES (?, 'gp', now() - (? || ' days')::interval, ?, NULL)""",
-					"gp" + i, i, caption);
+					VALUES (?, 'gp', now() - (? || ' days')::interval, '일상 기록 ' || ?, NULL)""",
+					"gp" + i, i, i);
 		}
+		// gp2·gp4는 창 안(2·4일 전)에서 verdict=true → 카운트 2건 기대.
+		// gp6은 창 안이지만 verdict NULL(미판정 — LLM 실패·잡 대기, 30분 재시도) → 제외.
+		// gp8은 창 안이지만 판정 행 자체가 없음(잡이 아직 못 본 신규 게시물) → 제외.
+		// gp13은 verdict=true지만 rn=13으로 창 밖(윈도우 경계 검증) → 제외.
+		jdbcTemplate.update("""
+				INSERT INTO group_purchase_judgments (short_code, verdict, tier, reason,
+				  judged_caption_hash, judged_at) VALUES
+				  ('gp2', true, 'RULE', '#공구', 'h2', now()),
+				  ('gp4', true, 'RULE', '공동구매', 'h4', now()),
+				  ('gp6', NULL, 'LLM', NULL, 'h6', now()),
+				  ('gp13', true, 'RULE', '#공구', 'h13', now())""");
 		// 태그라인 이력 — 최신 행이 이겨야 한다
 		jdbcTemplate.update("""
 				INSERT INTO account_analyses (handle, analyzed_at, tagline) VALUES
@@ -605,22 +624,24 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 	}
 
 	@Test
-	void 보강_캡션_재료는_contents_posted_at_기준_최근_12개로_컷한다() {
-		// gp는 contents에 14행이 있지만(gp1~gp14), findCaptions는 posted_at DESC 상위 12개만
-		// 반환한다(findRecentCards·6.4 recentContents와 같은 모수) — 13·14일 전(gp13·gp14)은 제외.
-		var captions = repository.findCaptions(List.of("gp"));
-		assertThat(captions).hasSize(12);
-		assertThat(captions).extracting(V1InfluencerDiscoveryRepository.CaptionRow::caption)
-				.doesNotContain("공동구매 특가") // gp13 — 창 밖
-				.contains("공동구매 오픈합니다", "#공구오픈 확인해주세요"); // gp2·gp4 — 창 안
+	void 공동구매_카운트는_contents_posted_at_기준_최근_12개_창_안에서만_verdict_true를_센다() {
+		// gp는 contents에 14행이 있지만(gp1~gp14) 창은 posted_at DESC 상위 12개만
+		// 본다(findRecentCards·6.4 recentContents와 같은 모수). gp2·gp4(창 안 verdict=true) 2건만
+		// 세고, gp6(창 안이지만 verdict NULL — 미판정)·gp8(창 안이지만 판정 행 없음)·
+		// gp13(verdict=true지만 rn=13으로 창 밖)은 전부 제외된다.
+		var counts = repository.findGroupPurchaseCounts(List.of("gp"));
+		assertThat(counts).hasSize(1);
+		assertThat(counts.getFirst().accountHandle()).isEqualTo("gp");
+		assertThat(counts.getFirst().count()).isEqualTo(2);
 	}
 
 	@Test
-	void 보강_캡션_재료의_공동구매_매칭_수는_창_안에서만_2건() {
-		var captions = repository.findCaptions(List.of("gp"));
-		long groupPurchaseCount = captions.stream()
-				.filter(c -> GroupPurchaseSignal.matches(c.caption())).count();
-		assertThat(groupPurchaseCount).isEqualTo(2); // gp2·gp4만 — gp13(창 밖)·gp14(비매칭)는 제외
+	void 판정_행이_전혀_없는_핸들은_0건이다() {
+		// glow는 contents 창(g1~g5)이 있지만 group_purchase_judgments에는 한 행도 없다 —
+		// LEFT JOIN이라 행 자체는 살아남고 FILTER(WHERE j.verdict)가 0을 만든다(신뢰성 우선).
+		var counts = repository.findGroupPurchaseCounts(List.of("glow"));
+		assertThat(counts).hasSize(1);
+		assertThat(counts.getFirst().count()).isZero();
 	}
 
 	@Test
