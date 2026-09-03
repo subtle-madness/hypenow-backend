@@ -101,22 +101,29 @@ class DekStoreTest extends IntegrationTest {
 		int keyId = 104;
 		// encryption_keys 행은 없지만(=키 유실 모양) users에 이미 email_enc가 채워진 행이 있다 —
 		// 이중 쓰기 중이던 DB를 잘못 지정했거나 encryption_keys 백업 복원을 빠뜨린 상황의 재현.
-		jdbcClient.sql("""
+		Long dummyUserId = jdbcClient.sql("""
 				INSERT INTO app.users (email, password_hash, name, email_enc)
-				VALUES (:email, 'h', '레거시', 'v1:1:dummy-iv:dummy-ciphertext')""")
+				VALUES (:email, 'h', '레거시', 'v1:1:dummy-iv:dummy-ciphertext') RETURNING id""")
 				.param("email", "keyloss-" + UUID.randomUUID() + "@ex.com")
-				.update();
+				.query(Long.class).single();
 
-		DekStore store = new DekStore(jdbcClient, new FakeDekWrapper());
+		try {
+			DekStore store = new DekStore(jdbcClient, new FakeDekWrapper());
 
-		assertThatThrownBy(() -> store.loadOrBootstrap(keyId))
-				.isInstanceOf(IllegalStateException.class)
-				.hasMessageContaining("키 유실");
+			assertThatThrownBy(() -> store.loadOrBootstrap(keyId))
+					.isInstanceOf(IllegalStateException.class)
+					.hasMessageContaining("키 유실");
 
-		// 부트스트랩이 실행되지 않았어야 한다 — 행은 여전히 없어야 한다(새 DEK가 조용히 등록되지 않음).
-		Long count = jdbcClient.sql("SELECT count(*) FROM app.encryption_keys WHERE key_id = :id")
-				.param("id", keyId).query(Long.class).single();
-		assertThat(count).isEqualTo(0L);
+			// 부트스트랩이 실행되지 않았어야 한다 — 행은 여전히 없어야 한다(새 DEK가 조용히 등록되지 않음).
+			Long count = jdbcClient.sql("SELECT count(*) FROM app.encryption_keys WHERE key_id = :id")
+					.param("id", keyId).query(Long.class).single();
+			assertThat(count).isEqualTo(0L);
+		} finally {
+			// 이 테스트가 심은 더미 유저 행은 email_enc='v1:1:dummy-iv:dummy-ciphertext'라는 진짜
+			// 암호화 결과가 아닌 값을 남긴다 — 컨테이너가 JVM 전체에서 공유되므로(IntegrationTest)
+			// 다른 테스트의 app.users 카운트·전수 조회를 오염시키지 않도록 행 자체를 지운다.
+			jdbcClient.sql("DELETE FROM app.users WHERE id = :id").param("id", dummyUserId).update();
+		}
 	}
 
 	/**
