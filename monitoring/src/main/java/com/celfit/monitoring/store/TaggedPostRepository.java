@@ -81,6 +81,13 @@ public class TaggedPostRepository {
 	}
 
 	/**
+	 * 해시태그 제안 후보 집계 입력(2026-09-03 자동 시드 재설계 §3-2) — 태그된 게시물 1건의 캡션과
+	 * 게시일. takenAt은 동률 태그의 tie-break(최근 우선)에만 쓰이므로 null이어도 집계는 성립한다.
+	 */
+	public record TaggedCaption(String caption, Instant takenAt) {
+	}
+
+	/**
 	 * 신규 감지 게시물 링크 — 재감지(ON CONFLICT)는 지표·메타를 건드리지 않는다. taken_at null은
 	 * 호출자가 거른다.
 	 *
