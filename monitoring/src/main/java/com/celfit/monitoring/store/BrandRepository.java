@@ -177,12 +177,11 @@ public class BrandRepository {
 	 * <p>미수집(null)·공백은 empty — 호출측이 "표시명 없음"으로 다루고 계정명만으로 진행한다.
 	 */
 	public Optional<String> findFullName(long brandId) {
-		List<String> rows = db.query("SELECT full_name FROM brand_account WHERE id = ?",
-				(rs, rowNum) -> rs.getString("full_name"), brandId);
-		if (rows.isEmpty()) {
-			return Optional.empty();
-		}
-		return Optional.ofNullable(rows.getFirst()).filter(value -> !value.isBlank());
+		// Stream.findFirst()는 원소가 null이면 Optional.of(null)에서 NPE다(full_name 미수집 행이
+		// 정확히 이 경우) — 행 매퍼가 Optional을 담아 null을 안전하게 통과시키고 flatMap으로 편다.
+		return db.query("SELECT full_name FROM brand_account WHERE id = ?",
+				(rs, i) -> Optional.ofNullable(rs.getString("full_name")), brandId)
+				.stream().findFirst().flatMap(value -> value).filter(value -> !value.isBlank());
 	}
 
 	public List<BrandRow> findActive() {

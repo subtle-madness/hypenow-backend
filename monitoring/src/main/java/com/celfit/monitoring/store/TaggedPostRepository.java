@@ -109,8 +109,7 @@ public class TaggedPostRepository {
 				  AND t.tag_detected_at IS NOT NULL
 				  AND m.caption IS NOT NULL
 				  AND m.caption <> ''""",
-				(rs, rowNum) -> new TaggedCaption(rs.getString("caption"),
-						rs.getTimestamp("taken_at") == null ? null : rs.getTimestamp("taken_at").toInstant()),
+				(rs, i) -> new TaggedCaption(rs.getString("caption"), rs.getTimestamp("taken_at").toInstant()),
 				brandId);
 	}
 
