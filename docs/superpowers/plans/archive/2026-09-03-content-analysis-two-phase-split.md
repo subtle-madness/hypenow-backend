@@ -1,6 +1,6 @@
 # 콘텐츠 AI 분석 2단계 분리 구현 계획
 
-> 상태: 🟢 활성 · 2026-09-03
+> 상태: ✅ 실행됨 (2026-09-03)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -3896,7 +3896,7 @@ cd $REPO && ./gradlew :was:test --tests "com.celfit.was.v1.content.*"
 ```markdown
 # `GET /v1/contents/{shortCode}` (스펙 6.3) - null 가능 필드 계약
 
-> 상태: 🟢 활성 · 2026-09-03
+> 상태: ✅ 실행됨 (2026-09-03)
 
 ## 무엇이 바뀌었나
 

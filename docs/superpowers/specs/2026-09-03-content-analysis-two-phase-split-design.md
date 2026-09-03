@@ -1,6 +1,6 @@
 # 콘텐츠 AI 분석 2단계 분리 설계 (파트 A 사실 D+1 · 파트 B 해석 D+4)
 
-> 상태: 🟢 활성 · 2026-09-03 · 설계 확정(구현 미착수). PR·구현은 사용자 승인 후.
+> 상태: ✅ 구현됨 (2026-09-03 구현 완료 · 운영 전환은 [deploy/README.md §17](../../../deploy/README.md#17-콘텐츠-분석-2단계-분리-파트-a-사실-d1--파트-b-해석-d4) 런북, 토글 기본 unified)
 
 ## 0. 배경
 
@@ -76,9 +76,19 @@
 | D+4 06:00 | **LATE_BACKFILL_ANALYZE(파트 B, 늦크롤)** | 마킹 late_backfill |
 
 파트 A와 파트 B는 `JobName`이 달라 `JobLock`이 잡별로 독립이므로 같은 시각에 걸어도 서로 막지 않는다.
-다만 배치 제출 직전 pending 수거(`collectJob.run()`) 호출이 두 잡에서 겹치면 BATCH_COLLECT 락에서
-한쪽이 BUSY로 건너뛰는데, 30분 뒤 정기 수거가 받쳐 주므로 무해하다. 크론은 A 05:00 · B 05:30 · 늦크롤
-B 06:00으로 15~30분 간격을 두는 것을 기본값으로 한다(compose 변경).
+크론은 A 05:00 · B 05:30 · 늦크롤 B 06:00으로 15~30분 간격을 두는 것을 기본값으로 한다(compose 변경).
+
+> **구현 시 정정(2026-09-03)**: 배치 제출 직전 pending 수거는 `ContentAnalysisJob.runQuery`가
+> `ContentBatchCollectJob.run()`을 **직접 호출**한다 - `JobLock`을 거치지 않는다(스케줄러가
+> `JobName.BATCH_COLLECT`에 거는 락은 `AnalyticsJobService` 경유 호출에만 적용되고, 이 인라인
+> 호출은 그 경로를 타지 않는다). 즉 "BATCH_COLLECT 락에서 한쪽이 BUSY로 건너뛴다"는 원안의 설명은
+> 틀렸다 - FACT_ANALYZE(05:00) 직전 스윕·정기 BATCH_COLLECT(05:10)·ANALYZE(05:30) 직전 스윕이
+> 겹치면 **셋 다 그대로 실행**된다. 데이터는 안전하다(INSERT는 `ON CONFLICT DO NOTHING`, UPDATE는
+> 멱등) - 대가는 같은 배치를 최대 3번 중복 조회하는 비용뿐이다(수용, §9-5). 이 스윕은 `resolveTargets`
+> **앞에서** 실행되도록 순서가 고정됐다(2026-09-03 리뷰 C1) - 순서가 뒤바뀌면 방금 수거해 timely로
+> 확정한 short_code가 여전히 SYNTHESIS 대상 목록에 남아 빈 "확인된 사실"로 재제출될 수 있어서다.
+> 2차 방어선으로 `requireStoredFacts`(제출 직전 storedFacts 재조회 후 없는 대상을 드롭 + 경고 로그)가
+> 붙었다.
 
 ## 3. 데이터 계약 - `content_analyses` 행의 상태 전이
 
@@ -116,8 +126,17 @@ B 06:00으로 15~30분 간격을 두는 것을 기본값으로 한다(compose �
    `WHERE NOT mature OR timely OR in_window`. 컬럼은 04와 동일 + `mature`. `timely`도 그대로 노출한다
    (진단용. A 잡은 안 읽는다).
 3. **`analytics.v_analysis_candidates`는 `SELECT (기존 컬럼) FROM v_fact_candidates WHERE mature`**로
-   재정의한다. 컬럼·행 집합·`timely` 의미가 현행과 동치라 기존 소비자(파트 B 잡·`pending.sh`·
-   어드민 퍼널 `PipelineStatsService`)는 무수정이다.
+   재정의한다. 컬럼·행 집합·`timely` 의미가 현행과 동치라 기존 소비자(파트 B 잡·`pending.sh`)는
+   무수정이다.
+
+> **구현 시 정정(2026-09-03)**: 어드민 퍼널 `PipelineStatsService`는 "무수정"이 아니다 - 이 트랙에서
+> **`v_fact_candidates`를 조건 없이 직접 읽도록** 바뀌었다(`SELECT short_code, timely, mature FROM
+> v_fact_candidates`, 미성숙(mature 후보 뷰(`v_analysis_candidates`)에 있는 rn=1)까지 노출해
+> "미성숙 풀" 지표를 계산한다). 따라서 **04 뷰(`v_fact_candidates` 포함)를 코드 배포보다 먼저
+> 적용해야 하는 순서 의존성이 하드하다** - 뷰 적용 전에 이 코드가 배포되면 `v_fact_candidates`가
+> 없어 어드민 퍼널 화면이 즉시 깨진다(`deploy/README.md` §17 배포 순서 ①→③ 참고). 또한 미성숙 행에도 timely
+> LATERAL(`content_snapshot_cache` EXISTS 세미조인)이 계산되므로, 어드민 경로도 파트 A 잡과 같은
+> 뷰 비용 증분(§4-1 플랜 주의)을 그대로 진다.
 
 왜 "성숙 무관 전량"이 아니라 `NOT mature OR timely OR in_window`인가: 성숙했는데 timely도 아니고 최근
 12 윈도우 밖인 게시물은 현행에서도 영구 제외 대상이다. 이걸 파트 A에 열면 운영 백로그(계정당 12개
@@ -157,23 +176,58 @@ V33 CHECK는 `('timely','late_backfill','immature')`다. 파트 A 시점 값의 
 | was `V1/V2InfluencerReportRepository.findSeries` | 필터 없음, ad_type만 | **D+1부터 ad_type 표시**(목표) | 없음 |
 | analysis DB 파생 뷰·MV(`account_category_stats`·`account_beauty_ratio`·`account_category_share`·`account_sponsored_counts`) | 필터 없음(is_beauty·main_category·ad_type만) | D+1부터 집계 포함 | 없음(`DERIVED_INPUT_JOBS`에 FACT_ANALYZE 추가해 수거 후 REFRESH) |
 | analytics `ContentAnalysisWriter.insert` | timely/late_backfill 기록 | 파트 A는 `'pending'` | `insertFacts` 신설(§4-4) |
-| analytics `ContentSynthesisRefreshJob` | `synthesis_version IS DISTINCT FROM ?` | **A만 행을 잡아 온라인으로 파트 B를 돌려버림** | `AND metric_timeliness <> 'pending'` 가드 추가(재생성 전용 유지) |
+| analytics `ContentSynthesisRefreshJob` | `synthesis_version IS DISTINCT FROM ?` | **A만 행을 잡아 온라인으로 파트 B를 돌려버림** | `AND metric_timeliness IS DISTINCT FROM 'pending'` 가드 추가(재생성 전용 유지) |
 | analytics 어드민 퍼널 `PipelineStatsService`·`AdminUiController`(immature·NULL 레거시 집계) | 행 존재=기분석 | A만 행이 "기분석"으로 잡힘 | "사실만(pending)" 칩 분리 |
-| `analytics/check/pending.sh` | `_analyzed(short_code, metric_timeliness)` | 20/30 "기분석"에 A만 포함 | 상태 `'pending'`을 "사실만·해석 대기" 코드로 분리(예: 24/34) |
+| `analytics/check/pending.sh` | `_analyzed(short_code, metric_timeliness)` | 20/30 "기분석"에 A만 포함 | 상태 `'pending'`을 "사실만·해석 대기" 코드로 분리(11/24/34/42) |
 | analytics `/ui/coverage` `CoverageRepository` copy3·cauth | `count(ai_content_summary…)` | 분모 대비 상시 "일부 누락" | 파트 B 행만 분모로(`synthesized_at IS NOT NULL`) 또는 A/B 행 분리 표기 |
 | 하입 스코어 | raw 뷰(02)에서 계산, `content_analyses` 무관 | 영향 없음 | 없음 |
 | `v_analysis_candidates.timely` | raw 스냅샷으로 판정, 마킹과 무관 | 영향 없음 | 없음 |
+
+> **구현 시 정정(2026-09-03)**:
+> - `ContentSynthesisRefreshJob`의 가드는 `<>`가 아니라 **`IS DISTINCT FROM 'pending'`**(NULL-safe)로
+>   구현됐다. `metric_timeliness`가 NULL인 레거시 행(V38 이전, 해석은 있으나 버전 미기록)에서 `<>`는
+>   NULL과 비교해 UNKNOWN이 되어 그 행이 재생성 대상에서 조용히 빠지는데, `IS DISTINCT FROM`은 NULL을
+>   "pending과 다름"으로 정확히 판정해 레거시 행도 그대로 대상에 남는다.
+> - `CoverageRepository`는 "파트 B 행만 분모"가 아니라 **분자·분모를 동일 모집단으로 통일**했다 -
+>   copy3(18행)·baseline(19행, §4-3 소개 이후 신설된 행)·cauth(22행) 세 지표 모두
+>   `content_analyses WHERE metric_timeliness IS DISTINCT FROM 'pending'` 서브쿼리(`anb`)를 분모로
+>   쓴다(분자도 같은 서브쿼리에서 집계). 즉 분자·분모가 같은 "파트 B 완료분" 모집단이 되어, 배포
+>   즉시 이 세 행은 (분리 자체와 무관하게) "준비됨"으로 뛴다 - 이전에는 `contents` 미러 전체가
+>   분모라 파트 B 미완 행이 항상 분모에 섞여 있었다.
+> - **`ContentAnalysisWriter`는 파트 B 배치/온라인 쓰기를 `updateSynthesisPending`(WHERE
+>   `metric_timeliness = 'pending'`)으로 추가 가드한다** - `updateSynthesis`는 재생성 잡 전용으로
+>   남기고(WHERE 없음, "이미 확정된 행"도 갱신 가능해야 하므로), 배치 SYNTHESIS 수거 경로는 새
+>   메서드로 "아직 pending인 행만" UPDATE해 늦게 도착한 파트 B 배치가 이미 완료된 행을 덮어쓰지
+>   못하게 한다(§4-7 롤백 순서와 연동).
+> - `pending.sh`의 상태 코드 우선순위(랭킹·상세 트랙 분기): 기분석(20/30, 파트 B 완료) → 댓글 게이트
+>   보류(22/32) → 미러 갭(23/33) → **사실만(24/34)** → 분석 대기(21/31) 순으로 판정한다. 즉 파트 A 행이
+>   있어도 댓글 게이트나 미러 갭에 걸려 있으면 그 차단 사유(22/23)로 집계되고 "사실만"으로 뭉개지지
+>   않는다 - split 모드에선 거의 모든 후보가 파트 A 행을 가지므로, 차단 사유가 상위 정보다(최종 리뷰
+>   반영). 11(미성숙·사실만)·42(영구 제외·사실만)는 각 분기에서 그대로 최상단이다.
 
 ### 4-3. was 노출 규칙의 변화 (FE 계약 영향)
 
 - **6.1 랭킹**: 무변경. 파트 B 완료(timely) 시점부터 노출 - 현행과 같은 D+4.
 - **6.3 드로어 `GET /v1/contents/{shortCode}`**: 현행은 분석 행이 없으면 404. 신 흐름에서는 **D+1부터
-  200이 되며 해석 5필드·기준선·비교 블록이 null**이다. FE가 null 문구를 "해석 준비 중"으로 렌더링하는지
-  확인이 필요하다(§9 미해결 1). 필요하면 was가 `'pending'` 행을 404로 유지하는 옵션도 가능하나, 광고
-  판정·브랜드를 드로어에 먼저 보여주는 것이 이 트랙의 목적이므로 기본은 200.
+  200이 되며 비교 블록 자체는 항상 내려간다 - 그중 특정 필드만 null**이다. FE가 null 문구를 "해석 준비
+  중"으로 렌더링하는지 확인이 필요하다(§9 미해결 1). 필요하면 was가 `'pending'` 행을 404로 유지하는
+  옵션도 가능하나, 광고 판정·브랜드를 드로어에 먼저 보여주는 것이 이 트랙의 목적이므로 기본은 200.
 - **6.4 / v2 인플루언서 상세 최근 콘텐츠**: ad_type·카테고리가 D+1부터 채워진다(목표 증상 해소).
 - 계약 문서 `docs/contracts/`에 6.3 응답의 null 가능 필드 목록을 명시한다(09-02 지침: FE 노출 변경은
   계약 문서 동반).
+
+> **구현 시 정정(2026-09-03)**: "해석 5필드·기준선·비교 블록이 null"은 부정확하다 - **비교 블록
+> (`comparison`)은 항상 내려가고, 그 안에서 개별 필드만 null**이다. null인 필드는 `aiContentSummary`,
+> `comparison.narrative`, `comparison.engagementRate.baseline`,
+> `comparison.engagementQuality.likes.baseline`/`.comments.baseline`, `commentAnalysis.insight`,
+> `commentAnalysis.signals.authenticity.grade`/`.note`, `categoryContext.percentile`뿐이다.
+> `comparison.views`(조회수·순위·최근 릴스 차트)는 라이브 재계산이라 D+1부터 채워진다(파트 B 지표가
+> 아니라 별도 소스). 전체 계약은 `docs/contracts/v1-content-report-nullable-fields.md`가 정본이다.
+>
+> **추가로 원안에 없던 사실**: 성숙했으나 timely도 아니고 최근 12 윈도우도 벗어나 파트 B 후보가 영영
+> 안 되는 콘텐츠(§4-1 "영구 제외", `pending.sh` 42/34 중 42)는 위 null 필드가 **"D+4까지"가 아니라
+> 영구히** null로 남는다. 6.3은 이 경우에도 계속 200을 주므로, FE 자리표시 문구가 "곧 채워짐"을
+> 암시하면 안 된다(계약 문서 §롤백/§영구 null 절 참고).
 
 ### 4-4. Java - analytics
 
@@ -189,6 +243,12 @@ JobName.LATE_BACKFILL_ANALYZE  → mode=split ? SYNTHESIS(timely=false) : UNIFIE
 
 `analytics.analyze-mode`(app_setting, 잡 시작마다 읽음)가 `unified`면 FACT_ANALYZE는 no-op 로그만
 남기고 끝난다.
+
+> **구현 시 정정(2026-09-03)**: `runFacts()`는 `runQuery(Phase.FACTS, timely=false, ...)`를 호출한다.
+> FACTS에는 timely 개념이 없어(파트 A는 성숙 무관 후보를 전량 대상으로 한다) 이 `false`는 의미 없는
+> 자리값이다. `content_batch_jobs.timely` 컬럼에도 FACTS 청크는 `false` 고정으로 쓰이고 수거 시
+> 읽히지 않으며, 로그는 `timely=n/a`로 표기해 "timely=false"로 오인되지 않게 한다
+> (`ContentAnalysisJob.timelyLogValue`).
 
 **`resolveTargets(phase, timely)`**:
 
@@ -231,8 +291,9 @@ REFRESH는 BATCH_COLLECT가 이미 트리거하므로, 실제 갱신은 수거 �
 (`thumbnailEnabled`)는 파트 A 온라인 경로에만 의미가 있다(사실 추출이 썸네일 소비자). 배치 시 온라인
 폴백 규칙은 현행 유지.
 
-**`ContentSynthesisRefreshJob`**: 대상 SQL에 `AND metric_timeliness <> 'pending'` 추가. 역할은
-"이미 해석이 있는 행의 재생성"으로 한정한다(온라인 유지).
+**`ContentSynthesisRefreshJob`**: 대상 SQL에 `AND metric_timeliness IS DISTINCT FROM 'pending'`
+추가(NULL-safe - `<>`는 레거시 NULL 행을 조용히 빠뜨린다, 위 정정 참고). 역할은 "이미 해석이 있는
+행의 재생성"으로 한정한다(온라인 유지).
 
 ### 4-5. `content_batch_jobs` - 파트 구분 컬럼
 
@@ -273,6 +334,19 @@ FACT_ANALYZE는 no-op, ANALYZE/LATE_BACKFILL은 통합 콜로 복귀한다. 재�
 metric_timeliness='pending'`(사용자 확인 후, 파트 A는 다음 통합 잡이 다시 만든다). 뷰·마이그레이션은
 롤백 불요(추가만이라 구 코드와 호환).
 
+> **구현 시 정정(2026-09-03)**: (b) 영구 복귀 갈래는 **DELETE 전에 진행 중인 배치를 먼저 취소**해야
+> 한다 - 순서는 (1) 토글을 `unified`로 되돌린다 (2)
+> `UPDATE content_batch_jobs SET status='failed', note='롤백 취소', sidecar_jsonl=NULL WHERE
+> status='pending' AND kind IN ('facts','synthesis')`로 아직 수거되지 않은 파트 A/B 배치를 죽인다
+> (3) 그 다음에야 `DELETE FROM content_analyses WHERE metric_timeliness='pending'`을 실행한다.
+> 이 순서가 필요한 이유: `ContentAnalysisWriter`는 파트 B 배치/온라인 쓰기를 `updateSynthesisPending`
+> (`WHERE metric_timeliness = 'pending'`)으로 가드하므로, DELETE **이후에** 늦게 도착한 파트 B 배치가
+> 수거되면 이미 지워진 행에 대한 UPDATE는 0행으로 조용히 무시된다(안전). 반대로 늦게 도착한 **파트 A**
+> 배치(`insertFacts`, `ON CONFLICT DO NOTHING`)는 DELETE 이후 수거되면 방금 지운 것과 같은
+> `short_code`로 **고아 pending 행을 다시 만들어 버린다** - 통합 잡이 이후 이 행을 "이미 분석됨"으로
+> 보고 건너뛰므로 조용히 재발한다. (2)에서 pending 배치를 먼저 취소하는 것이 이 재발을 막는 유일한
+> 방어선이다.
+
 ## 5. 배치 잡 상세 (수거 분기)
 
 ```
@@ -310,6 +384,12 @@ sidecar(JSONL, DB 저장)에 phase별로 싣는 것: `facts` = short_code·is_be
   `updateSynthesis` → 상태 "A+B"(timely 마킹·version) 전이. 재생성 경로가 기존 마킹을 보존하는지.
 - `ContentAnalysisJobTest`: phase별 `resolveTargets` - FACTS는 행 존재만 제외, SYNTHESIS는 A 부재·B 완료·
   댓글 게이트 제외, UNIFIED 현행 동일. `analyze-mode=unified`에서 FACT_ANALYZE no-op.
+  **추가: "FACTS는 댓글 게이트를 적용하지 않는다"**(댓글 미분류인 콘텐츠도 파트 A 후보에 포함 -
+  댓글 게이트는 SYNTHESIS 전용, `resolveTargets`의 FACTS 분기는 `analyzedShortCodes()`만 본다) +
+  **"null 포트는 조용히 no-op이 아니라 크게 실패한다"**(`analyze-mode=split`인데
+  프로바이더가 gemini/vertex가 아니라 `factsPort`/`synthesisPort`가 null이면 `IllegalStateException`
+  - anthropic 프로바이더에서 split을 켜면 "왜 안 도는지" 알 수 없는 조용한 no-op 대신 잡이 명시적으로
+  죽는다).
 - `ContentBatchCollectJobTest`: kind 3종 분기, `synthesis` 0행 갱신 경고, kind 기본값 `analyze` 호환.
 - `ContentSynthesisRefreshJobTest`: pending 행 미대상.
 - `GeminiContentAnalyzerTest`: `RESPONSE_SCHEMA_FACTS`에 파트 B 키 없음, `userTextFacts`에 지표 줄 없음.
@@ -373,8 +453,10 @@ B로 빠짐), 04 뷰 EXPLAIN 시간.
 4. **파트 B 댓글 분포 입력**: 댓글 수집이 MVP 제외라 분포가 빈 값인데, `aiCommentInsight`·
    `commentAuthenticityGrade`가 빈 입력에서 무엇을 내는지는 현행과 동일 문제(이 트랙 범위 밖). 파트 B
    프롬프트를 손볼 기회이므로 "댓글 분포 없음이면 해당 항목은 '데이터 없음'으로" 규칙 추가 여부.
-5. **크론 간격**: A 05:00·B 05:30 제안. 배치 제출 자체는 수 초라 붙여도 되지만, 첫 배포일 A 1만 건
-   제출과 B 제출이 겹칠 때 GCS 업로드·수거 잡 락 BUSY 로그가 어지럽지 않은지 첫 주 관찰 후 조정.
+5. **크론 간격**: ✅ **확정(구현 반영)** - A(FACT_ANALYZE) 05:00 · B(ANALYZE) 05:30 · 늦크롤 B
+   (LATE_BACKFILL_ANALYZE) 06:00 KST(`deploy/compose.yaml`). 정기 BATCH_COLLECT(05:10~11:40 30분
+   간격)가 A와 B 사이(05:10)에 낀다. 겹침은 BUSY로 스킵되는 게 아니라(§2 정정 참고) 셋 다 그대로
+   실행되는 것으로 수용 확정 - 비용은 중복 다운로드뿐, 데이터는 멱등이라 안전.
 6. **어드민 `/ui` 표기**: 잡 카드에 FACT_ANALYZE 추가, 퍼널에 "사실만" 칩 - 범위에 포함하되 화면 설계는
    구현 시 결정.
 7. **contract 단계 시점**: `kind='analyze'`·UNIFIED phase·`analyze-mode` 토글 제거는 split 2주 안정 후.
