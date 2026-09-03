@@ -76,14 +76,23 @@ public class BrandSnapshotRepository {
 				p.saves(), p.shares(), Boolean.TRUE.equals(p.sharesHidden()), p.reposts());
 	}
 
-	/** 브랜드 계정 프로필 추이 — 매일 스윕의 프로필 1콜을 일 1행으로(profile_snapshot 동형). */
+	/**
+	 * 브랜드 계정 프로필 추이 — 매일 스윕의 프로필 1콜을 일 1행으로(profile_snapshot 동형).
+	 *
+	 * <p>같은 날 재수집 시 null 관측의 덮어쓰기 보호(S15 보완) — SnapshotRepository.upsertProfile과
+	 * 동형 결함을 그대로 물려받고 있었다. og 표면은 media_count가 og:description 영어 정규식
+	 * 파싱 의존이라 부분 파싱 실패(null)가 흔하고, followers·following도 문서 JSON에 해당 키가
+	 * 없으면 null로 온다. BrandCollectService가 이 메서드로 같은 og/wpi fetcher 결과를 쓰므로
+	 * COALESCE 보호를 동형 적용한다.
+	 */
 	public void upsertBrandProfile(String username, LocalDate on, ProfileInfo p) {
 		db.update("""
 				INSERT INTO brand_profile_snapshot (username, captured_on, followers, following, media_count)
 				VALUES (?, ?, ?, ?, ?)
 				ON CONFLICT (username, captured_on) DO UPDATE SET
-				  followers=EXCLUDED.followers, following=EXCLUDED.following,
-				  media_count=EXCLUDED.media_count""",
+				  followers=COALESCE(EXCLUDED.followers, brand_profile_snapshot.followers),
+				  following=COALESCE(EXCLUDED.following, brand_profile_snapshot.following),
+				  media_count=COALESCE(EXCLUDED.media_count, brand_profile_snapshot.media_count)""",
 				username, on, p.followers(), p.following(), p.mediaCount());
 	}
 
