@@ -328,6 +328,10 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/monitoring
       SPRING_DATASOURCE_USERNAME: ${MONITORING_DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${MONITORING_DB_PASSWORD}
+      # Hikari 풀 10 → 20(2026-09-03 브랜드 스윕 병렬화) — 동시 DB 사용자 최악 스윕 4 + 보강 워커 10 + 광고 판정 4 +
+      # 스케줄러 2 + 웹. 운영 Postgres max_connections 100 중 ~52 사용(09-03 실측). application.yml이 아니라 여기인
+      # 이유는 테스트 컨텍스트가 같은 값을 물려받지 않게 하기 위함(yml 주석 참조)
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "20"
       HIKER_API_KEY: ${HIKER_API_KEY}
       # 자체크롤 프록시·댓글 graphql 파라미터. 개통 토글은 app_setting(ig-source.self-enabled,
       # ig-source.force-hiker)이 런타임 관장 — 기본 off라 미개통. DATAIMPULSE_*는 crawler와 같은 .env 키 공유.

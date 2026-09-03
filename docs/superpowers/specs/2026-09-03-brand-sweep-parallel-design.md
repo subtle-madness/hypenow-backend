@@ -77,9 +77,9 @@ Loki 마커(`브랜드 태그 수집 —`·`태그 부재 검증 — 브랜드`�
 `sweepUnenumerated` ↔ `backfillUnenriched` 겹침만 막는다(08-28 리뷰의 원 의도 — 재기동 백필과
 야간 스윕이 같은 게시물을 이중 과금하지 않게). 획득·해제 단위(브랜드 1건 처리)는 불변.
 
-### 3-3. DB 커넥션 풀 — monitoring `application.yml`
+### 3-3. DB 커넥션 풀 — 운영 compose env
 
-`spring.datasource.hikari.maximum-pool-size: 20`(기본 10). 동시 DB 사용자 최악: 스윕 4 + 보강 워커 10
+`SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE=20`(기본 10)을 `deploy/compose.yaml` monitoring·`compose.test.yaml` test-monitoring env로 주입한다. `application.yml`에 두지 않는 이유: monitoring의 @SpringBootTest 컨텍스트 여러 개가 Testcontainers Postgres 한 대(max_connections 100)를 나눠 쓰는데, 컨텍스트당 풀 20이면 연결 한도에 닿아 CI가 깨진다(09-03 실측 — 3회 연속 SweepControllerTest 6건 FlywaySqlUnableToConnectToDb). 동시 DB 사용자 최악: 스윕 4 + 보강 워커 10
 + 광고 판정 워커 4 + 스케줄러 2 + 웹. 점유는 짧지만 기본 10에서는 풀 대기(30초 초과 시 예외 →
 격리 실패로 집계)가 생길 수 있다. 운영 Postgres는 max_connections 100 중 ~52 사용(2026-09-03 실측)이라
 +10은 여유 안이다.

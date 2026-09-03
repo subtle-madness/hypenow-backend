@@ -441,7 +441,7 @@ DB 측 전송분이 ~7.5ms뿐이라 로컬 하니스로는 ~1.9초 고정비의 
 `brandSweepExecutor`(`monitoring.brand.sweep-concurrency:4`)에 제출하고 join, 제출 순서는 전날
 `brand_call_count` 내림차순(`findActiveHeaviestFirst`, LPT). 브랜드 안 3단계 순서·격리·touchSwept
 불변. 동반 수정 — direct 2단계 겹침 가드 `unenumeratedBusy`(서비스 전역)를 `busyBrands`(브랜드 키
-집합)로: 전역이면 병렬 브랜드가 서로의 2단계를 "겹침"으로 건너뛴다. Hikari 풀 10→20, 전역 Hiker
+집합)로: 전역이면 병렬 브랜드가 서로의 2단계를 "겹침"으로 건너뛴다. Hikari 풀 10→20(compose env — yml에 두면 테스트 컨텍스트가 물려받아 CI가 깨진다), 전역 Hiker
 동시 콜 예산 최악 14→17(08-12 램프 실측 20 이내, 힙 +30MB). 브랜드별 `브랜드 스윕 완료 — {u} {ms}ms
 (태그·direct·해시태그)` 로그 신설. 기대 105~140분(KST 03:45~04:20 종료), 롤백은
 `MONITORING_BRAND_SWEEP_CONCURRENCY=1`. **스윕 뒤 이미지 아카이브 57분(CPU 0.34~0.38코어)은 범위
