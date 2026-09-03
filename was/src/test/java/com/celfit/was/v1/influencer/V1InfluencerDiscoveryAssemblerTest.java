@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.BrandRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.CardRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.EngagementRow;
+import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.GroupPurchaseCountRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.ShareRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.ThumbRow;
 import java.math.BigDecimal;
@@ -28,7 +29,8 @@ class V1InfluencerDiscoveryAssemblerTest {
 
 	@Test
 	void 카드_변환_스케일과_id_규칙() {
-		var cards = assembler.toCards(List.of(row("glow")), List.of(), List.of(), List.of(), List.of());
+		var cards = assembler.toCards(List.of(row("glow")), List.of(), List.of(), List.of(), List.of(),
+				List.of());
 		var card = cards.get(0);
 		assertThat(card.id()).isEqualTo("glow"); // id = handle (6.4 확정 준용)
 		assertThat(card.handle()).isEqualTo("glow");
@@ -47,7 +49,8 @@ class V1InfluencerDiscoveryAssemblerTest {
 	void bio_tagline_부재는_빈문자열_배열은_빈배열() {
 		var bare = new CardRow("mute", "이름", null, 40000L, 40L, 50L, null, null,
 				null, null, null, 300L, 10L, null, 0L, null, null, null);
-		var card = assembler.toCards(List.of(bare), List.of(), List.of(), List.of(), List.of()).get(0);
+		var card = assembler.toCards(List.of(bare), List.of(), List.of(), List.of(), List.of(),
+				List.of()).get(0);
 		assertThat(card.bio()).isEmpty();
 		assertThat(card.tagline()).isEmpty();
 		assertThat(card.effectiveFollowers()).isNull(); // 시계열 없음
@@ -57,6 +60,10 @@ class V1InfluencerDiscoveryAssemblerTest {
 		assertThat(card.recentThumbs()).isEmpty();
 		assertThat(card.hypeScore()).isNull(); // 점수 가능 콘텐츠 없는 계정
 		assertThat(card.email()).isNull(); // biography 매치 없음(또는 NULL)
+		assertThat(card.minComments()).isNull(); // 창 표본 0
+		assertThat(card.maxComments()).isNull();
+		assertThat(card.groupPurchaseCount()).isZero();
+		assertThat(card.hasGroupPurchase()).isFalse();
 	}
 
 	@Test
@@ -68,7 +75,7 @@ class V1InfluencerDiscoveryAssemblerTest {
 				"sponsored", OffsetDateTime.parse("2026-07-15T16:00:00Z"), 100L, 10L, 1L));
 		var card = assembler.toCards(List.of(row("glow")), shares,
 				List.of(new BrandRow("glow", "롬앤"), new BrandRow("glow", "클리오")), thumbs,
-				List.of()).get(0);
+				List.of(), List.of()).get(0);
 		assertThat(card.categoryShares()).hasSize(3);
 		assertThat(card.categoryShares().get(0).category()).isEqualTo("makeup");
 		assertThat(card.collaboratedBrands()).containsExactly("롬앤", "클리오");
@@ -80,7 +87,7 @@ class V1InfluencerDiscoveryAssemblerTest {
 	@Test
 	void 본쿼리_정렬_순서를_보존한다() {
 		var cards = assembler.toCards(List.of(row("b"), row("a")), List.of(), List.of(), List.of(),
-				List.of());
+				List.of(), List.of());
 		assertThat(cards).extracting(InfluencerCard::handle).containsExactly("b", "a");
 	}
 
@@ -91,14 +98,55 @@ class V1InfluencerDiscoveryAssemblerTest {
 		var engagements = List.of(
 				new EngagementRow("a", null, 100L, 10L),
 				new EngagementRow("a", null, 200L, 20L));
-		var cards = assembler.toCards(rows, List.of(), List.of(), List.of(), engagements);
+		var cards = assembler.toCards(rows, List.of(), List.of(), List.of(), engagements, List.of());
 		assertThat(cards.get(0).effectiveFollowers()).isEqualTo(165L);
 	}
 
 	@Test
 	void 시계열_없는_계정은_유효_팔로워_null() {
 		var cards = assembler.toCards(List.of(row("a", 10_000L)),
-				List.of(), List.of(), List.of(), List.of());
+				List.of(), List.of(), List.of(), List.of(), List.of());
 		assertThat(cards.get(0).effectiveFollowers()).isNull();
+	}
+
+	@Test
+	void 댓글_min_max는_avgComments와_같은_창에서_NULL을_제외하고_계산한다() {
+		// comments NULL(댓글 미수집) 1건은 min/max에서 자연 제외 — avg()의 NULL 무시와 동치 계약.
+		var rows = List.of(row("a", 10_000L));
+		var engagements = List.of(
+				new EngagementRow("a", null, 100L, 30L),
+				new EngagementRow("a", null, 200L, 10L),
+				new EngagementRow("a", null, 50L, null));
+		var cards = assembler.toCards(rows, List.of(), List.of(), List.of(), engagements, List.of());
+		assertThat(cards.get(0).minComments()).isEqualTo(10);
+		assertThat(cards.get(0).maxComments()).isEqualTo(30);
+	}
+
+	@Test
+	void 댓글_min_max는_시계열_전량이_NULL이면_null() {
+		var rows = List.of(row("a", 10_000L));
+		var engagements = List.of(new EngagementRow("a", null, 50L, null));
+		var cards = assembler.toCards(rows, List.of(), List.of(), List.of(), engagements, List.of());
+		assertThat(cards.get(0).minComments()).isNull();
+		assertThat(cards.get(0).maxComments()).isNull();
+	}
+
+	@Test
+	void 공동구매_카운트는_저장소_집계값을_그대로_싣고_존재여부는_카운트에서_파생된다() {
+		// 판정(규칙 vs LLM, 정규식 매칭 여부)은 analytics GROUP_PURCHASE_JUDGE 잡의 몫 — 어셈블러는
+		// 리포지토리가 이미 센 값(group_purchase_judgments.verdict=true 개수)을 그대로 옮길 뿐이다.
+		var rows = List.of(row("a", 10_000L));
+		var counts = List.of(new GroupPurchaseCountRow("a", 2L));
+		var cards = assembler.toCards(rows, List.of(), List.of(), List.of(), List.of(), counts);
+		assertThat(cards.get(0).groupPurchaseCount()).isEqualTo(2);
+		assertThat(cards.get(0).hasGroupPurchase()).isTrue();
+	}
+
+	@Test
+	void 공동구매_판정_행이_없으면_0건_false() {
+		var rows = List.of(row("a", 10_000L));
+		var cards = assembler.toCards(rows, List.of(), List.of(), List.of(), List.of(), List.of());
+		assertThat(cards.get(0).groupPurchaseCount()).isZero();
+		assertThat(cards.get(0).hasGroupPurchase()).isFalse();
 	}
 }

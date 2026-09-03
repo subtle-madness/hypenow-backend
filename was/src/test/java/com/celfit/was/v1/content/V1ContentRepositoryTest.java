@@ -29,6 +29,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("DROP TABLE IF EXISTS beauty_taxonomy");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS beauty_distributors");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS image_assets");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS group_purchase_judgments");
 		jdbcTemplate.execute("""
 				CREATE TABLE accounts (
 				    handle            text PRIMARY KEY,
@@ -92,6 +93,18 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				    source_name text NOT NULL,
 				    archived_at timestamptz NOT NULL DEFAULT now(),
 				    PRIMARY KEY (kind, key)
+				)""");
+		// ContentCardRow.SELECT의 gpj 조인 재료(2026-09-03 공동구매 판정 서버화) — 빈 테이블이면
+		// 카드의 groupPurchase는 항상 false(6.1 목록 경로는 이 테스트의 관심사가 아니라 형상만 갖춘다).
+		jdbcTemplate.execute("""
+				CREATE TABLE group_purchase_judgments (
+				    short_code          text PRIMARY KEY,
+				    verdict             boolean,
+				    tier                text NOT NULL,
+				    reason              text,
+				    judged_caption_hash text NOT NULL,
+				    judged_at           timestamptz NOT NULL,
+				    model               text
 				)""");
 
 		// 어휘 시드: 아이메이크업(아이라이너)·립메이크업(립틴트), 유통사 2종(slug 포함)

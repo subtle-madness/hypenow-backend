@@ -99,6 +99,7 @@ class AdminQueryApiIntegrationTest extends IntegrationTest {
 		jdbcClient.sql("DROP TABLE IF EXISTS contents").update();
 		jdbcClient.sql("DROP TABLE IF EXISTS accounts").update();
 		jdbcClient.sql("DROP TABLE IF EXISTS image_assets").update();
+		jdbcClient.sql("DROP TABLE IF EXISTS group_purchase_judgments").update();
 		jdbcClient.sql("""
 				CREATE TABLE accounts (handle text PRIMARY KEY, display_name text,
 				    profile_image_url text, followers bigint)
@@ -118,6 +119,13 @@ class AdminQueryApiIntegrationTest extends IntegrationTest {
 				CREATE TABLE image_assets (kind text NOT NULL, key text NOT NULL, object_path text NOT NULL,
 				    source_name text NOT NULL, archived_at timestamptz NOT NULL DEFAULT now(),
 				    PRIMARY KEY (kind, key))
+				""").update();
+		// ContentCardRow.SELECT의 gpj 조인 재료(2026-09-03 공동구매 판정 서버화) — AdminUserEventAssembler가
+		// content_saved 이벤트 라벨용으로 savedRepository.findCards를 타서 이 테이블이 없으면 500이 난다.
+		jdbcClient.sql("""
+				CREATE TABLE group_purchase_judgments (short_code text PRIMARY KEY, verdict boolean,
+				    tier text NOT NULL, reason text, judged_caption_hash text NOT NULL,
+				    judged_at timestamptz NOT NULL, model text)
 				""").update();
 
 		// app 쪽 어드민 조회 대상 테이블 — 자식부터 정리(FK).

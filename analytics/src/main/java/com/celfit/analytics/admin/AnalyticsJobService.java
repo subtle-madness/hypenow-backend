@@ -41,6 +41,7 @@ public class AnalyticsJobService {
 	private final ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob;
 	private final ObjectProvider<ImageArchiveJob> archiveJob;
 	private final ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob;
+	private final ObjectProvider<com.celfit.analytics.grouppurchase.GroupPurchaseJudgeJob> groupPurchaseJudgeJob;
 	private final JobProgressRegistry progress;
 	private final RunHistory history;
 	private final DerivedViewRefresher derivedViewRefresher;
@@ -62,6 +63,7 @@ public class AnalyticsJobService {
 			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
 			ObjectProvider<ImageArchiveJob> archiveJob,
 			ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob,
+			ObjectProvider<com.celfit.analytics.grouppurchase.GroupPurchaseJudgeJob> groupPurchaseJudgeJob,
 			JobProgressRegistry progress, RunHistory history,
 			DerivedViewRefresher derivedViewRefresher) {
 		this.lock = lock;
@@ -76,6 +78,7 @@ public class AnalyticsJobService {
 		this.synthesisRefreshJob = synthesisRefreshJob;
 		this.archiveJob = archiveJob;
 		this.traitCanonJob = traitCanonJob;
+		this.groupPurchaseJudgeJob = groupPurchaseJudgeJob;
 		this.progress = progress;
 		this.history = history;
 		this.derivedViewRefresher = derivedViewRefresher;
@@ -184,6 +187,7 @@ public class AnalyticsJobService {
 			// trait 어휘 매핑 원샷(2026-07-29 스펙) — 스케줄 없음, 어드민 수동 트리거 전용
 			case TRAIT_CANON_DRY -> traitCanonJob.getObject().run(true);
 			case TRAIT_CANON_APPLY -> traitCanonJob.getObject().run(false);
+			case GROUP_PURCHASE_JUDGE -> groupPurchaseJudgeJob.getObject().run();
 		};
 	}
 

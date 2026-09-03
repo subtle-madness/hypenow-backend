@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.celfit.was.IntegrationTest;
 import com.celfit.was.v1.content.ContentCardRow;
 import java.util.List;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,6 +27,7 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("DROP TABLE IF EXISTS account_summaries");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS accounts");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS image_assets");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS group_purchase_judgments");
 		jdbcTemplate.execute("""
 				CREATE TABLE accounts (
 				    handle            text PRIMARY KEY,
@@ -102,6 +104,18 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 				    archived_at timestamptz NOT NULL DEFAULT now(),
 				    PRIMARY KEY (kind, key)
 				)""");
+		// group_purchase_judgments 사본 DDL(analytics Task 1 V20260903110541과 동일 형상) —
+		// ContentCardRow.SELECT의 gpj 조인 재료. groupPurchase(6.4) 검증 재료는 아래 개별 INSERT.
+		jdbcTemplate.execute("""
+				CREATE TABLE group_purchase_judgments (
+				    short_code          text PRIMARY KEY,
+				    verdict             boolean,
+				    tier                text NOT NULL,
+				    reason              text,
+				    judged_caption_hash text NOT NULL,
+				    judged_at           timestamptz NOT NULL,
+				    model               text
+				)""");
 
 		jdbcTemplate.update("""
 				INSERT INTO accounts (handle, display_name, profile_image_url, followers, external_link) VALUES
@@ -129,6 +143,16 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 				  '[{"name":"브랜드A"}]'::jsonb, NULL, NULL, true),
 				 ('a3', NULL, NULL, 'organic', NULL, NULL, NULL, false)
 				""");
+
+		// groupPurchase(6.4, 2026-09-03) 검증 재료 — a1은 verdict=true(판정 확정), a3는 verdict
+		// NULL(미판정 — LLM 실패·잡 대기), a2는 판정 행 자체가 없음(잡이 아직 못 본 신규 게시물).
+		// 셋 다 groupPurchase는 a1만 true여야 한다(NULL·행 없음은 동일하게 false로 취급 — 신뢰성 우선).
+		jdbcTemplate.update("""
+				INSERT INTO group_purchase_judgments (short_code, verdict, tier, reason,
+				  judged_caption_hash, judged_at) VALUES
+				 ('a1', true, 'RULE', '공동구매', 'h1', now()),
+				 ('a3', NULL, 'LLM', NULL, 'h3', now())
+				""");
 	}
 
 	@Test
@@ -151,6 +175,17 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 		assertThat(a2.views()).isEqualTo(9999L);
 		assertThat(a2.handle()).isEqualTo("alpha");
 		assertThat(a2.followers()).isEqualTo(5000L);
+	}
+
+	@Test
+	void groupPurchase는_verdict_true인_게시물만_true다() {
+		List<ContentCardRow> rows = repository.findRecentCards("alpha");
+		var byCode = rows.stream()
+				.collect(Collectors.toMap(ContentCardRow::shortCode, r -> r));
+
+		assertThat(byCode.get("a1").groupPurchase()).isTrue(); // verdict=true
+		assertThat(byCode.get("a3").groupPurchase()).isFalse(); // verdict NULL(미판정)
+		assertThat(byCode.get("a2").groupPurchase()).isFalse(); // 판정 행 자체가 없음
 	}
 
 	@Test

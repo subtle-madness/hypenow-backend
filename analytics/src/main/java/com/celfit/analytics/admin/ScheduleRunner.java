@@ -69,4 +69,12 @@ public class ScheduleRunner {
 	void batchCollect() {
 		log.info("스케줄 batch-collect: {}", jobService.trigger(JobName.BATCH_COLLECT, TriggerType.SCHEDULED));
 	}
+
+	/** 공동구매(공구) 판정(스펙 2026-09-03) — 규칙 확정분은 즉시, 애매분만 LLM. 대상 없는 실행은
+	 * 저렴한 SQL no-op이라 낮 시간 30분 간격으로 자주 돌려도 무해하다. */
+	@Scheduled(cron = "${analytics.schedule.group-purchase-cron:-}")
+	void groupPurchaseJudge() {
+		log.info("스케줄 group-purchase-judge: {}",
+				jobService.trigger(JobName.GROUP_PURCHASE_JUDGE, TriggerType.SCHEDULED));
+	}
 }
