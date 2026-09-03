@@ -53,6 +53,15 @@ monitoring:
     request-timeout: 15s
     max-retries: 2       # 일시 오류(5xx·IO) 전용. 404는 재시도하지 않는다
     retry-backoff: 2s    # 회차마다 × n (2s → 4s)
+    # 전송 계층 동시 in-flight 상한(2026-09-03) — 종전엔 풀 크기 산술 합("최대 14")으로만 지켜지던
+    # 예산을, 브랜드 병렬 스윕 도입에 맞춰 세마포어로 구조화했다(HikerConcurrencyLimiter).
+    # self(자체크롤) 전송은 이 상한과 무관하다 — Hiker 폴백 콜만 여기 합류한다.
+    max-concurrent-calls: 14
+    # 그중 사용자 대면 동기 경로 예약분 — 배치 레인은 (14 - 2)까지만 쓸 수 있어, 배치가 아무리
+    # 몰려도 동기 콜이 배치에 밀려 대기하는 일이 구조적으로 없다.
+    sync-reserved-permits: 2
+    batch-acquire-timeout: 60s   # 초과 시 그 콜만 실패(건 단위 격리가 흡수)
+    sync-acquire-timeout: 3s     # 초과 시 벤더 장애로 간주 → HikerFirst의 self 구조 시도로 넘어간다
   proxy:
     residential-url: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:}
     mobile-url: ${DATAIMPULSE_MOBILE_PROXY_URL:}
@@ -105,6 +114,11 @@ monitoring:
                                     # 0 이하면 무제한
     comment-pages: 3            # 게시물당 댓글 상한 3콜 45개(스펙 §2 — 정책 v1에서 30일 보충 없이 유지 확정)
     author-stale-days: 30       # 게시자 프로필 등장 시 stale 갱신 기준(스펙 §8)
+    # 야간 스윕 병렬도(2026-09-03) — 여기 값은 전용 워커 풀 크기(하드 상한)이고, 런타임 하향은
+    # app_setting 'brand-sweep.brand-concurrency' / 'brand-sweep.unenumerated-concurrency'가 한다
+    # (1 = 개정 전 직렬 경로 복원 = 킬스위치). 상향은 재배포.
+    sweep-concurrency: 3            # 브랜드 루프 병렬도 N — 브랜드 안의 3단계 순서는 그대로
+    unenumerated-concurrency: 8     # 2단계 단건 재수집 콜 병렬도 K — self 1순위라 Hiker 예산과 별개
     enrich-concurrency: 10      # 보강(게시자·댓글) 워커 풀 크기 — 08-13 실측에서 6/8/10 어느 레벨도 5초 초과 콜
                                 # 미증가(정상 브랜드 세 레벨 모두 0건)라 6→10. enrich executor 2병렬로 브랜드당
                                 # 실효 워커가 반감하므로 그 상쇄분이기도 하다

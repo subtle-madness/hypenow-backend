@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.instagram.source.InstagramSource;
 import com.celfit.monitoring.hiker.BrandCallContext;
+import com.celfit.monitoring.hiker.HikerConcurrencyLimiter;
 import com.celfit.monitoring.hiker.IgSourceSettings;
 import com.celfit.monitoring.hiker.InstagramProxyProperties;
 import com.celfit.monitoring.hiker.TargetCallContext;
@@ -67,6 +68,11 @@ class HikerConfigTest {
 		}
 	}
 
+	/** 조립 테스트용 동시 상한 — 운영 기본값(14/2)이라 이 테스트의 단일 콜은 대기 없이 통과한다. */
+	private static HikerConcurrencyLimiter limiter(SimpleMeterRegistry registry) {
+		return new HikerConcurrencyLimiter(14, 2, Duration.ofSeconds(60), Duration.ofSeconds(3), registry);
+	}
+
 	@Test
 	void 조립된_InstagramSource_콜은_external_call_타이머에_기록된다() {
 		SimpleMeterRegistry registry = new SimpleMeterRegistry();
@@ -76,7 +82,7 @@ class HikerConfigTest {
 		InstagramSource client = new HikerConfig().instagramSource(path -> "{\"user\":{\"pk\":1}}",
 				new NoopPayloadRepo(), new BrandCallContext(), new BrandCallCountRepository(null),
 				new TargetCallContext(), new TargetCallCountRepository(null), registry, proxyProps,
-				new IgSourceSettings(new EmptySettingsRepo(), proxyProps), Duration.ofSeconds(8));
+				new IgSourceSettings(new EmptySettingsRepo(), proxyProps), limiter(registry), Duration.ofSeconds(8));
 
 		client.fetchProfile("hypenow");
 
@@ -107,7 +113,7 @@ class HikerConfigTest {
 		InstagramSource client = new HikerConfig().syncInstagramSource(path -> "{\"user\":{\"pk\":1}}",
 				new NoopPayloadRepo(), new BrandCallContext(), new BrandCallCountRepository(null),
 				new TargetCallContext(), new TargetCallCountRepository(null), registry, proxyProps,
-				new IgSourceSettings(new EmptySettingsRepo(), proxyProps), Duration.ofSeconds(2));
+				new IgSourceSettings(new EmptySettingsRepo(), proxyProps), limiter(registry), Duration.ofSeconds(2));
 
 		client.fetchProfile("hypenow");
 
@@ -137,14 +143,14 @@ class HikerConfigTest {
 				return "{\"user\":{\"pk\":1}}";
 			}, new NoopPayloadRepo(), new BrandCallContext(), new BrandCallCountRepository(null),
 					new TargetCallContext(), new TargetCallCountRepository(null), registry, proxyProps,
-					igSettings, Duration.ofSeconds(2));
+					igSettings, limiter(registry), Duration.ofSeconds(2));
 		}
 		return config.instagramSource(path -> {
 			calls.add(path);
 			return "{\"user\":{\"pk\":1}}";
 		}, new NoopPayloadRepo(), new BrandCallContext(), new BrandCallCountRepository(null),
 				new TargetCallContext(), new TargetCallCountRepository(null), registry, proxyProps,
-				igSettings, Duration.ofSeconds(8));
+				igSettings, limiter(registry), Duration.ofSeconds(8));
 	}
 
 	@Test

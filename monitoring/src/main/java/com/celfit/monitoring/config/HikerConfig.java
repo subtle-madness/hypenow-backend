@@ -17,7 +17,10 @@ import com.celfit.instagram.source.self.SelfRetry;
 import com.celfit.instagram.source.self.SurfaceCircuitBreaker;
 import com.celfit.instagram.source.self.WpiProfileFetcher;
 import com.celfit.monitoring.hiker.BrandCallContext;
+import com.celfit.monitoring.hiker.ConcurrencyLimitedHikerHttp;
 import com.celfit.monitoring.hiker.CountingHikerHttp;
+import com.celfit.monitoring.hiker.HikerConcurrencyLimiter;
+import com.celfit.monitoring.hiker.HikerConcurrencyLimiter.Lane;
 import com.celfit.monitoring.hiker.IgSourceSettings;
 import com.celfit.monitoring.hiker.InstagramProxyProperties;
 import com.celfit.monitoring.hiker.MicrometerInstagramSourceMetrics;
@@ -37,6 +40,39 @@ import org.springframework.context.annotation.Primary;
 
 @Configuration
 public class HikerConfig {
+
+	/**
+	 * Hiker 전송 동시 in-flight 상한(2026-09-03) — 아래 체인 4개가 <b>같은 인스턴스</b>를 공유해야
+	 * "어떤 풀 조합에서도 총 in-flight ≤ max"가 성립한다. 근거·동기 경로 예약 설계는
+	 * {@link HikerConcurrencyLimiter} javadoc 참조.
+	 */
+	@Bean
+	public HikerConcurrencyLimiter hikerConcurrencyLimiter(MeterRegistry meterRegistry,
+			@Value("${monitoring.hiker.max-concurrent-calls:14}") int maxConcurrentCalls,
+			@Value("${monitoring.hiker.sync-reserved-permits:2}") int syncReservedPermits,
+			@Value("${monitoring.hiker.batch-acquire-timeout:60s}") Duration batchAcquireTimeout,
+			@Value("${monitoring.hiker.sync-acquire-timeout:3s}") Duration syncAcquireTimeout) {
+		return new HikerConcurrencyLimiter(maxConcurrentCalls, syncReservedPermits, batchAcquireTimeout,
+				syncAcquireTimeout, meterRegistry);
+	}
+
+	/**
+	 * 전송 데코레이터 체인 조립(단일 정본) — 새 소비자 빈이 늘어도 동시 상한 데코레이터를 빠뜨릴 수
+	 * 없게 한 곳에 모은다. 안쪽부터 전송 → 타이머 → <b>동시 상한</b> → 원형 적재 → 콜 집계 순이다:
+	 * 집계가 바깥이라 "호출자가 성공으로 본 콜"과 1:1로 맞고, 타이머는 최내곽이라 원형 적재·집계의
+	 * DB 쓰기 시간도, 상한 대기 시간도 외부 구간 지표에 섞이지 않는다.
+	 */
+	private static HikerHttp chain(HikerHttp transport, Lane lane, HikerConcurrencyLimiter limiter,
+			MeterRegistry meterRegistry, RawPayloadRepository rawPayloads, BrandCallContext brandContext,
+			BrandCallCountRepository brandCounts, TargetCallContext targetContext,
+			TargetCallCountRepository targetCounts) {
+		return new CountingHikerHttp(
+				new RecordingHikerHttp(
+						new ConcurrencyLimitedHikerHttp(new TimedHikerHttp(transport, meterRegistry), limiter,
+								lane),
+						rawPayloads),
+				brandContext, brandCounts, targetContext, targetCounts);
+	}
 
 	/**
 	 * 수집 진입점 — 소비자는 이 InstagramSource를 주입받는다. 전송 데코레이터 체인(과금·원형 적재·
@@ -63,12 +99,11 @@ public class HikerConfig {
 			BrandCallContext brandContext, BrandCallCountRepository brandCounts,
 			TargetCallContext targetContext, TargetCallCountRepository targetCounts,
 			MeterRegistry meterRegistry, InstagramProxyProperties proxyProps, IgSourceSettings igSettings,
+			HikerConcurrencyLimiter limiter,
 			@Value("${monitoring.self-retry.budget:8s}") Duration selfRetryBudget) {
-		// 집계가 바깥 — 원형 적재까지 끝난 "호출자가 성공으로 본 콜"과 집계가 1:1로 맞는다.
-		// 타이머는 최내곽(전송 바로 바깥) — 원형 적재·집계의 DB 쓰기 시간이 외부 구간 지표에 안 섞인다.
-		HikerHttp chain = new CountingHikerHttp(
-				new RecordingHikerHttp(new TimedHikerHttp(transport, meterRegistry), rawPayloads),
-				brandContext, brandCounts, targetContext, targetCounts);
+		// 배치·백그라운드 소비자 전용 체인 — 동시 상한의 배치 레인(동기 예약분을 침범하지 않는다).
+		HikerHttp chain = chain(transport, Lane.BATCH, limiter, meterRegistry, rawPayloads, brandContext,
+				brandCounts, targetContext, targetCounts);
 		HikerBackend hikerBackend = new HikerBackend(chain);
 
 		ProxyConfig proxyConfig = new ProxyConfig(proxyProps.residentialUrl(), proxyProps.mobileUrl(),
@@ -110,10 +145,11 @@ public class HikerConfig {
 			BrandCallContext brandContext, BrandCallCountRepository brandCounts,
 			TargetCallContext targetContext, TargetCallCountRepository targetCounts,
 			MeterRegistry meterRegistry, InstagramProxyProperties proxyProps, IgSourceSettings igSettings,
+			HikerConcurrencyLimiter limiter,
 			@Value("${monitoring.self-retry.rescue-budget:2s}") Duration rescueBudget) {
-		HikerHttp chain = new CountingHikerHttp(
-				new RecordingHikerHttp(new TimedHikerHttp(transport, meterRegistry), rawPayloads),
-				brandContext, brandCounts, targetContext, targetCounts);
+		// 사용자 대면 동기 체인 — 동시 상한의 SYNC 레인(예약 퍼밋 덕에 배치 부하에 밀리지 않는다).
+		HikerHttp chain = chain(transport, Lane.SYNC, limiter, meterRegistry, rawPayloads, brandContext,
+				brandCounts, targetContext, targetCounts);
 		HikerBackend hikerBackend = new HikerBackend(chain);
 
 		ProxyConfig proxyConfig = new ProxyConfig(proxyProps.residentialUrl(), proxyProps.mobileUrl(),
@@ -166,10 +202,9 @@ public class HikerConfig {
 	public InstagramSource metricsRetryInstagramSource(HikerHttp transport, RawPayloadRepository rawPayloads,
 			BrandCallContext brandContext, BrandCallCountRepository brandCounts,
 			TargetCallContext targetContext, TargetCallCountRepository targetCounts,
-			MeterRegistry meterRegistry) {
-		HikerHttp chain = new CountingHikerHttp(
-				new RecordingHikerHttp(new TimedHikerHttp(transport, meterRegistry), rawPayloads),
-				brandContext, brandCounts, targetContext, targetCounts);
-		return new HikerBackend(chain);
+			MeterRegistry meterRegistry, HikerConcurrencyLimiter limiter) {
+		// 스윕 꼬리의 복권 재시도 — 배치 레인.
+		return new HikerBackend(chain(transport, Lane.BATCH, limiter, meterRegistry, rawPayloads, brandContext,
+				brandCounts, targetContext, targetCounts));
 	}
 }
