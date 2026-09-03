@@ -133,57 +133,12 @@ public class V1BrandAccountService {
 			compensate(registered.brandId(), username);
 			throw e;
 		}
-		// 태그 시딩(2026-08-27 해시태그 직접 수집 설계 §4, 2026-08-28 monitoring push 추가) — 신규
-		// 링크에만 건다. 멱등 재-POST는 위 alreadyLinked 분기에서 이미 반환됐으므로 여기 도달하지
-		// 않는다(지운 태그 부활 방지). 개명 재등록(precheck가 옛 계정명 기준이라 미스 나고 위
-		// link()가 기존 brandId로 접히는 경우, 128행 주석 참고)은 이 경로를 그대로 지나간다 — 새
-		// 계정명 유도 태그를 더할 뿐 기존 태그를 지우지 않으므로 "지운 태그 부활" 위험이 없어
-		// 의도적으로 허용한다.
-		seedLedgerTagsSafely(userId, registered.brandId(), username);
+		// 태그 시딩은 링크 생성 시점에 하지 않는다(2026-09-03 자동 시드 재설계 §4-3) — 계정명 절삭
+		// 유도 규칙이 삭제됐고, 이 시점엔 판단 재료(태그된 게시물 캡션)가 아직 하나도 없다. 자동
+		// 태그는 초기 백필 완료 뒤 첫 조회에서 ensureAutoSeeded가 monitoring 제안을 받아 심는다.
 		// 등록 응답의 status는 monitoring이 "ACTIVE"로 하드코딩해 보내므로 준비 상태 판정에 쓸 수 없다 —
 		// 상태는 항상 brand_account 조회가 정본이다(§5-2).
 		return get(userId, registered.brandId());
-	}
-
-	/**
-	 * 신규 링크 태그 시딩(2026-08-27 해시태그 직접 수집 설계 §4, <b>2026-08-28 태그 생성 권한 was
-	 * 일원화</b>) — 계정명 유도 태그({@link BrandHashtagTags#derive})를 이 사용자의 장부에 남기고,
-	 * <b>monitoring에도 일반 태그 add로 push</b>한다. 과거엔 monitoring
-	 * {@code BrandRegistrationService.seedHashtagsSafely}가 등록·replay 양쪽에서 독립적으로
-	 * {@code brand_hashtag}에 같은 태그를 심었다 — 태그 생성 권한이 두 시스템에 분산돼 있었다는
-	 * 뜻이다. 그 자가 시드를 제거하고(monitoring 쪽 결정 기록 참조) was가 유일한 작성자가 되도록
-	 * 이 메서드가 두 쓰기를 모두 담당한다.
-	 *
-	 * <p>push는 <b>일반 태그 add와 완전히 같은 경로</b>({@link MonitoringCommandClient#addHashtagTags})
-	 * 다 — tombstone 재활성 의미론까지 포함한다. 즉 어떤 사용자가 이 브랜드에 새로 연결하면, 이전에
-	 * 다른 사용자가 지웠던 자동 태그라도 이 사용자의 연결 의도(장부에 태그가 있어야 한다)를 따라
-	 * 되살아난다 — 반면 그 태그를 지운 사용자 본인은 자기 장부에서 여전히 빠져 있으므로(사용자
-	 * 스코프 격리) 계속 보호된다.
-	 *
-	 * <p>두 쓰기 모두 best-effort로 격리한다(등록 자체를 절대 실패시키지 않는다): monitoring push를
-	 * 먼저 시도한다(태그 관리 API의 "monitoring 먼저" 관용구와 동형, {@link #putHashtagTags} 등
-	 * 참조) — push가 실패해도 장부 쓰기는 <b>그대로 진행</b>한다. 링크는 이미 커밋됐고, 여기서
-	 * 던지면 재시도가 멱등 경로(시딩 없음)로 접혀 그 사용자의 장부가 <b>영구히</b> 비어 버린다.
-	 * 장부만 채워진 상태(push 실패)는 다음 사용자의 등록이 같은 태그를 다시 push하거나, 태그 관리
-	 * API로 수동 추가하면 자연히 복구된다(장부 자체는 이미 정확하므로 "이 사용자에게 해시태그
-	 * 게시물이 안 보임" 피해는 없다 — monitoring 스윕 대상에서만 빠질 뿐).
-	 */
-	private void seedLedgerTagsSafely(long userId, long brandId, String username) {
-		List<String> derived = List.copyOf(BrandHashtagTags.derive(username));
-		if (derived.isEmpty()) {
-			return;
-		}
-		try {
-			commandClient.addHashtagTags(username, derived);
-		} catch (RuntimeException e) {
-			log.warn("해시태그 자동 시드 monitoring push 실패(격리) — userId={}, brandId={}, username={}",
-					userId, brandId, username, e);
-		}
-		try {
-			hashtagTagRepository.addTags(userId, brandId, derived);
-		} catch (RuntimeException e) {
-			log.warn("해시태그 태그 장부 시딩 실패(격리) — userId={}, brandId={}", userId, brandId, e);
-		}
 	}
 
 	/**
