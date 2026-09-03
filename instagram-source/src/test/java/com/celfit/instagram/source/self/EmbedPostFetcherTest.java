@@ -67,9 +67,36 @@ class EmbedPostFetcherTest {
 		assertThat(p.likesHidden()).isFalse();
 	}
 
+	/**
+	 * S1 — 3xx 리다이렉트는 게이트·소프트블록 응답에서도 나온다(09-03 운영 오탐 실측). 부재 확정은
+	 * Hiker의 결정론적 404만(BrandCollectService 불변식) — NOT_FOUND로 확정하지 않고 OTHER로 강등해
+	 * FailoverInstagramSource가 Hiker로 재확인하게 한다.
+	 */
 	@Test
-	void 삭제_리다이렉트는_NOT_FOUND() {
+	void 삭제_리다이렉트는_부재_미확정_OTHER로_강등된다() {
 		assertThatThrownBy(() -> fetcher("", 302).fetch("Bt_A-8dgHKW"))
+				.isInstanceOf(SelfCrawlException.class)
+				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
+						.isEqualTo(SelfErrorClass.OTHER));
+	}
+
+	/**
+	 * S1 — 200인데 소유자·좋아요 둘 다 없는 "빈 셸"도 게이트 응답에서 나올 수 있다. 3xx와 동일하게
+	 * OTHER로 강등해 Hiker 재확인을 거치게 한다(폴백 없이 확정하지 않는다).
+	 */
+	@Test
+	void 빈_셸_200은_부재_미확정_OTHER로_강등된다() {
+		String body = "<html><body>로그인/게이트 추정 셸 — 소유자·좋아요 신호 없음</body></html>";
+		assertThatThrownBy(() -> fetcher(body, 200).fetch("SC2"))
+				.isInstanceOf(SelfCrawlException.class)
+				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
+						.isEqualTo(SelfErrorClass.OTHER));
+	}
+
+	/** S1 — 진짜 HTTP 404만 NOT_FOUND로 남는다(부재 확정 유일 경로). */
+	@Test
+	void 진짜_HTTP_404는_NOT_FOUND_유지() {
+		assertThatThrownBy(() -> fetcher("", 404).fetch("Bt_A-8dgHKW"))
 				.isInstanceOf(SelfCrawlException.class)
 				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
 						.isEqualTo(SelfErrorClass.NOT_FOUND));
