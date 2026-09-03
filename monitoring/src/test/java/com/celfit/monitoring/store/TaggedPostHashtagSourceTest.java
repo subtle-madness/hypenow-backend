@@ -269,11 +269,34 @@ class TaggedPostHashtagSourceTest {
 		repo.upsertHashtag(brandId, post("H_OUT", "poster1", NOW.minusSeconds(5000)), NOW);
 		repo.upsertDirect(brandId, post("D_OLD", "poster1", NOW.minusSeconds(9000)), NOW);
 
-		assertThat(repo.unenumeratedDuePosts(brandId, NOW.minusSeconds(86400), NOW.minusSeconds(2000))
+		assertThat(repo.unenumeratedDuePosts(brandId, NOW.minusSeconds(86400), NOW.minusSeconds(2000), null)
 				.stream().map(TaggedPostRepository.TrackedPost::shortCode))
 				.containsExactly("H_IN", "D_OLD");   // 미보강 우선 동순위 → taken_at DESC
 		// null floor = 기존 동작(전부)
-		assertThat(repo.unenumeratedDuePosts(brandId, NOW.minusSeconds(86400), null))
+		assertThat(repo.unenumeratedDuePosts(brandId, NOW.minusSeconds(86400), null, null))
+				.hasSize(3);
+	}
+
+	/**
+	 * 부재 확정(markUnavailable) 행 재검증 스로틀(2026-09-03) — 삭제된 게시물이 매일 티어에 있는
+	 * 동안 매일 밤 404 단건 콜을 다시 내면 그대로 과금이다(Hiker는 404도 과금). 최근에 부재
+	 * 확정된 행은 재검증 주기까지 모수에서 제외하고, 주기를 넘긴 행만 생존 재확인 대상으로 돌린다.
+	 * 재관측(touchCrawled)이 unavailable_at을 해제하므로 부활 경로는 그대로 살아 있다.
+	 */
+	@Test
+	void unenumeratedDuePosts는_최근_부재_확정_행을_재검증_주기까지_제외한다() {
+		repo.upsertHashtag(brandId, post("GONE_FRESH", "poster1", NOW.minusSeconds(1000)), NOW);
+		repo.upsertHashtag(brandId, post("GONE_STALE", "poster2", NOW.minusSeconds(2000)), NOW);
+		repo.upsertHashtag(brandId, post("ALIVE", "poster3", NOW.minusSeconds(3000)), NOW);
+		repo.markUnavailable(brandId, "GONE_FRESH", NOW.minusSeconds(3600L));            // 1시간 전 확정 — 스킵
+		repo.markUnavailable(brandId, "GONE_STALE", NOW.minusSeconds(8L * 86400));       // 8일 전 확정 — 재검증
+
+		Instant recheckBefore = NOW.minusSeconds(7L * 86400);
+		assertThat(repo.unenumeratedDuePosts(brandId, NOW.minusSeconds(30L * 86400), null, recheckBefore)
+				.stream().map(TaggedPostRepository.TrackedPost::shortCode))
+				.containsExactly("GONE_STALE", "ALIVE");
+		// 스로틀 null = 기존 동작(부재 행 포함 전부)
+		assertThat(repo.unenumeratedDuePosts(brandId, NOW.minusSeconds(30L * 86400), null, null))
 				.hasSize(3);
 	}
 
