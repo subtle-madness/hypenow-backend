@@ -95,6 +95,14 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				    ad_type         text,
 				    detected_brands jsonb
 				)""");
+		// analytics V20260903 사본 — findBrandCollabs의 `??|` 술어가 이 GIN 식 인덱스와 글자 단위로
+		// 같은 식이어야 운영에서 인덱스가 붙는다. 테스트 DB에도 같은 인덱스를 둬 식 컴파일·연산자
+		// 이스케이프(Spring named-param → pgjdbc)를 같은 형상에서 검증한다.
+		jdbcTemplate.execute("""
+				CREATE INDEX idx_content_analyses_brand_names_gin
+				    ON content_analyses USING gin ((jsonb_path_query_array(detected_brands, '$[*].name')))
+				    WITH (fastupdate = off)
+				    WHERE ad_type = 'sponsored'""");
 		jdbcTemplate.execute("""
 				CREATE TABLE account_analyses (
 				    handle          text NOT NULL,
@@ -239,6 +247,34 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 				UPDATE content_analyses SET detected_brands = '[{"name":"롬앤"},{"name":"롬앤"}]'::jsonb
 				WHERE short_code = 'o3_1'""");
 
+		// multi — 브랜드 2개(아모레 2건 m1·m2, 클리오 1건 m3). 아모레 협업 계정은 p1~p6(협업 수 1~6)
+		// 6명이라 상위 5 캡이 실제로 잘리고(p1 탈락), 클리오는 협업 계정이 없어 others가 '[]'이어야 한다.
+		jdbcTemplate.update("""
+				INSERT INTO account_content_series (short_code, account_handle, posted_at,
+				  content_type, views, likes, comments, sponsored) VALUES
+				  ('m1', 'multi', now() - interval '4 days', 'reels', 1000, 10, 1, true),
+				  ('m2', 'multi', now() - interval '2 days', 'reels', 1000, 10, 1, true),
+				  ('m3', 'multi', now() - interval '1 day',  'reels', 1000, 10, 1, true)""");
+		jdbcTemplate.update("""
+				INSERT INTO content_analyses (short_code, is_beauty, main_category, ad_type,
+				  detected_brands) VALUES
+				  ('m1', true, 'makeup', 'sponsored', '[{"name":"아모레"}]'::jsonb),
+				  ('m2', true, 'makeup', 'sponsored', '[{"name":"아모레"}]'::jsonb),
+				  ('m3', true, 'makeup', 'sponsored', '[{"name":"클리오"}]'::jsonb)""");
+		jdbcTemplate.update("""
+				INSERT INTO account_content_series (short_code, account_handle, posted_at,
+				  content_type, views, likes, comments, sponsored)
+				SELECT 'p' || acct || '_' || n, 'p' || acct,
+				       now() - ((acct * 10 + n) || ' days')::interval, 'reels', 5000, 100, 5, true
+				FROM generate_series(1, 6) AS acct, generate_series(1, 6) AS n
+				WHERE n <= acct""");
+		jdbcTemplate.update("""
+				INSERT INTO content_analyses (short_code, is_beauty, main_category, ad_type,
+				  detected_brands)
+				SELECT 'p' || acct || '_' || n, true, 'makeup', 'sponsored', '[{"name":"아모레"}]'::jsonb
+				FROM generate_series(1, 6) AS acct, generate_series(1, 6) AS n
+				WHERE n <= acct""");
+
 		// 유사 핸들 재료 — 전부 스킨케어(sim_other_cat만 메이크업), 팔로워는 sim_me=10000 기준.
 		jdbcTemplate.update("""
 				INSERT INTO accounts (handle, followers) VALUES
@@ -369,6 +405,25 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		// short_code)면 o3는 실게시물 수 3을 유지해 아래 순서(o6,o5,o4,o3)가 그대로 성립한다.
 		assertThat(others).containsExactly("o6", "o5", "o4", "o3"); // 협업 수 내림차순
 		assertThat(others).doesNotContain("dupe");
+	}
+
+	@Test
+	void 브랜드_협업은_브랜드별_상위5_캡과_빈_others를_지킨다() throws Exception {
+		List<BrandCollabRow> rows = repository.findBrandCollabs("multi");
+		// mine 정렬: 게시물 수 내림차순, 동률이면 이름
+		assertThat(rows).extracting(BrandCollabRow::name).containsExactly("아모레", "클리오");
+		assertThat(rows.get(0).cnt()).isEqualTo(2);
+		assertThat(readList(rows.get(0).contentIdsJson())).containsExactly("m1", "m2"); // 올린 순
+		// 협업 계정 6명 중 상위 5만(협업 수 내림차순) — p1(1건) 탈락
+		assertThat(readList(rows.get(0).othersJson())).containsExactly("p6", "p5", "p4", "p3", "p2");
+		assertThat(rows.get(1).cnt()).isEqualTo(1);
+		assertThat(readList(rows.get(1).contentIdsJson())).containsExactly("m3");
+		assertThat(readList(rows.get(1).othersJson())).isEmpty();
+	}
+
+	private List<String> readList(String json) throws Exception {
+		return objectMapper.readValue(json, new TypeReference<List<String>>() {
+		});
 	}
 
 	@Test
