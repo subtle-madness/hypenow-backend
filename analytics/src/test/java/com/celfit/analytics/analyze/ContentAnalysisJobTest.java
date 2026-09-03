@@ -1083,9 +1083,12 @@ class ContentAnalysisJobTest {
 	@Test
 	void split_배치_스윕은_resolveTargets보다_먼저_돌아_pending_수거분_재해석을_막는다() {
 		// C1(2026-09-03 리뷰): SYNTHESIS 배치 제출 전 스윕(collectJob.run())이 resolveTargets보다
-		// 먼저 돌아야 한다. 순서가 뒤바뀌면(고치기 전 코드) 스윕이 막 timely로 확정한 short_code가
-		// 여전히 targets에 남아 빈 "확인된 사실"로 재제출되고, 그 재수거가 방금 수거한 좋은 해석을
-		// 덮어쓴다.
+		// 먼저 돌아야 한다. 이 테스트는 두 방어선(스윕 순서 + requireStoredFacts 2차 방어)이 합쳐진
+		// "최종 결과"만 검증한다 - SYNTHESIS는 requireStoredFacts가 storedFacts 조회 시점에 이미
+		// timely로 넘어간 short_code를 다시 걸러내므로, 스윕 순서만 단독으로 깨져도(즉 이 테스트
+		// 만으로는) 실패가 재현되지 않는다(2차 방어가 대신 막아 낸다). 순서 자체를 단독으로
+		// 검증하는 회귀 테스트는 2차 방어가 없는 FACTS 경로로 아래
+		// {@code split_배치_스윕_순서가_깨지면_FACTS_대상이_새_배치에_잘못_실린다}가 담당한다.
 		enableSplitMode();
 		enableBatchTransport();
 		// post_a를 파트 A만 채워진 상태(pending)로 직접 시딩 - runFacts를 거치지 않고 "전날
@@ -1151,6 +1154,142 @@ class ContentAnalysisJobTest {
 				db.queryForList("SELECT batch_name FROM content_batch_jobs", String.class));
 		assertEquals("collected", db.queryForObject(
 				"SELECT status FROM content_batch_jobs WHERE batch_name = 'batches/pre'", String.class));
+	}
+
+	@Test
+	void split_배치_스윕_순서가_깨지면_FACTS_대상이_새_배치에_잘못_실린다() {
+		// 위 SYNTHESIS 테스트와 짝 - FACTS는 requireStoredFacts 같은 2차 방어가 없으므로(그 방어는
+		// SYNTHESIS 전용), 스윕(collectJob.run())이 resolveTargets보다 먼저 도는지를 이 경로가
+		// 단독으로 증명한다. 순서가 뒤바뀌면(고치기 전 코드) 스윕이 막 저장한 short_code가 여전히
+		// FACTS 대상 목록에 남아 새 배치 JSONL에 다시 실린다.
+		enableSplitMode();
+		enableBatchTransport();
+		// post_new(v_fact_candidates 멤버, 아직 미분석)를 "전날 미수거 배치"로 재현한다 - runFacts를
+		// 거치지 않고 content_batch_jobs에 kind='facts' pending 행을 직접 시딩한다.
+		String sidecar = om.writeValueAsString(om.createObjectNode()
+				.put("short_code", "post_new")
+				.put("caption", "어제 올린 캡션")) + "\n";
+		db.update("""
+				INSERT INTO content_batch_jobs (batch_name, timely, submitted_count, status, sidecar_jsonl, kind)
+				VALUES ('batches/pre-facts', false, 1, 'pending', ?, 'facts')""", sidecar);
+		String factsJson = """
+				{"detectedBrands":[],"sponsoredSignalLevel":null,"sponsoredSignalReasons":[],
+				 "adDisclosure":"표기 없음","detectedProductCategories":[],"detectedProducts":[],
+				 "vlmAttributes":[],"isRelevant":false,"mainCategory":null,"subCategories":[],
+				 "detectedDistributors":[],"adType":"organic"}"""
+				.replace("\n", "");
+		String resultJsonl = """
+				{"key":"post_new","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(factsJson));
+		GeminiBatchApi api = new GeminiBatchApi() {
+			@Override
+			public String uploadFile(byte[] jsonl, String displayName) {
+				batchUploads.add(jsonl);
+				batchUploadNames.add(displayName);
+				return "files/" + displayName;
+			}
+
+			@Override
+			public String createBatch(String model, String inputFileName, String displayName) {
+				batchCreated.add(model + "|" + inputFileName);
+				return "batches/new-facts"; // 순서가 깨지면 여기서 post_new가 또 실려 나간다
+			}
+
+			@Override
+			public String getBatch(String batchName) {
+				if ("batches/pre-facts".equals(batchName)) {
+					return """
+							{"name":"batches/pre-facts","metadata":{"state":"JOB_STATE_SUCCEEDED",
+							 "output":{"responsesFile":"files/pre-facts"}}}""";
+				}
+				return "{\"metadata\":{\"state\":\"JOB_STATE_RUNNING\"}}";
+			}
+
+			@Override
+			public void downloadResults(String fileName, java.util.function.Consumer<String> onLine) {
+				resultJsonl.lines().filter(l -> !l.isBlank()).forEach(onLine);
+			}
+		};
+		rewireSplitJob(api);
+
+		job.runFacts();
+
+		// 스윕이 resolveTargets보다 먼저 돌아 post_new가 이미 저장됐다 - pending 사실 행으로 남는다
+		assertEquals("pending", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'post_new'", String.class));
+		// 새로 제출된 배치(post_a·post_b·post_c 대상)에는 post_new가 없어야 한다 - 있었다면 스윕이
+		// resolveTargets보다 늦게 돌아 방금 저장한 행을 다시 대상으로 집었다는 뜻이다.
+		assertEquals(1, batchUploads.size());
+		String jsonl = new String(batchUploads.get(0), StandardCharsets.UTF_8);
+		assertFalse(jsonl.contains("\"post_new\""), jsonl);
+		assertTrue(jsonl.contains("\"post_a\""), jsonl);
+		assertEquals(List.of("batches/pre-facts", "batches/new-facts"),
+				db.queryForList("SELECT batch_name FROM content_batch_jobs ORDER BY id", String.class));
+	}
+
+	@Test
+	void requireStoredFacts는_저장된_사실이_없는_대상만_걸러낸다() {
+		// M4(2026-09-03 리뷰): private → package-private 전환 - resolveTargets의 pending 집합과
+		// storedFacts 조회 사이 어긋남(C1 2차 방어)을 대상 2건·사실 1건으로 직접 검증한다.
+		Map<String, Object> a = Map.of("short_code", "post_a");
+		Map<String, Object> b = Map.of("short_code", "post_b");
+		Map<String, Map<String, Object>> storedFacts = Map.of("post_a", Map.of("main_category", "cleansing"));
+
+		List<Map<String, Object>> kept = ContentAnalysisJob.requireStoredFacts(List.of(a, b), storedFacts);
+
+		assertEquals(1, kept.size());
+		assertEquals("post_a", kept.get(0).get("short_code"));
+	}
+
+	@Test
+	void split_모드_runFacts는_포트가_null_속성을_반환하면_예외_없이_실패로_집계한다() {
+		// M5(2026-09-03 리뷰): analyzeFactsOne이 도달했다는 것 자체가 hasCaption||attachThumbnail
+		// 이므로, 포트가 null을 반환하면 예기치 않은 케이스다 - 빈 사실 행을 성공으로 오기록하지
+		// 않고 QuietFailure(실패 집계)로 처리해야 하고, 그 예외가 runOnline 밖으로 새면 안 된다.
+		db.update("DELETE FROM analytics.fact_candidates_fixture WHERE short_code != 'post_a'");
+		enableSplitMode();
+		job = new ContentAnalysisJob(db, ds, fakeInsightPort(), new AnalyticsSettings(db),
+				false, url -> true, ProgressReporter.NOOP, ProgressReporter.NOOP,
+				null, new BeautyTaxonomyLoader(ds), ProgressReporter.NOOP,
+				(content, thumbnailUrl) -> null, fakeSynthesisPort());
+
+		JobResult result = job.runFacts(); // 예외가 전파되지 않아야 한다
+
+		assertEquals(0, result.processed());
+		assertEquals(1, result.failed());
+		assertEquals(0L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void split_모드_run은_updateSynthesis가_0행이면_예외_없이_실패로_집계한다() {
+		// M9(2026-09-03 리뷰): 제출~수거(또는 온라인 호출) 사이에 행이 사라지면 updateSynthesis는
+		// 0행을 반환한다 - synthesizeOne이 이를 QuietFailure로 바꿔 집계해야 하고, runOnline 밖으로
+		// 예외가 새면 안 된다. 파트 B 포트 호출 자체를 "행 삭제" 부작용으로 써서 그 사이 경합을
+		// 재현한다(행이 사라진 뒤 UPDATE가 0행이 되는 상황과 동형).
+		enableSplitMode();
+		rewireSplitJob(null);
+		job.runFacts(); // post_a·post_b·post_c·post_new에 pending 행 생성
+
+		job = new ContentAnalysisJob(db, ds, fakeInsightPort(), new AnalyticsSettings(db),
+				false, url -> true, ProgressReporter.NOOP, ProgressReporter.NOOP,
+				null, new BeautyTaxonomyLoader(ds), ProgressReporter.NOOP, fakeFactsPort(),
+				content -> {
+					synthesisCalls.add(content);
+					// 파트 B가 해석을 만든 직후 ~ UPDATE 직전에 행이 사라지는 경합을 재현한다.
+					db.update("DELETE FROM content_analyses WHERE short_code = ?", content.shortCode());
+					return new Synthesis("해석: " + content.shortCode(), "패턴", "댓글 인사이트", "high", "근거");
+				});
+
+		JobResult result = job.run(); // 예외가 전파되지 않아야 한다
+
+		// 파트 B 후보 = v_analysis_candidates(timely=true) ∩ pending - 댓글 게이트 → post_a·post_b
+		assertEquals(0, result.processed());
+		assertEquals(2, result.failed());
+		assertEquals(2, synthesisCalls.size());
+		assertEquals(0L, db.queryForObject(
+				"SELECT count(*) FROM content_analyses WHERE short_code IN ('post_a', 'post_b')", Long.class));
+		// post_c(댓글 미분류)·post_new(파트 B 후보 아님)는 그대로 pending으로 남는다
+		assertEquals(2L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
 	}
 
 	@Test

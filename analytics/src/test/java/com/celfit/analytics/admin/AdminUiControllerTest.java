@@ -62,8 +62,8 @@ class AdminUiControllerTest {
 			new PipelineStatsService.Accounts(14_123, 1_714, 723, 169, 822, 1_861);
 
 	/**
-	 * 콘텐츠 축 실측 — 후보 7,402 = timely 1,435 + 윈도우 5,967, 기분석 7,116 / 미분석 286.
-	 * 파트 A 축(사실만 2+100, 파트 A 후보 9,000 · 완료 8,800)은 2026-09-03 2단계 분리 추가분 — 실측이
+	 * 콘텐츠 축 실측 - 후보 7,402 = timely 1,435 + 윈도우 5,967, 기분석 7,116 / 미분석 286.
+	 * 파트 A 축(사실만 2+100, 파트 A 후보 9,000 · 완료 8,800)은 2026-09-03 2단계 분리 추가분 - 실측이
 	 * 아니라 항등식만 성립하는 임의값(테스트 목적).
 	 */
 	private static final PipelineStatsService.Heavy HEAVY = new PipelineStatsService.Heavy(
@@ -76,8 +76,8 @@ class AdminUiControllerTest {
 			new PipelineStatsService.ArchiveCoverage(107_886, 27_686, 5_699, 5_694),
 			Instant.parse("2026-07-21T08:20:00Z"));
 
-	/** heavy 유무·실패 사유만 갈아끼우는 픽스처 — 누적(각주)·미러 수치는 §1 실측.
-	 *  pendingMarked=0 — 이 픽스처는 07-21 실측이라 2단계 분리 이전 데이터, "기타 445" 항등식 유지. */
+	/** heavy 유무·실패 사유만 갈아끼우는 픽스처 - 누적(각주)·미러 수치는 §1 실측.
+	 *  pendingMarked=0 - 이 픽스처는 07-21 실측이라 2단계 분리 이전 데이터, "기타 445" 항등식 유지. */
 	private static PipelineStatsService.Funnel funnel(PipelineStatsService.Heavy heavy,
 			String candidatesError) {
 		long remaining = heavy == null ? -1 : heavy.truePending();

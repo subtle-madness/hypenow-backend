@@ -92,6 +92,7 @@ class AnalyticsJobServiceTest {
 		assertThat(result).isEqualTo(AnalyticsJobService.TriggerResult.ACCEPTED);
 		var run = history.recent(1).getFirst();
 		assertThat(run.job()).isEqualTo(JobName.FACT_ANALYZE);
+		assertThat(run.processed()).isEqualTo(1);
 	}
 
 	@Test
