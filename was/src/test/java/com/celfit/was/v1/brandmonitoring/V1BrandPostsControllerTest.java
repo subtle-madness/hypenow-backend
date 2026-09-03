@@ -1106,7 +1106,8 @@ class V1BrandPostsControllerTest {
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
 				.andExpect(status().isOk());
 
-		then(brandAccountService).should().ensureAutoSeeded(7L, 100L);
+		// 훅은 requireOwnership이 이미 읽은 링크를 그대로 받는다(2026-09-03 팔로업 — 재조회 없음).
+		then(brandAccountService).should().ensureAutoSeeded(link());
 	}
 
 	@Test
@@ -1114,7 +1115,7 @@ class V1BrandPostsControllerTest {
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts/count").with(user(principal())))
 				.andExpect(status().isOk());
 
-		then(brandAccountService).should().ensureAutoSeeded(7L, 100L);
+		then(brandAccountService).should().ensureAutoSeeded(link());
 	}
 
 	/** 메인 목록은 수집 중 초 단위 폴링 경로라 훅을 걸지 않는다(§4-2·§7). */
@@ -1123,7 +1124,7 @@ class V1BrandPostsControllerTest {
 		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
 				.andExpect(status().isOk());
 
-		then(brandAccountService).should(never()).ensureAutoSeeded(anyLong(), anyLong());
+		then(brandAccountService).should(never()).ensureAutoSeeded(any());
 	}
 
 	// ---------- 상세 ----------

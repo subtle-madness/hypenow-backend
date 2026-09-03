@@ -222,7 +222,7 @@ public class V1BrandPostsController {
 		// 자동 시드 훅(2026-09-03 §4-2 호출 지점 3) — 격리 필터(내 장부 태그 ∩ 게시물 매칭 태그)가
 		// 빈 장부에서는 아무것도 통과시키지 못해, 자동 태그로 발견된 게시물이 통째로 안 보인다.
 		// 조립 층(BrandPostAssembler)에는 monitoring 클라이언트도 username도 없어 여기서 부른다.
-		brandAccountService.ensureAutoSeeded(principal.getUserId(), brandId);
+		brandAccountService.ensureAutoSeeded(link);
 		LocalDate windowStart = BrandPostWindows.linkWindowStart(today(), link.collectionMonths());
 		return ApiResponse.ok(hashtagPostAssembler.assembleForBrand(principal.getUserId(), account,
 				link.accountType(), windowStart));
@@ -241,7 +241,7 @@ public class V1BrandPostsController {
 		BrandLinkRow link = requireOwnership(principal.getUserId(), brandId);
 		BrandAccountRow account = findAccountOrThrow(brandId);
 		// 탭 뱃지가 목록보다 먼저 렌더될 수 있다 — 여기서 0이 나오면 사용자가 목록을 열지 않는다.
-		brandAccountService.ensureAutoSeeded(principal.getUserId(), brandId);
+		brandAccountService.ensureAutoSeeded(link);
 		LocalDate windowStart = BrandPostWindows.linkWindowStart(today(), link.collectionMonths());
 		return ApiResponse.ok(Map.of("count",
 				hashtagPostAssembler.countForBrand(principal.getUserId(), account, windowStart)));

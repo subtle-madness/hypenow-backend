@@ -221,6 +221,10 @@ public class V1BrandAccountService {
 	 * 규칙이고, PATCH에서 그대로 쓰면 필드를 안 보낸 요청이 계정을 조용히 own으로 덮어쓴다
 	 * (경쟁사 강등, 심지어 own이 6개면 보내지도 않은 필드 때문에 409). 값 공간의 두 리터럴만 받고
 	 * 부재·null·공백은 전부 400이다.
+	 *
+	 * <p>응답은 {@code get}과 같은 셰이프지만 자동 시드 훅은 태우지 않는다({@link #getWithoutAutoSeed}
+	 * — 2026-09-03 팔로업, {@link #register}와 같은 이유) — PATCH도 뮤테이션 요청이라 monitoring
+	 * 제안 계산(AI 호출 포함)이 그 요청 처리 안에서 동기로 실행되면 안 된다.
 	 */
 	public BrandAccountResponse changeType(long userId, long brandId, String rawAccountType) {
 		// 검증은 반드시 리포지토리 도달 전에 — 잘못된 값이 그대로 내려가면 CHECK 제약 위반이 500으로 샌다.
@@ -229,7 +233,7 @@ public class V1BrandAccountService {
 		}
 		linkTransaction.changeType(userId, brandId, rawAccountType);
 		pushOwnLinkSafely(brandId);
-		return get(userId, brandId);
+		return getWithoutAutoSeed(userId, brandId);
 	}
 
 	/**
@@ -251,9 +255,10 @@ public class V1BrandAccountService {
 	 * 하나로 깨지면 안 된다(다른 monitoring best-effort push 관용구와 동형).
 	 */
 	public List<BrandHashtagTagsResponse.TagStatus> getHashtagTags(long userId, long brandId) {
-		requireOwnership(userId, brandId);
-		// 자동 시드 훅(2026-09-03 §4-2 호출 지점 2) — 장부를 읽기 전에 태운다.
-		ensureAutoSeeded(userId, brandId);
+		BrandLinkRow link = requireOwnership(userId, brandId);
+		// 자동 시드 훅(2026-09-03 §4-2 호출 지점 2) — 장부를 읽기 전에 태운다. 링크를 이미 들고
+		// 있으니 링크 오버로드로 넘겨 훅 안에서 같은 링크를 또 조회하지 않는다.
+		ensureAutoSeeded(link);
 		List<String> ledgerTags = List.copyOf(hashtagTagRepository.findByUserAndBrand(userId, brandId));
 		if (ledgerTags.isEmpty()) {
 			findAccountOrThrow(brandId);   // 소유권 통과 후에도 브랜드 자체는 존재해야 한다(기존 계약 유지)
@@ -287,8 +292,9 @@ public class V1BrandAccountService {
 	}
 
 	/**
-	 * 브랜드 해시태그 자동 시드 훅(2026-09-03 자동 시드 재설계 §4-2) — <b>was가 유일한 작성자다</b>
-	 * (08-28 "태그 생성 권한 was 일원화" 유지). monitoring은 계산만 해 주고 아무것도 쓰지 않는다.
+	 * 브랜드 해시태그 자동 시드 훅(2026-09-03 자동 시드 재설계 §4-2, 09-03 팔로업으로 호출부가
+	 * 이미 읽은 링크를 받는 형태로 일원화) — <b>was가 유일한 작성자다</b>(08-28 "태그 생성 권한
+	 * was 일원화" 유지). monitoring은 계산만 해 주고 아무것도 쓰지 않는다.
 	 *
 	 * <p>두 단계 멱등: 계산은 브랜드당 1회({@code app.brand_hashtag_seed} 1행), 장부 삽입은
 	 * 사용자당 1회({@code brand_monitorings.hashtag_seeded_at}). 두 번째 사용자가 같은 브랜드에
@@ -305,24 +311,9 @@ public class V1BrandAccountService {
 	 * 보이는 상태가 길어진다. 장부만 채워진 상태는 다음 사용자의 push나 수동 추가로 자연 복구된다.
 	 *
 	 * <p><b>전체가 best-effort다</b> — 어떤 예외도 밖으로 내지 않는다. 호출 지점 3곳이 전부 사용자
-	 * 대면 조회라, 자동 시드 실패가 화면을 깨뜨리면 안 된다. 소유권 검증은 이 메서드 안의 활성
-	 * 링크 조회가 겸한다(남의 brandId면 링크가 없어 조용히 반환).
-	 */
-	public void ensureAutoSeeded(long userId, long brandId) {
-		try {
-			Optional<BrandLinkRow> link = linkRepository.findActiveByUserAndBrand(userId, brandId);
-			if (link.isPresent()) {
-				doEnsureAutoSeeded(link.get());
-			}
-		} catch (RuntimeException e) {
-			log.warn("해시태그 자동 시드 실패(격리) — userId={}, brandId={}", userId, brandId, e);
-		}
-	}
-
-	/**
-	 * 링크를 이미 들고 있는 호출부용 오버로드(2026-09-03 팔로업) — {@link #get}처럼 소유권 검증에서
-	 * 이미 활성 링크를 읽은 경우, 훅 안에서 같은 링크를 또 조회하지 않는다(폴링마다 쿼리 1회 절감).
-	 * 그 외 동작·best-effort 격리는 위 {@link #ensureAutoSeeded(long, long)}와 동일하다.
+	 * 대면 조회라, 자동 시드 실패가 화면을 깨뜨리면 안 된다. 소유권 검증은 호출부의 {@code
+	 * requireOwnership}이 이미 끝낸 뒤라 이 메서드는 링크를 다시 조회하지 않는다(폴링마다
+	 * 쿼리 1회 절감 — 09-03 팔로업).
 	 */
 	public void ensureAutoSeeded(BrandLinkRow link) {
 		try {
@@ -351,8 +342,8 @@ public class V1BrandAccountService {
 			try {
 				commandClient.addHashtagTags(username, List.of(tag));
 			} catch (RuntimeException e) {
-				log.warn("해시태그 자동 시드 monitoring push 실패(격리, 장부는 진행) — userId={}, brandId={}",
-						userId, brandId, e);
+				log.warn("해시태그 자동 시드 monitoring push 실패(격리, 장부는 진행) — userId={}, brandId={}, "
+						+ "username={}, tag={}", userId, brandId, username, tag, e);
 			}
 			hashtagTagRepository.addTags(userId, brandId, List.of(tag));
 		}

@@ -9,6 +9,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -1001,6 +1002,9 @@ class V1BrandAccountsControllerTest {
 				.andExpect(status().isOk());
 
 		then(seedRepository).should().find(100L);
+		// 훅은 소유권 검증이 이미 읽은 링크를 그대로 쓴다(2026-09-03 팔로업) — 링크 재조회가 없어야
+		// requireOwnership의 1회 호출만 잡힌다(제로 추가 쿼리 고정).
+		then(linkRepository).should(times(1)).findActiveByUserAndBrand(7L, 100L);
 	}
 
 	/** 아직 수집 중(backfillCompletedAt == null)이면 훅 자체를 태우지 않는다 — 폴링 왕복 낭비 방지. */

@@ -29,9 +29,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * 자동 시드 훅(2026-09-03 자동 시드 재설계 §4-2) — was가 유일한 작성자다. 분기 전부를 고정한다:
- * 링크 이미 반영됨 / 백필 미완 / 이미 사용자 태그 있음(SKIP) / 신규 계산 / 기존 시드 복사 /
- * push 실패 격리 / 동시 호출 경합. 훅은 어떤 실패에서도 예외를 밖으로 내지 않는다.
+ * 자동 시드 훅(2026-09-03 자동 시드 재설계 §4-2, 09-03 팔로업으로 {@code BrandLinkRow} 오버로드로
+ * 일원화) — was가 유일한 작성자다. 분기 전부를 고정한다: 링크 이미 반영됨 / 백필 미완 / 이미 사용자
+ * 태그 있음(SKIP) / 신규 계산 / 기존 시드 복사 / push 실패 격리 / 동시 호출 경합. 훅은 어떤 실패에서도
+ * 예외를 밖으로 내지 않는다.
+ *
+ * <p>모든 프로덕션 호출부(get·getHashtagTags·해시태그 목록·개수)가 소유권 검증에서 이미 읽은
+ * {@code BrandLinkRow}를 그대로 넘기므로, 이 테스트도 링크를 직접 구성해 {@link
+ * V1BrandAccountService#ensureAutoSeeded(BrandLinkRow)}를 부른다 — 링크 조회(존재 유무·조회
+ * 실패)는 더 이상 이 메서드의 관심사가 아니다(호출부의 {@code requireOwnership}이 이미 검증한다).
  */
 @ExtendWith(MockitoExtension.class)
 class V1BrandAccountServiceAutoSeedTest {
@@ -76,11 +82,6 @@ class V1BrandAccountServiceAutoSeedTest {
 				"https://p", false, null, "ACTIVE", null, 12, NOW, false, null);
 	}
 
-	private void stubLink(OffsetDateTime hashtagSeededAt) {
-		given(linkRepository.findActiveByUserAndBrand(USER_ID, BRAND_ID))
-				.willReturn(Optional.of(link(hashtagSeededAt)));
-	}
-
 	private void stubAccount(OffsetDateTime backfillCompletedAt) {
 		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account(backfillCompletedAt)));
 	}
@@ -89,9 +90,7 @@ class V1BrandAccountServiceAutoSeedTest {
 
 	@Test
 	void 링크가_이미_반영됐으면_아무것도_하지_않는다() {
-		stubLink(NOW);
-
-		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+		service.ensureAutoSeeded(link(NOW));
 
 		then(seedRepository).should(never()).find(anyLong());
 		then(commandClient).should(never()).getHashtagSuggestion(anyString());
@@ -99,21 +98,11 @@ class V1BrandAccountServiceAutoSeedTest {
 	}
 
 	@Test
-	void 미소유_브랜드는_아무것도_하지_않는다() {
-		given(linkRepository.findActiveByUserAndBrand(USER_ID, BRAND_ID)).willReturn(Optional.empty());
-
-		service.ensureAutoSeeded(USER_ID, BRAND_ID);
-
-		then(seedRepository).should(never()).find(anyLong());
-	}
-
-	@Test
 	void 초기_백필이_미완이면_계산하지_않는다() {
-		stubLink(null);
 		given(seedRepository.find(BRAND_ID)).willReturn(Optional.empty());
 		stubAccount(null);
 
-		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+		service.ensureAutoSeeded(link(null));
 
 		then(commandClient).should(never()).getHashtagSuggestion(anyString());
 		then(linkRepository).should(never()).markHashtagSeeded(anyLong());
@@ -123,7 +112,6 @@ class V1BrandAccountServiceAutoSeedTest {
 
 	@Test
 	void 태그가_없으면_제안을_받아_기록하고_push하고_장부에_넣고_표식을_찍는다() {
-		stubLink(null);
 		given(seedRepository.find(BRAND_ID)).willReturn(Optional.empty(),
 				Optional.of(new SeedRow(BRAND_ID, "AI", "닥터피엘", NOW)));
 		stubAccount(NOW);
@@ -131,7 +119,7 @@ class V1BrandAccountServiceAutoSeedTest {
 		given(commandClient.getHashtagSuggestion(USERNAME))
 				.willReturn(new HashtagSuggestionBody("AI", "닥터피엘", 3, 40));
 
-		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+		service.ensureAutoSeeded(link(null));
 
 		then(seedRepository).should().insertIgnore(BRAND_ID, "AI", "닥터피엘");
 		then(commandClient).should().addHashtagTags(USERNAME, List.of("닥터피엘"));
@@ -142,13 +130,12 @@ class V1BrandAccountServiceAutoSeedTest {
 	/** 이미 사용자 관리 태그가 있는 브랜드 — 자동 태그를 얹지 않고 SKIP만 기록한다. */
 	@Test
 	void monitoring에_태그가_있으면_SKIP을_기록하고_장부는_건드리지_않는다() {
-		stubLink(null);
 		given(seedRepository.find(BRAND_ID)).willReturn(Optional.empty(),
 				Optional.of(new SeedRow(BRAND_ID, "SKIP", null, NOW)));
 		stubAccount(NOW);
 		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of("사용자태그"));
 
-		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+		service.ensureAutoSeeded(link(null));
 
 		then(seedRepository).should().insertIgnore(BRAND_ID, "SKIP", null);
 		then(commandClient).should(never()).getHashtagSuggestion(anyString());
@@ -162,11 +149,10 @@ class V1BrandAccountServiceAutoSeedTest {
 
 	@Test
 	void 시드가_이미_있으면_계산_없이_복사한다() {
-		stubLink(null);
 		given(seedRepository.find(BRAND_ID))
 				.willReturn(Optional.of(new SeedRow(BRAND_ID, "FREQ", "닥피", NOW)));
 
-		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+		service.ensureAutoSeeded(link(null));
 
 		then(commandClient).should(never()).getHashtagSuggestion(anyString());
 		then(commandClient).should(never()).getHashtagTags(anyString());
@@ -178,11 +164,10 @@ class V1BrandAccountServiceAutoSeedTest {
 
 	@Test
 	void SKIP_시드는_장부_삽입_없이_표식만_찍는다() {
-		stubLink(null);
 		given(seedRepository.find(BRAND_ID))
 				.willReturn(Optional.of(new SeedRow(BRAND_ID, "SKIP", null, NOW)));
 
-		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+		service.ensureAutoSeeded(link(null));
 
 		then(commandClient).should(never()).addHashtagTags(anyString(), any());
 		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
@@ -192,7 +177,6 @@ class V1BrandAccountServiceAutoSeedTest {
 	/** 동시 호출 경합 — 내 INSERT가 지면 재조회로 이긴 쪽의 값을 쓴다(계산 결과가 아니라). */
 	@Test
 	void 동시_호출은_먼저_커밋된_시드를_따른다() {
-		stubLink(null);
 		given(seedRepository.find(BRAND_ID)).willReturn(Optional.empty(),
 				Optional.of(new SeedRow(BRAND_ID, "FREQ", "먼저값", NOW)));
 		stubAccount(NOW);
@@ -200,7 +184,7 @@ class V1BrandAccountServiceAutoSeedTest {
 		given(commandClient.getHashtagSuggestion(USERNAME))
 				.willReturn(new HashtagSuggestionBody("AI", "내값", 1, 5));
 
-		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+		service.ensureAutoSeeded(link(null));
 
 		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of("먼저값"));
 	}
@@ -210,13 +194,12 @@ class V1BrandAccountServiceAutoSeedTest {
 	/** monitoring push가 실패해도 장부는 진행한다 — 여기서 멈추면 그 사용자 장부가 영구히 빈다. */
 	@Test
 	void push_실패는_장부_삽입과_표식을_막지_않는다() {
-		stubLink(null);
 		given(seedRepository.find(BRAND_ID))
 				.willReturn(Optional.of(new SeedRow(BRAND_ID, "FREQ", "닥피", NOW)));
 		willThrow(new RuntimeException("monitoring 순단"))
 				.given(commandClient).addHashtagTags(USERNAME, List.of("닥피"));
 
-		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+		service.ensureAutoSeeded(link(null));
 
 		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of("닥피"));
 		then(linkRepository).should().markHashtagSeeded(LINK_ID);
@@ -224,24 +207,23 @@ class V1BrandAccountServiceAutoSeedTest {
 
 	@Test
 	void 제안_조회_실패는_예외를_밖으로_내지_않는다() {
-		stubLink(null);
 		given(seedRepository.find(BRAND_ID)).willReturn(Optional.empty());
 		stubAccount(NOW);
 		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of());
 		given(commandClient.getHashtagSuggestion(USERNAME)).willThrow(new RuntimeException("monitoring 순단"));
 
-		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+		service.ensureAutoSeeded(link(null));
 
 		then(seedRepository).should(never()).insertIgnore(anyLong(), anyString(), any());
 		then(linkRepository).should(never()).markHashtagSeeded(anyLong());
 	}
 
+	/** 훅 자체의 예상치 못한 실패(브랜드 시드 조회 오류)도 밖으로 내지 않는다 — 호출부는 조회 화면이다. */
 	@Test
-	void 링크_조회_실패도_예외를_밖으로_내지_않는다() {
-		given(linkRepository.findActiveByUserAndBrand(USER_ID, BRAND_ID))
-				.willThrow(new RuntimeException("DB 장애"));
+	void 브랜드_시드_조회_실패도_예외를_밖으로_내지_않는다() {
+		given(seedRepository.find(BRAND_ID)).willThrow(new RuntimeException("DB 장애"));
 
-		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+		service.ensureAutoSeeded(link(null));
 
 		then(linkRepository).should(never()).markHashtagSeeded(anyLong());
 	}
@@ -249,21 +231,20 @@ class V1BrandAccountServiceAutoSeedTest {
 	/** 제안 tag가 비어 오는 건 monitoring 계약 위반이지만, 방어적으로 심지 않는다. */
 	@Test
 	void 제안_tag가_비면_아무것도_심지_않는다() {
-		stubLink(null);
 		given(seedRepository.find(BRAND_ID)).willReturn(Optional.empty());
 		stubAccount(NOW);
 		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of());
 		given(commandClient.getHashtagSuggestion(USERNAME))
 				.willReturn(new HashtagSuggestionBody("FALLBACK", "  ", 0, 0));
 
-		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+		service.ensureAutoSeeded(link(null));
 
 		then(seedRepository).should(never()).insertIgnore(anyLong(), anyString(), any());
 		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
 		then(linkRepository).should(never()).markHashtagSeeded(anyLong());
 	}
 
-	// ---------- 등록은 훅을 동기로 태우지 않는다(2026-09-03 팔로업) ----------
+	// ---------- 등록·타입 변경은 훅을 동기로 태우지 않는다(2026-09-03 팔로업) ----------
 
 	/**
 	 * 이미 백필이 끝난 브랜드에 두 번째 사용자가 멱등 재-POST로 연결해도, 등록 응답 조립은 훅을
@@ -281,5 +262,21 @@ class V1BrandAccountServiceAutoSeedTest {
 		then(seedRepository).should(never()).find(anyLong());
 		then(commandClient).should(never()).getHashtagSuggestion(anyString());
 		then(commandClient).should(never()).getHashtagTags(anyString());
+	}
+
+	/**
+	 * 타입 변경(PATCH)도 등록과 같은 이유로 훅을 태우지 않는다 — PATCH는 뮤테이션 요청이라
+	 * monitoring 제안 계산(AI 호출 포함)이 그 요청 처리 안에서 동기로 실행되면 안 된다.
+	 */
+	@Test
+	void PATCH_타입_변경은_자동_시드_훅을_동기로_태우지_않는다() {
+		given(linkRepository.findAllActiveByUser(USER_ID)).willReturn(List.of(link(null)));
+		given(linkRepository.findActiveByUserAndBrand(USER_ID, BRAND_ID)).willReturn(Optional.of(link(null)));
+		stubAccount(NOW);   // 백필 완료 브랜드 — 훅이 살아 있었다면 여기서 계산이 돌았을 상황.
+
+		service.changeType(USER_ID, BRAND_ID, BrandAccountType.OWN);
+
+		then(seedRepository).should(never()).find(anyLong());
+		then(commandClient).should(never()).getHashtagSuggestion(anyString());
 	}
 }

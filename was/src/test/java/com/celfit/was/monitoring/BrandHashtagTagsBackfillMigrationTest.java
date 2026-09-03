@@ -73,7 +73,8 @@ class BrandHashtagTagsBackfillMigrationTest extends IntegrationTest {
 		assertThat(repository.findByUserAndBrand(userId, brandId)).containsExactly("cclime_official");
 	}
 
-	/** IG 해시태그는 점(.)에서 끊긴다 — was BrandHashtagTags.derive와 같은 결과여야 한다. */
+	/** IG 해시태그는 점(.)에서 끊긴다 — was가 링크 생성 시점에 계정명을 절삭해 태그로 쓰던
+	 * 구 규칙(2026-09-03 자동 시드 재설계로 삭제)과 같은 결과를 이 백필 SQL도 재현해야 한다. */
 	@Test
 	void 점_포함_계정명은_점_앞까지만_태그가_된다() throws IOException {
 		insertLink(brandId, "cclime.beauty", false);

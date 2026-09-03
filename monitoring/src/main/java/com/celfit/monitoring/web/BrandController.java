@@ -276,6 +276,8 @@ public class BrandController {
 		if (row.isEmpty()) {
 			return brandNotFound();
 		}
+		// 다른 GET들과 달리 *Body로 감싸지 않는다 — 스펙 §3-1이 와이어 셰이프를 이 Suggestion 레코드
+		// 그대로로 정의해서다(의도된 것, 감싸기 누락이 아니다).
 		return ResponseEntity.ok(suggestions.suggest(row.get().id(), row.get().username()));
 	}
 
