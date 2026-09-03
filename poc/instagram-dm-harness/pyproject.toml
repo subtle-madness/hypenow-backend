@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "igdm-harness"
+version = "0.1.0"
+description = "인스타 DM 콜드아웃리치 밴 리스크 실측 POC 하네스 (1단계). 우리 통제 더미 계정 전용."
+requires-python = ">=3.11"
+# instagrapi는 버전 핀 고정(밴 측정 재현성). 설치 후 실제 버전을 ledger에 런타임 기록한다.
+dependencies = [
+    "instagrapi==2.1.2",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+igdm-harness = "igdm_harness.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
