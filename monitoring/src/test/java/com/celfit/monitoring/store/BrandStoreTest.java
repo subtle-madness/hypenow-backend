@@ -559,6 +559,36 @@ class BrandStoreTest {
 				.isEqualTo(1L);
 	}
 
+	@Test
+	void 브랜드_프로필_스냅샷_null_관측은_기존값을_보호한다() {
+		// og 표면은 media_count가 og:description 영어 정규식 파싱 의존이라 부분 파싱 실패(null)가 흔하다
+		// (S15 보완) — 그 null이 이미 Hiker·wpi가 채운 good value를 지우면 안 된다(SnapshotRepository와 동형).
+		snapshots.upsertBrandProfile("brand_b", LocalDate.of(2026, 9, 3),
+				new ProfileInfo("brand_b", "1", 100L, 10L, 5L, "이름", "https://img", null, null, null));
+		snapshots.upsertBrandProfile("brand_b", LocalDate.of(2026, 9, 3),
+				new ProfileInfo("brand_b", "1", null, null, null, "이름", "https://img", null, null, null));
+		assertThat(db.queryForObject(
+				"SELECT followers FROM brand_profile_snapshot WHERE username='brand_b'", Long.class)).isEqualTo(100);
+		assertThat(db.queryForObject(
+				"SELECT following FROM brand_profile_snapshot WHERE username='brand_b'", Long.class)).isEqualTo(10);
+		assertThat(db.queryForObject(
+				"SELECT media_count FROM brand_profile_snapshot WHERE username='brand_b'", Long.class)).isEqualTo(5);
+	}
+
+	@Test
+	void 브랜드_프로필_스냅샷_실제_관측값은_null_보호와_무관하게_덮는다() {
+		snapshots.upsertBrandProfile("brand_c", LocalDate.of(2026, 9, 3),
+				new ProfileInfo("brand_c", "1", 100L, 10L, 5L, "이름", "https://img", null, null, null));
+		snapshots.upsertBrandProfile("brand_c", LocalDate.of(2026, 9, 3),
+				new ProfileInfo("brand_c", "1", 200L, 20L, 8L, "이름", "https://img", null, null, null));
+		assertThat(db.queryForObject(
+				"SELECT followers FROM brand_profile_snapshot WHERE username='brand_c'", Long.class)).isEqualTo(200);
+		assertThat(db.queryForObject(
+				"SELECT following FROM brand_profile_snapshot WHERE username='brand_c'", Long.class)).isEqualTo(20);
+		assertThat(db.queryForObject(
+				"SELECT media_count FROM brand_profile_snapshot WHERE username='brand_c'", Long.class)).isEqualTo(8);
+	}
+
 	// ── brand_post_meta / brand_post_comment ─────────────────────────────────
 
 	@Test

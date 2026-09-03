@@ -23,13 +23,20 @@ public class SnapshotRepository {
 		this.db = db;
 	}
 
+	/**
+	 * 같은 날 재수집 시 null 관측의 덮어쓰기 보호(S15) — og 표면은 media_count가 og:description
+	 * 영어 정규식 파싱 의존이라 부분 파싱 실패(null)가 흔하고, followers·following도 문서 JSON에
+	 * 해당 키가 없으면 null로 온다. 이 null이 Hiker·wpi가 먼저 채운 good value를 지우지 못하게
+	 * COALESCE로 보호한다(upsertPost의 saves·comments 등과 동일 원칙, #725).
+	 */
 	public void upsertProfile(String username, LocalDate on, ProfileInfo p) {
 		db.update("""
 				INSERT INTO profile_snapshot (username, captured_on, followers, following, media_count)
 				VALUES (?, ?, ?, ?, ?)
 				ON CONFLICT (username, captured_on) DO UPDATE SET
-				  followers=EXCLUDED.followers, following=EXCLUDED.following,
-				  media_count=EXCLUDED.media_count""",
+				  followers=COALESCE(EXCLUDED.followers, profile_snapshot.followers),
+				  following=COALESCE(EXCLUDED.following, profile_snapshot.following),
+				  media_count=COALESCE(EXCLUDED.media_count, profile_snapshot.media_count)""",
 				username, on, p.followers(), p.following(), p.mediaCount());
 	}
 
@@ -57,6 +64,12 @@ public class SnapshotRepository {
 	 * 보고 값·hidden 플래그를 함께 보존한다 — self가 hidden을 단정하지 않도록 고친 결과(수정 2)
 	 * 자연히 여기서 "관측 실패"로 흡수된다. EXCLUDED가 (값 null + hidden=true)면 진짜 숨김 관측이라
 	 * 정상적으로 덮는다.
+	 *
+	 * <p>PostInfo.likesHidden·sharesHidden은 인메모리에서 3상태(Boolean, null=미확정)를 쓰지만
+	 * (S9, 2026-09-03 감사 수정 — CollectService#assumeZeroForOmittedKeys가 미확정과 확정 false를
+	 * 구분해 오기록을 막는다), DB 컬럼은 boolean NOT NULL이고 위 CASE 보호는 원래도 false를
+	 * "미확정 관측" 신호로 썼다 — 그래서 저장 직전 null은 false로 접는다(Boolean.TRUE.equals),
+	 * 기존 계약 그대로다.
 	 */
 	public void upsertPost(LocalDate on, PostInfo p) {
 		Long fb = p.fbPlays() != null ? p.fbPlays() : latestFbPlays(p.shortCode(), on);
@@ -91,8 +104,8 @@ public class SnapshotRepository {
 				               THEN post_snapshot.shares_hidden ELSE EXCLUDED.shares_hidden END,
 				  reposts = COALESCE(EXCLUDED.reposts, post_snapshot.reposts)""",
 				p.username(), p.shortCode(), on, p.contentType(),
-				p.likes(), p.likesHidden(), p.comments(), views, fb,
-				p.saves(), p.shares(), p.sharesHidden(), p.reposts());
+				p.likes(), Boolean.TRUE.equals(p.likesHidden()), p.comments(), views, fb,
+				p.saves(), p.shares(), Boolean.TRUE.equals(p.sharesHidden()), p.reposts());
 	}
 
 	/**

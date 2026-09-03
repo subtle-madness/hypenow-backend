@@ -10,4 +10,4 @@
 
 ## 내용
 
-CDN 만료(~4일) 전 프로필·릴스 썸네일·게시글 썸네일을 OCI `hypenow-images` 버킷에 적재하는 analytics 잡 + `image_assets`(V37, 미러 제외 누적) + was COALESCE `/img/` 상대경로 서빙(Vercel rewrite 엣지 캐시 — 프론트 배포 완료) — [specs/2026-07-21-image-archive-design.md](../superpowers/specs/2026-07-21-image-archive-design.md) [plans/2026-07-21-image-archive.md → archive]
+CDN 만료(~4일) 전 프로필·릴스 썸네일·게시글 썸네일을 OCI `hypenow-images` 버킷에 적재하는 analytics 잡 + `image_assets`(V37, 미러 제외 누적) + was COALESCE `/img/` 상대경로 서빙(Vercel rewrite 엣지 캐시 — 프론트 배포 완료) — [specs/archive/2026-07-21-image-archive-design.md](../superpowers/specs/archive/2026-07-21-image-archive-design.md) [plans/2026-07-21-image-archive.md → archive]

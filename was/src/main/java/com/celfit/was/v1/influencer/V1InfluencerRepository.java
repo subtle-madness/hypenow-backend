@@ -15,13 +15,18 @@ public class V1InfluencerRepository {
 		this.jdbcClient = jdbcClient;
 	}
 
-	/** accounts ⋈ account_summaries — 프로필 1행. 아카이브된 프로필 이미지는 /img/ 상대경로로 폴백. */
+	/**
+	 * accounts ⋈ account_summaries — 프로필 1행. 아카이브된 프로필 이미지는 /img/ 상대경로로 폴백.
+	 * email은 account_summaries.email(analytics V46, 소개글 정규식 파싱 — 스펙
+	 * 2026-07-30-influencer-email-from-bio-design.md) — 발굴 목록(6.21)·유사 카드(6.23)가 읽는 컬럼과
+	 * 같은 소스다(2026-09-03 FE 피드백 #1: 상세만 항상 null이던 결함 수리).
+	 */
 	public Optional<ProfileRow> findProfile(String handle) {
 		return jdbcClient.sql("""
 				SELECT a.handle, a.display_name,
 				       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
 				       a.followers, a.external_link,
-				       s.posts_count, s.follows_count, s.biography
+				       s.posts_count, s.follows_count, s.biography, s.email
 				FROM accounts a
 				LEFT JOIN account_summaries s ON s.handle = a.handle
 				LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
@@ -51,6 +56,7 @@ public class V1InfluencerRepository {
 	}
 
 	public record ProfileRow(String handle, String displayName, String profileImageUrl,
-			Long followers, String externalLink, Long postsCount, Long followsCount, String biography) {
+			Long followers, String externalLink, Long postsCount, Long followsCount, String biography,
+			String email) {
 	}
 }

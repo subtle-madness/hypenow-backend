@@ -31,6 +31,10 @@ public class CacheConfig implements CachingConfigurer {
 	public static final String INFLUENCER_DISCOVERY = "influencer-discovery";
 	public static final String CONTENT_REPORT = "content-report";
 	public static final String INFLUENCER_REPORT = "influencer-report";
+	/** 6.22 발굴 리포트 v2 — v1(INFLUENCER_REPORT)과 값 타입이 달라 캐시를 분리, TTL 등급은 같다. */
+	public static final String INFLUENCER_REPORT_V2 = "influencer-report-v2";
+	/** 6.23 유사 인플루언서 — 기준 계정 단일 키, 리포트와 같은 등급(재료가 같은 새벽 배치 산출). */
+	public static final String INFLUENCER_SIMILAR = "influencer-similar";
 
 	private static final Logger log = LoggerFactory.getLogger(CacheConfig.class);
 
@@ -54,7 +58,7 @@ public class CacheConfig implements CachingConfigurer {
 						.fromSerializer(RedisSerializer.json()));
 		// TTL 근거: 미러 KST 04:30~07:00 → 최악 stale 6h면 오전 중 자연 갱신(스펙 §4)
 		// SDR 4.1 기본은 비동기 쓰기(put/evict 실패가 로그 없이 소실 — errorHandler 도달 불가).
-		// immediateWrites로 동기화해 fail-open 로그 계약(§7)을 지킨다. 4경로 전부 sync=true라
+		// immediateWrites로 동기화해 fail-open 로그 계약(§7)을 지킨다. 전 경로 sync=true라
 		// 실측 지연 변화 없음(2026-07-29 리뷰).
 		return RedisCacheManager.builder(RedisCacheWriter.create(factory,
 						RedisCacheWriter.RedisCacheWriterConfigurer::immediateWrites))
@@ -63,6 +67,8 @@ public class CacheConfig implements CachingConfigurer {
 				.withCacheConfiguration(INFLUENCER_DISCOVERY, base.entryTtl(Duration.ofHours(1)))
 				.withCacheConfiguration(CONTENT_REPORT, base.entryTtl(Duration.ofHours(6)))
 				.withCacheConfiguration(INFLUENCER_REPORT, base.entryTtl(Duration.ofHours(6)))
+				.withCacheConfiguration(INFLUENCER_REPORT_V2, base.entryTtl(Duration.ofHours(6)))
+				.withCacheConfiguration(INFLUENCER_SIMILAR, base.entryTtl(Duration.ofHours(6)))
 				.build();
 	}
 

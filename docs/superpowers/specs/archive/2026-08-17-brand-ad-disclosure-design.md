@@ -1,6 +1,6 @@
 # 캡션 기반 광고 표기 판정 (브랜드 직접 태그 게시물) 설계
 
-> 상태: 🟢 활성 · 2026-08-17 설계 확정 → 2026-08-18 구현 완료(배포·노출 개통 전 — 잔여는 트랙 문서 참조)
+> 상태: ✅ 구현됨(2026-08-17 설계 확정 → 2026-08-18 구현, 08-19 운영 노출 개통 — 후속은 트랙 MON-BT 문서 참조)
 > **2026-08-18 사용자 정정(§6)**: 최초 설계는 브랜드가 시딩 인플루언서 계정을 별도 등록하는
 > 신규 관리 표면(monitoring `brand_seeded_account` + `.../seeded-accounts` API 5종 + was
 > 프록시 5종)을 전제했으나, 구현 당일 이 표면이 잘못된 신설이라는 판단으로 전면 철회됐다.
@@ -8,8 +8,8 @@
 > (`app.monitoring_items`·`app.brand_direct_posts`)에서 was가 조회 시점에 직접 도출한다 —
 > §6은 이 교체를 반영해 재기술했다. `brand_seeded_account` 테이블·마이그레이션 자체는
 > expand-contract상 이번엔 DROP하지 않고 미사용 상태로 남아 있다. 상세는
-> [monitoring-was-contract.md §9](../../contracts/monitoring-was-contract.md)(v2.12)와
-> [트랙 MON-BT](../../tracks/MON-BT-브랜드-태그-모니터링.md) 참조.
+> [monitoring-was-contract.md §9](../../../contracts/monitoring-was-contract.md)(v2.12)와
+> [트랙 MON-BT](../../../tracks/MON-BT-브랜드-태그-모니터링.md) 참조.
 
 ## 1. 목적
 

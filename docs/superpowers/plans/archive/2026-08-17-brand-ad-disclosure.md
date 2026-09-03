@@ -17,7 +17,7 @@ enrich 체인에 인라인으로 추가하고, 전용 소형 LLM 풀(동시 3~4)
 **Tech Stack:** Java 21, Spring Boot 4.1, monitoring 모듈(Flyway/JdbcTemplate) + was 모듈(JdbcClient),
 Gemini(`GeminiHttp` seam 재사용), JUnit 5 + AssertJ, Testcontainers(PostgreSQL).
 
-정본 스펙: [docs/superpowers/specs/2026-08-17-brand-ad-disclosure-design.md](../../specs/2026-08-17-brand-ad-disclosure-design.md) — 이 계획과 스펙이 어긋나면 스펙이 이긴다.
+정본 스펙: [docs/superpowers/specs/archive/2026-08-17-brand-ad-disclosure-design.md](../../specs/archive/2026-08-17-brand-ad-disclosure-design.md) — 이 계획과 스펙이 어긋나면 스펙이 이긴다.
 
 ---
 

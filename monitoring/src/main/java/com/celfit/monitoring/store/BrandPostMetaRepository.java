@@ -56,6 +56,11 @@ public class BrandPostMetaRepository {
 	 *     불가"다. EXCLUDED로 무조건 덮으면 광고 판정 Tier0 최우선 신호(AdDisclosureJudgeService)로
 	 *     이미 확정된 협찬 판정이 self 재수집에 지워진다. thumbnail_url·video_url과 같은 COALESCE
 	 *     보호로 통일한다.</li>
+	 * <li>content_type — COALESCE 보존(S4, 2026-09-03 배포 전 감사 수정). self(embed·feed/user)는
+	 *     REELS/FEED를 구조적으로 확정하지 못하면 null을 넘긴다(EmbedPostFetcher·
+	 *     FeedUserPostsFetcher 참조). EXCLUDED로 무조건 덮으면 이미 확정된 content_type이 self의
+	 *     미확정 재수집에 지워지고, 그 강등이 AdDisclosureJudgeService의 isVideo 판정·
+	 *     CollectService.needsMetricsRetry의 REELS 전제를 조용히 오동작시킨다.</li>
 	 * </ul>
 	 */
 	public void upsert(String shortCode, String username, String contentType, LocalDate uploadedAt,
@@ -68,7 +73,7 @@ public class BrandPostMetaRepository {
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, now())
 				ON CONFLICT (short_code) DO UPDATE SET
 				  username = EXCLUDED.username,
-				  content_type = EXCLUDED.content_type,
+				  content_type = COALESCE(EXCLUDED.content_type, brand_post_meta.content_type),
 				  uploaded_at = EXCLUDED.uploaded_at,
 				  caption = COALESCE(EXCLUDED.caption, brand_post_meta.caption),
 				  thumbnail_url = COALESCE(EXCLUDED.thumbnail_url, brand_post_meta.thumbnail_url),

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · JdbcClient · Mockito/`@WebMvcTest`(기존 테스트 스타일).
 
-**스펙:** [2026-08-27-perf-dashboard-list-api-optimization-design.md](../../specs/2026-08-27-perf-dashboard-list-api-optimization-design.md) §1~§3
+**스펙:** [2026-08-27-perf-dashboard-list-api-optimization-design.md](../../specs/archive/2026-08-27-perf-dashboard-list-api-optimization-design.md) §1~§3
 
 ## Global Constraints
 
@@ -629,7 +629,7 @@ Expected: PASS (기존 브랜드 표면 동작 불변)
 
 **Files:**
 - Modify: `was/src/main/java/com/celfit/was/v1/brandmonitoring/BrandPostAssembler.java` (`assembleBrandPosts` 고아 확인)
-- Modify: `docs/superpowers/specs/2026-08-13-performance-dashboard-etag-design.md` (§7 대체 주석)
+- Modify: `docs/superpowers/specs/archive/2026-08-13-performance-dashboard-etag-design.md` (§7 대체 주석)
 
 - [ ] **Step 1: 고아 코드 정리** — `grep -rn 'assembleBrandPosts' --include='*.java' was/src`로 사용처 확인. 대시보드 전환 후 호출부가 없으면 `assembleBrandPosts`·`filterVisibleToUser` 등 그 경로 전용 헬퍼를 삭제(테스트 포함). 남은 사용처가 있으면 삭제하지 않고 javadoc의 "공개 이유(성과 대시보드)"만 실사용처로 교정.
 - [ ] **Step 2: ETag 설계 문서 §7에 대체 주석** — "페이지네이션 기각(§7)은 2026-08-27 대시보드 목록 최적화 설계로 대체됨(전제였던 '전량 수신 후 클라이언트 필터' 구조가 UI 개편으로 소멸)" 한 줄을 §7 머리에 추가.
