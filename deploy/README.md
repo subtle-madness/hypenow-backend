@@ -435,7 +435,7 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
   쪽이 이기고, 진 쪽도 재조회로 같은 값에 수렴한다 — 수동으로 DEK를 생성·등록할 필요가 없다.
   확인은 SQL 하나면 끝난다:
   ```sql
-  -- 서버에서 (app DB 슈퍼유저로 접속 — §14-2 관용구)
+  -- 서버에서: docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis (analysis DB의 app 스키마)
   SELECT key_id, created_at FROM app.encryption_keys;
   ```
   최초 vault 기동 로그에 `DEK 부트스트랩 — key_id=1 신규 래핑본 등록 시도`가 보이면 정상
@@ -452,14 +452,30 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
 - **백필 실행**(`--crypto.backfill=true` 1회 기동, 트랙 A 스펙 §전환 2 — 이중 쓰기 배포 후,
   bidx UNIQUE 마이그레이션·읽기 전환(PR 2) **전에** 완료해야 한다). `rollout.sh`가 관리하는
   정식 `was` 컨테이너와는 별개로, 호스트 포트를 점유하지 않는 was 서비스 특성(Caddy가 도커
-  DNS로만 프록시)을 이용해 1회성 컨테이너를 추가로 띄운다:
+  DNS로만 프록시)을 이용해 1회성 컨테이너를 추가로 띄운다. **주의**: 이 컨테이너는 백필
+  러너만 도는 게 아니라 **정상 was 인스턴스 전체**라 모든 `@Scheduled` 배치가 함께 뜬다 —
+  특히 `WeeklyDigestJob.catchUp`(평일 09:10~23:50 KST 10분마다, **메일 실발송 포함** — 재진입
+  가드가 JVM 내 `AtomicBoolean`이라 이 두 번째 컨테이너를 막지 못한다)과 등록 복구 스케줄러
+  2종(`RecoverStalePendingScheduler`·`BrandDirectRegistrationRecoveryScheduler`, 10분 간격)이
+  위험하다. 아래처럼 그 크론들을 `"-"`(Spring `@Scheduled` cron 비활성 마커 — CLAUDE.md
+  "임시 중단은 둘 다 `"-"`로 덮어 재기동" 관용구와 동일)로 덮어 무력화한 채로 띄운다(보존
+  스케줄러 2종도 같은 창에 걸릴 가능성을 없애기 위해 함께 무력화):
   ```bash
   # 서버에서 (deploy/ 디렉토리 — compose.yaml과 같은 위치). foreground로 띄워 로그를 바로 본다.
-  docker compose run --rm --no-deps -e JAVA_OPTS="-Dcrypto.backfill=true" was
+  # -e JAVA_OPTS="-Dcrypto.backfill=true"는 was 서비스의 JAVA_OPTS(-Xms2g -Xmx2g
+  # -XX:+AlwaysPreTouch …)를 통째로 대체한다 — 의도된 것: 백필은 짧게 끝나는 1회성 작업이라
+  # 라이브 옆에 2GiB 힙을 미리 채워 띄울 이유가 없다.
+  docker compose run --rm --no-deps \
+    -e JAVA_OPTS="-Dcrypto.backfill=true" \
+    -e MONITORING_DIGEST_WEEKLY_CRON="-" -e MONITORING_DIGEST_WEEKLY_CATCHUP_CRON="-" \
+    -e MONITORING_RECOVER_CRON="-" -e MONITORING_BRAND_REGISTRATION_RECOVER_CRON="-" \
+    -e ADMIN_AUDIT_LOG_RETENTION_CRON="-" -e SIGNUP_EVENTS_RETENTION_CRON="-" \
+    was
   # 로그에 "PII 백필 완료 — users=NN, inquiries=NN, password_resets=NN, signup_events=NN"이
-  # 찍히면 Ctrl-C로 즉시 중단(--rm이 컨테이너를 자동 정리). PiiBackfillRunner는
-  # ApplicationRunner라 백필 후에도 앱 자체는 정상 기동·서빙을 계속하므로 오래 켜둬도 무해하지만,
-  # rollout.sh가 관리하지 않는 임시 컨테이너를 도커 DNS 라운드로빈에 남겨둘 이유가 없다.
+  # 찍히면 **그 즉시** Ctrl-C로 중단한다(--rm이 컨테이너를 자동 정리). PiiBackfillRunner는
+  # ApplicationRunner라 백필 후에도 앱은 정상 기동 상태로 계속 살아있다 — 위 크론 무력화가
+  # 예약 배치의 위험만 상쇄할 뿐 이 컨테이너 자체가 무해해지는 건 아니므로, rollout.sh가
+  # 관리하지 않는 이 임시 컨테이너를 도커 DNS 라운드로빈(Caddy → was)에 계속 남겨둘 이유가 없다.
   ```
   완료 확인: `SELECT count(*) FROM app.users WHERE email_enc IS NULL;`(0이어야 정상 — 나머지
   3테이블도 `<table>_enc IS NULL` 패턴으로 동일 확인).
@@ -469,9 +485,25 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
 - **키 유실 시나리오**: `app.encryption_keys`의 래핑본 행이 유실되면(KEK 자체는 살아있어도)
   그 환경의 암호화 컬럼은 **영구 복원 불가**(래핑된 DEK 없이는 KEK로도 원문에 못 감) —
   평문 컬럼이 아직 살아있는 이중 쓰기 기간엔 재부트스트랩(새 DEK 생성) + 백필 재실행으로 복구
-  가능하지만, contract(평문 컬럼 DROP, PR 3) 이후엔 복구 경로가 없다. §6 백업은
-  `app.encryption_keys`를 포함한 app DB 전체를 덤프하므로(별도 제외 없음) 통상적인 DB 복원
-  경로로 같이 복원된다 — 뒤집어 말하면 그 백업이 이 행의 유일한 안전망이라는 뜻이기도 하다.
+  가능하지만, contract(평문 컬럼 DROP, PR 3) 이후엔 복구 경로가 없다. **`DekStore`는 이 사고를
+  자동 감지해 fail-closed로 막는다**: `encryption_keys` 행이 없는데 4개 테이블
+  (`users`/`inquiries`/`password_resets`/`signup_events`) 중 어느 하나라도 `*_enc IS NOT NULL`
+  행이 있으면(구 백업 복원·잘못된 DB 지정·행 실수 삭제 등 — 첫 부팅과 "행 없음" 모양이 똑같아
+  구분이 안 된다) 자동 부트스트랩을 거부하고 `IllegalStateException`("encryption_keys 행은
+  없는데 암호문이 존재 — 키 유실 의심, 자동 부트스트랩 거부. 백업의 encryption_keys 복원
+  필요")으로 기동을 중단한다 — 이 검사가 없으면 같은 `key_id=1`로 새 DEK가 조용히
+  부트스트랩돼 `v1:1:` 접두사 검사까지 통과하지만 GCM 태그 검증에서 기존 암호문 전량이
+  복호화 실패로 죽는, 훨씬 늦게 발견되는 사고(fail-open)가 됐을 것이다. 첫 부팅처럼 4개
+  테이블이 전부 비어 있는 정상 케이스는 이 검사를 그대로 통과해 부트스트랩된다. 유일한
+  복구 경로는 §6 백업에서 `app.encryption_keys`를 되살리는 것뿐이다(별도 제외 없이 app DB
+  전체 덤프에 포함되므로 통상 DB 복원 경로로 같이 복원된다) — 뒤집어 말하면 그 백업이 이
+  행의 유일한 안전망이라는 뜻이기도 하다.
+- **힙덤프·디버그 로그는 키 재료로 취급**: 부트스트랩·언래핑 과정에서 평문 DEK가 담긴 base64
+  `String`이 OCI SDK 시그니처(`EncryptDataDetails.plaintext`/`DecryptedData.getPlaintext()`가
+  `String`을 요구)상 GC 전까지 불가피하게 힙에 잔존한다 — was 힙덤프(§ OOM 자동 덤프 등)는
+  백업 age 키(§6-2)와 동등한 민감도로 취급할 것. 같은 이유로 `com.oracle.bmc`(OCI SDK) 로거를
+  DEBUG로 올리면 HTTP 요청 본문(평문 DEK 포함)이 로그에 찍힐 수 있다 — 운영에서 이 로거
+  레벨을 올리지 말 것.
 
 ## 7. 프론트 연동 (www.hypenow.io)
 - 권장: **Vercel rewrite로 같은 오리진화** — celfit-front `vercel.json`에
