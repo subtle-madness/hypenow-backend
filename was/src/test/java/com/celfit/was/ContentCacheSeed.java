@@ -73,6 +73,7 @@ public final class ContentCacheSeed {
 		jdbc.execute("""
 				CREATE TABLE account_summaries (
 				    handle                    text PRIMARY KEY,
+				    followers                 bigint,
 				    analyzed_count            bigint,
 				    posts_count               bigint,
 				    metric                    text,
@@ -93,7 +94,9 @@ public final class ContentCacheSeed {
 				    avg_interval_days         numeric
 				)""");
 		// findLatestCopy(계정 LLM 카피, 없으면 카피 필드만 null)·findSeries/findCategories/findBrands
-		// (시계열·보강 조회) 참조 테이블 — 전부 비워둔다. 어셈블러가 빈 리스트·null copy를 정상
+		// (시계열·보강 조회) 참조 테이블 — 전부 비워둔다. followers·perf_summary·content_summary·
+		// ad_summary는 6.22(v2) 리포트 경로(V2InfluencerReportRepository)가 읽는 컬럼 — v2 캐시
+		// 테스트가 자기 메서드 안에서 채운다(v1 경로의 "카피 없음" 전제를 시드 단계에선 유지). 어셈블러가 빈 리스트·null copy를 정상
 		// 처리하므로(V1InfluencerReportAssembler) 리포트 조립 자체는 account_summaries 1행만으로 성립.
 		jdbc.execute("""
 				CREATE TABLE account_analyses (
@@ -105,7 +108,10 @@ public final class ContentCacheSeed {
 				    chart_note  text,
 				    traits      jsonb,
 				    ad_headline text,
-				    pace_note   text
+				    pace_note   text,
+				    perf_summary    text,
+				    content_summary text,
+				    ad_summary      text
 				)""");
 		jdbc.execute("""
 				CREATE TABLE account_content_series (

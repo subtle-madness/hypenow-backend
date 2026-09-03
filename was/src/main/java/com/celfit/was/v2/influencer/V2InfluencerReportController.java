@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 스펙 6.22·6.23 발굴 리포트 v2 — influencerId는 handle 그대로(6.4와 동일 설계).
  * 6.5(v1)는 기존 패널이 소비 중이라 병존 — 프론트 v2 전환 후 별도 PR로 폐기.
  * 인증은 둘 다 공개(SecurityConfig permitAll) — 잠금 표현은 프론트 처리(스펙 7절 15번).
+ * ai-report 조립·캐시는 V2InfluencerReportService(Redis TTL 6h, 09-03) — v1 6.5와 같은 구조.
  *
  * 비로그인 무제한 접근으로 리포트가 대량 수집되는 걸 막기 위해 IP 레이트리밋을 둔다(기존 RateLimiter
  * 재사용 — V1AuthController·V1GateEventController와 동일 관용구, V1InfluencerDiscoveryController와
@@ -46,19 +47,19 @@ public class V2InfluencerReportController {
 	private static final int CONCURRENCY_RETRY_AFTER_SECONDS = 1;
 
 	private final V2InfluencerReportRepository repository;
-	private final V2InfluencerReportAssembler assembler;
+	private final V2InfluencerReportService reportService;
 	private final V1InfluencerDiscoveryRepository discoveryRepository;
 	private final V1InfluencerDiscoveryAssembler discoveryAssembler;
 	private final RateLimiter rateLimiter;
 	private final ConcurrencyLimiter concurrencyLimiter;
 
 	public V2InfluencerReportController(V2InfluencerReportRepository repository,
-			V2InfluencerReportAssembler assembler,
+			V2InfluencerReportService reportService,
 			V1InfluencerDiscoveryRepository discoveryRepository,
 			V1InfluencerDiscoveryAssembler discoveryAssembler, RateLimiter rateLimiter,
 			ConcurrencyLimiter concurrencyLimiter) {
 		this.repository = repository;
-		this.assembler = assembler;
+		this.reportService = reportService;
 		this.discoveryRepository = discoveryRepository;
 		this.discoveryAssembler = discoveryAssembler;
 		this.rateLimiter = rateLimiter;
@@ -76,15 +77,9 @@ public class V2InfluencerReportController {
 			throw V1ApiException.rateLimited(CONCURRENCY_RETRY_AFTER_SECONDS);
 		}
 		try {
-			var summary = repository.findSummary(influencerId)
-					.orElseThrow(() -> V1ApiException.notFound("인플루언서를 찾을 수 없습니다."));
-			// 신 스키마 카피 없으면 "리포트 미생성" — tagline·요약 3종이 비-null 계약이라 부분 응답 불가(스펙 6.22 에러)
-			var copy = repository.findLatestCopy(influencerId)
-					.orElseThrow(() -> V1ApiException.notFound("리포트가 아직 생성되지 않았습니다."));
-			return ApiResponse.ok(assembler.toReport(summary, copy,
-					repository.findSeries(influencerId),
-					repository.findCategories(influencerId),
-					repository.findBrandCollabs(influencerId)));
+			// 조립·404 판정·Redis 캐시는 서비스(V2InfluencerReportService). 동시성 permit은 캐시 히트도
+			// 잡지만 히트는 ms 단위라 점유가 짧다 — 벌크헤드 의미(DB 보호)는 미스 경로에서만 실효.
+			return ApiResponse.ok(reportService.report(influencerId));
 		} finally {
 			concurrencyLimiter.release();
 		}
