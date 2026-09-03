@@ -170,6 +170,27 @@ class FeedUserPostsFetcherTest {
 		assertThat(posts.get(0).likesHidden()).isTrue();
 	}
 
+	/**
+	 * S9 보완(2026-09-03 리뷰 지적) — like_count 키 자체가 없는 경우(-1 센티널이 아니라 구조적
+	 * 부재)를 과거엔 -1과 뭉뚱그려 확정 숨김(true)으로 단정했다. 이는 embed·wpi의 "구조적으로
+	 * 판정 불가면 null" 규칙과 어긋난다 — CollectService#assumeZeroForOmittedKeys는 확정
+	 * false만 0 간주 대상으로 삼지만, mergedWith의 OR 병합은 폴백(feed/user)의 근거 없는 true가
+	 * 정본(embed)의 진짜 확정 false를 덮어버려 likes가 null로 강제되는 결함을 냈다. 키 부재는
+	 * null(미확정)이어야 한다 — 이 표면이 좋아요를 아예 못 줬는지, 진짜 숨겨졌는지 구분 못 한다.
+	 */
+	@Test
+	void 좋아요_키_부재는_숨김_미확정_null이다() {
+		String body = """
+				{"items":[{"code":"NOKEYLIKE","media_type":1,"comment_count":5,
+				"taken_at":1700000000,"caption":null,"user":{"username":"nasa"}}]}
+				""";
+		List<PostInfo> posts = fetcher(body, 200).fetchRecentPosts("nasa", "528817151");
+
+		assertThat(posts).hasSize(1);
+		assertThat(posts.get(0).likes()).isNull();
+		assertThat(posts.get(0).likesHidden()).isNull();
+	}
+
 	/** S14 — image_versions2 자체가 없으면(예상외 셰이프) 예외 없이 thumbnailUrl을 null로 남긴다. */
 	@Test
 	void image_versions2가_없으면_썸네일은_null이다() {

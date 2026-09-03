@@ -106,4 +106,42 @@ class WpiProfileFetcherTest {
 		assertThatThrownBy(() -> fetcher(body, 200).fetchProfile("secret"))
 				.isInstanceOf(PrivateAccountException.class);
 	}
+
+	// ── S9 보완(2026-09-03 리뷰 지적) — likesHidden 3상태 정렬 ──────────────────
+	// 과거엔 edge_media_preview_like.count가 안 잡히면(키 부재) likes==null만 보고 likesHidden을
+	// true로 단정했다 — embed의 "숫자를 실제로 봤을 때만 확정, 부재는 미확정" 규칙과 어긋난다.
+	// 이 오단정이 mergedWith의 OR 병합에서 정본(embed)의 진짜 확정 false를 덮어 likes를 지웠다.
+
+	/** edge_media_preview_like 자체가 없으면(구조적 부재) likesHidden은 미확정(null)이다. */
+	@Test
+	void 좋아요_엣지_부재는_숨김_미확정_null이다() {
+		String body = """
+				{"data":{"user":{"username":"nasa","id":"528817151",
+				"edge_owner_to_timeline_media":{"edges":[{"node":{"shortcode":"NOLIKEEDGE",
+				"is_video":false,"taken_at_timestamp":1700000000,
+				"edge_media_to_comment":{"count":2}}}]}}}}
+				""";
+		List<PostInfo> posts = fetcher(body, 200).fetchRecentPosts("nasa");
+
+		assertThat(posts).hasSize(1);
+		assertThat(posts.get(0).likes()).isNull();
+		assertThat(posts.get(0).likesHidden()).isNull();
+	}
+
+	/** count가 -1(IG 좋아요 숨김 센티널)이면 확정 숨김(true)이다 — embed와 같은 규칙. */
+	@Test
+	void 좋아요_카운트_음수는_확정_숨김_true다() {
+		String body = """
+				{"data":{"user":{"username":"nasa","id":"528817151",
+				"edge_owner_to_timeline_media":{"edges":[{"node":{"shortcode":"NEGLIKE",
+				"is_video":false,"taken_at_timestamp":1700000000,
+				"edge_media_preview_like":{"count":-1},
+				"edge_media_to_comment":{"count":2}}}]}}}}
+				""";
+		List<PostInfo> posts = fetcher(body, 200).fetchRecentPosts("nasa");
+
+		assertThat(posts).hasSize(1);
+		assertThat(posts.get(0).likes()).isNull();
+		assertThat(posts.get(0).likesHidden()).isTrue();
+	}
 }

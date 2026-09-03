@@ -71,9 +71,22 @@ public class FeedUserPostsFetcher {
 		String contentType = contentType(item);
 
 		JsonNode likeCount = item.path("like_count");
-		// -1은 IG의 좋아요 숨김 센티널 — 부재도 동일 취급.
-		boolean likesHidden = !likeCount.isNumber() || likeCount.asLong() < 0;
-		Long likes = likesHidden ? null : likeCount.asLong();
+		// -1은 IG의 명시적 좋아요 숨김 센티널(확정 true). 숫자를 실제로 봤으면 확정 false. 키
+		// 자체가 없으면(구조적 부재) 미확정(null, S9 보완, 2026-09-03 리뷰 지적) — embed와 같은
+		// 규칙이다. 과거엔 부재를 -1과 뭉뚱그려 확정 true로 단정해, mergedWith의 OR 병합에서
+		// 정본(embed)의 진짜 확정 false를 덮어 likes를 null로 강제하는 결함을 냈다.
+		Boolean likesHidden;
+		Long likes;
+		if (!likeCount.isNumber()) {
+			likesHidden = null;
+			likes = null;
+		} else if (likeCount.asLong() < 0) {
+			likesHidden = true;
+			likes = null;
+		} else {
+			likesHidden = false;
+			likes = likeCount.asLong();
+		}
 
 		JsonNode commentCount = item.path("comment_count");
 		Long comments = commentCount.isNumber() ? commentCount.asLong() : null;

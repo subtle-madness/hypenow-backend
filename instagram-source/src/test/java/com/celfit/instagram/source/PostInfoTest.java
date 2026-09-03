@@ -159,6 +159,24 @@ class PostInfoTest {
 		assertThat(merged.likes()).isEqualTo(83L);   // 미확정이므로 마스킹하지 않는다
 	}
 
+	/**
+	 * S9 보완(2026-09-03 리뷰 지적) — 정본(embed)이 좋아요 숫자를 실제로 보고 확정 비숨김(false)을
+	 * 줬는데, 폴백(feed/user·wpi)이 키 부재를 확정 true로 오단정하던 과거 결함이 있었다면
+	 * mergedWith의 OR 병합에서 폴백의 근거 없는 true가 정본의 진짜 확정을 덮어 likes가 null로
+	 * 강제됐을 것이다(CollectService#retrySinglesOnce의 single.mergedWith(enumerated) 시나리오).
+	 * 폴백이 규칙대로 null(미확정)을 주면 정본의 확정 false가 그대로 살아남고 likes도 보존돼야 한다.
+	 */
+	@Test
+	void mergedWith는_정본이_확정_비숨김이고_폴백이_미확정이면_비숨김과_likes를_보존한다() {
+		PostInfo primary = withHidden(485_267L, false, null);   // embed — 좋아요 숫자를 실제로 봄
+		PostInfo fallback = withHidden(null, null, null);       // feed/user — 키 부재(미확정, S9 보완)
+
+		PostInfo merged = primary.mergedWith(fallback);
+
+		assertThat(merged.likesHidden()).isFalse();
+		assertThat(merged.likes()).isEqualTo(485_267L);
+	}
+
 	/** mergedMetrics(3-arg)는 새 숨김 정보가 없다는 뜻 — 기존 sharesHidden(미확정 포함)을 그대로 보존한다. */
 	@Test
 	void mergedMetrics_3항은_기존_공유_숨김_상태를_보존한다() {
