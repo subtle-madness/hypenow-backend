@@ -5,8 +5,9 @@
 > [specs/2026-07-30-monitoring-alarm-module-design.md](../superpowers/specs/archive/2026-07-30-monitoring-alarm-module-design.md)(v2 — 알람 소유 이동·승인 폐지) 참조.
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
-> 상태: **v2.16 (삭제 감지 tagged 확장 — 열거 부재 검증 콜·`absence_checked_at` 신설.
-> 2026-08-25)** · 명령 API **3종**(등록·연장·해지) +
+> 상태: **v2.17 (브랜드 등록 백필 완주 스탬프 의미 확정 — `collectionCompletedAt`이 게시물·게시자
+> 보강 정산 완료만 뜻하고 댓글·광고 표기 판정은 그 밖의 후행 단계임을 명문화. 2026-09-03, §11)** ·
+> 명령 API **3종**(등록·연장·해지) +
 > share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
 > 에러 어휘 전부 구현과 일치. **v2.8부터 별도 서브시스템**(브랜드 태그 모니터링 — target/캠페인
 > 계약과 무관한 신규 3테이블, §8. **v2.12로 direct 게시물도 이 서브시스템에 합류** — 레거시
@@ -125,6 +126,14 @@
 > 폐기(이제 tagged도 hidden 가능). 설계
 > [2026-08-25 tagged 확장](../superpowers/specs/2026-08-25-brand-tagged-deletion-verify-design.md),
 > `feat/brand-tagged-deletion-verify`.)
+> → **v2.17**(2026-09-03, 등록 백필 완주 스탬프 의미 확정 — 코드·DB 변경 없음, **계약 명문화만**.
+> `collectionCompletedAt`(= `backfill_completed_at`)이 "열거된 전 페이지의 게시물·게시자 보강
+> 정산(markEnriched) 완료"만을 뜻함을 확정하고, 댓글 수집·광고 표기 판정은 이 표식 **밖**의
+> 후행 단계로 정의한다(§11). 종전엔 "댓글·판정까지 포함한 완주"였는데, 2,000건급 브랜드에서
+> 이 완주까지 수십 분이 걸려 FE가 계정 목록 전체를 60초 폴링으로 계속 재조회하는 원인이었다 —
+> was 소비 코드(`BrandAccountAssembler`)는 애초에 이 값을 해석 없이 통과시킬 뿐이라(판정 포함
+> 완주에 의존하는 소비자 없음) 좁혀도 계약 위반이 아니다. was 배포 불필요(monitoring 단독
+> 재기동으로 충분).)
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -1095,3 +1104,42 @@ DROP은 이번 범위 밖(추후 contract 단계). was는 이 테이블을 더 �
 
 was `BrandReadRepository`가 `collection_capped`·`covered_until`을 **무조건 SELECT**하므로
 **monitoring(마이그레이션) → was 순서로 배포**해야 하고 **롤백은 역순**이다.
+
+## 11. `collectionCompletedAt`의 확정 의미 (v2.17, 2026-09-03)
+
+> ⚠️ §8~§10과 마찬가지로 브랜드 태그 모니터링 서브시스템 한정. 코드·DB 변경 없이 기존 필드의
+> 의미를 명문화하는 절이다 — was 배포 불필요.
+
+`BrandAccountResponse.collectionCompletedAt`(DB `brand_account.backfill_completed_at`)은
+**"열거된 모든 페이지의 게시물·게시자 보강이 정산(`markEnriched`)됨 — 목록·지표·게시자 정보가
+서빙 완비됐다"**만을 뜻한다. FE 폴링 종료 조건(이 값이 채워지면 그 계정은 더 이상 폴링하지 않아도
+됨)인 것은 종전과 같다.
+
+**댓글(`recentComments`·`commentsCollectedCount`)과 광고 표기 판정(`adDisclosure`·
+`adViolations`·`adEvidence`)은 이 표식 밖의 후행 단계다.** `collectionCompletedAt`이 채워진
+시점에도 이 두 필드셋은 비어 있을 수 있고, 이후 폴링 없이(다음 다른 표면 조회 시) 조용히
+채워진다. was·FE 어느 쪽도 `collectionCompletedAt != null`을 "댓글·판정까지 확정됨"으로 해석하면
+안 된다 — 예를 들어 `adDisclosure == null`을 "판정 없음(비광고)"으로 단정하거나, 댓글 0건을
+"댓글 없음"으로 확정 표기하면 오독이다.
+
+**갱신 전 계약과의 차이** — 종전(v2.16 이전, 계약 문서에 표면화된 적은 없었다)에는 등록 백필의
+댓글 수집·광고 표기 판정이 끝난 뒤에야 이 값이 찍혔다. 2,000건급 브랜드는 신규 게시물 전량의
+`commentsCollectedCount`가 0이라 댓글 게이트가 전부 열려(게시물당 최대 3콜) 스탬프 앞에 최대
+~6,000콜이 줄을 섰고, 그 수십 분 동안 FE는 `collectionCompletedAt == null`을 근거로 브랜드 계정
+목록 전체를 60초 간격으로 재조회했다. was 소비 코드(`BrandAccountAssembler`)는 이 값을 해석 없이
+그대로 통과시킬 뿐이고 `collectionStatus`(`collecting`/`ready`/`error`) 유도도 별개 컬럼
+(`last_swept_on`·`last_swept_at`·`backfill_error`)만 보므로, "판정 포함 완주"에 의존하는 소비자가
+없다는 것이 확인돼 좁힐 수 있었다.
+
+**댓글·판정이 결국 채워진다는 보장** — 둘 다 스탬프와 무관한 백스톱을 각자 갖는다.
+
+- 광고 표기 판정: 전역 `ad_verdict IS NULL` 잔량을 monitoring 기동 즉시 + 매일 밤 상한 없이(180일
+  창과 무관하게) 흡수하는 백필 잡이 있다.
+- 댓글: `commentsCollectedCount` 워터마크가 다음 날 스윕에서 게이트를 다시 연다 — 단, 이건
+  **180일 이내 게시물에 한한다.** 180일을 넘긴 게시물은 일일 스윕의 재열거 대상에서 빠지므로,
+  등록 시점에 후행 처리가 유실되면(monitoring 재기동 등) 댓글이 영구히 비어 있을 수 있다(광고
+  판정은 이 한계가 없다 — 위 전역 백스톱이 180일 무관).
+
+**`backfillError`(= `collectionError.message`, `code: "BACKFILL_FAILED"`)와의 관계** — 이 필드는
+"열거(sweepCore) 자체의 실패"만 가리키고, 이번 절의 후행 단계(댓글·판정)와는 무관하다. 후행
+단계의 실패는 격리되어(다음 스윕이 재시도) `backfillError`에 나타나지 않는다.

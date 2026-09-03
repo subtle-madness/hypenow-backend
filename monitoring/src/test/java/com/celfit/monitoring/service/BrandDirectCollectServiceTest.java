@@ -283,7 +283,7 @@ class BrandDirectCollectServiceTest {
 		// brands는 무해 스텁 — direct 경로는 열거(doSweepCore·enumerationCutoff)를 타지 않아
 		// 커버리지 조회·기록 지점에 닿지 않는다(collect는 adjustLotteryMetrics 재사용 목적).
 		BrandCollectService collect = new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments,
-				tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
+				tagged, authors, new InertBrands(), null, Runnable::run, Runnable::run, 2000, 10000, 3, 30, false);
 		return new BrandDirectCollectService(client(), client(), callContext, writer, tagged, collect, sweepLimit,
 				monitoringSetSize);
 	}
@@ -385,7 +385,7 @@ class BrandDirectCollectServiceTest {
 
 	private BrandDirectCollectService serviceWithSeparateSources(InstagramSource hiker, InstagramSource syncHiker) {
 		BrandCollectService collect = new BrandCollectService(client(), client(), client(), callContext, writer, snapshots,
-				comments, tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
+				comments, tagged, authors, new InertBrands(), null, Runnable::run, Runnable::run, 2000, 10000, 3, 30, false);
 		return new BrandDirectCollectService(hiker, syncHiker, callContext, writer, tagged, collect, 300, 2000);
 	}
 

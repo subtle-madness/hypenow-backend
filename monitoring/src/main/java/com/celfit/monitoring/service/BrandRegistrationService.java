@@ -44,8 +44,13 @@ import org.springframework.stereotype.Service;
  *
  * <p>ready(markServing)는 <b>첫 페이지의 게시자 보강이 끝나는 지점</b>에서 열리고(2026-08-18
  * 계정 게이트 단축 — 댓글 수집·광고 표기 판정은 기다리지 않는다), 완주 표식(touchSwept = 응답
- * collectionCompletedAt · FE 폴링 종료 조건)은 <b>모든 페이지 보강(댓글·판정 포함) 뒤</b>에
- * 찍힌다 — 목록에는 정산된 페이지만 오른다(스펙 §1·§2, {@link #runBackfillSafely} 참조).
+ * collectionCompletedAt · FE 폴링 종료 조건)은 <b>모든 페이지의 게시물·게시자 보강이 정산
+ * (markEnriched)된 뒤</b>에 찍힌다 — 목록·지표·게시자 정보는 그 시점에 완비된다(스펙 §1·§2,
+ * {@link #runBackfillSafely} 참조). <b>댓글 수집·광고 표기 판정은 2026-09부터 이 표식 밖</b>이다
+ * (완주 스탬프 축소 개정) — {@link BrandCollectService#enrichUserTriggeredDeferred}가 후행 전용
+ * executor에 detached 제출하고, 스탬프 뒤에 조용히 채워진다. was는 이 값을 해석 없이 통과시킬
+ * 뿐이라(계약 {@code docs/contracts/monitoring-was-contract.md} collectionCompletedAt 절 참조)
+ * 별도 스탬프 컬럼 없이 기존 컬럼의 의미만 좁혔다.
  *
  * <p>core 실패·앱 재시작으로 끊겨도 last_swept_on이 null로 남아 다음 스윕이 백스톱한다.
  * backfill은 동시 2스레드(브랜드 단위 태스크라 브랜드 안 순서는 유지), enrich는 전역 공유 풀
@@ -249,10 +254,17 @@ public class BrandRegistrationService {
 	 * 없다), 뒤 페이지는 훅 없이(null) 돈다. served CAS는 방어적 1회 보장(재가입 등으로 이 메서드가
 	 * 다시 불려도 안전) — DB 쪽 IS NULL 가드(markServing)와 같은 이중 방어.
 	 *
-	 * <p>touchSwept는 <b>모든 페이지 보강이 끝난 뒤</b>에 찍는다 — 이 값이 곧 응답
-	 * collectionCompletedAt이고 FE의 폴링 종료 조건이라, 아직 정산 안 된 페이지가 남은 채로 찍으면
-	 * FE가 미완성 목록을 최종본으로 알고 폴링을 멈춘다. 열거 완주 ≠ 수집 완주로 의미가 갈렸다.
-	 * "열거가 끝났으니 여기서 찍자"로 되돌리면 그 회귀가 그대로 재현된다.
+	 * <p>touchSwept는 <b>모든 페이지의 게시자 보강 정산(markEnriched)이 끝난 뒤</b>에 찍는다 — 이
+	 * 값이 곧 응답 collectionCompletedAt이고 FE의 폴링 종료 조건이라, 아직 정산 안 된 페이지가 남은
+	 * 채로 찍으면 FE가 미완성 목록을 최종본으로 알고 폴링을 멈춘다. 열거 완주 ≠ 수집 완주로 의미가
+	 * 갈렸다. "열거가 끝났으니 여기서 찍자"로 되돌리면 그 회귀가 그대로 재현된다. <b>댓글 수집·광고
+	 * 표기 판정은 2026-09부터 이 join 경계 밖</b>이다 — {@code pages}(아래 futures)의 몸통은
+	 * ensureAuthors → markEnriched → touchProgress → onVisible까지로 끝나고
+	 * ({@link #runEnrichSafely} 참조), 댓글·판정은 그 안에서 후행 전용 executor에 detached
+	 * 제출되므로 이 allOf(pages).join()이 후행 완료를 기다리지 않는다. touchSwept가 댓글·판정
+	 * 완료를 기다리지 않게 된 것이 이 개정의 본체다 — 2,000건급 브랜드에서 신규 백필 시 모든
+	 * 게시물의 comments_collected_count가 0이라 댓글 게이트가 전부 열려(게시물당 최대 3콜) 스탬프
+	 * 앞을 최대 ~6,000콜이 막던 구간을 걷어낸다.
 	 *
 	 * <p>페이지 태스크는 enrich executor에서 돌고 여기(backfill executor 스레드)에서 join으로
 	 * 기다린다 — 두 층이 <b>별도 풀</b>이어야 한다(합치면 영구 자기 교착 — BrandBackfillConfig 참조).
@@ -299,13 +311,18 @@ public class BrandRegistrationService {
 	 * 보강 실패는 backfill_error를 남기지 않는다 — 목록·지표는 이미 서빙 중(ready)이라 "초기 수집
 	 * 실패" 문구가 오히려 오보고, 미수집분(게시자 stale·댓글 워터마크)은 다음 스윕이 자동 재시도한다.
 	 *
-	 * <p>onVisible은 그대로 {@link BrandCollectService#enrich(BrandRow, List, Runnable)}에 위임한다
-	 * — markEnriched와 같은 finally 보장이라 여기서 별도로 재시도·대체 호출할 필요가 없다(ensureAuthors
-	 * 하드 실패 경로 포함).
+	 * <p>onVisible은 그대로 {@link BrandCollectService#enrichUserTriggeredDeferred}에 위임한다 —
+	 * markEnriched와 같은 finally 보장이라 여기서 별도로 재시도·대체 호출할 필요가 없다(ensureAuthors
+	 * 하드 실패 경로 포함). <b>2026-09부터 3-인자 {@code enrichUserTriggered}가 아니라 이 deferred
+	 * 진입점을 부른다</b> — 댓글 수집·광고 표기 판정을 후행 전용 executor에 detached 제출해, 이
+	 * 메서드가 반환한 뒤에도(= {@link #runBackfillSafely}의 페이지 future가 완료된 뒤에도) 그 둘이
+	 * 계속 돌 수 있다. try/catch는 이 메서드가 동기로 보는 구간(ensureAuthors·markEnriched·
+	 * touchProgress·onVisible)의 실패만 잡는다 — 댓글·판정은 이미 그 안에서 각자 격리돼 있어
+	 * 여기까지 예외가 올라오지 않는다.
 	 */
 	private void runEnrichSafely(BrandRow row, List<PostInfo> posts, Runnable onVisible) {
 		try {
-			collect.enrichUserTriggered(row, posts, onVisible);
+			collect.enrichUserTriggeredDeferred(row, posts, onVisible);
 		} catch (RuntimeException e) {
 			log.warn("브랜드 등록 보강 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 		}

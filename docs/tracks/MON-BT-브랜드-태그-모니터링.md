@@ -597,3 +597,19 @@ DB 측 전송분이 ~7.5ms뿐이라 로컬 하니스로는 ~1.9초 고정비의 
   - **재검토 트리거는 "브랜드 창 안 총 행수"**(엔트리 수도 유저 수도 아니다 — 상주량이 여기에 선형).
     08-28 기준 156개 브랜드 69,972행. 3배(약 21만)가 되면 절대 상한이 500MB대라 상한·구조를 다시 볼 것.
   - 힙 재측정 레시피(로컬 실데이터 기동 + `jcmd GC.run`/`GC.heap_info`/`GC.class_histogram`)는 메모리 노트 참조.
+- **등록 백필 완주 스탬프 축소(09-03, DECISIONS 09-03 행, 계약 v2.17)** — `backfill_completed_at`
+  (FE `collectionCompletedAt`)의 의미를 "전 페이지 게시물·게시자 보강 정산(`markEnriched`) 완료"로
+  좁히고, 댓글 수집·광고 표기 판정을 이 표식 밖 후행 단계로 분리했다. 종전엔 댓글·판정까지 끝나야
+  스탬프가 찍혀, 신규 백필의 모든 게시물이 `commentsCollectedCount=0`이라 댓글 게이트가 전부 열리는
+  2,000건급 브랜드에서 스탬프가 수십 분 밀렸다(게시물당 최대 3콜, 최대 ~6,000콜이 줄을 섬) — 그
+  사이 FE는 `collectionCompletedAt == null`을 근거로 계정 목록 전체(2,281건)를 60초 폴링으로
+  재조회했다. 배선: `BrandCollectService`의 private `enrich`가 후행 실행기(Executor)를 인자로 받아,
+  등록 백필 전용 신규 진입점 `enrichUserTriggeredDeferred`만 신설 전용 executor
+  `brandFollowupExecutor`(기본 1스레드, `monitoring.brand.followup-concurrency`)에 detached
+  제출한다. 야간 스윕·해시태그 스윕·direct 동기 등록은 무변 — 전부 direct executor(`Runnable::run`)를
+  넘겨 실행 의미가 바이트 수준으로 종전과 같다. 전역 Hiker 동시 콜 상한(14)도 불변 — 후행 콜도
+  `brandEnrichWorkerPool`을 통해 나갈 뿐 별도 콜 예산이 아니다. 두 백스톱(광고 판정은 전역
+  `backfillUnjudged`, 댓글은 워터마크 — 단 댓글은 180일 이내 게시물 한정)이 있어 후행 유실은
+  스탬프 지연이 아니라 그 뒤 조용한 채움 지연으로만 남는다. was는 이 값을 해석 없이 통과시킬 뿐이라
+  별도 스탬프 컬럼 신설 없이 기존 컬럼 의미만 좁혔다(계약 §11 참조). 잔여: 열거 실패 재시도
+  스케줄러(결함 1)는 별도 커밋.

@@ -174,9 +174,11 @@ class BrandRegistrationServiceTest {
 		Duration enrichDelay = Duration.ZERO;
 		final List<List<String>> enrichedPosts = new CopyOnWriteArrayList<>();
 		private List<String> callOrder = new CopyOnWriteArrayList<>();
+		/** deferred 진입점 호출 횟수(결함 2 수정 배선 검증용) — runEnrichSafely가 이제 이걸 부른다. */
+		int deferredCalls = 0;
 
 		StubCollect() {
-			super(null, null, null, null, null, null, null, null, null, null, null, null,
+			super(null, null, null, null, null, null, null, null, null, null, null, null, null,
 					2000, 10000, 3, 30, true);
 		}
 
@@ -248,6 +250,19 @@ class BrandRegistrationServiceTest {
 		 * 이유로 기존 enrich(3-인자) 오버라이드에 위임한다. */
 		@Override
 		public void enrichUserTriggered(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
+			enrich(brand, posts, onVisible);
+		}
+
+		/**
+		 * 결함 2 수정(2026-09 완주 스탬프 축소 개정)으로 {@link BrandRegistrationService#runEnrichSafely}가
+		 * 이제 이 진입점을 부른다 — 위 {@code enrichUserTriggered}와 같은 이유로 기존 3-인자 enrich
+		 * 오버라이드에 위임한다. 이 스텁은 후행(댓글·판정) 분리 자체를 모사하지 않는다 — 그건
+		 * {@code BrandCollectServiceTest}가 real 서비스로 직접 검증한다. 여기서는 등록 백필이 이
+		 * deferred 진입점으로 라우팅된다는 배선만 확인한다.
+		 */
+		@Override
+		public void enrichUserTriggeredDeferred(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
+			deferredCalls++;
 			enrich(brand, posts, onVisible);
 		}
 
@@ -433,6 +448,23 @@ class BrandRegistrationServiceTest {
 		assertThat(brands.touched).containsExactly(result.brandId());
 		// 등록 검증 프로필 1콜의 사후 계상(어드민 크롤링 비용) — 콜 시점엔 brand_id가 없어 등록 직후 +1.
 		assertThat(callCounts.byBrand).containsExactly(Map.entry(result.brandId(), 1L));
+	}
+
+	/**
+	 * 결함 2 수정(2026-09 완주 스탬프 축소 개정) 배선 검증 — runEnrichSafely는 이제 댓글·판정을
+	 * 그 자리에서 도는 {@code enrichUserTriggered}가 아니라 후행 전용 executor에 detached 제출하는
+	 * {@code enrichUserTriggeredDeferred}를 부른다. 후행 분리 자체(댓글·판정이 실제로 지연 실행되는지)는
+	 * real {@code BrandCollectService}를 쓰는 {@code BrandCollectServiceTest}가 검증하고, 여기서는
+	 * 라우팅만 확인한다.
+	 */
+	@Test
+	void 백필_페이지_보강은_deferred_진입점으로_라우팅된다() {
+		twoPages();
+
+		service().register("brandx");
+		awaitEnrich();
+
+		assertThat(collect.deferredCalls).isEqualTo(2);   // 페이지 2건 각각 deferred로
 	}
 
 	/**

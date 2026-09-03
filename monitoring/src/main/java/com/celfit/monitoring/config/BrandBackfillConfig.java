@@ -38,6 +38,11 @@ import org.springframework.context.annotation.Configuration;
  * in-flight 콜당 ~10MB(TAGGED body 1.7MB + 파싱 트리)로 계산한다 — rawJson 제거(08-12) 전제.
  * 종료로 끊겨도 last_swept_on null(core) 또는 게시자 stale·댓글 워터마크(enrichment)로 다음
  * 스윕이 백스톱한다(미정산분은 다음 스윕의 페이지 배치가 정산까지 다시 태운다).
+ *
+ * <p><b>brandFollowupExecutor(2026-09 완주 스탬프 축소 개정)는 위 "전역 동시 콜 최대 14" 계산에
+ * 들어가지 않는다</b> — 등록 백필 전용 후행 단계(댓글 수집·광고 표기 판정)의 <b>제출 주체</b>일
+ * 뿐, 콜은 여전히 전부 brandEnrichWorkerPool(Hiker)·ad-disclosure 전용 풀(LLM)로 나간다. 이
+ * executor를 늘려도 Hiker·LLM 동시 콜 예산은 늘지 않는다.</p>
  */
 @Configuration
 public class BrandBackfillConfig {
@@ -115,6 +120,33 @@ public class BrandBackfillConfig {
 		AtomicInteger seq = new AtomicInteger();
 		return Executors.newFixedThreadPool(concurrency, r -> {
 			Thread t = new Thread(r, "brand-enrich-worker-" + seq.incrementAndGet());
+			t.setDaemon(true);
+			return t;
+		});
+	}
+
+	/**
+	 * 후행(댓글 수집·광고 표기 판정) 전용 큐 — 2026-09 완주 스탬프 축소 개정 신설. 등록 백필
+	 * ({@link com.celfit.monitoring.service.BrandCollectService#enrichUserTriggeredDeferred})만
+	 * 여기 제출한다. 야간 스윕·해시태그 스윕·direct 동기 등록은 그대로 direct 실행(제자리)이라 이
+	 * executor를 참조하지 않는다(무변 보장의 배선 근거).
+	 *
+	 * <p>기존 brandEnrichExecutor 재사용을 기각한 이유(설계 §2-3) — 08-18 운영 사고(느린 LLM 판정이
+	 * 빠른 Hiker 보강 큐를 분 단위로 점유해 뒤 계정 백필을 지연시킨 구조)의 재현이다. 정산·ready
+	 * 임계 경로(게시자 보강)와 후행 꼬리(댓글·판정)가 같은 스레드 풀을 나눠 갖는 건 그 사고와 같은
+	 * 실수라 전용 풀로 분리했다.
+	 *
+	 * <p>동시성 기본값 1(설정 {@code monitoring.brand.followup-concurrency}) — 후행은 꼬리 작업이고
+	 * 큐가 길어지는 건 의도한 동작이다. 올리면 같은 워커 풀(brandEnrichWorkerPool, 10)의 슬롯을
+	 * 정산·ready 임계 경로와 더 나눠 갖게 돼 스탬프가 다시 느려진다. <b>Hiker·LLM 동시 콜 예산에는
+	 * 영향 없다</b>(클래스 javadoc 참조) — 여기서 늘리는 건 제출 주체 수뿐이다.
+	 */
+	@Bean(name = "brandFollowupExecutor")
+	public Executor brandFollowupExecutor(
+			@Value("${monitoring.brand.followup-concurrency:1}") int concurrency) {
+		AtomicInteger seq = new AtomicInteger();
+		return Executors.newFixedThreadPool(concurrency, r -> {
+			Thread t = new Thread(r, "brand-followup-" + seq.incrementAndGet());
 			t.setDaemon(true);
 			return t;
 		});

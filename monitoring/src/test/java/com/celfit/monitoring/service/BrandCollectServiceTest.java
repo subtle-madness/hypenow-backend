@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -438,8 +439,13 @@ class BrandCollectServiceTest {
 	}
 
 	private BrandCollectService service(int maxPostsPerSweep, int collectionPostLimit) {
+		return service(maxPostsPerSweep, collectionPostLimit, Runnable::run);
+	}
+
+	/** 후행(댓글·판정) executor를 직접 주입하는 팩토리 — 완주 스탬프 축소 개정 검증용. */
+	private BrandCollectService service(int maxPostsPerSweep, int collectionPostLimit, java.util.concurrent.Executor followup) {
 		return new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments, tagged, authors,
-				brands, new FakeAdJudge(), Runnable::run, maxPostsPerSweep, collectionPostLimit, 3, 30, true);
+				brands, new FakeAdJudge(), Runnable::run, followup, maxPostsPerSweep, collectionPostLimit, 3, 30, true);
 	}
 
 	private long tagCalls() {
@@ -1327,7 +1333,7 @@ class BrandCollectServiceTest {
 		ExecutorService pool = Executors.newFixedThreadPool(3);
 		try {
 			BrandCollectService svc = new BrandCollectService(latched, latched, latched, callContext, writer, snapshots,
-					comments, tagged, authors, brands, new FakeAdJudge(), pool, 2000, 10000, 3, 30, true);
+					comments, tagged, authors, brands, new FakeAdJudge(), pool, Runnable::run, 2000, 10000, 3, 30, true);
 			svc.enrich(brand, svc.sweepCore(brand));
 		} finally {
 			pool.shutdown();
@@ -1453,6 +1459,68 @@ class BrandCollectServiceTest {
 		svc.enrich(brand, List.of(post));   // brand.hasOwnLink() == true(픽스처 기본값)
 
 		assertThat(adJudge.judged).contains("AAA");
+	}
+
+	// ---------- 완주 스탬프 축소(2026-09) — 후행(댓글 수집·광고 표기 판정) executor 분리 ----------
+
+	/**
+	 * 결함 2 수정의 핵심 — {@link BrandCollectService#enrichUserTriggeredDeferred}는 게시자 보강
+	 * 정산(markEnriched)·onVisible까지만 동기로 끝내고, 댓글 수집·광고 표기 판정은 후행 executor에
+	 * "제출"만 한 채 반환한다. 큐가 실행되지 않는 한 댓글·판정 호출 자체가 나가지 않는다는 것과,
+	 * 큐를 수동으로 돌리면 그제서야 수행된다는 것을 함께 확인한다(설계 §4-C 테스트 1a).
+	 */
+	@Test
+	void enrichUserTriggeredDeferred는_댓글_판정을_후행_큐에만_제출하고_즉시_반환한다() {
+		List<Runnable> queue = new ArrayList<>();
+		Executor queueing = queue::add;   // 실행하지 않고 쌓기만 한다
+		FakeAdJudge adJudge = new FakeAdJudge();
+		BrandCollectService svc = serviceWithFollowup(queueing, adJudge);
+		// comments(3L) > 저장값(0, 기본) — 댓글 게이트가 열려야 큐 실행 후 comments.upserted가 채워진다.
+		PostInfo post = post("AAA", RECENT, "111", 3L);
+		List<String> visible = new ArrayList<>();
+
+		svc.enrichUserTriggeredDeferred(brand, List.of(post), () -> visible.add("onVisible"));
+
+		// 반환 시점 — 정산·워터마크·onVisible은 끝났지만 댓글 콜·판정 호출은 0
+		assertThat(tagged.enriched).contains("AAA");
+		assertThat(brands.progressTouches).contains(1L);
+		assertThat(visible).containsExactly("onVisible");
+		assertThat(comments.upserted).isEmpty();
+		assertThat(adJudge.judged).isEmpty();
+		assertThat(queue).hasSize(1);   // 후행 태스크가 큐에 1건 쌓였다(제출은 됐다)
+
+		queue.forEach(Runnable::run);   // 큐를 수동으로 실행하면
+
+		assertThat(comments.upserted).contains("AAA");   // 그제서야 댓글 수집이
+		assertThat(adJudge.judged).contains("AAA");        // 광고 판정도 수행된다
+	}
+
+	/**
+	 * 야간 스윕 무변 보장(설계 §4-C 테스트 2) — {@link BrandCollectService#sweep}은 후행 전용
+	 * executor를 전혀 참조하지 않는다(2-인자 {@code enrich}가 direct 실행기를 넘기므로). sweep이
+	 * 반환하기 <b>전에</b> 댓글·판정이 이미 끝나 있어야 하고, 주입한 후행 executor의 제출 카운트는
+	 * 0이어야 한다 — 등록 백필 전용 개정이 스윕 실행 의미를 바꾸지 않았다는 구조적 증거.
+	 */
+	@Test
+	void 야간_스윕은_후행_executor를_전혀_쓰지_않고_반환_전에_댓글_판정을_끝낸다() {
+		tagPages.add(page(null, reel("A", RECENT, 3, 101, "")));
+		List<Runnable> followupSubmissions = new ArrayList<>();
+		Executor countingFollowup = followupSubmissions::add;   // 실행 안 해도 된다 — 애초에 안 타야 정상
+		FakeAdJudge adJudge = new FakeAdJudge();
+		BrandCollectService svc = serviceWithFollowup(countingFollowup, adJudge);
+
+		svc.sweep(brand);
+
+		assertThat(tagged.enriched).contains("A");
+		assertThat(comments.upserted).contains("A");     // 반환 전에 이미 댓글 수집이 끝나 있다
+		assertThat(adJudge.judged).contains("A");         // 광고 판정도 끝나 있다
+		assertThat(followupSubmissions).isEmpty();         // 후행 executor는 전혀 제출받지 않았다
+	}
+
+	/** 후행 executor·adJudge를 함께 주입하는 팩토리 — 완주 스탬프 축소 개정 검증 전용. */
+	private BrandCollectService serviceWithFollowup(Executor followup, FakeAdJudge adJudge) {
+		return new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments, tagged,
+				authors, brands, adJudge, Runnable::run, followup, 10000, 10000, 3, 30, true);
 	}
 
 	// ---------- 계정 게이트 훅(onVisible, 2026-08-18 markServing 단축 — 스펙 §8 후속) ----------
@@ -1601,7 +1669,7 @@ class BrandCollectServiceTest {
 			return authorOrCommentResponse(path);
 		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
 		BrandCollectService svc = new BrandCollectService(hikerBackend, syncBackend, hikerBackend, callContext, writer, snapshots,
-				comments, tagged, authors, brands, new FakeAdJudge(), Runnable::run, 10000, 10000, 3, 30, false);
+				comments, tagged, authors, brands, new FakeAdJudge(), Runnable::run, Runnable::run, 10000, 10000, 3, 30, false);
 		PostInfo p = post("AAA", RECENT, "111", 3L);
 
 		svc.enrichSync(brand, List.of(p));
@@ -1636,7 +1704,7 @@ class BrandCollectServiceTest {
 		}, callContext, callCounts, new TargetCallContext(), new TargetCallCountRepository(null)));
 		BrandCollectService svc = new BrandCollectService(hikerBackend, hikerBackend, userTriggeredBackend,
 				callContext, writer, snapshots, comments, tagged, authors, brands, new FakeAdJudge(),
-				Runnable::run, 10000, 10000, 3, 30, false);
+				Runnable::run, Runnable::run, 10000, 10000, 3, 30, false);
 		PostInfo p = post("AAA", RECENT, "111", 3L);
 
 		svc.enrichUserTriggered(brand, List.of(p), null);
@@ -1670,7 +1738,7 @@ class BrandCollectServiceTest {
 		});
 		BrandCollectService svc = new BrandCollectService(hikerBackend, hikerBackend, userTriggeredBackend,
 				callContext, writer, snapshots, comments, tagged, authors, brands, new FakeAdJudge(),
-				Runnable::run, 10000, 10000, 3, 30, false);
+				Runnable::run, Runnable::run, 10000, 10000, 3, 30, false);
 
 		svc.sweepCoreUserTriggered(brand, page -> { });
 
@@ -1715,7 +1783,7 @@ class BrandCollectServiceTest {
 
 	private BrandCollectService serviceWithAdJudge(FakeAdJudge adJudge, boolean adDisclosureEnabled) {
 		return new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments, tagged, authors,
-				brands, adJudge, Runnable::run, 10000, 10000, 3, 30, adDisclosureEnabled);
+				brands, adJudge, Runnable::run, Runnable::run, 10000, 10000, 3, 30, adDisclosureEnabled);
 	}
 
 	/**

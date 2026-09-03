@@ -188,6 +188,15 @@ public class BrandRepository {
 	 * 워터마크로 넓힌 뒤(08-31) 완주 시각을 재는 소비자(Grafana 수집 소요·신선도 패널)용
 	 * 전용 컬럼으로, 여기서만 찍는다(09-02).
 	 * 성공했으니 직전 백필 오류도 여기서 클리어한다 — 다음 스윕 성공이 오류 기록의 유일한 해제 지점.
+	 *
+	 * <p><b>backfill_completed_at(= 응답 collectionCompletedAt, FE 폴링 종료 조건)의 확정 의미
+	 * (2026-09 완주 스탬프 축소 개정)</b> — "열거된 모든 페이지의 <b>게시물·게시자 보강이 정산
+	 * (markEnriched)됨</b> = 목록·지표·게시자가 서빙 완비"다. 종전엔 "모든 페이지 보강(댓글·판정
+	 * 포함) 뒤"였으나, was가 이 값을 해석 없이 통과시킬 뿐이라 "판정 포함 완주"에 의존하는 소비자가
+	 * 없음을 확인하고 좁혔다. <b>댓글 수집·광고 표기 판정은 이 표식 밖의 후행 단계</b>다 — 등록
+	 * 백필({@link com.celfit.monitoring.service.BrandRegistrationService#runBackfillSafely})의
+	 * 페이지 join이 후행을 기다리지 않고 여기가 찍힌 뒤 후행 전용 executor에서 조용히 채워질 수
+	 * 있다(계약 {@code docs/contracts/monitoring-was-contract.md} collectionCompletedAt 절 참조).
 	 */
 	public void touchSwept(long brandId, LocalDate on) {
 		db.update("""
