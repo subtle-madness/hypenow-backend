@@ -141,6 +141,10 @@ services:
       # transport 자체(online|batch)는 app_setting analytics.analyze-transport 수동 UPDATE로 전환하므로
       # 여기엔 없음 — online이면 content_batch_jobs에 pending 행이 없어 이 크론은 매번 no-op이다.
       ANALYTICS_SCHEDULE_BATCH_COLLECT_CRON: "0 10,40 20-23,0-2 * * *"
+      # 공동구매(공구) 판정(2026-09-03) — 낮 시간 30분 간격, :15·:45로 미러(:30)·분석 배치 수거
+      # (:10,:40)와 겹치지 않게 오프셋. 새벽 미러 완료 30분 안에 첫 회가 돌고, 대상 없는 실행은
+      # 저렴한 SQL no-op이라 자주 돌려도 무해하다.
+      ANALYTICS_SCHEDULE_GROUP_PURCHASE_CRON: "0 15,45 * * * *"
       ANALYTICS_IMAGE_PAR_URL: ${ANALYTICS_IMAGE_PAR_URL}
       # 이미지 스토어 선택(2026-08-12 GCS 이전) — par가 기본, .env의 IMAGE_STORE=gcs 한 줄이 컷오버 스위치.
       # GCS 인증은 전용 SA 키(IMAGE_GCS_KEY)를 코드가 직접 읽는다 — 위 GOOGLE_APPLICATION_CREDENTIALS는

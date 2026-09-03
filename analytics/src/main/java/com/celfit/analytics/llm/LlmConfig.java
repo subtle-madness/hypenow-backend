@@ -120,4 +120,17 @@ public class LlmConfig {
 			ObjectProvider<GeminiApi> gemini) {
 		return new GeminiContentSynthesizer(gemini.getObject(), settings::geminiModel);
 	}
+
+	/**
+	 * 공동구매(공구) 애매분 판정 포트 — {@link ContentSynthesisPort}와 같은 이유로 Gemini/Vertex
+	 * 전용이다(콜 규모가 백로그 수백 건 1회 + 일 한두 건이라 프로바이더 폴백까지 둘 필요가 없다,
+	 * 스펙 §3).
+	 */
+	@Bean
+	@Lazy
+	public com.celfit.analytics.grouppurchase.GroupPurchaseJudgePort groupPurchaseJudgePort(
+			AnalyticsSettings settings, ObjectProvider<GeminiApi> gemini) {
+		return new com.celfit.analytics.grouppurchase.GeminiGroupPurchaseJudge(
+				gemini.getObject(), settings::geminiModel);
+	}
 }

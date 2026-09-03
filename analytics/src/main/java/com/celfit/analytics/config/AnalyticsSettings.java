@@ -61,6 +61,9 @@ public class AnalyticsSettings {
 	 * (08-11 콘텐츠 전환 때 계정 카피는 의도적으로 제외 — 2026-08-17 후속 전환).
 	 */
 	public static final String KEY_ACCOUNT_ANALYZE_TRANSPORT = "analytics.account-analyze-transport";
+	/** 공동구매(공구) 판정 킬 스위치 — false면 GroupPurchaseJudgeJob이 즉시 반환한다. 기본값은
+	 * crawler Flyway 마이그레이션이 시드(true). 사전·프롬프트 수정 후 재판정은 리셋 SQL로 별도. */
+	public static final String KEY_GROUP_PURCHASE_ENABLED = "analytics.group-purchase.enabled";
 
 	// app_setting 미설정 시 폴백 — 비용 가드로 최저가 티어(haiku) 고정. Opus 등 상위 모델은 app_setting으로 명시 전환.
 	static final String DEFAULT_LLM_MODEL = "claude-haiku-4-5-20251001";
@@ -80,6 +83,7 @@ public class AnalyticsSettings {
 	static final int DEFAULT_BATCH_CHUNK_SIZE = 3000;
 	static final String DEFAULT_ANALYZE_TRANSPORT = "online";
 	static final String DEFAULT_ACCOUNT_ANALYZE_TRANSPORT = "online";
+	static final boolean DEFAULT_GROUP_PURCHASE_ENABLED = true;
 
 	private final JdbcTemplate raw;
 
@@ -186,6 +190,11 @@ public class AnalyticsSettings {
 	/** true면 계정 카피(ACCOUNT_ANALYZE)가 Vertex 배치 제출 경로로 전환된다. */
 	public boolean accountBatchTransportEnabled() {
 		return "batch".equals(accountAnalyzeTransport());
+	}
+
+	/** 공동구매 판정 킬 스위치 — 잡 실행 시점마다 매번 읽는다(캐시 없음). */
+	public boolean groupPurchaseEnabled() {
+		return read(KEY_GROUP_PURCHASE_ENABLED).map(Boolean::parseBoolean).orElse(DEFAULT_GROUP_PURCHASE_ENABLED);
 	}
 
 	/** content_analyses.model 등 기록에 쓰는 활성 모델명 — 프로바이더 따라 결정. */

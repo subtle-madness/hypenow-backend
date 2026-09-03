@@ -51,6 +51,7 @@ class AnalyticsJobServiceTest {
 				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
 				provider(archiveJob),
 				provider(mock(com.celfit.analytics.analyze.TraitCanonJob.class)),
+				provider(mock(com.celfit.analytics.grouppurchase.GroupPurchaseJudgeJob.class)),
 				progress, history, derivedViewRefresher);
 	}
 
@@ -167,8 +168,9 @@ class AnalyticsJobServiceTest {
 				provider(mock(AccountAnalysisJob.class)),
 				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
 				provider(mock(ImageArchiveJob.class)),
-				provider(mock(com.celfit.analytics.analyze.TraitCanonJob.class)), progress, history,
-				derivedViewRefresher);
+				provider(mock(com.celfit.analytics.analyze.TraitCanonJob.class)),
+				provider(mock(com.celfit.analytics.grouppurchase.GroupPurchaseJudgeJob.class)),
+				progress, history, derivedViewRefresher);
 		assertThat(resolved.get()).isZero(); // 생성만으로는 미조회
 		service.trigger(JobName.ANALYZE, TriggerType.MANUAL);
 		assertThat(resolved.get()).isEqualTo(1);
