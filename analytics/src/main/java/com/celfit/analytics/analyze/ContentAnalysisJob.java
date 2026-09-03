@@ -410,6 +410,12 @@ public class ContentAnalysisJob {
 	 * 프롬프트의 전제는 "A 행이 존재한다"이므로, 빈 사실로 내보내 좋은 기존 해석을 덮어쓰는 대신
 	 * 여기서 걸러 다음 실행에서 자연 재대상되게 한다.
 	 *
+	 * <p>행 존재만으론 부족하다(2026-09-03 리뷰 추가분): 캡션도 썸네일도 없어 속성 근거가 전무한
+	 * 콘텐츠는 파트 A가 전부 NULL인 채로 행을 만든다({@code GeminiBatchLines.processFactsResultLine}
+	 * 의 {@code hasCaption ? attrs : null}). 그런 short_code는 {@code storedFacts}에 키는 있어도
+	 * 값 9개가 전부 null이라 파트 B 프롬프트의 "확인된 사실" 블록이 비게 된다 - 행 부재와 같은
+	 * 결과이므로 같은 드롭 경로로 흡수한다.
+	 *
 	 * <p>package-private - 테스트가 targets/storedFacts 어긋남 케이스를 직접 호출로 검증한다.
 	 */
 	static List<Map<String, Object>> requireStoredFacts(List<Map<String, Object>> targets,
@@ -418,7 +424,8 @@ public class ContentAnalysisJob {
 		List<String> dropped = new ArrayList<>();
 		for (Map<String, Object> row : targets) {
 			String shortCode = (String) row.get("short_code");
-			if (storedFacts.containsKey(shortCode)) {
+			Map<String, Object> facts = storedFacts.get(shortCode);
+			if (facts != null && !allNull(facts)) {
 				kept.add(row);
 			} else {
 				dropped.add(shortCode);
@@ -430,9 +437,16 @@ public class ContentAnalysisJob {
 					? dropped.subList(0, DROPPED_LOG_LIMIT) : dropped;
 			String suffix = dropped.size() > DROPPED_LOG_LIMIT
 					? " ...(%d건 생략)".formatted(dropped.size() - DROPPED_LOG_LIMIT) : "";
-			log.warn("SYNTHESIS 대상인데 저장된 사실이 없어 제외 - {}건: {}{}", dropped.size(), shown, suffix);
+			log.warn("SYNTHESIS 대상인데 저장된 사실이 없거나 전부 비어 있어 제외 - {}건: {}{}",
+					dropped.size(), shown, suffix);
 		}
 		return kept;
+	}
+
+	/** facts 맵(StoredFacts.KEYS 9키)의 값이 전부 null인지 - 캡션·썸네일이 둘 다 없어 파트 A가
+	 * NULL 행으로 종결 저장한 콘텐츠가 이 모양이다({@link #requireStoredFacts} 참조). */
+	private static boolean allNull(Map<String, Object> facts) {
+		return facts.values().stream().allMatch(v -> v == null);
 	}
 
 	/** FACTS는 timely 개념이 없다 - 로그에 timely=false로 오인 표기되지 않게 n/a로 표기한다(I3). */
@@ -751,13 +765,15 @@ public class ContentAnalysisJob {
 		if (s.aiContentSummary() == null || s.aiContentSummary().isBlank()) {
 			throw new IllegalStateException("해석 문구가 비어 있음: " + shortCode);
 		}
-		int updated = ContentAnalysisWriter.updateSynthesis(analysis, shortCode, model, b, s,
+		// pending 가드(ContentAnalysisWriter.updateSynthesisPending, 2026-09-03 리뷰) - 롤백·재생성이
+		// 겹쳐 이 사이 행이 이미 완결(non-pending)됐다면 그 완결 행을 덮어쓰지 않는다.
+		int updated = ContentAnalysisWriter.updateSynthesisPending(analysis, shortCode, model, b, s,
 				timely ? "timely" : "late_backfill");
 		if (updated == 0) {
 			// 수거 경로(GeminiBatchLines.processSynthesisResultLine)와 같은 처방(M9) - 그 사이 행이
-			// 사라진 경우는 스택트레이스를 남길 예외적 버그가 아니라 경합으로 벌어지는 정상 범주의
-			// 실패다. warn으로만 집계하고 다음 실행이 재대상하게 둔다.
-			throw new QuietFailure("해석 UPDATE 0행 - 그 사이 행이 사라짐: " + shortCode);
+			// 사라졌거나 이미 non-pending으로 확정된 경우는 스택트레이스를 남길 예외적 버그가 아니라
+			// 경합으로 벌어지는 정상 범주의 실패다. warn으로만 집계하고 다음 실행이 재대상하게 둔다.
+			throw new QuietFailure("해석 UPDATE 0행 - 그 사이 행이 사라졌거나 이미 확정(non-pending)됨: " + shortCode);
 		}
 	}
 

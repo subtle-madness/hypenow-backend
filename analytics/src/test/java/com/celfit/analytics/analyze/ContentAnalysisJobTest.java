@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.celfit.analytics.config.AnalyticsSettings;
@@ -1242,6 +1243,25 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void requireStoredFacts는_값이_전부_null인_사실도_걸러낸다() {
+		// 2026-09-03 리뷰 추가분: 캡션도 썸네일도 없어 파트 A가 NULL 행으로 종결 저장한 콘텐츠는
+		// storedFacts에 키는 있지만 값 9개가 전부 null이다 - 행 부재와 같은 취급(파트 B 프롬프트의
+		// "확인된 사실" 블록이 비게 되는 걸 막는다).
+		Map<String, Object> a = Map.of("short_code", "post_a");
+		Map<String, Object> allNullFacts = new java.util.HashMap<>();
+		for (String k : List.of("main_category", "sub_categories", "ad_type", "ad_disclosure",
+				"detected_brands", "detected_products", "detected_product_categories",
+				"sponsored_signal_level", "is_beauty")) {
+			allNullFacts.put(k, null);
+		}
+		Map<String, Map<String, Object>> storedFacts = Map.of("post_a", allNullFacts);
+
+		List<Map<String, Object>> kept = ContentAnalysisJob.requireStoredFacts(List.of(a), storedFacts);
+
+		assertTrue(kept.isEmpty());
+	}
+
+	@Test
 	void split_모드_runFacts는_포트가_null_속성을_반환하면_예외_없이_실패로_집계한다() {
 		// M5(2026-09-03 리뷰): analyzeFactsOne이 도달했다는 것 자체가 hasCaption||attachThumbnail
 		// 이므로, 포트가 null을 반환하면 예기치 않은 케이스다 - 빈 사실 행을 성공으로 오기록하지
@@ -1290,6 +1310,46 @@ class ContentAnalysisJobTest {
 				"SELECT count(*) FROM content_analyses WHERE short_code IN ('post_a', 'post_b')", Long.class));
 		// post_c(댓글 미분류)·post_new(파트 B 후보 아님)는 그대로 pending으로 남는다
 		assertEquals(2L, db.queryForObject("SELECT count(*) FROM content_analyses", Long.class));
+	}
+
+	@Test
+	void split_모드인데_factsPort_synthesisPort가_null이면_런타임_예외로_죽는다() {
+		// anthropic처럼 split 미지원 프로바이더로 배선되면 factsPort/synthesisPort가 null이다
+		// (생성자 javadoc 참조) - runQuery 상단 가드가 조용한 no-op 대신 명시적으로 죽여 "왜 안
+		// 도는지"를 로그로 알 수 있게 한다. 롤백 방법(app_setting 키)이 메시지에 있어야 운영자가
+		// 바로 조치할 수 있다.
+		enableSplitMode();
+		rewireJob(fakeInsightPort(), false); // 구 생성자 배선 - factsPort=null, synthesisPort=null
+
+		IllegalStateException factsEx = assertThrows(IllegalStateException.class, () -> job.runFacts());
+		assertTrue(factsEx.getMessage().contains("analytics.analyze-mode"), factsEx.getMessage());
+
+		IllegalStateException runEx = assertThrows(IllegalStateException.class, () -> job.run());
+		assertTrue(runEx.getMessage().contains("analytics.analyze-mode"), runEx.getMessage());
+	}
+
+	@Test
+	void FACTS는_댓글_게이트를_적용하지_않지만_SYNTHESIS는_적용한다() {
+		// 파트 A(FACTS)는 댓글 분포를 입력으로 안 쓰므로 댓글 게이트를 안 건다(클래스 상단 주석의
+		// phase별 제외 표 - "FACTS: 행 존재만. 댓글 게이트는 걸지 않는다") - post_c(댓글 있고
+		// 미분류)도 대상이다. 반면 파트 B(SYNTHESIS)는 댓글 인사이트를 만들어야 해서 여전히 게이트가
+		// 걸린다. UNIFIED의 같은 게이트는 댓글_있는데_미분류인_콘텐츠는_대상에서_제외된다() 회귀로
+		// 이미 커버돼 있어 여기서 반복하지 않는다.
+		enableSplitMode();
+		rewireSplitJob(null);
+
+		job.runFacts();
+
+		assertTrue(factsCalls.stream().anyMatch(c -> c.shortCode().equals("post_c")));
+		assertEquals("pending", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'post_c'", String.class));
+
+		job.run(); // SYNTHESIS phase(split 유지)
+
+		// post_c는 이제 파트 A 행(pending)이 있지만 댓글 미분류 게이트에 여전히 막혀 파트 B 대상이 아니다
+		assertFalse(synthesisCalls.stream().anyMatch(c -> c.shortCode().equals("post_c")));
+		assertEquals("pending", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'post_c'", String.class));
 	}
 
 	@Test

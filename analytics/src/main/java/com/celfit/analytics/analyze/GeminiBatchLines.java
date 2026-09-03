@@ -275,6 +275,14 @@ final class GeminiBatchLines {
 				log.info("분류 대상이나 대분류 미도출 - 미분류로 종결 저장(재시도 루프 방지): {}", parsed.shortCode());
 				attrs = attrs.asUnclassified();
 			}
+			// hasCaption=false면 attrs를 폐기하고 컬럼 전부 NULL로 행만 만든다(통합·온라인 경로와
+			// 같은 규칙) - 배치 라인은 여기서 종결 저장한다: 이 결과가 이미 "성공적으로 받은 응답"이고,
+			// 재시도해도 사이드카의 caption은 그대로라 같은 NULL 행이 반복될 뿐이다(재시도 루프 방지).
+			// 온라인 경로(ContentAnalysisJob.analyzeFactsOne)는 반대로 attrs가 null이면
+			// QuietFailure를 던져 실패로 집계한다 - 그건 "포트를 호출했는데 예기치 않게 null이
+			// 돌아온" 이례 케이스라 다음 실행(익일)에 자연 재시도할 가치가 있기 때문이다(M5).
+			// 어차피 캡션도 썸네일도 없는 NULL 행은 requireStoredFacts가 파트 B 대상에서 걸러낸다
+			// (2026-09-03 리뷰 - "확인된 사실"이 전부 비면 행 부재와 동급 취급).
 			int inserted = ContentAnalysisWriter.insertFacts(analysis, om, parsed.shortCode(), model,
 					hasCaption ? attrs : null);
 			if (inserted == 0) {
@@ -293,7 +301,12 @@ final class GeminiBatchLines {
 	 * 파트 B 결과 한 줄 처리: 파싱 → 해석 5필드 + 기준선 스냅샷 UPDATE + 시점 확정.
 	 * 마킹은 사이드카에 실린 뷰의 timely 판정을 승계한다(제출 시점 고정 - 수거 시점 재계산 금지).
 	 *
-	 * @return true=갱신 성공, false=실패 또는 0행(그 사이 행이 사라짐)
+	 * <p>{@link ContentAnalysisWriter#updateSynthesisPending}(pending 가드)을 쓴다(2026-09-03
+	 * 리뷰) - 롤백·재생성이 겹치면 이 배치 결과가 이미 완결된(non-pending) 행을 덮어쓸 수 있다
+	 * ({@link ContentAnalysisWriter#updateSynthesisPending} 문서의 시나리오 참조). 가드에 걸려
+	 * 0행이면 라인 실패로 집계 - 다음 후보 diff가 자연 재대상(이미 완결됐으니 실질적으로는 무해).
+	 *
+	 * @return true=갱신 성공, false=실패 또는 0행(그 사이 행이 사라졌거나 이미 non-pending으로 확정됨)
 	 */
 	static boolean processSynthesisResultLine(JdbcTemplate analysis, ObjectMapper om, String line,
 			Map<String, Map<String, String>> sidecar, String model) {
@@ -314,10 +327,10 @@ final class GeminiBatchLines {
 				return false;
 			}
 			boolean timely = "true".equals(base.get("timely"));
-			int updated = ContentAnalysisWriter.updateSynthesis(analysis, parsed.shortCode(), model,
+			int updated = ContentAnalysisWriter.updateSynthesisPending(analysis, parsed.shortCode(), model,
 					baselineOf(base), s, timely ? "timely" : "late_backfill");
 			if (updated == 0) {
-				log.warn("해석 UPDATE 0행 - 제출~수거 사이에 행이 사라짐: {}", parsed.shortCode());
+				log.warn("해석 UPDATE 0행 - 그 사이 행이 사라졌거나 이미 확정(non-pending)됨: {}", parsed.shortCode());
 				return false;
 			}
 			return true;

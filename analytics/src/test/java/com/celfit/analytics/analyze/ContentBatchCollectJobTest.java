@@ -365,6 +365,36 @@ class ContentBatchCollectJobTest {
 	}
 
 	@Test
+	void kind_synthesis는_이미_확정된_행을_덮지_않고_라인_실패로_센다() {
+		// 2026-09-03 리뷰 시나리오: split ON → 파트 B 배치 제출 → 운영자가 롤백하며 pending 행 삭제
+		// → 통합 ANALYZE가 같은 short_code를 완결(non-pending) 행으로 재생성 → 그 뒤 옛 파트 B
+		// 배치 결과가 도착. pending 가드(updateSynthesisPending)가 없으면 이 수거가 방금 만든
+		// 완결 행을 조용히 덮어쓴다 - 가드가 있으면 UPDATE 0행 → 라인 실패로만 집계되고 행은 보존된다.
+		db.update("""
+				INSERT INTO content_analyses (short_code, model, ai_content_summary, main_category,
+				  ad_type, is_beauty, metric_timeliness)
+				VALUES ('cc_final', 'unified-model', '통합 재생성 요약', 'cleansing', 'organic', true, 'timely')""");
+		insertPendingBatchJob("batches/s4", true, 1, sidecarLine("cc_final", true), "synthesis");
+		String resultJsonl = """
+				{"key":"cc_final","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(SYNTHESIS_JSON));
+
+		JobResult result = collectJob(succeededApi("files/s4", resultJsonl)).run();
+
+		assertEquals(0, result.processed());
+		assertEquals(0, result.failed()); // 배치 수준 예외가 아니라 라인 실패(collectOne이 던지지 않음)
+		// 통합 ANALYZE가 이미 채운 완결 행이 옛 배치 결과로 덮이지 않는다
+		assertEquals("통합 재생성 요약", db.queryForObject(
+				"SELECT ai_content_summary FROM content_analyses WHERE short_code = 'cc_final'", String.class));
+		assertEquals("timely", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'cc_final'", String.class));
+		assertEquals("unified-model", db.queryForObject(
+				"SELECT model FROM content_analyses WHERE short_code = 'cc_final'", String.class));
+		assertEquals("collected", db.queryForObject(
+				"SELECT status FROM content_batch_jobs WHERE batch_name = 'batches/s4'", String.class));
+	}
+
+	@Test
 	void kind_synthesis에서_대상_행이_없으면_저장_실패로_센다() {
 		// 제출~수거 사이에 행이 사라진 경우 - 0행 갱신은 성공이 아니다
 		insertPendingBatchJob("batches/s2", true, 1, sidecarLine("cc_gone", true), "synthesis");
