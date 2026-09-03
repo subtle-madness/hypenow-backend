@@ -24,4 +24,10 @@ class JobNameTest {
 	void fromSlug은_모르는_값에_예외() {
 		assertThatThrownBy(() -> JobName.fromSlug("nope")).isInstanceOf(IllegalArgumentException.class);
 	}
+
+	@Test
+	void fact_analyze_슬러그() {
+		assertThat(JobName.FACT_ANALYZE.slug()).isEqualTo("fact-analyze");
+		assertThat(JobName.fromSlug("fact-analyze")).isEqualTo(JobName.FACT_ANALYZE);
+	}
 }

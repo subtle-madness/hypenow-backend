@@ -50,7 +50,7 @@ public class ContentBatchCollectJob {
 			return new JobResult(0, 0, false);
 		}
 		List<Map<String, Object>> pending = analysis.queryForList("""
-				SELECT id, batch_name, sidecar_jsonl FROM content_batch_jobs
+				SELECT id, batch_name, sidecar_jsonl, kind FROM content_batch_jobs
 				WHERE status = 'pending' ORDER BY submitted_at""");
 		int collected = 0;
 		int failed = 0;
@@ -58,8 +58,10 @@ public class ContentBatchCollectJob {
 			long id = ((Number) row.get("id")).longValue();
 			String batchName = (String) row.get("batch_name");
 			String sidecarJsonl = (String) row.get("sidecar_jsonl");
+			// kind는 NOT NULL DEFAULT 'analyze'지만, 컬럼 추가 직전에 제출된 행을 방어적으로 흡수한다.
+			String kind = row.get("kind") == null ? "analyze" : (String) row.get("kind");
 			try {
-				collected += collectOne(id, batchName, sidecarJsonl);
+				collected += collectOne(id, batchName, sidecarJsonl, kind);
 			} catch (Exception e) {
 				failed++;
 				log.error("배치 수거 실패 — batch_name={}", batchName, e);
@@ -72,7 +74,7 @@ public class ContentBatchCollectJob {
 	}
 
 	/** @return 이번 배치에서 저장한 행 수. 실행 중이거나 상태 판정 불가면 0(행은 pending 유지). */
-	private int collectOne(long id, String batchName, String sidecarJsonl) {
+	private int collectOne(long id, String batchName, String sidecarJsonl, String kind) {
 		JsonNode batch = om.readTree(batchApi.getBatch(batchName));
 		String state = GeminiBatchLines.state(batch);
 		if (state == null || state.endsWith("_RUNNING") || state.endsWith("_PENDING")
@@ -117,7 +119,18 @@ public class ContentBatchCollectJob {
 		AtomicInteger saved = new AtomicInteger();
 		AtomicInteger lineFailed = new AtomicInteger();
 		batchApi.downloadResults(resultFile, line -> {
-			if (GeminiBatchLines.processResultLine(analysis, om, line, sidecar, model, taxonomy)) {
+			// 응답 스키마가 kind마다 다르므로 파서를 여기서 고른다(2026-09-03 2단계 분리 §5).
+			//   analyze   : 통합 1콜(레거시·롤백 경로) - 사실 + 해석 한 번에 INSERT
+			//   facts     : 파트 A - insertFacts(metric_timeliness='pending', ON CONFLICT DO NOTHING)
+			//   synthesis : 파트 B - updateSynthesis(사이드카 timely로 시점 확정, 0행이면 warn)
+			boolean ok = switch (kind) {
+				case "facts" -> GeminiBatchLines.processFactsResultLine(
+						analysis, om, line, sidecar, model, taxonomy);
+				case "synthesis" -> GeminiBatchLines.processSynthesisResultLine(
+						analysis, om, line, sidecar, model);
+				default -> GeminiBatchLines.processResultLine(analysis, om, line, sidecar, model, taxonomy);
+			};
+			if (ok) {
 				saved.incrementAndGet();
 			} else {
 				lineFailed.incrementAndGet();
@@ -127,7 +140,8 @@ public class ContentBatchCollectJob {
 		analysis.update("""
 				UPDATE content_batch_jobs SET status = 'collected', collected_at = now(), sidecar_jsonl = NULL
 				WHERE id = ?""", id);
-		log.info("배치 수거 완료 — batch_name={}, {}건 저장, {}건 실패", batchName, saved.get(), lineFailed.get());
+		log.info("배치 수거 완료 - batch_name={}, kind={}, {}건 저장, {}건 실패",
+				batchName, kind, saved.get(), lineFailed.get());
 		return saved.get();
 	}
 

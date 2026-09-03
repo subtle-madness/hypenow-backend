@@ -231,8 +231,10 @@ public class CollectService {
 
 	/**
 	 * 저장·공유·리포스트 재시도 필요 판정(스윕·등록·재시도 진입이 공유하는 단일 기준) — 릴스이면서
-	 * 3지표 중 미관측이 남아 있으면 참. 단, 공유는 게시자 숨김({@link PostInfo#sharesHidden}이면
-	 * 영영 안 오므로 판정에서 제외한다 — 넣으면 숨김 게시물이 매일 상한까지 헛 재시도를 돈다.
+	 * 3지표 중 미관측이 남아 있으면 참. 단, 공유는 게시자 숨김이 <b>확정</b>되면({@link
+	 * PostInfo#sharesHidden}이 {@code true}) 영영 안 오므로 판정에서 제외한다 — 넣으면 숨김
+	 * 게시물이 매일 상한까지 헛 재시도를 돈다. {@code null}(self 기원 미확정, S9)은 제외하지
+	 * 않는다 — 아직 확인 못 했을 뿐이라 재시도로 진짜 확정값을 얻을 기회를 줘야 한다.
 	 * 진입·종료 조건은 3지표 공통이다(08-05 옵션 ③): 08-04엔 "공유는 단건 정본이 확정 제공"
 	 * 전제로 저장·리포스트만 봤지만, 전제가 반증돼 부분 세션이 공유만 빠뜨린 날의 단독 누락도
 	 * 재시도가 메꿔야 한다(당첨 clips 열거는 공유를 사실상 상시 실어 추가 비용이 거의 없다).
@@ -240,7 +242,7 @@ public class CollectService {
 	public static boolean needsMetricsRetry(PostInfo p) {
 		return "REELS".equals(p.contentType())
 				&& (p.saves() == null || p.reposts() == null
-						|| (p.shares() == null && !p.sharesHidden()));
+						|| (p.shares() == null && !Boolean.TRUE.equals(p.sharesHidden())));
 	}
 
 	/**
@@ -326,7 +328,9 @@ public class CollectService {
 			if (p.reposts() == null) {
 				repostsCandidates.add(p.shortCode());
 			}
-			if (p.shares() == null && !p.sharesHidden()) {
+			// !Boolean.TRUE.equals — 확정 숨김(true)만 제외. null(self 기원 미확정, S9)은 실제
+			// DB 이력(codesWithSharesZeroCarry)이 뒷받침하는 후보 조회일 뿐이라 포함해도 안전하다.
+			if (p.shares() == null && !Boolean.TRUE.equals(p.sharesHidden())) {
 				sharesCandidates.add(p.shortCode());
 			}
 		}
@@ -339,7 +343,7 @@ public class CollectService {
 		List<PostInfo> result = new ArrayList<>(trackedPosts.size());
 		for (PostInfo p : trackedPosts) {
 			Long zeroReposts = p.reposts() == null && repostsCarry.contains(p.shortCode()) ? 0L : null;
-			Long zeroShares = p.shares() == null && !p.sharesHidden()
+			Long zeroShares = p.shares() == null && !Boolean.TRUE.equals(p.sharesHidden())
 					&& sharesCarry.contains(p.shortCode()) ? 0L : null;
 			if (zeroReposts == null && zeroShares == null) {
 				result.add(p);
@@ -364,11 +368,17 @@ public class CollectService {
 	// 판정 조건에 saves 관측을 요구하는 이유: 키 실은 세션을 만났다는 근거가 있어야 "부재=생략"
 	// 해석이 성립한다(save·repost 키는 같이 실리는 짝 — 08-04 실측 566/596). 전부 꽝인 날은
 	// 근거가 없으므로 0을 쓰지 않는다(내일 스윕 이월) — null(미관측)/0(관측 해석) 구분 유지.
+	//
+	// sharesHidden이 "확정 false"(Boolean.FALSE)일 때만 0 간주한다(S9, 2026-09-03 감사 수정) —
+	// applyZeroCarry·needsMetricsRetry의 관대한 !Boolean.TRUE.equals와 다르다. 이 경로는 DB 이력
+	// 같은 뒷받침 근거가 전혀 없는 "그냥 소진됐으니 0으로 찍자"는 맹목적 추정이라, self 기원의
+	// 미확정(null)까지 포함하면(과거엔 primitive false 하드코딩이라 그랬다) 실제로는 숨김인
+	// 게시물에 공유 0을 영구 오기록한다 — Hiker가 명시적으로 "숨김 아님"을 확정한 경우로만 좁힌다.
 
-	/** 소진된 게시물의 리포스트·공유(숨김 제외) 0 간주 — 판정 근거(저장 관측)가 있으면 저장하고 true. */
+	/** 소진된 게시물의 리포스트·공유(확정 비숨김만) 0 간주 — 판정 근거(저장 관측)가 있으면 저장하고 true. */
 	private boolean assumeZeroForOmittedKeys(PostInfo p) {
 		Long zeroReposts = p.reposts() == null ? 0L : null;
-		Long zeroShares = p.shares() == null && !p.sharesHidden() ? 0L : null;
+		Long zeroShares = p.shares() == null && Boolean.FALSE.equals(p.sharesHidden()) ? 0L : null;
 		if (p.saves() == null || (zeroReposts == null && zeroShares == null)) {
 			return false;
 		}
@@ -432,7 +442,11 @@ public class CollectService {
 				next.add(p);   // 꽝 세션 — 재콜로 다른 세션을 뽑는다.
 				continue;
 			}
-			PostInfo merged = p.mergedMetrics(observed.saves(), observed.shares(), observed.reposts());
+			// observed는 항상 metricsRetryHiker(Hiker 직결) 관측이라 sharesHidden이 확정값이다 —
+			// mergedMetrics 4-arg로 되싣어야 self 기원의 미확정(null)이 진짜 숨김을 배우고
+			// needsMetricsRetry가 더 이상 재시도를 요구하지 않는다(S9, 클래스 javadoc 참조).
+			PostInfo merged = p.mergedMetrics(observed.saves(), observed.shares(), observed.reposts(),
+					observed.sharesHidden());
 			writer.savePost(LocalDate.now(KST), merged);
 			log.info("저장·리포스트 단건 당첨 머지 — {} saves={} shares={} reposts={} ({}번째 시도)",
 					p.shortCode(), merged.saves(), merged.shares(), merged.reposts(), attempt);

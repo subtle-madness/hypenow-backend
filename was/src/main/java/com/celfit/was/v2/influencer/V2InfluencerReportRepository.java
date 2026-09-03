@@ -77,6 +77,18 @@ public class V2InfluencerReportRepository {
 	 * DISTINCT — detected_brands 배열에 같은 브랜드가 중복 기재돼도 contentIds·cnt가 안 부풀도록
 	 * (traits Jaccard DISTINCT 교훈과 동일). others의 cnt도 count(DISTINCT s2.short_code)로 게시물
 	 * 단위 중복 제거(mine과 대칭). JSON 집계는 CopyRow.traitsJson과 같은 ::text 관용구.
+	 *
+	 * 09-03 성능 수리: others가 브랜드별 상관 서브쿼리(SubPlan)였을 때 플래너가 브랜드마다
+	 * content_analyses(운영 309MB) 전체 순차 스캔 + jsonb 전개를 반복했다 — 운영 실측 브랜드 21개
+	 * 계정 7.3초(동시 2건 13.7초), 단계 로그의 시간 전부가 이 메서드. 지금은 ① 내 브랜드명 배열을
+	 * `?|`로 한 번에 짚고(GIN 식 인덱스 idx_content_analyses_brand_names_gin — analytics
+	 * V20260903083555, 술어 식이 인덱스 식과 글자 단위로 같아야 붙는다) ② 브랜드×계정 집계를
+	 * 조인으로 붙여 스캔이 브랜드 수와 무관하게 1회다. 단일 참조 CTE는 플래너가 도로 상관 서브쿼리로
+	 * 인라인하므로(실측: MATERIALIZED 없이 동일 3.2초) mine은 MATERIALIZED. 로컬 스냅샷(협찬 6.5만 행)
+	 * 실측 브랜드 49개 3,168ms → 8ms(인덱스 없이도 885ms), 결과 전량 동일.
+	 * `??|`는 Spring named-param 파서와 pgjdbc가 각각 `?`를 바인드 자리로 읽어 필요한 이중
+	 * 이스케이프 — DB에 닿는 SQL은 `?|`. 완전 동률(협업 수·최신 게시일)은 handle 오름차순으로
+	 * 고정(원본은 비결정 순서).
 	 */
 	public List<BrandCollabRow> findBrandCollabs(String handle) {
 		return jdbcClient.sql("""
@@ -87,25 +99,34 @@ public class V2InfluencerReportRepository {
 				  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(an.detected_brands, '[]'::jsonb)) b
 				  WHERE s.account_handle = :h AND b->>'name' IS NOT NULL
 				),
-				mine AS (
+				mine AS MATERIALIZED (
 				  SELECT name, count(*) AS cnt,
 				         jsonb_agg(short_code ORDER BY posted_at)::text AS content_ids_json
 				  FROM pairs GROUP BY name
+				),
+				others AS (
+				  SELECT b2->>'name' AS name, s2.account_handle AS handle,
+				         count(DISTINCT s2.short_code) AS cnt, max(s2.posted_at) AS last_at
+				  FROM account_content_series s2
+				  JOIN content_analyses an2 ON an2.short_code = s2.short_code AND an2.ad_type = 'sponsored'
+				  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(an2.detected_brands, '[]'::jsonb)) b2
+				  WHERE s2.account_handle <> :h
+				    AND jsonb_path_query_array(an2.detected_brands, '$[*].name')
+				          ??| (SELECT array_agg(name)::text[] FROM mine)
+				    AND b2->>'name' IN (SELECT name FROM mine)
+				  GROUP BY 1, 2
+				),
+				ranked AS (
+				  SELECT name, handle, cnt, last_at,
+				         row_number() OVER (PARTITION BY name ORDER BY cnt DESC, last_at DESC, handle) AS rn
+				  FROM others
+				),
+				others_agg AS (
+				  SELECT name, jsonb_agg(handle ORDER BY cnt DESC, last_at DESC, handle)::text AS others_json
+				  FROM ranked WHERE rn <= 5 GROUP BY name
 				)
-				SELECT m.name, m.cnt, m.content_ids_json,
-				       COALESCE((SELECT jsonb_agg(o.handle ORDER BY o.cnt DESC, o.last_at DESC)
-				                 FROM (SELECT s2.account_handle AS handle,
-				                              count(DISTINCT s2.short_code) AS cnt,
-				                              max(s2.posted_at) AS last_at
-				                       FROM account_content_series s2
-				                       JOIN content_analyses an2 ON an2.short_code = s2.short_code
-				                                                AND an2.ad_type = 'sponsored'
-				                       CROSS JOIN LATERAL jsonb_array_elements(
-				                                          COALESCE(an2.detected_brands, '[]'::jsonb)) b2
-				                       WHERE b2->>'name' = m.name AND s2.account_handle <> :h
-				                       GROUP BY 1 ORDER BY cnt DESC, last_at DESC LIMIT 5) o),
-				                '[]'::jsonb)::text AS others_json
-				FROM mine m
+				SELECT m.name, m.cnt, m.content_ids_json, COALESCE(o.others_json, '[]') AS others_json
+				FROM mine m LEFT JOIN others_agg o ON o.name = m.name
 				ORDER BY m.cnt DESC, m.name
 				""").param("h", handle).query(BrandCollabRow.class).list();
 	}

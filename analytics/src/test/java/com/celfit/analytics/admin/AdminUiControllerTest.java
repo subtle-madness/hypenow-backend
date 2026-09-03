@@ -61,20 +61,28 @@ class AdminUiControllerTest {
 	private static final PipelineStatsService.Accounts ACCOUNTS =
 			new PipelineStatsService.Accounts(14_123, 1_714, 723, 169, 822, 1_861);
 
-	/** 콘텐츠 축 실측 — 후보 7,402 = timely 1,435 + 윈도우 5,967, 기분석 7,116 / 미분석 286. */
+	/**
+	 * 콘텐츠 축 실측 - 후보 7,402 = timely 1,435 + 윈도우 5,967, 기분석 7,116 / 미분석 286.
+	 * 파트 A 축(사실만 2+100, 파트 A 후보 9,000 · 완료 8,800)은 2026-09-03 2단계 분리 추가분 - 실측이
+	 * 아니라 항등식만 성립하는 임의값(테스트 목적).
+	 */
 	private static final PipelineStatsService.Heavy HEAVY = new PipelineStatsService.Heavy(
-			7_402, 1_435, 1_432, 5_967, 5_684,
+			7_402,
+			1_435, 1_432, 2,
+			5_967, 5_684, 100,
+			9_000, 8_800,
 			12_777, 11_072, 4_000, 1_104, 723, 700,
 			// 아카이브 커버리지 07-27 실측 — 썸네일 107,886 중 27,686 · 프로필 5,699 중 5,694
 			new PipelineStatsService.ArchiveCoverage(107_886, 27_686, 5_699, 5_694),
 			Instant.parse("2026-07-21T08:20:00Z"));
 
-	/** heavy 유무·실패 사유만 갈아끼우는 픽스처 — 누적(각주)·미러 수치는 §1 실측. */
+	/** heavy 유무·실패 사유만 갈아끼우는 픽스처 - 누적(각주)·미러 수치는 §1 실측.
+	 *  pendingMarked=0 - 이 픽스처는 07-21 실측이라 2단계 분리 이전 데이터, "기타 445" 항등식 유지. */
 	private static PipelineStatsService.Funnel funnel(PipelineStatsService.Heavy heavy,
 			String candidatesError) {
 		long remaining = heavy == null ? -1 : heavy.truePending();
 		return new PipelineStatsService.Funnel(31_038,
-				16_827, 1_745, 14_637,
+				16_827, 1_745, 14_637, 0,
 				30_358, 1_515, 1_517, 12,
 				ACCOUNTS, heavy,
 				remaining < 0 ? 0 : (int) remaining, remaining < 0 ? 0 : 1,
@@ -169,6 +177,70 @@ class AdminUiControllerTest {
 				// 자격 밖은 별도 행으로 승격 — "실패·지연 아님"이 명시돼야 잔여와 안 섞인다
 				.andExpect(content().string(Matchers.containsString("분석 안 함")))
 				.andExpect(content().string(Matchers.containsString("실패·지연 아님")));
+	}
+
+	@Test
+	void 콘텐츠_보드는_사실만_칩으로_파트A_완료분을_따로_보여준다() throws Exception {
+		// 파트 A만 채워진 행은 랭킹에 못 뜨므로 '기분석'이 아니라 '사실만'으로 센다 -
+		// 이걸 뭉개면 "분석이 다 됐는데 왜 랭킹에 없나"라는 오독이 생긴다.
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(Matchers.containsString("사실만")));
+	}
+
+	@Test
+	void fact_analyze_카드는_unified_모드면_no_op임을_밝힌다() throws Exception {
+		// 기본 스텁(settings.splitAnalyzeMode() 미지정 - Mockito boolean 기본값 false)이 곧
+		// unified 모드다. 이 상태에서 통합 콜(ANALYZE)이 사실까지 만들어 이 잡은 no-op이다.
+		when(settings.splitAnalyzeMode()).thenReturn(false);
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
+				// 대상 카운트 줄은 그대로 노출(집계 자체는 유효)
+				.andExpect(content().string(Matchers.containsString("후보 9,000 · 사실 보유 8,800")))
+				.andExpect(content().string(Matchers.containsString(
+						"unified 모드 - 이 잡은 no-op (analytics.analyze-mode=split로 전환 시 활성)")));
+	}
+
+	@Test
+	void fact_analyze_카드는_split_모드면_기존_보조설명을_유지한다() throws Exception {
+		when(settings.splitAnalyzeMode()).thenReturn(true);
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(Matchers.containsString("후보 9,000 · 사실 보유 8,800")))
+				.andExpect(content().string(Matchers.containsString("성숙 무관 - 업로드 다음 날 광고 판정·카테고리를 먼저 채운다")))
+				.andExpect(content().string(Matchers.not(Matchers.containsString("이 잡은 no-op"))));
+	}
+
+	@Test
+	void 사실만_해석대상아님_칩은_pendingMarked가_factsOnlyTotal을_초과할_때_노출된다() throws Exception {
+		// 파트 A만 채워진 채 성숙 후 후보 뷰(v_analysis_candidates) 밖으로 나간 행 - 어느 Heavy
+		// 트랙 카운터(HEAVY.factsOnlyTotal() = timelyFactsOnly 2 + windowFactsOnly 100 = 102)에도
+		// 안 잡히지만 pendingMarked(누적 마킹, 여기선 150)엔 남아 차집합 48로 드러나야 한다
+		// (2026-09-03 리뷰 — Funnel.pendingMarked() - Heavy.factsOnlyTotal()).
+		PipelineStatsService.Funnel base = funnel(HEAVY, null);
+		PipelineStatsService.Funnel stranded = new PipelineStatsService.Funnel(base.rawContents(),
+				base.analyzed(), base.timelyMarked(), base.backfillMarked(), 150,
+				base.served(), base.mirrorAccounts(), base.copiedAccounts(), base.accountTarget(),
+				base.accounts(), base.heavy(), base.todayPlanned(), base.daysToFull(),
+				base.pinDays(), base.slackDays(), base.candidatesError());
+		when(stats.funnel()).thenReturn(stranded);
+
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(Matchers.containsString("사실만 · 해석 대상 아님")))
+				.andExpect(content().string(Matchers.containsString("48")));
+	}
+
+	@Test
+	void 사실만_해석대상아님_칩은_pendingMarked가_factsOnlyTotal_이하면_숨는다() throws Exception {
+		// 기본 픽스처(pendingMarked=0)는 stranded=0이라 칩 자체가 안 보여야 한다.
+		when(stats.funnel()).thenReturn(funnel(HEAVY, null));
+		mvc.perform(get("/ui/fragments/board"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(Matchers.not(Matchers.containsString("해석 대상 아님"))));
 	}
 
 	@Test

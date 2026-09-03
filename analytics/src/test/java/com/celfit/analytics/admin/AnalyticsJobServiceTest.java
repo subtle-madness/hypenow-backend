@@ -51,6 +51,7 @@ class AnalyticsJobServiceTest {
 				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
 				provider(archiveJob),
 				provider(mock(com.celfit.analytics.analyze.TraitCanonJob.class)),
+				provider(mock(com.celfit.analytics.grouppurchase.GroupPurchaseJudgeJob.class)),
 				progress, history, derivedViewRefresher);
 	}
 
@@ -82,6 +83,37 @@ class AnalyticsJobServiceTest {
 		var result = service().trigger(JobName.ANALYZE, TriggerType.MANUAL);
 		assertThat(result).isEqualTo(AnalyticsJobService.TriggerResult.ACCEPTED);
 		assertThat(lock.isRunning(JobName.ANALYZE)).isFalse(); // 동기 실행 후 해제
+	}
+
+	@Test
+	void fact_analyze_잡을_트리거하면_runFacts가_호출된다() {
+		when(analyzeJob.runFacts()).thenReturn(new JobResult(1, 0, false));
+		var result = service().trigger(JobName.FACT_ANALYZE, TriggerType.MANUAL);
+
+		assertThat(result).isEqualTo(AnalyticsJobService.TriggerResult.ACCEPTED);
+		var run = history.recent(1).getFirst();
+		assertThat(run.job()).isEqualTo(JobName.FACT_ANALYZE);
+		assertThat(run.processed()).isEqualTo(1);
+	}
+
+	@Test
+	void fact_analyze도_파생_matview_갱신_대상이다() {
+		// 파트 A가 채우는 사실 컬럼(is_beauty·main_category·ad_type)이 발굴 사전집계 MV의 입력이다 -
+		// 온라인 폴백 경로에서 수거 잡을 안 타므로 이 잡 자체가 갱신 후크를 가져야 한다.
+		when(analyzeJob.runFacts()).thenReturn(new JobResult(1, 0, false));
+		service().trigger(JobName.FACT_ANALYZE, TriggerType.MANUAL);
+
+		org.mockito.Mockito.verify(derivedViewRefresher).refresh();
+	}
+
+	@Test
+	void fact_analyze가_처리0건_no_op이면_파생_matview를_갱신하지_않는다() {
+		// unified 모드 no-op(또는 split인데 대상 없음)은 입력이 실제로 안 바뀐 것 - 매 무의미한
+		// 트리거마다 무거운 matview 재계산을 태울 이유가 없다(2026-09-03 리뷰).
+		when(analyzeJob.runFacts()).thenReturn(new JobResult(0, 0, false));
+		service().trigger(JobName.FACT_ANALYZE, TriggerType.MANUAL);
+
+		org.mockito.Mockito.verify(derivedViewRefresher, org.mockito.Mockito.never()).refresh();
 	}
 
 	@Test
@@ -167,8 +199,9 @@ class AnalyticsJobServiceTest {
 				provider(mock(AccountAnalysisJob.class)),
 				provider(mock(com.celfit.analytics.analyze.ContentSynthesisRefreshJob.class)),
 				provider(mock(ImageArchiveJob.class)),
-				provider(mock(com.celfit.analytics.analyze.TraitCanonJob.class)), progress, history,
-				derivedViewRefresher);
+				provider(mock(com.celfit.analytics.analyze.TraitCanonJob.class)),
+				provider(mock(com.celfit.analytics.grouppurchase.GroupPurchaseJudgeJob.class)),
+				progress, history, derivedViewRefresher);
 		assertThat(resolved.get()).isZero(); // 생성만으로는 미조회
 		service.trigger(JobName.ANALYZE, TriggerType.MANUAL);
 		assertThat(resolved.get()).isEqualTo(1);

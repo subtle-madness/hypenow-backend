@@ -529,4 +529,54 @@ public class TaggedPostRepository {
 		db.update("UPDATE brand_tagged_post SET enriched_at = ? WHERE brand_id = ? AND short_code IN ("
 				+ placeholders + ")", args);
 	}
+
+	/**
+	 * 게시자 id 재사용 배치 조회(BrandCollectService.ensureAuthors 결함 수정, S8 — self 표면
+	 * ownerUserId 공백 보완). 이번 관측(PostInfo)이 ownerUserId를 못 준 게시물의 short_code만 넘기면,
+	 * 그 행이 <b>이전 관측</b>에서 저장해 둔 author_ig_user_id를 돌려준다(없으면 맵에서 빠진다).
+	 *
+	 * <p>self 표면(embed 등)은 media 응답에 소유 계정 pk 노드를 구조적으로 안 실어 ownerUserId가
+	 * 항상 null이다(무예외 200이라 폴백도 없다) — 매 관측이 이 null을 그대로 쓰면 이미 한 번은
+	 * 실관측(Hiker 등)으로 저장해 둔 값이 있어도 게시자 프로필 생성·30일 stale 갱신이 조용히 멈춘다.
+	 */
+	public Map<String, String> authorIgUserIds(long brandId, Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return Map.of();
+		}
+		String placeholders = String.join(",", Collections.nCopies(shortCodes.size(), "?"));
+		Object[] args = new Object[shortCodes.size() + 1];
+		args[0] = brandId;
+		int i = 1;
+		for (String code : shortCodes) {
+			args[i++] = code;
+		}
+		Map<String, String> out = new HashMap<>();
+		db.query("SELECT short_code, author_ig_user_id FROM brand_tagged_post WHERE brand_id = ? AND short_code IN ("
+						+ placeholders + ") AND author_ig_user_id IS NOT NULL",
+				rs -> {
+					out.put(rs.getString("short_code"), rs.getString("author_ig_user_id"));
+				}, args);
+		return out;
+	}
+
+	/**
+	 * 게시자 id 역보강(위 {@link #authorIgUserIds} 조회의 짝, S8) — 이번 관측이 실제
+	 * author_ig_user_id를 줬는데 저장값이 비어 있으면(그 게시물의 <b>최초</b> 관측이 self였던 경우)
+	 * 채운다. WHERE 가드로 이미 값이 있는 행은 절대 덮지 않는다({@link #upsertDirect}·{@link
+	 * #upsertHashtag}의 COALESCE와 같은 원칙 — 최신 관측으로 계속 갈아끼우는 게 목적이 아니라, self가
+	 * 이후 다시 null을 주더라도 이 값으로 위 재사용 경로가 계속 작동하게 하는 게 목적이다). 이 채움이
+	 * 없으면 direct·hashtag 2단계 단건 수집({@code BrandDirectCollectService.collectOne})처럼 최초
+	 * 관측 이후 저장 갱신이 없는 경로에서, self가 딱 한 번이라도 실패해 Hiker로 폴백한 순간의 id가
+	 * 그 순간에만 쓰이고 버려져 self가 다시 안정되는 즉시 재사용 경로 자체가 무력화된다.
+	 */
+	public void backfillAuthorIgUserIds(long brandId, Map<String, String> authorIdsByShortCode) {
+		if (authorIdsByShortCode.isEmpty()) {
+			return;
+		}
+		List<Object[]> batchArgs = authorIdsByShortCode.entrySet().stream()
+				.map(e -> new Object[] {e.getValue(), brandId, e.getKey()})
+				.toList();
+		db.batchUpdate("UPDATE brand_tagged_post SET author_ig_user_id = ? WHERE brand_id = ? AND short_code = ?"
+				+ " AND author_ig_user_id IS NULL", batchArgs);
+	}
 }

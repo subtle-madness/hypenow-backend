@@ -81,14 +81,29 @@ public class JobConfig {
 			@Value("${analytics.vlm-enabled:false}") boolean thumbnailEnabled,
 			ObjectProvider<JobProgressRegistry> progressRegistry,
 			ObjectProvider<com.celfit.analytics.llm.GeminiApi> gemini,
-			com.celfit.analytics.llm.BeautyTaxonomyLoader taxonomyLoader) {
+			com.celfit.analytics.llm.BeautyTaxonomyLoader taxonomyLoader,
+			ObjectProvider<com.celfit.analytics.llm.ContentFactsPort> factsPort,
+			ObjectProvider<ContentSynthesisPort> synthesisPort) {
 		JobProgressRegistry registry = progressRegistry.getIfAvailable();
 		ProgressReporter reporter = registry != null ? registry.reporter(JobName.ANALYZE) : ProgressReporter.NOOP;
 		ProgressReporter backfillReporter = registry != null
 				? registry.reporter(JobName.LATE_BACKFILL_ANALYZE) : ProgressReporter.NOOP;
+		ProgressReporter factsReporter = registry != null
+				? registry.reporter(JobName.FACT_ANALYZE) : ProgressReporter.NOOP;
 		return new ContentAnalysisJob(rawJdbcTemplate, analysisDataSource, insight,
 				settings, thumbnailEnabled, headPrecheck(), reporter, backfillReporter,
-				batchApiOrNull(settings, gemini), taxonomyLoader);
+				batchApiOrNull(settings, gemini), taxonomyLoader,
+				factsReporter, splitPortOrNull(settings, factsPort), splitPortOrNull(settings, synthesisPort));
+	}
+
+	/**
+	 * 2단계 분리(split) 전용 포트 - provider=anthropic이면 조회 자체를 하지 않는다.
+	 * batchApiOrNull과 같은 관용구: @Lazy 빈이라도 getIfAvailable()은 생성을 강제해,
+	 * GEMINI_API_KEY 없이 anthropic만으로 운영 중인 환경에서 불필요한 키 부재 예외를 낸다.
+	 * split은 gemini/vertex 전용이며, anthropic 경로는 unified 모드로 남는다.
+	 */
+	private static <T> T splitPortOrNull(AnalyticsSettings settings, ObjectProvider<T> port) {
+		return "anthropic".equals(settings.llmProvider()) ? null : port.getIfAvailable();
 	}
 
 	/**
@@ -189,6 +204,25 @@ public class JobConfig {
 				: new ParImageStore(imageParUrl);
 		return new ImageArchiveJob(rawJdbcTemplate, analysisDataSource,
 				store, ImageResizer.wrap(ImageDownloader.http()), settings, reporter);
+	}
+
+	/**
+	 * 공동구매(공구) 판정(스펙 2026-09-03) — 규칙 확정분은 즉시 기록, 애매분만 LLM.
+	 * on-startup 플래그는 따로 두지 않는다(admin-enabled면 어드민/스케줄 트리거로만 실행 — 다른
+	 * LLM 잡처럼 기동 시 자동 실행할 필요가 없는 정기 스윕형 잡).
+	 */
+	@Bean
+	@Lazy
+	@ConditionalOnExpression("${analytics.admin-enabled:false}")
+	public com.celfit.analytics.grouppurchase.GroupPurchaseJudgeJob groupPurchaseJudgeJob(
+			@Qualifier("analysisDataSource") DataSource analysisDataSource,
+			com.celfit.analytics.grouppurchase.GroupPurchaseJudgePort port, AnalyticsSettings settings,
+			ObjectProvider<JobProgressRegistry> progressRegistry) {
+		JobProgressRegistry registry = progressRegistry.getIfAvailable();
+		ProgressReporter reporter = registry != null
+				? registry.reporter(JobName.GROUP_PURCHASE_JUDGE) : ProgressReporter.NOOP;
+		return new com.celfit.analytics.grouppurchase.GroupPurchaseJudgeJob(
+				analysisDataSource, port, settings, reporter);
 	}
 
 	/** trait 어휘 매핑 원샷(2026-07-29 스펙 §3-3) — 어드민 수동 트리거 전용, 스케줄 없음. */

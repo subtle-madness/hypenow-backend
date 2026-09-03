@@ -29,6 +29,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("DROP TABLE IF EXISTS beauty_taxonomy");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS beauty_distributors");
 		jdbcTemplate.execute("DROP TABLE IF EXISTS image_assets");
+		jdbcTemplate.execute("DROP TABLE IF EXISTS group_purchase_judgments");
 		jdbcTemplate.execute("""
 				CREATE TABLE accounts (
 				    handle            text PRIMARY KEY,
@@ -93,6 +94,18 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				    archived_at timestamptz NOT NULL DEFAULT now(),
 				    PRIMARY KEY (kind, key)
 				)""");
+		// ContentCardRow.SELECT의 gpj 조인 재료(2026-09-03 공동구매 판정 서버화) — 빈 테이블이면
+		// 카드의 groupPurchase는 항상 false(6.1 목록 경로는 이 테스트의 관심사가 아니라 형상만 갖춘다).
+		jdbcTemplate.execute("""
+				CREATE TABLE group_purchase_judgments (
+				    short_code          text PRIMARY KEY,
+				    verdict             boolean,
+				    tier                text NOT NULL,
+				    reason              text,
+				    judged_caption_hash text NOT NULL,
+				    judged_at           timestamptz NOT NULL,
+				    model               text
+				)""");
 
 		// 어휘 시드: 아이메이크업(아이라이너)·립메이크업(립틴트), 유통사 2종(slug 포함)
 		jdbcTemplate.update("""
@@ -146,6 +159,8 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				  20, 'https://ig/lb1', 9999, 999, 99, 999, '2026-07-25T03:00:00Z', 999),
 				 ('lg1', 'alpha', 'https://thumb/lg1.jpg', '레거시 미분류 릴스', '2026-07-17T03:00:00Z', 'reels',
 				  20, 'https://ig/lg1', 500, 50, 5, 300, '2026-07-20T03:00:00Z', 300),
+				 ('pd1', 'alpha', 'https://thumb/pd1.jpg', '사실만 채워진 릴스', '2026-07-18T03:00:00Z', 'reels',
+				  20, 'https://ig/pd1', 8888, 888, 88, 888, '2026-07-19T03:00:00Z', 888),
 				 -- 소수점 정렬 회귀 대조군(별도 기간 [08-01, 08-05) — 기존 테스트 무영향): z1·a1은
 				 -- hype_score(정수)가 700으로 동일(동점)하지만 hype_score_precise가 다르다. short_code는
 				 -- 알파벳순(a1 < z1)이 precise 순서(z1 > a1)와 정반대가 되도록 골랐다 — 구코드
@@ -174,6 +189,7 @@ class V1ContentRepositoryTest extends IntegrationTest {
 				 ('tl1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'timely'),
 				 ('lb1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'late_backfill'),
 				 ('lg1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, NULL),
+				 ('pd1', 'makeup', '["아이라이너"]'::jsonb, 'sponsored', NULL, NULL, NULL, true, 'pending'),
 				 ('z1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'timely'),
 				 ('a1', 'makeup', '["아이라이너"]'::jsonb, 'organic', NULL, NULL, NULL, true, 'timely')
 				""");
@@ -225,6 +241,22 @@ class V1ContentRepositoryTest extends IntegrationTest {
 
 		assertThat(rows).extracting(ContentCardRow::shortCode).doesNotContain("lb1");
 		// 기본 hype 내림차순: tl1(600) → lg1(300)
+		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("tl1", "lg1");
+		assertThat(repository.countCards(q)).isEqualTo(2);
+	}
+
+	@Test
+	void 사실만_채워진_pending은_랭킹에서_제외된다() {
+		// 2026-09-03 2단계 분리: 파트 A만 채워진 행은 지표 시점이 미확정('pending')이라
+		// 랭킹에 뜨면 안 된다. NULL로 뒀다면 `= 'timely' OR IS NULL` 필터가 레거시 timely로
+		// 취급해 미성숙 지표가 노출됐을 것이다 - 신규 어휘를 쓴 이유가 이 케이스다.
+		V1ContentQuery q = V1ContentQuery.of(LocalDate.parse("2026-07-11"), LocalDate.parse("2026-07-20"),
+				null, null, null, null, null, null, null, null, null, null, null, null);
+
+		List<ContentCardRow> rows = repository.findCards(q);
+
+		// pd1은 hype 888로 필터 없으면 1위인데 빠진다
+		assertThat(rows).extracting(ContentCardRow::shortCode).doesNotContain("pd1");
 		assertThat(rows).extracting(ContentCardRow::shortCode).containsExactly("tl1", "lg1");
 		assertThat(repository.countCards(q)).isEqualTo(2);
 	}

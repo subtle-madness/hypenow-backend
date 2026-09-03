@@ -6,7 +6,7 @@
 
 **Goal:** 인플루언서 발굴 목록(`GET /v1/influencers`) 카드에 계정 하입 스코어(`hypeScore`, 최근 12창 콘텐츠 hype_score 단순 평균)를 노출하고 `sort=hype` 정렬을 추가한다.
 
-**Architecture:** 스펙 `docs/superpowers/specs/2026-07-29-influencer-avg-hype-score-design.md`의 B안 — 산식은 analytics `v_account_summaries`에 두고(기존 `analytics.hype_score()` 함수 재사용, 신선도 `now()` 기준 = `v_contents`와 동일), 미러 3곳 동시 변경(뷰 SQL + analysis Flyway DDL + `AccountSummary` record) 후 was는 `su.avg_hype_score` 읽기와 정렬만 추가한다.
+**Architecture:** 스펙 `docs/superpowers/specs/archive/2026-07-29-influencer-avg-hype-score-design.md`의 B안 — 산식은 analytics `v_account_summaries`에 두고(기존 `analytics.hype_score()` 함수 재사용, 신선도 `now()` 기준 = `v_contents`와 동일), 미러 3곳 동시 변경(뷰 SQL + analysis Flyway DDL + `AccountSummary` record) 후 was는 `su.avg_hype_score` 읽기와 정렬만 추가한다.
 
 **Tech Stack:** PostgreSQL 뷰/SQL 하니스, Flyway(analysis DB), Java 21 record, Spring JdbcClient, Testcontainers.
 
@@ -487,7 +487,7 @@ git commit -m "feat(was): 발굴 카드에 hypeScore 노출 — 유사 카드(6.
 
 **Files:**
 - Modify: `ARCHITECTURE.md` (§5 작업 트랙 표·§7 결정 기록)
-- Modify: `docs/superpowers/specs/2026-07-29-influencer-avg-hype-score-design.md` (상태 헤더만)
+- Modify: `docs/superpowers/specs/archive/2026-07-29-influencer-avg-hype-score-design.md` (상태 헤더만)
 
 - [ ] **Step 1: 전체 테스트 (SQL 하니스 + Gradle 전 모듈)**
 
@@ -505,12 +505,12 @@ Expected: `ALL GREEN` + `BUILD SUCCESSFUL`.
 
 - [ ] **Step 3: 스펙 상태 헤더 갱신**
 
-`docs/superpowers/specs/2026-07-29-influencer-avg-hype-score-design.md` 첫머리 상태를 `> 상태: 🟢 활성 · ✅ 구현됨(배포 대기)`으로 변경(본문 불변).
+`docs/superpowers/specs/archive/2026-07-29-influencer-avg-hype-score-design.md` 첫머리 상태를 `> 상태: 🟢 활성 · ✅ 구현됨(배포 대기)`으로 변경(본문 불변).
 
 - [ ] **Step 4: Commit + PR**
 
 ```bash
-git add ARCHITECTURE.md docs/superpowers/specs/2026-07-29-influencer-avg-hype-score-design.md
+git add ARCHITECTURE.md docs/superpowers/specs/archive/2026-07-29-influencer-avg-hype-score-design.md
 git commit -m "docs: 계정 하입 스코어 트랙 반영 — ARCHITECTURE §5·§7, 스펙 상태 갱신"
 ```
 

@@ -32,7 +32,9 @@ import org.springframework.web.context.WebApplicationContext;
  * 잡는 이유도 동일: SweepCommandService.start()의 executor 람다 finally가 한 프레임 더 있다).
  * 게이트가 꺼졌을 때의 동작(404)은 {@link AuthorImageBackfillControllerDisabledTest}가 검증한다.
  */
-@SpringBootTest(properties = "monitoring.image.backfill-trigger-enabled=true")
+// 백필 재시도 스케줄러 틱 방지(2026-09, 결함 3) — @SpringBootTest 컨텍스트에서 5분 주기가 돌지 않게.
+@SpringBootTest(properties = {"monitoring.image.backfill-trigger-enabled=true",
+		"monitoring.brand.backfill-retry.enabled=false"})
 class AuthorImageBackfillControllerTest {
 
 	static class ControllableJob extends AuthorImageBackfillJob {

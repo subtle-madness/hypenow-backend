@@ -36,12 +36,15 @@ class ArchiveInventoryTest extends IntegrationTest {
 			Map.entry("app_setting", "was 런타임 설정값"),
 			Map.entry("password_resets", "만료성 재설정 코드·토큰(SHA-256 해시, TTL 10분 이내) — 자산 가치 없음"),
 			Map.entry("signup_codes", "삭제 경로 없음(used_by가 SET NULL로 끊길 뿐)"),
-			Map.entry("signup_events", "삭제 경로 없음. 단 email + detail->>'userId'를 보존해 "
-					+ "탈퇴 유저의 가명화 아카이브를 재식별할 수 있다(설계 §4-4)"),
+			Map.entry("signup_events", "90일 보존 배치가 삭제(트랙 A 09-03, SignupEventRetentionScheduler) "
+					+ "— email + detail->>'userId' 보존으로 탈퇴 유저의 가명화 아카이브를 재식별할 수 있는 "
+					+ "창은 그 90일 내로 한정된다. 비회원(가입 미완료) 이메일까지 무기한 보유할 근거가 "
+					+ "없어 재식별 편의보다 개인정보 최소 보존을 택한 의도된 결정(설계 §4-4)"),
 			Map.entry("inquiries", "삭제 경로 없음"),
 			Map.entry("admin_audit_logs", "삭제 경로 없음. target_user_id에 FK가 없어 탈퇴에도 남는다"),
 			Map.entry("brand_hashtag_seed", "브랜드 단위 계산 캐시(2026-09-03 자동 시드 재설계 §4-1) — "
-					+ "user_id 없음(브랜드당 1행), 개인정보 아님, 삭제 경로 없음(브랜드 탈퇴에도 재계산 방지용으로 보존)"));
+					+ "user_id 없음(브랜드당 1행), 개인정보 아님, 삭제 경로 없음(브랜드 탈퇴에도 재계산 방지용으로 보존)"),
+			Map.entry("encryption_keys", "시스템 암호화 키(DEK) 저장소. 사용자 스코프 데이터가 아니라 전역 키 관리용"));
 
 	@Autowired
 	JdbcClient jdbcClient;

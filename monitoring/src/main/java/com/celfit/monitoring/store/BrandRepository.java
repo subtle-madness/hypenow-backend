@@ -25,9 +25,12 @@ public class BrandRepository {
 	/**
 	 * 등록 또는 재가입 — CLOSED 행이 있으면 ACTIVE로 재활성하고 프로필 관측값을 갱신한다.
 	 * last_swept_on을 null로 되돌리는 이유: 재가입 시점의 윈도우(90일)를 백필이 다시 채우기
-	 * 전까지는 "수집 준비 중"(was 계약의 판별 기준)이어야 하기 때문이다. 백필 상태 두 컬럼
+	 * 전까지는 "수집 준비 중"(was 계약의 판별 기준)이어야 하기 때문이다. 백필 상태 컬럼
 	 * (backfill_error·backfill_completed_at)도 같은 이유로 리셋한다 — 재등록은 백필을 처음부터
 	 * 다시 도는 것이라, 지난 가입의 완주·실패 기록이 남으면 was 폴링이 곧장 ready를 본다.
+	 * <b>재시도 예산(backfill_attempts·backfill_attempted_at, 2026-09 결함 수정)도 0·NULL로
+	 * 리셋</b> — 재등록 전 열거가 상한(3회)까지 소진돼 있으면, 리셋 없이는 재등록 직후 첫 열거
+	 * 실패가 곧장 exhausted 문구로 떨어져 재시도 스케줄러가 구제할 기회 자체가 없다.
 	 * 수집 창은 GREATEST로 합친다 — 재가입 축소 요청은 무시한다: 기존 수집분이 이미 있어 창을
 	 * 줄이면 응답 창과 보유 데이터가 어긋난다.
 	 *
@@ -49,6 +52,7 @@ public class BrandRepository {
 				  external_url = EXCLUDED.external_url, following = EXCLUDED.following,
 				  media_count = EXCLUDED.media_count, status = 'ACTIVE', closed_at = NULL,
 				  last_swept_on = NULL, backfill_error = NULL, backfill_completed_at = NULL,
+				  backfill_attempts = 0, backfill_attempted_at = NULL,
 				  registered_at = now(),
 				  collection_months = GREATEST(brand_account.collection_months, EXCLUDED.collection_months),
 				  collection_started_at = now(),
@@ -74,6 +78,10 @@ public class BrandRepository {
 	 * last_swept_on NULL이 핵심이다: 확장 백필이 죽어도 다음 새벽 스윕이 백필 분기(전체 창 열거)로
 	 * 자동 복구한다(기존 백스톱 상속).
 	 *
+	 * <p>2026-09 결함 수정: backfill_attempts·backfill_attempted_at도 0·NULL로 리셋한다 — 확장
+	 * 전 열거가 재시도 상한을 소진해 있었다면, 리셋 없이는 확장 백필의 첫 실패가 재시도 없이 곧장
+	 * exhausted로 떨어진다(위 insertOrReactivate와 같은 결함, 같은 이유).
+	 *
 	 * <p>2026-08-13 개정: backfill_completed_at도 리셋한다(08-12의 "보존한다" 결정을 뒤집는다).
 	 * FE 폴링 종료 조건이 이 값(응답 collectionCompletedAt)이 되면서, 보존하면 확장 시작 즉시
 	 * 폴링이 멎어 확장분이 화면에 반영되지 않는다. 그 대가로 was의 "확장 중 → collecting" 유도
@@ -94,7 +102,7 @@ public class BrandRepository {
 				UPDATE brand_account
 				SET collection_months = GREATEST(collection_months, ?), last_swept_on = NULL,
 				    collection_started_at = now(), backfill_error = NULL,
-				    backfill_completed_at = NULL
+				    backfill_completed_at = NULL, backfill_attempts = 0, backfill_attempted_at = NULL
 				WHERE id = ? AND collection_months < ?""", months, brandId, months) > 0;
 	}
 
@@ -191,6 +199,23 @@ public class BrandRepository {
 				BrandRepository::toRow);
 	}
 
+	/**
+	 * 활성 브랜드를 <b>무거운 순</b>으로 — 브랜드 스윕 병렬화(2026-09-03 설계 §3-1)의 LPT 배정 입력.
+	 * 무거움의 정본은 {@code calledOn}(KST 달력일)의 {@code brand_call_count.calls}다: 직전 스윕(전날
+	 * KST 02:00~)의 콜이 그 날짜에 계상되므로 호출부는 "KST 오늘 − 1일"을 넘긴다. 이력 없는 브랜드는
+	 * 0으로 맨 뒤, 동률은 id 순(결정적). 전날 등록된 브랜드는 백필 콜로 앞에 서는데 무해하다(먼저 돌
+	 * 뿐). 다른 호출처(기동 러너들)는 순서가 무의미해 {@link #findActive()}를 그대로 쓴다.
+	 */
+	public List<BrandRow> findActiveHeaviestFirst(LocalDate calledOn) {
+		return db.query("""
+				SELECT b.id, b.username, b.ig_user_id, b.status, b.last_swept_on, b.collection_months, b.has_own_link
+				FROM brand_account b
+				LEFT JOIN brand_call_count c ON c.brand_id = b.id AND c.called_on = ?
+				WHERE b.status = 'ACTIVE'
+				ORDER BY COALESCE(c.calls, 0) DESC, b.id""",
+				BrandRepository::toRow, calledOn);
+	}
+
 	/** 탈퇴 — ACTIVE였던 행만 닫는다. @return 실제로 전이됐으면 true(이미 닫힘·미존재는 false). */
 	public boolean close(String username) {
 		return db.update("""
@@ -206,13 +231,27 @@ public class BrandRepository {
 	 * 워터마크로 넓힌 뒤(08-31) 완주 시각을 재는 소비자(Grafana 수집 소요·신선도 패널)용
 	 * 전용 컬럼으로, 여기서만 찍는다(09-02).
 	 * 성공했으니 직전 백필 오류도 여기서 클리어한다 — 다음 스윕 성공이 오류 기록의 유일한 해제 지점.
+	 *
+	 * <p><b>backfill_completed_at(= 응답 collectionCompletedAt, FE 폴링 종료 조건)의 확정 의미
+	 * (2026-09 완주 스탬프 축소 개정)</b> — "열거된 모든 페이지의 <b>게시물·게시자 보강이 정산
+	 * (markEnriched)됨</b> = 목록·지표·게시자가 서빙 완비"다. 종전엔 "모든 페이지 보강(댓글·판정
+	 * 포함) 뒤"였으나, was가 이 값을 해석 없이 통과시킬 뿐이라 "판정 포함 완주"에 의존하는 소비자가
+	 * 없음을 확인하고 좁혔다. <b>댓글 수집·광고 표기 판정은 이 표식 밖의 후행 단계</b>다 — 등록
+	 * 백필({@link com.celfit.monitoring.service.BrandRegistrationService#runBackfillSafely})의
+	 * 페이지 join이 후행을 기다리지 않고 여기가 찍힌 뒤 후행 전용 executor에서 조용히 채워질 수
+	 * 있다(계약 {@code docs/contracts/monitoring-was-contract.md} collectionCompletedAt 절 참조).
+	 *
+	 * <p><b>backfill_attempts도 여기서 0으로 되돌린다(2026-09 열거 실패 재시도 스케줄러 신설)</b> —
+	 * 성공이 재시도 예산의 유일한 해제 지점이라는 backfill_error와 같은 규율의 연장이다. 이걸 안 하면
+	 * 이후 기간 확장 재백필({@link #expandWindow})이 지난 등록의 소진된 예산을 물려받아 재시도가
+	 * 열리지 않는다({@link com.celfit.monitoring.service.BrandBackfillRetryJob} 참조).
 	 */
 	public void touchSwept(long brandId, LocalDate on) {
 		db.update("""
 				UPDATE brand_account
 				SET last_swept_on = ?, last_swept_at = now(), sweep_completed_at = now(),
 				    backfill_completed_at = COALESCE(backfill_completed_at, now()),
-				    backfill_error = NULL
+				    backfill_error = NULL, backfill_attempts = 0
 				WHERE id = ?""", on, brandId);
 	}
 
@@ -253,6 +292,69 @@ public class BrandRepository {
 	public void markBackfillError(long brandId, String message) {
 		db.update("UPDATE brand_account SET backfill_error = ? WHERE id = ? AND last_swept_on IS NULL",
 				message, brandId);
+	}
+
+	/**
+	 * 백필 재시도 후보 조회(2026-09 열거 실패 재시도 스케줄러, {@link
+	 * com.celfit.monitoring.service.BrandBackfillRetryJob} 전용) — 세 조건이 함께 "정상 진행 중"과
+	 * "상한 소진"을 자연 배제한다:
+	 * <ul>
+	 *   <li>{@code last_swept_on IS NULL} — 한 번이라도 완주한 브랜드는 대상 아님</li>
+	 *   <li>{@code backfill_error IS NOT NULL} — 정상 진행 중인 브랜드는 이 값이 null이라(신규 삽입·
+	 *       기간 확장 둘 다 NULL로 시작) 자동 제외된다. {@link #markBackfillError}가 {@code sweepCore}
+	 *       예외 시에만 찍는 구조(페이지별 댓글·판정 실패는 내부에서 삼켜짐) 덕에 성립한다</li>
+	 *   <li>{@code backfill_attempts < maxAttempts} — 상한 소진 브랜드는 자동 제외</li>
+	 * </ul>
+	 * 나이 앵커는 {@code registered_at}이 아니라 {@code collection_started_at}이다 — 등록·재등록·
+	 * 기간 확장 모두가 {@code now()}로 갱신하고(was의 FE 폴링 30분 상한과 같은 앵커), 이 재시도의
+	 * 목적이 "폴링 중인 사용자 화면 구제"이지 범용 수리 도구가 아니라는 것과, 최초 배포 시 기존
+	 * 실패 잔량이 한꺼번에 예산을 받는 herd를 자르는 것 둘 다의 근거다. 백오프는 시도 횟수에
+	 * 비례해 선형으로 늘어난다({@code backoffMinutes * (attempts + 1)}) — 상한 3 기준 대략
+	 * t+5, t+15, t+30분에 재시도가 들어간다. 정렬은 최신 등록 우선(화면을 보고 있을 확률이 높은 순).
+	 */
+	public List<BrandRow> findBackfillRetryCandidates(int maxAttempts, int maxAgeMinutes,
+			int backoffMinutes, int limit) {
+		return db.query("""
+				SELECT id, username, ig_user_id, status, last_swept_on, collection_months, has_own_link
+				FROM brand_account
+				WHERE status = 'ACTIVE'
+				  AND last_swept_on IS NULL
+				  AND backfill_error IS NOT NULL
+				  AND backfill_attempts < ?
+				  AND collection_started_at > now() - make_interval(mins => ?)
+				  AND (backfill_attempted_at IS NULL
+				       OR backfill_attempted_at < now() - make_interval(mins => ? * (backfill_attempts + 1)))
+				ORDER BY collection_started_at DESC
+				LIMIT ?""",
+				BrandRepository::toRow, maxAttempts, maxAgeMinutes, backoffMinutes, limit);
+	}
+
+	/**
+	 * 재시도 제출 직전 호출 — 완료 시점이 아니라 <b>제출 직전</b>에 증가시킨다: 완료 시 증가로 하면
+	 * 재시도 도중 프로세스가 죽었을 때 예산이 환불돼 무한 재시도가 된다. {@code last_swept_on IS
+	 * NULL} 가드는 {@link #markBackfillError}와 같은 이유 — 그사이 다른 경로(동시 재가입 등)가
+	 * 이미 완주시켰으면 더 이상 재시도 대상이 아니다.
+	 */
+	public void markBackfillAttempt(long brandId) {
+		db.update("""
+				UPDATE brand_account SET backfill_attempts = backfill_attempts + 1, backfill_attempted_at = now()
+				WHERE id = ? AND last_swept_on IS NULL""", brandId);
+	}
+
+	/**
+	 * 재시도 예산 소진 브랜드의 {@code backfill_error} 문구를 "다음 새벽 정기 수집에서 다시
+	 * 시도해요."로 교체한다 — 상한 소진 후보는 {@link #findBackfillRetryCandidates}가 애초에 뽑지
+	 * 않으므로(attempts &lt; maxAttempts 조건), 문구 교체는 매 틱 이 별도 UPDATE로 한다.
+	 * {@code backfill_error <> ?} 조건이 멱등성을 준다 — 이미 교체된 행은 재틱에서 다시 세지 않는다
+	 * (반환값은 <b>이번 틱에 새로</b> 교체된 행 수).
+	 */
+	public int markBackfillRetryExhausted(String message, int maxAttempts) {
+		return db.update("""
+				UPDATE brand_account
+				SET backfill_error = ?
+				WHERE status = 'ACTIVE' AND last_swept_on IS NULL AND backfill_error IS NOT NULL
+				  AND backfill_attempts >= ? AND backfill_error <> ?""",
+				message, maxAttempts, message);
 	}
 
 	/**

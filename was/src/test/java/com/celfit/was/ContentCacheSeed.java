@@ -25,8 +25,14 @@ public final class ContentCacheSeed {
 		jdbc.execute("DROP TABLE IF EXISTS beauty_distributors");
 		jdbc.execute("DROP TABLE IF EXISTS account_summaries");
 		jdbc.execute("DROP TABLE IF EXISTS account_analyses");
+		// 6.23 유사 캐시 테스트가 만드는 빈 뷰(상수 SELECT라 테이블 의존 없음) — 다른 클래스의
+		// CREATE VIEW와 이름이 겹치지 않도록 매번 치운다.
+		jdbc.execute("DROP VIEW IF EXISTS account_peer_axis_stats");
+		jdbc.execute("DROP VIEW IF EXISTS account_category_stats");
+		jdbc.execute("DROP VIEW IF EXISTS account_beauty_ratio");
 		jdbc.execute("DROP TABLE IF EXISTS account_content_series");
 		jdbc.execute("DROP TABLE IF EXISTS beauty_taxonomy");
+		jdbc.execute("DROP TABLE IF EXISTS group_purchase_judgments");
 		jdbc.execute("""
 				CREATE TABLE contents (
 				    short_code          text PRIMARY KEY,
@@ -61,9 +67,23 @@ public final class ContentCacheSeed {
 				    handle            text PRIMARY KEY,
 				    display_name      text,
 				    profile_image_url text,
-				    followers         bigint
+				    followers         bigint,
+				    beauty            boolean,
+				    fnb               boolean
 				)""");
 		jdbc.execute("CREATE TABLE image_assets (kind text NOT NULL, key text NOT NULL, object_path text)");
+		// ContentCardRow.SELECT의 gpj 조인 재료(2026-09-03 공동구매 판정 서버화) — 빈 테이블이면
+		// COALESCE(gpj.verdict, false)가 항상 false로 떨어져 캐시 경로 자체는 판정과 무관하게 검증된다.
+		jdbc.execute("""
+				CREATE TABLE group_purchase_judgments (
+				    short_code          text PRIMARY KEY,
+				    verdict             boolean,
+				    tier                text NOT NULL,
+				    reason              text,
+				    judged_caption_hash text NOT NULL,
+				    judged_at           timestamptz NOT NULL,
+				    model               text
+				)""");
 		// axis는 findDistributorOptions의 뷰티 축 필터가 읽는다 (2026-08-31 F&B 어휘 추가)
 		jdbc.execute("CREATE TABLE beauty_distributors (slug text PRIMARY KEY, name text,"
 				+ " axis text NOT NULL DEFAULT 'beauty')");
@@ -73,6 +93,7 @@ public final class ContentCacheSeed {
 		jdbc.execute("""
 				CREATE TABLE account_summaries (
 				    handle                    text PRIMARY KEY,
+				    followers                 bigint,
 				    analyzed_count            bigint,
 				    posts_count               bigint,
 				    metric                    text,
@@ -93,7 +114,9 @@ public final class ContentCacheSeed {
 				    avg_interval_days         numeric
 				)""");
 		// findLatestCopy(계정 LLM 카피, 없으면 카피 필드만 null)·findSeries/findCategories/findBrands
-		// (시계열·보강 조회) 참조 테이블 — 전부 비워둔다. 어셈블러가 빈 리스트·null copy를 정상
+		// (시계열·보강 조회) 참조 테이블 — 전부 비워둔다. followers·perf_summary·content_summary·
+		// ad_summary는 6.22(v2) 리포트 경로(V2InfluencerReportRepository)가 읽는 컬럼 — v2 캐시
+		// 테스트가 자기 메서드 안에서 채운다(v1 경로의 "카피 없음" 전제를 시드 단계에선 유지). 어셈블러가 빈 리스트·null copy를 정상
 		// 처리하므로(V1InfluencerReportAssembler) 리포트 조립 자체는 account_summaries 1행만으로 성립.
 		jdbc.execute("""
 				CREATE TABLE account_analyses (
@@ -105,7 +128,10 @@ public final class ContentCacheSeed {
 				    chart_note  text,
 				    traits      jsonb,
 				    ad_headline text,
-				    pace_note   text
+				    pace_note   text,
+				    perf_summary    text,
+				    content_summary text,
+				    ad_summary      text
 				)""");
 		jdbc.execute("""
 				CREATE TABLE account_content_series (

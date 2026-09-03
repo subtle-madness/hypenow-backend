@@ -39,6 +39,13 @@ public class ScheduleRunner {
 		log.info("스케줄 analyze: {}", jobService.trigger(JobName.ANALYZE, TriggerType.SCHEDULED));
 	}
 
+	/** 파트 A(사실) 배치 - 2026-09-03 2단계 분리. analytics.analyze-mode=unified면 잡이 no-op이라
+	 * 크론이 돌아도 로그 한 줄만 남는다(토글 전 무해). */
+	@Scheduled(cron = "${analytics.schedule.fact-analyze-cron:-}")
+	void factAnalyze() {
+		log.info("스케줄 fact-analyze: {}", jobService.trigger(JobName.FACT_ANALYZE, TriggerType.SCHEDULED));
+	}
+
 	@Scheduled(cron = "${analytics.schedule.late-backfill-analyze-cron:-}")
 	void lateBackfillAnalyze() {
 		log.info("스케줄 late-backfill-analyze: {}",
@@ -61,5 +68,13 @@ public class ScheduleRunner {
 	@Scheduled(cron = "${analytics.schedule.batch-collect-cron:-}")
 	void batchCollect() {
 		log.info("스케줄 batch-collect: {}", jobService.trigger(JobName.BATCH_COLLECT, TriggerType.SCHEDULED));
+	}
+
+	/** 공동구매(공구) 판정(스펙 2026-09-03) — 규칙 확정분은 즉시, 애매분만 LLM. 대상 없는 실행은
+	 * 저렴한 SQL no-op이라 낮 시간 30분 간격으로 자주 돌려도 무해하다. */
+	@Scheduled(cron = "${analytics.schedule.group-purchase-cron:-}")
+	void groupPurchaseJudge() {
+		log.info("스케줄 group-purchase-judge: {}",
+				jobService.trigger(JobName.GROUP_PURCHASE_JUDGE, TriggerType.SCHEDULED));
 	}
 }

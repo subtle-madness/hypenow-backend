@@ -1,9 +1,13 @@
 package com.celfit.analytics.analyze;
 
 import com.celfit.analytics.llm.BeautyTaxonomy;
+import com.celfit.analytics.llm.ContentAttributes;
 import com.celfit.analytics.llm.ContentInsightPort.ContentInsight;
 import com.celfit.analytics.llm.ContentToAnalyze;
+import com.celfit.analytics.llm.ContentToSynthesize;
 import com.celfit.analytics.llm.GeminiContentAnalyzer;
+import com.celfit.analytics.llm.GeminiContentSynthesizer;
+import com.celfit.analytics.llm.Synthesis;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -51,22 +55,62 @@ final class GeminiBatchLines {
 	 */
 	static ObjectNode requestLine(ObjectMapper om, String shortCode, Map<String, Object> r,
 			Map<String, Long> commentCategoryCounts, String system) {
-		Map<String, Object> baseline = PromptBaseline.ofRow(r);
 		ContentToAnalyze content = new ContentToAnalyze(shortCode, (String) r.get("account_handle"),
 				(String) r.get("caption"), (String) r.get("content_type"),
 				numberOf(r.get("views")), numberOf(r.get("likes")), numberOf(r.get("comments")),
-				baseline, commentCategoryCounts, (Boolean) r.get("ad_marked"));
+				PromptBaseline.ofRow(r), commentCategoryCounts, (Boolean) r.get("ad_marked"));
+		return buildLine(om, shortCode, system, GeminiContentAnalyzer.userText(content),
+				GeminiContentAnalyzer.RESPONSE_SCHEMA, GeminiContentAnalyzer.MAX_OUTPUT_TOKENS);
+	}
+
+	/**
+	 * 파트 A(사실) 요청 라인 - 캡션과 유료 파트너십 태그만 싣는다(2026-09-03 2단계 분리 §4-4).
+	 * 지표·기준선·댓글 분포를 안 실으므로 성숙(D+4)을 기다릴 필요가 없다.
+	 * 응답 스키마는 해석 5필드가 빠진 {@code RESPONSE_SCHEMA_FACTS}다.
+	 */
+	static ObjectNode factsRequestLine(ObjectMapper om, String shortCode, Map<String, Object> r,
+			String system) {
+		ContentToAnalyze content = new ContentToAnalyze(shortCode, (String) r.get("account_handle"),
+				(String) r.get("caption"), (String) r.get("content_type"),
+				null, null, null, Map.of(), Map.of(), (Boolean) r.get("ad_marked"));
+		return buildLine(om, shortCode, system, GeminiContentAnalyzer.userTextFacts(content),
+				GeminiContentAnalyzer.RESPONSE_SCHEMA_FACTS, GeminiContentAnalyzer.MAX_OUTPUT_TOKENS);
+	}
+
+	/**
+	 * 파트 B(해석) 요청 라인 - 저장된 사실 + 핀 지표 + 기준선 스냅샷 + 댓글 분포.
+	 * 프롬프트·스키마는 온라인 재생성 경로({@link GeminiContentSynthesizer})와 같은 것을 쓴다 -
+	 * 복제하면 배치 생성분과 재생성분의 문구 의미가 갈린다(07-21 사고와 같은 함정).
+	 *
+	 * @param facts {@code StoredFacts.of}가 만든 "확인된 사실" 9키.
+	 */
+	static ObjectNode synthesisRequestLine(ObjectMapper om, String shortCode, Map<String, Object> r,
+			Map<String, Long> commentCategoryCounts, Map<String, Object> facts, String system) {
+		ContentToSynthesize content = new ContentToSynthesize(shortCode,
+				(String) r.get("account_handle"), (String) r.get("content_type"),
+				numberOf(r.get("views")), numberOf(r.get("likes")), numberOf(r.get("comments")),
+				PromptBaseline.ofRow(r), commentCategoryCounts, facts);
+		return buildLine(om, shortCode, system, GeminiContentSynthesizer.userText(content),
+				GeminiContentSynthesizer.RESPONSE_SCHEMA, GeminiContentSynthesizer.MAX_OUTPUT_TOKENS);
+	}
+
+	/**
+	 * JSONL 요청 라인 조립 공통 뼈대 - key·systemInstruction·contents(userText)·generationConfig
+	 * (temperature 0 결정론·responseMimeType=JSON·responseSchema·maxOutputTokens). kind 3종이 공유.
+	 */
+	private static ObjectNode buildLine(ObjectMapper om, String shortCode, String systemText,
+			String userText, String schemaJson, int maxOutputTokens) {
 		ObjectNode line = om.createObjectNode();
 		line.put("key", shortCode);
 		ObjectNode request = line.putObject("request");
-		request.putObject("systemInstruction").putArray("parts").addObject().put("text", system);
+		request.putObject("systemInstruction").putArray("parts").addObject().put("text", systemText);
 		request.putArray("contents").addObject().put("role", "user").putArray("parts")
-				.addObject().put("text", GeminiContentAnalyzer.userText(content));
+				.addObject().put("text", userText);
 		ObjectNode gen = request.putObject("generationConfig");
 		gen.put("temperature", 0);
 		gen.put("responseMimeType", "application/json");
-		gen.set("responseSchema", om.readTree(GeminiContentAnalyzer.RESPONSE_SCHEMA));
-		gen.put("maxOutputTokens", GeminiContentAnalyzer.MAX_OUTPUT_TOKENS);
+		gen.set("responseSchema", om.readTree(schemaJson));
+		gen.put("maxOutputTokens", maxOutputTokens);
 		return line;
 	}
 
@@ -155,40 +199,143 @@ final class GeminiBatchLines {
 	static boolean processResultLine(JdbcTemplate analysis, ObjectMapper om, String line,
 			Map<String, Map<String, String>> sidecar, String model, BeautyTaxonomy taxonomy) {
 		try {
-			JsonNode node = om.readTree(line);
-			String vertexStatus = node.path("status").asString("");
-			if (!vertexStatus.isEmpty()) {
-				log.warn("배치 실패 라인 (status={}): {}", vertexStatus, abbreviate(line));
+			ParsedResult parsed = shortCodeAndText(om, line);
+			if (parsed == null) {
 				return false;
 			}
-			String shortCode = node.path("key").asString("");
-			if (shortCode.isEmpty()) {
-				shortCode = shortCodeFromEcho(node);
-			}
-			JsonNode text = node.path("response").path("candidates").path(0)
-					.path("content").path("parts").path(0).path("text");
-			if (shortCode.isEmpty() || text.isMissingNode()) {
-				log.warn("결과 라인 해석 불가/오류 응답: {}", abbreviate(line));
-				return false;
-			}
-			ContentInsight insight = GeminiContentAnalyzer.parse(om, text.asString(), taxonomy);
+			ContentInsight insight = GeminiContentAnalyzer.parse(om, parsed.text(), taxonomy);
 			if (insight.synthesis().aiContentSummary() == null
 					|| insight.synthesis().aiContentSummary().isBlank()) {
 				return false;
 			}
-			Map<String, String> base = sidecar.get(shortCode);
+			Map<String, String> base = sidecar.get(parsed.shortCode());
 			if (base == null) {
-				log.warn("사이드카에 없는 key: {}", shortCode);
+				log.warn("사이드카에 없는 key: {}", parsed.shortCode());
 				return false;
 			}
 			boolean hasCaption = base.get("caption") != null && !base.get("caption").isBlank();
 			boolean timely = "true".equals(base.get("timely"));
-			ContentAnalysisWriter.insert(analysis, om, shortCode, model, baselineOf(base),
+			ContentAnalysisWriter.insert(analysis, om, parsed.shortCode(), model, baselineOf(base),
 					hasCaption ? insight.attributes() : null, insight.synthesis(), true,
 					timely ? "timely" : "late_backfill");
 			return true;
 		} catch (Exception e) {
 			log.warn("결과 라인 저장 실패: {}", abbreviate(line), e);
+			return false;
+		}
+	}
+
+	/** {@link #shortCodeAndText}의 반환값 - 결과 라인에서 꺼낸 (short_code, 응답 텍스트). */
+	private record ParsedResult(String shortCode, String text) {
+	}
+
+	/** 결과 라인에서 (short_code, 응답 텍스트)를 꺼낸다 - 실패면 null. kind 3종이 공유. */
+	private static ParsedResult shortCodeAndText(ObjectMapper om, String line) {
+		JsonNode node = om.readTree(line);
+		String vertexStatus = node.path("status").asString("");
+		if (!vertexStatus.isEmpty()) {
+			log.warn("배치 실패 라인 (status={}): {}", vertexStatus, abbreviate(line));
+			return null;
+		}
+		String shortCode = node.path("key").asString("");
+		if (shortCode.isEmpty()) {
+			shortCode = shortCodeFromEcho(node);
+		}
+		JsonNode text = node.path("response").path("candidates").path(0)
+				.path("content").path("parts").path(0).path("text");
+		if (shortCode.isEmpty() || text.isMissingNode()) {
+			log.warn("결과 라인 해석 불가/오류 응답: {}", abbreviate(line));
+			return null;
+		}
+		return new ParsedResult(shortCode, text.asString());
+	}
+
+	/**
+	 * 파트 A 결과 한 줄 처리: 파싱 → sanitize → ON CONFLICT DO NOTHING INSERT(pending).
+	 * 분류 대상인데 대분류를 못 얻은 경우는 통합 경로와 같은 처방으로 미분류 종결한다
+	 * (temperature 0 결정론이라 재대상해도 같은 결과 - 무한 재시도 방지).
+	 *
+	 * @return true=저장 성공, false=실패(다음 실행이 재대상 흡수)
+	 */
+	static boolean processFactsResultLine(JdbcTemplate analysis, ObjectMapper om, String line,
+			Map<String, Map<String, String>> sidecar, String model, BeautyTaxonomy taxonomy) {
+		try {
+			ParsedResult parsed = shortCodeAndText(om, line);
+			if (parsed == null) {
+				return false;
+			}
+			Map<String, String> base = sidecar.get(parsed.shortCode());
+			if (base == null) {
+				log.warn("사이드카에 없는 key: {}", parsed.shortCode());
+				return false;
+			}
+			boolean hasCaption = base.get("caption") != null && !base.get("caption").isBlank();
+			ContentAttributes attrs = GeminiContentAnalyzer.parseFacts(om, parsed.text(), taxonomy);
+			if (Boolean.TRUE.equals(attrs.isRelevant()) && attrs.mainCategory() == null) {
+				log.info("분류 대상이나 대분류 미도출 - 미분류로 종결 저장(재시도 루프 방지): {}", parsed.shortCode());
+				attrs = attrs.asUnclassified();
+			}
+			// hasCaption=false면 attrs를 폐기하고 컬럼 전부 NULL로 행만 만든다(통합·온라인 경로와
+			// 같은 규칙) - 배치 라인은 여기서 종결 저장한다: 이 결과가 이미 "성공적으로 받은 응답"이고,
+			// 재시도해도 사이드카의 caption은 그대로라 같은 NULL 행이 반복될 뿐이다(재시도 루프 방지).
+			// 온라인 경로(ContentAnalysisJob.analyzeFactsOne)는 반대로 attrs가 null이면
+			// QuietFailure를 던져 실패로 집계한다 - 그건 "포트를 호출했는데 예기치 않게 null이
+			// 돌아온" 이례 케이스라 다음 실행(익일)에 자연 재시도할 가치가 있기 때문이다(M5).
+			// 어차피 캡션도 썸네일도 없는 NULL 행은 requireStoredFacts가 파트 B 대상에서 걸러낸다
+			// (2026-09-03 리뷰 - "확인된 사실"이 전부 비면 행 부재와 동급 취급).
+			int inserted = ContentAnalysisWriter.insertFacts(analysis, om, parsed.shortCode(), model,
+					hasCaption ? attrs : null);
+			if (inserted == 0) {
+				// ON CONFLICT DO NOTHING - 이미 존재하는 행. 수거 자체는 성공(true)으로 센다 - 파트 A
+				// 제출이 겹치거나 재수거된 정상 범주라 라인 실패로 취급하지 않는다(M8).
+				log.warn("파트 A INSERT 0행 - 이미 존재하는 행(ON CONFLICT DO NOTHING): {}", parsed.shortCode());
+			}
+			return true;
+		} catch (Exception e) {
+			log.warn("파트 A 결과 라인 저장 실패: {}", abbreviate(line), e);
+			return false;
+		}
+	}
+
+	/**
+	 * 파트 B 결과 한 줄 처리: 파싱 → 해석 5필드 + 기준선 스냅샷 UPDATE + 시점 확정.
+	 * 마킹은 사이드카에 실린 뷰의 timely 판정을 승계한다(제출 시점 고정 - 수거 시점 재계산 금지).
+	 *
+	 * <p>{@link ContentAnalysisWriter#updateSynthesisPending}(pending 가드)을 쓴다(2026-09-03
+	 * 리뷰) - 롤백·재생성이 겹치면 이 배치 결과가 이미 완결된(non-pending) 행을 덮어쓸 수 있다
+	 * ({@link ContentAnalysisWriter#updateSynthesisPending} 문서의 시나리오 참조). 가드에 걸려
+	 * 0행이면 라인 실패로 집계 - 다음 후보 diff가 자연 재대상(이미 완결됐으니 실질적으로는 무해).
+	 *
+	 * @return true=갱신 성공, false=실패 또는 0행(그 사이 행이 사라졌거나 이미 non-pending으로 확정됨)
+	 */
+	static boolean processSynthesisResultLine(JdbcTemplate analysis, ObjectMapper om, String line,
+			Map<String, Map<String, String>> sidecar, String model) {
+		try {
+			ParsedResult parsed = shortCodeAndText(om, line);
+			if (parsed == null) {
+				return false;
+			}
+			Map<String, String> base = sidecar.get(parsed.shortCode());
+			if (base == null) {
+				log.warn("사이드카에 없는 key: {}", parsed.shortCode());
+				return false;
+			}
+			Synthesis s = GeminiContentAnalyzer.parseSynthesis(om, parsed.text());
+			// 빈 종합은 저장하지 않는다 - 저장하면 pending이 풀려 다시 대상이 되지 않는다
+			if (s.aiContentSummary() == null || s.aiContentSummary().isBlank()) {
+				log.warn("해석 문구가 비어 있음 - 저장하지 않음(다음 실행 재대상): {}", parsed.shortCode());
+				return false;
+			}
+			boolean timely = "true".equals(base.get("timely"));
+			int updated = ContentAnalysisWriter.updateSynthesisPending(analysis, parsed.shortCode(), model,
+					baselineOf(base), s, timely ? "timely" : "late_backfill");
+			if (updated == 0) {
+				log.warn("해석 UPDATE 0행 - 그 사이 행이 사라졌거나 이미 확정(non-pending)됨: {}", parsed.shortCode());
+				return false;
+			}
+			return true;
+		} catch (Exception e) {
+			log.warn("파트 B 결과 라인 저장 실패: {}", abbreviate(line), e);
 			return false;
 		}
 	}
