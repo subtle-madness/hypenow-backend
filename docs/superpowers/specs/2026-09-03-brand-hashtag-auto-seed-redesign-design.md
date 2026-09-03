@@ -118,9 +118,10 @@ ALTER TABLE app.brand_monitorings ADD COLUMN hashtag_seeded_at timestamptz;  -- 
 호출 지점 3곳(전부 best-effort, 실패해도 응답을 막지 않는다):
 1. 단건 폴링 `get(userId, brandId)` — 응답 조립에서 `backfill_completed_at`이 non-null(수집 완료)일 때.
 2. `getHashtagTags(userId, brandId)`.
-3. 해시태그 게시물 목록 조회(`V1BrandPostsController`의 조립 직전 — assembler는 HTTP 의존이 없어
-   서비스 층에서 부른다). 메인 게시물 목록(`GET /accounts/{id}/posts`)에는 걸지 않는다(수집 중 초
-   단위 폴링 경로).
+3. 해시태그 게시물 목록·개수 조회(`V1BrandPostsController`의 조립 직전 — assembler는 HTTP 의존이
+   없어 서비스 층에서 부른다. 개수는 탭 뱃지가 목록보다 먼저 렌더돼 빈 장부에서 0을 보이면 사용자가
+   목록을 열지 않으므로 함께 건다). 메인 게시물 목록(`GET /accounts/{id}/posts`)에는 걸지 않는다
+   (수집 중 초 단위 폴링 경로).
 
 로직:
 ```
