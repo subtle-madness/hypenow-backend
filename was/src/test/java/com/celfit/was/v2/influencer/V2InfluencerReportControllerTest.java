@@ -41,7 +41,7 @@ import org.springframework.test.web.servlet.MockMvc;
 /** 스펙 6.22·6.23 배선 — 공개 표면(로그인 월 화이트리스트, SecurityConfig 참고). */
 @WebMvcTest(controllers = V2InfluencerReportController.class,
 		properties = "was.cors.allowed-origins=http://localhost:3000")
-@Import({V2InfluencerReportService.class, V2InfluencerReportAssembler.class, V1InfluencerDiscoveryAssembler.class,
+@Import({V2InfluencerReportService.class, V2SimilarInfluencerService.class, V2InfluencerReportAssembler.class, V1InfluencerDiscoveryAssembler.class,
 		ClockConfig.class, V1ExceptionAdvice.class, SecurityConfig.class})
 class V2InfluencerReportControllerTest {
 

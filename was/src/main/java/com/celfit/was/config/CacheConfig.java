@@ -33,6 +33,8 @@ public class CacheConfig implements CachingConfigurer {
 	public static final String INFLUENCER_REPORT = "influencer-report";
 	/** 6.22 발굴 리포트 v2 — v1(INFLUENCER_REPORT)과 값 타입이 달라 캐시를 분리, TTL 등급은 같다. */
 	public static final String INFLUENCER_REPORT_V2 = "influencer-report-v2";
+	/** 6.23 유사 인플루언서 — 기준 계정 단일 키, 리포트와 같은 등급(재료가 같은 새벽 배치 산출). */
+	public static final String INFLUENCER_SIMILAR = "influencer-similar";
 
 	private static final Logger log = LoggerFactory.getLogger(CacheConfig.class);
 
@@ -66,6 +68,7 @@ public class CacheConfig implements CachingConfigurer {
 				.withCacheConfiguration(CONTENT_REPORT, base.entryTtl(Duration.ofHours(6)))
 				.withCacheConfiguration(INFLUENCER_REPORT, base.entryTtl(Duration.ofHours(6)))
 				.withCacheConfiguration(INFLUENCER_REPORT_V2, base.entryTtl(Duration.ofHours(6)))
+				.withCacheConfiguration(INFLUENCER_SIMILAR, base.entryTtl(Duration.ofHours(6)))
 				.build();
 	}
 
