@@ -487,21 +487,23 @@ class BrandDirectCollectServiceTest {
 	}
 
 	/**
-	 * fetch는 성공했지만 게시일 미상이라 저장 불가한 행(collectOne)은 touchCrawled로 커버 처리해야
-	 * 한다 — 안 그러면 unenumeratedDuePosts 정렬이 미보강 우선이라 이 행이 계속 상한 창 맨 앞을
-	 * 점유해 나머지 행이 영구 굶는다(2026-08-27 리뷰 지적).
+	 * 09-03 self 셰이프 회귀 수정 — fetch 결과의 taken_at이 없어도(self/EmbedPostFetcher는 embed
+	 * HTML에 taken_at이 없어 구조적으로 항상 null) 호출부가 이미 들고 있는 DB taken_at(TrackedPost,
+	 * brand_tagged_post.taken_at은 NOT NULL·등록 시 확정·불변)으로 채워 정상 저장 경로로 진행한다.
+	 * self-paths 개통 이후 이 경로가 매 스윕 100% 타서 direct·해시태그 게시물 지표 갱신이 전면
+	 * 정지됐던 회귀(F1)의 수정 — 예전엔 이 행을 touchCrawled로 커버만 하고 폐기했다.
 	 */
 	@Test
-	void taken_at_없는_게시물은_커버_처리되어_상한_창을_점유하지_않는다() {
+	void taken_at_없는_fetch_결과는_DB_taken_at으로_채워_저장된다() {
 		tagged.due.add(new TaggedPostRepository.TrackedPost("NoDate", Instant.ofEpochSecond(RECENT), null));
 		postResponses.put("NoDate", postJsonNoTakenAt("NoDate", 106));
-		tagged.due.add(new TaggedPostRepository.TrackedPost("After", Instant.ofEpochSecond(RECENT), null));
-		postResponses.put("After", postJson("After", RECENT, 107));
 
 		service().sweepUnenumerated(brand);
 
-		assertThat(tagged.touched).containsKey("NoDate");   // 커버 처리 — 즉시-due 창에서 빠진다
-		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("After");
+		assertThat(writer.saved).extracting(PostInfo::shortCode).containsExactly("NoDate");
+		assertThat(writer.saved.getFirst().takenAt()).isEqualTo(RECENT);   // DB taken_at으로 채워짐
+		assertThat(tagged.touched).containsKey("NoDate");
+		assertThat(tagged.enriched).containsExactly("NoDate");             // 정상 저장 경로(보강까지 완주)
 	}
 
 	// ── 감시 세트 바닥 한정(2026-09-02 해시태그 감시 세트 설계 §3) ─────────────────

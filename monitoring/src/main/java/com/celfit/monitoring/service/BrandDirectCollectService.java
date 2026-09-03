@@ -178,7 +178,7 @@ public class BrandDirectCollectService {
 		}
 		List<PostInfo> batch = new ArrayList<>();
 		for (TaggedPostRepository.TrackedPost t : due) {
-			collectOne(brand, t.shortCode(), now).ifPresent(batch::add);
+			collectOne(brand, t.shortCode(), t.takenAt(), now).ifPresent(batch::add);
 			if (batch.size() >= SWEEP_BATCH_SIZE) {
 				collect.enrich(brand, List.copyOf(batch));
 				batch.clear();
@@ -223,7 +223,7 @@ public class BrandDirectCollectService {
 				.unenrichedUnenumeratedPosts(brand.id(), now.minus(BrandCrawlPolicy.TRACKED_MAX_AGE));
 		List<PostInfo> batch = new ArrayList<>();
 		for (TaggedPostRepository.TrackedPost t : due) {
-			collectOne(brand, t.shortCode(), now).ifPresent(batch::add);
+			collectOne(brand, t.shortCode(), t.takenAt(), now).ifPresent(batch::add);
 			if (batch.size() >= SWEEP_BATCH_SIZE) {
 				collect.enrich(brand, List.copyOf(batch));
 				batch.clear();
@@ -241,14 +241,28 @@ public class BrandDirectCollectService {
 	 * "상태 전이 없음"에 대한 유일한 예외이며, 성공 재관측이 해제하는 가역 마킹이라 CLOSED 같은
 	 * 종결 전이가 아니다). 카드는 마지막 스냅샷으로 남는다. 그 외 실패(타임아웃·5xx·셰이프 이상)는
 	 * 이 게시물만 건너뛰고 나머지는 계속 — 한 건의 실패가 배치 전체를 죽이면 안 된다.
+	 *
+	 * @param dbTakenAt 호출부가 이미 들고 있는 brand_tagged_post.taken_at(NOT NULL·등록 시 확정·
+	 * 불변, epoch seconds) — fetch 결과의 takenAt이 null이면(self 셰이프, 2026-09-03) 이 값으로
+	 * 채워 정상 저장 경로로 진행한다(F1, 09-03 self-paths 개통 이후 direct·해시태그 게시물 지표
+	 * 갱신이 매 스윕 100% 폐기되던 회귀 — EmbedPostFetcher는 embed HTML에 taken_at이 없어 이 필드가
+	 * 구조적으로 항상 null이다).
 	 */
-	private Optional<PostInfo> collectOne(BrandRow brand, String shortCode, Instant now) {
+	private Optional<PostInfo> collectOne(BrandRow brand, String shortCode, Instant dbTakenAt, Instant now) {
 		try {
 			PostInfo post = hiker.fetchPost(shortCode);
+			if (post.takenAt() == null && dbTakenAt != null) {
+				// self 셰이프 — DB taken_at 재사용(불변값이라 안전). WARN이 아니라 DEBUG: 매 스윕
+				// 정상적으로 반복되는 경로라 WARN이면 self 개통 중 로그가 상시 오염된다.
+				log.debug("unenumerated 재수집: self 셰이프(taken_at 없음) — DB taken_at 재사용 brand={} code={}",
+						brand.id(), shortCode);
+				post = post.withTakenAt(dbTakenAt.getEpochSecond());
+			}
 			if (post.takenAt() == null) {
-				// fetch 자체는 성공했으므로 커버로 기록해 즉시-due 창에서 빼고, 나이 티어 주기로
-				// 재시도한다 — 영구 점유 방지(touchCrawled 없이 두면 unenumeratedDuePosts 정렬이
-				// 미보강 우선이라 이 행이 계속 상한 창 맨 앞을 차지해 나머지 행이 영구 굶는다).
+				// fetch도 DB도 taken_at이 없는 경로(호출부가 dbTakenAt을 못 주는 경우) — 기존 폐기
+				// 동작 유지. 커버로 기록해 즉시-due 창에서 빼고, 나이 티어 주기로 재시도한다(영구
+				// 점유 방지 — touchCrawled 없이 두면 unenumeratedDuePosts 정렬이 미보강 우선이라
+				// 이 행이 계속 상한 창 맨 앞을 차지해 나머지 행이 영구 굶는다).
 				log.warn("unenumerated 재수집: taken_at 없는 게시물 셰이프 - 커버 처리 후 건너뜀 brand={} code={}",
 						brand.id(), shortCode);
 				taggedPosts.touchCrawled(brand.id(), List.of(shortCode), now);

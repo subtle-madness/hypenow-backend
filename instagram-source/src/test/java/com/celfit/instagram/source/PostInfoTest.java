@@ -24,6 +24,21 @@ class PostInfoTest {
 				true, false, false);
 	}
 
+	/**
+	 * self 셰이프 보강 전용(2026-09-03) — DB taken_at으로 채운 사본이 나머지 필드(표시 메타 포함)를
+	 * 그대로 보존하는지. BrandDirectCollectService.collectOne이 fetch 결과의 takenAt이 null일 때
+	 * 이 사본을 저장 경로에 흘려보낸다.
+	 */
+	@Test
+	void withTakenAt은_나머지_필드를_보존한다() {
+		PostInfo copy = reel(VIDEO_URL, 12.119, true).withTakenAt(1_650_000_000L);
+
+		assertThat(copy.takenAt()).isEqualTo(1_650_000_000L);
+		assertThat(copy.videoUrl()).isEqualTo(VIDEO_URL);
+		assertThat(copy.videoDuration()).isEqualTo(12.119);
+		assertThat(copy.isPaidPartnership()).isTrue();
+	}
+
 	@Test
 	void withFbPlays는_표시_메타를_보존한다() {
 		PostInfo copy = reel(VIDEO_URL, 12.119, false).withFbPlays(83L);
