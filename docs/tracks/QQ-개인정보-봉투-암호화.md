@@ -71,6 +71,30 @@ HMAC 블라인드 인덱스(`*_bidx`)로 대체해 암호화 후에도 UNIQUE·�
    `app.users`와 조인해 전량 이전한다 — 재로그인 강제 없이, 세션 만료(자연 소거)를 기다릴
    필요도 없이 해소. 세션 목록·강제 로그아웃(`SessionService.deleteOthers`/`deleteAll`)이
    이제 배포 이전 세션까지 포함해 정상 동작한다.
+4. **DEK 에스크로 — PR 3(평문 DROP) 전에 반드시 수행** (09-03 결정: 방안 A). 키 계열 비대칭
+   때문이다 — 백업 age 비밀키는 맥·비밀번호 관리자·Vault 3중이지만, DB 컬럼 키(DEK)는 OCI
+   Vault의 `hypenow-pii-kek`로만 풀린다. OCI 테넌시를 통째로 잃으면 B2 백업 안의 래핑된 DEK를
+   풀 방법이 없어 **암호화 컬럼(이메일·이름·전화)은 백업이 있어도 복구 불가**가 된다. PR 1·2
+   동안은 평문 컬럼이 남아 있어 age 키만으로 완전 복원되지만, PR 3에서 평문을 지우는 순간
+   이 의존이 실재한다. 대안 B(의존 수용 — 연락처는 재수집 가능)를 검토했으나 "최악의 경우"가
+   백업의 존재 이유인데 그때 개인정보만 잃는 구조는 어정쩡해 A를 택했다.
+   **절차(코드 변경 불필요 — 관리자 계정으로 맥에서 1회)**: 운영 DB의 래핑본을 꺼내
+   Vault로 직접 언래핑해 비밀번호 관리자에 보관한다. 평문 DEK가 서버·디스크에 남지 않게
+   파이프로만 다룬다.
+   ```bash
+   # ① 운영 DB에서 래핑된 DEK(base64) — 서버 경유 읽기 전용 조회
+   ssh ubuntu@<IP> "docker exec deploy-postgres-1 psql -U <DB_USER> -d analysis -tAc \
+     \"SELECT encode(wrapped_dek,'base64') FROM app.encryption_keys WHERE key_id=1\""
+   # ② 맥에서 KEK로 언래핑(Administrators 권한) → 출력 한 줄(base64 64바이트)을 비밀번호 관리자에
+   #    "hypenow PII DEK key_id=1" 보안 메모로 저장. 터미널 스크롤백·클립보드 기록은 지운다.
+   oci --profile HYPENOW kms crypto decrypt --key-id <KEK_OCID> \
+     --endpoint https://ezvjprllaacng-crypto.kms.ap-tokyo-1.oraclecloud.com \
+     --ciphertext "<①의 출력>" --query 'data.plaintext' --raw-output
+   ```
+   복구 시나리오(OCI 유실 후 새 환경): `app.encryption_keys`에 새 KEK로 재래핑한 행을 넣거나,
+   임시로 `crypto.mode=local` + `crypto.local-key-base64=<에스크로 값>`으로 기동하면 기존
+   암호문이 그대로 풀린다(암호문 형식이 KEK와 무관 — `v1:<key_id>:…`는 DEK만 가리킨다).
+   DEK 로테이션 시 에스크로도 갱신한다. 스테이징 DEK는 에스크로 대상 아님(재생성 가능).
 
 ## 검증
 
