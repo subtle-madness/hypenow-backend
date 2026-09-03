@@ -26,4 +26,7 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	// JobConfigLlmWiringTest가 LlmConfig.geminiApi()의 실제 빈 배선을 그대로 태워 컨텍스트 기동을
+	// 재현한다 — GeminiHttpApi 생성자는 네트워크를 타지 않으므로 더미 키로 충분(2026-09-03).
+	environment 'GEMINI_API_KEY', 'test-dummy-key-no-network-call'
 }
