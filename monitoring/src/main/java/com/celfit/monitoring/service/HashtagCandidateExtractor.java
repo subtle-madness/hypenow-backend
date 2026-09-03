@@ -41,13 +41,18 @@ public final class HashtagCandidateExtractor {
 	 * 정렬된 후보 목록 — 등장 게시물 수 내림차순 → 최근 게시일 내림차순(null은 뒤) → 태그 사전순.
 	 *
 	 * @param posts    태그된 게시물의 캡션·게시일. 캡션 null·빈 값은 무시한다.
-	 * @param stoplist 제외 태그(전부 소문자). 순수 숫자 태그는 stoplist와 무관하게 항상 제외한다.
+	 * @param stoplist 제외 태그. 대소문자를 가리지 않는다 — 호출자의 소문자 사전조건에 기대지 않고
+	 *                 여기서 직접 소문자로 정규화한다. 순수 숫자 태그는 stoplist와 무관하게 항상 제외한다.
 	 */
 	public static List<Candidate> extract(List<TaggedCaption> posts, Set<String> stoplist) {
+		Set<String> normalizedStoplist = new HashSet<>();
+		for (String tag : stoplist) {
+			normalizedStoplist.add(tag.toLowerCase(Locale.ROOT));
+		}
 		Map<String, Integer> countByTag = new HashMap<>();
 		Map<String, Instant> latestByTag = new HashMap<>();
 		for (TaggedCaption post : posts) {
-			for (String tag : tagsOf(post.caption(), stoplist)) {
+			for (String tag : tagsOf(post.caption(), normalizedStoplist)) {
 				countByTag.merge(tag, 1, Integer::sum);
 				if (post.takenAt() != null) {
 					latestByTag.merge(tag, post.takenAt(), (a, b) -> a.isAfter(b) ? a : b);
@@ -66,7 +71,11 @@ public final class HashtagCandidateExtractor {
 		return List.copyOf(out);
 	}
 
-	/** 게시물 1건의 태그 집합 — 소문자 정규화 후 게시물당 중복 제거, 순수 숫자·stoplist 제외. */
+	/**
+	 * 게시물 1건의 태그 집합 — 소문자 정규화 후 게시물당 중복 제거, 순수 숫자·stoplist 제외.
+	 *
+	 * @param stoplist 이미 소문자로 정규화된 상태로 전달돼야 한다({@link #extract} 참고).
+	 */
 	private static Set<String> tagsOf(String caption, Set<String> stoplist) {
 		if (caption == null || caption.isEmpty()) {
 			return Set.of();

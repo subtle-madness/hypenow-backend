@@ -127,4 +127,39 @@ class HashtagCandidateExtractorTest {
 
 		assertThat(out).extracting(HashtagCandidateExtractor.Candidate::tag).containsExactly("cclime");
 	}
+
+	/** 구분자 없이 붙은 두 해시태그도 정규식이 각각의 #부터 다시 매치해 둘로 갈린다. */
+	@Test
+	void 구분자_없이_붙은_해시태그는_둘로_나뉜다() {
+		var out = HashtagCandidateExtractor.extract(List.of(post("#tag1#tag2", T1)), Set.of());
+
+		assertThat(out).extracting(HashtagCandidateExtractor.Candidate::tag)
+				.containsExactlyInAnyOrder("tag1", "tag2");
+	}
+
+	@Test
+	void 공백만_있는_캡션은_빈_목록이다() {
+		assertThat(HashtagCandidateExtractor.extract(List.of(post("   ", T1)), Set.of())).isEmpty();
+	}
+
+	/**
+	 * was BrandCaptionHashtags와 공유하는 정규식 계약: {@code [\p{L}\p{N}_]+}는 밑줄만으로도
+	 * 매치된다. "#_"는 언어적으로 의미 있는 태그는 아니지만 실사용 캡션에서 사실상 나오지 않아
+	 * 별도 배제 규칙을 두지 않는다 — 현재 동작을 그대로 계약으로 봉인한다.
+	 */
+	@Test
+	void 밑줄만_있는_태그는_그대로_통과한다() {
+		var out = HashtagCandidateExtractor.extract(List.of(post("#_", T1)), Set.of());
+
+		assertThat(out).extracting(HashtagCandidateExtractor.Candidate::tag).containsExactly("_");
+	}
+
+	/** stoplist 항목은 대소문자를 가리지 않는다 — 호출자가 소문자로 넘기지 않아도 배제된다. */
+	@Test
+	void stoplist_항목이_대문자여도_소문자_태그를_배제한다() {
+		var out = HashtagCandidateExtractor.extract(
+				List.of(post("#ad #끌리메", T1)), Set.of("광고", "AD"));
+
+		assertThat(out).extracting(HashtagCandidateExtractor.Candidate::tag).containsExactly("끌리메");
+	}
 }
