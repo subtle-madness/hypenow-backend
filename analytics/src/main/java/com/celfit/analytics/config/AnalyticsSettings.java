@@ -61,6 +61,12 @@ public class AnalyticsSettings {
 	 * (08-11 콘텐츠 전환 때 계정 카피는 의도적으로 제외 — 2026-08-17 후속 전환).
 	 */
 	public static final String KEY_ACCOUNT_ANALYZE_TRANSPORT = "analytics.account-analyze-transport";
+	/**
+	 * 콘텐츠 분석 단계 분리 토글 - unified(기본, 통합 1콜) | split(파트 A 사실 / 파트 B 해석 분리).
+	 * 2026-09-03 2단계 분리 설계. 전송 토글(analytics.analyze-transport)과 독립이며,
+	 * 잡 실행 시점마다 매번 읽으므로 재기동 없이 전환된다. 롤백은 값을 unified로 되돌리는 UPDATE 한 줄.
+	 */
+	public static final String KEY_ANALYZE_MODE = "analytics.analyze-mode";
 
 	// app_setting 미설정 시 폴백 — 비용 가드로 최저가 티어(haiku) 고정. Opus 등 상위 모델은 app_setting으로 명시 전환.
 	static final String DEFAULT_LLM_MODEL = "claude-haiku-4-5-20251001";
@@ -80,6 +86,7 @@ public class AnalyticsSettings {
 	static final int DEFAULT_BATCH_CHUNK_SIZE = 3000;
 	static final String DEFAULT_ANALYZE_TRANSPORT = "online";
 	static final String DEFAULT_ACCOUNT_ANALYZE_TRANSPORT = "online";
+	static final String DEFAULT_ANALYZE_MODE = "unified";
 
 	private final JdbcTemplate raw;
 
@@ -186,6 +193,19 @@ public class AnalyticsSettings {
 	/** true면 계정 카피(ACCOUNT_ANALYZE)가 Vertex 배치 제출 경로로 전환된다. */
 	public boolean accountBatchTransportEnabled() {
 		return "batch".equals(accountAnalyzeTransport());
+	}
+
+	/** 잡 실행 시점마다 매번 읽는다(캐시 없음) - 재기동 없이 unified↔split 전환. */
+	public String analyzeMode() {
+		return read(KEY_ANALYZE_MODE).orElse(DEFAULT_ANALYZE_MODE);
+	}
+
+	/**
+	 * true면 콘텐츠 분석이 파트 A(FACT_ANALYZE)와 파트 B(ANALYZE / LATE_BACKFILL_ANALYZE)로 갈린다.
+	 * false(기본)면 현행 통합 1콜이고 FACT_ANALYZE는 no-op이다.
+	 */
+	public boolean splitAnalyzeMode() {
+		return "split".equals(analyzeMode());
 	}
 
 	/** content_analyses.model 등 기록에 쓰는 활성 모델명 — 프로바이더 따라 결정. */

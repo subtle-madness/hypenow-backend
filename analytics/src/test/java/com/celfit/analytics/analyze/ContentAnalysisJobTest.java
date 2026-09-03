@@ -547,6 +547,17 @@ class ContentAnalysisJobTest {
 	}
 
 	@Test
+	void 분석_모드_기본은_unified고_app_setting으로_split_전환된다() {
+		AnalyticsSettings settings = new AnalyticsSettings(db);
+		assertEquals("unified", settings.analyzeMode());
+		assertFalse(settings.splitAnalyzeMode());
+
+		db.update("INSERT INTO app_setting(key, value) VALUES ('analytics.analyze-mode', 'split')");
+		assertEquals("split", settings.analyzeMode());
+		assertTrue(settings.splitAnalyzeMode());
+	}
+
+	@Test
 	void 전송_방식_batch면_온라인_호출_없이_배치로_제출되고_pending_행이_기록된다() {
 		enableBatchTransport();
 		rewireJobWithBatch(fakeInsightPort(), fakeBatchApi());
