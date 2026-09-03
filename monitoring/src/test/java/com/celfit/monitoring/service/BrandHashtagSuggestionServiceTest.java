@@ -47,6 +47,7 @@ class BrandHashtagSuggestionServiceTest {
 
 	private static final class StubBrands extends BrandRepository {
 		String fullName;
+		boolean failing;
 
 		StubBrands() {
 			super(null);
@@ -54,6 +55,9 @@ class BrandHashtagSuggestionServiceTest {
 
 		@Override
 		public Optional<String> findFullName(long brandId) {
+			if (failing) {
+				throw new IllegalStateException("DB 장애 주입");
+			}
 			return Optional.ofNullable(fullName);
 		}
 	}
@@ -229,6 +233,42 @@ class BrandHashtagSuggestionServiceTest {
 		assertThat(counted("ai", "error")).isEqualTo(1);
 	}
 
+	/** 표시명 조회(DB) 실패도 격리되어 FALLBACK으로 수렴하고 지표에 error로 남는다. */
+	@Test
+	void 표시명_조회_DB_실패도_FALLBACK으로_수렴하고_지표에_error로_남는다() {
+		brands.failing = true;
+
+		var out = service().suggest(BRAND_ID, USERNAME);
+
+		assertThat(out.path()).isEqualTo("FALLBACK");
+		assertThat(out.tag()).isEqualTo("drpielofficial");
+		assertThat(llmCalls).isEmpty();
+		assertThat(counted("fallback", "error")).isEqualTo(1);
+	}
+
+	/** 계정명이 null·공백이면(호출부 결함 방어) 계산을 시도조차 하지 않고 곧장 FALLBACK이다. */
+	@Test
+	void 계정명이_비어있으면_계산_없이_바로_FALLBACK이다() {
+		var out = service().suggest(BRAND_ID, null);
+
+		assertThat(out.path()).isEqualTo("FALLBACK");
+		assertThat(out.tag()).isEqualTo(BrandHashtagSuggestionService.UNREACHABLE_FALLBACK_TAG);
+		assertThat(out.topCount()).isZero();
+		assertThat(out.candidatePosts()).isZero();
+		assertThat(llmCalls).isEmpty();
+		assertThat(counted("fallback", "error")).isEqualTo(1);
+	}
+
+	/** 공백 계정명도 null과 동일하게 취급한다. */
+	@Test
+	void 계정명이_공백뿐이면_계산_없이_바로_FALLBACK이다() {
+		var out = service().suggest(BRAND_ID, "   ");
+
+		assertThat(out.path()).isEqualTo("FALLBACK");
+		assertThat(out.tag()).isEqualTo(BrandHashtagSuggestionService.UNREACHABLE_FALLBACK_TAG);
+		assertThat(llmCalls).isEmpty();
+	}
+
 	@Test
 	void 계정명_정리는_점과_언더스코어를_뺀_소문자다() {
 		assertThat(BrandHashtagSuggestionService.fallbackTag("dr.piel_official")).isEqualTo("drpielofficial");
@@ -240,6 +280,19 @@ class BrandHashtagSuggestionServiceTest {
 	@Test
 	void 계정명이_언더스코어뿐이면_언더스코어를_남긴다() {
 		assertThat(BrandHashtagSuggestionService.fallbackTag("___")).isEqualTo("___");
+	}
+
+	/**
+	 * 계정명이 언더스코어조차 없는 순수 특수문자뿐이면(예: "."), 2차 정리도 아무것도 못 건져
+	 * {@link BrandHashtagSuggestionService#UNREACHABLE_FALLBACK_TAG}까지 내려간다 — 실제 IG
+	 * 계정명 규칙상 도달 불가지만, 코드는 이 마지막 계단까지 비지 않음을 봉인해 둔다.
+	 */
+	@Test
+	void 계정명에_글자_숫자_언더스코어가_전혀_없으면_최종_방어값이다() {
+		String tag = BrandHashtagSuggestionService.fallbackTag(".");
+
+		assertThat(tag).isNotBlank();
+		assertThat(tag).isEqualTo(BrandHashtagSuggestionService.UNREACHABLE_FALLBACK_TAG);
 	}
 
 	/** 어떤 입력에서도 응답 tag는 비지 않는다(§3-1 계약). */

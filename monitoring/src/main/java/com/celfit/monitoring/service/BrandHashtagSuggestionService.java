@@ -45,8 +45,26 @@ public class BrandHashtagSuggestionService {
 	/** 위 결과가 비었을 때의 2차 정리 — 언더스코어는 유효 태그 문자라 살린다. */
 	private static final Pattern NOT_TAG_CHAR = Pattern.compile("[^\\p{L}\\p{N}_]");
 
-	/** 제안 1건(§3-1 응답 본문). tag는 항상 비어 있지 않다. */
+	/**
+	 * 최종 방어값 — 계정명이 아예 없거나(널·공백, 호출부 결함 방어) {@link #fallbackTag}가 문자를
+	 * 하나도 못 건지는 극단(계정명이 점·특수문자뿐)에서만 쓴다. 실제 IG 계정명은 가입 규칙상 항상
+	 * 영숫자·언더스코어를 최소 1자 포함하므로 정상 운영에서는 이 상수까지 내려올 일이 없다 —
+	 * "tag는 절대 비지 않는다"(§3-1)는 계약을 코드에서 완전히 닫아 두기 위한 방어값이다.
+	 */
+	static final String UNREACHABLE_FALLBACK_TAG = "brand";
+
+	/**
+	 * 제안 1건(§3-1 응답 본문). {@code tag}는 항상 비어 있지 않다 — compact 생성자가 타입 경계에서
+	 * 그 계약을 강제한다(공백·빈 문자열은 즉시 {@link IllegalArgumentException}).
+	 */
 	public record Suggestion(String path, String tag, int topCount, int candidatePosts) {
+
+		public Suggestion {
+			if (tag == null || tag.isBlank()) {
+				throw new IllegalArgumentException(
+						"해시태그 제안 tag는 비어 있을 수 없다(§3-1 계약) — path=" + path);
+			}
+		}
 	}
 
 	private final TaggedPostRepository taggedPosts;
@@ -68,9 +86,14 @@ public class BrandHashtagSuggestionService {
 	 * 이 브랜드에 심을 해시태그 1개를 계산한다. 예외를 던지지 않는다.
 	 *
 	 * @param brandId  monitoring {@code brand_account.id}
-	 * @param username IG 계정명 — FALLBACK의 재료라 반드시 있어야 한다.
+	 * @param username IG 계정명 — FALLBACK의 재료라 반드시 있어야 한다. 널·공백이면(호출부 결함
+	 *                 방어) 계산을 시도하지 않고 곧장 {@link #UNREACHABLE_FALLBACK_TAG}로 응답한다.
 	 */
 	public Suggestion suggest(long brandId, String username) {
+		if (username == null || username.isBlank()) {
+			log.warn("해시태그 제안 계정명이 비어 있음(도달 불가 방어, FALLBACK 처리) — brandId={}", brandId);
+			return respond("FALLBACK", UNREACHABLE_FALLBACK_TAG, 0, 0, username, true);
+		}
 		Set<String> stoplist = settings.stoplist();
 		int topCount = 0;
 		int candidatePosts = 0;
@@ -115,8 +138,8 @@ public class BrandHashtagSuggestionService {
 	 * ({@code dr.piel_official} → {@code drpielofficial}).
 	 *
 	 * <p>계정명이 점·언더스코어뿐인 극단 케이스에서는 언더스코어를 살려 값을 만들고(언더스코어는
-	 * 유효 태그 문자다), 그래도 비면 브랜드 식별자로 만든다 — IG 계정명 규칙상 도달 불가지만
-	 * "tag는 절대 비지 않는다"는 계약을 코드에서 닫아 둔다.
+	 * 유효 태그 문자다), 그래도 비면 {@link #UNREACHABLE_FALLBACK_TAG}로 만든다 — IG 계정명 규칙상
+	 * 도달 불가지만 "tag는 절대 비지 않는다"는 계약을 코드에서 닫아 둔다.
 	 */
 	static String fallbackTag(String username) {
 		String lower = username.toLowerCase(Locale.ROOT);
@@ -125,7 +148,7 @@ public class BrandHashtagSuggestionService {
 			return stripped;
 		}
 		String withUnderscore = NOT_TAG_CHAR.matcher(lower).replaceAll("");
-		return withUnderscore.isEmpty() ? "brand" : withUnderscore;
+		return withUnderscore.isEmpty() ? UNREACHABLE_FALLBACK_TAG : withUnderscore;
 	}
 
 	/** 응답 1건 = 로그 1줄 + 카운터 1증가(§3-6). degraded는 "일부 계산이 예외로 실패했다"는 표식이다. */
