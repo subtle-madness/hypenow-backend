@@ -24,6 +24,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * <b>후보 자격(최근창·성숙 가드)과 무관</b>하다 — 사실은 이미 있고 계정 평균 기준선은 언제나
  * 계산되므로, 재분석 후보에서 빠진 옛 콘텐츠도 갱신할 수 있다(전량 재분석으로는 손댈 수 없던 영역).
  *
+ * <p>2026-09-03(2단계 분리): {@code metric_timeliness = 'pending'} 행은 제외한다.
+ * 그건 파트 A만 채워진 "최초 생성 대기"라 이 잡의 재생성 대상이 아니다.
+ *
  * <p>rank_in_recent_reels는 최근창 안일 때만 채워진다 — 밖이면 null로, 통합 잡의 폴백과 같은 규칙.
  */
 public class ContentSynthesisRefreshJob {
@@ -53,6 +56,13 @@ public class ContentSynthesisRefreshJob {
 		List<String> targets = analysis.queryForList("""
 				SELECT short_code FROM content_analyses
 				WHERE synthesis_version IS DISTINCT FROM ?
+				  -- 파트 A만 채워진 행(2026-09-03 2단계 분리)은 재생성이 아니라 최초 생성 대상이다.
+				  -- 이 잡은 성숙 가드가 없고 온라인 전용이라, 낚아채면 D+1 미성숙 지표를 인용한
+				  -- 문구가 만들어지고 일 3,500건이 동기 호출로 나간다. 파트 B 배치(ContentAnalysisJob
+				  -- Phase.SYNTHESIS)가 성숙 후에 채운다.
+				  -- <> 가 아니라 IS DISTINCT FROM: 시점이 NULL인 레거시 행(V33 이전 기분석분)을
+				  -- 조용히 제외하면 안 된다.
+				  AND metric_timeliness IS DISTINCT FROM 'pending'
 				ORDER BY short_code
 				LIMIT ?""", String.class, Synthesis.VERSION, settings.analyzeBatchLimit());
 		if (targets.isEmpty()) {
@@ -101,7 +111,7 @@ public class ContentSynthesisRefreshJob {
 		Map<String, Object> row = analysis.queryForMap("""
 				SELECT a.short_code, a.main_category, a.sub_categories, a.ad_type, a.ad_disclosure,
 				       a.detected_brands, a.detected_products, a.detected_product_categories,
-				       a.sponsored_signal_level, a.is_beauty,
+				       a.sponsored_signal_level, a.is_beauty, a.metric_timeliness,
 				       COALESCE(c.account_handle, s.account_handle) AS account_handle,
 				       COALESCE(c.content_type, s.content_type)     AS content_type,
 				       COALESCE(c.views, s.views)                   AS views,
@@ -130,26 +140,17 @@ public class ContentSynthesisRefreshJob {
 		Synthesis s = port.synthesize(new ContentToSynthesize(shortCode,
 				(String) row.get("account_handle"), (String) row.get("content_type"),
 				(Long) row.get("views"), (Long) row.get("likes"), (Long) row.get("comments"),
-				PromptBaseline.of(b), categoryCounts, facts(row)));
+				PromptBaseline.of(b), categoryCounts, StoredFacts.of(row)));
 
 		// 빈 종합은 저장하지 않는다 — 기존 문구가 낡았어도 빈 문구보다는 낫다(가드는 통합 잡과 동일 취지).
 		if (s.aiContentSummary() == null || s.aiContentSummary().isBlank()) {
 			throw new IllegalStateException("해석 문구가 비어 있음: " + shortCode);
 		}
-		ContentAnalysisWriter.updateSynthesis(analysis, shortCode, model, b, s);
+		// 지표 시점은 수집 시점 사실이라 재생성이 바꾸지 않는다 - 저장된 값을 그대로 되돌려 넣는다
+		// (2026-09-03 updateSynthesis가 metric_timeliness를 SET하게 되면서 생긴 호출 계약).
+		ContentAnalysisWriter.updateSynthesis(analysis, shortCode, model, b, s,
+				(String) row.get("metric_timeliness"));
 		return true;
-	}
-
-	/** 프롬프트에 싣는 "확인된 사실" — 저장된 파트 A 산출물. jsonb는 문자열 그대로 넘긴다. */
-	private static Map<String, Object> facts(Map<String, Object> row) {
-		Map<String, Object> facts = new LinkedHashMap<>();
-		for (String k : List.of("main_category", "sub_categories", "ad_type", "ad_disclosure",
-				"detected_brands", "detected_products", "detected_product_categories",
-				"sponsored_signal_level", "is_beauty")) {
-			Object v = row.get(k);
-			facts.put(k, v == null ? null : v.toString());
-		}
-		return facts;
 	}
 
 }

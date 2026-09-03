@@ -142,6 +142,8 @@
                     <span class="off">랭킹 노출</span></span>
                 <span class="chip alt">미분석 <b th:text="${funnel.timelyPending()}">0</b>
                     <span class="off">분석 대기</span></span>
+                <span class="chip alt">사실만 <b th:text="${funnel.timelyFactsOnly()}">0</b>
+                    <span class="off">광고·카테고리는 표시됨, 해석 대기</span></span>
             </div>
             <div class="split">
                 <span class="split-label">상세 트랙 <span class="off">제때창 놓침 · 최근 윈도우 안 → 랭킹 제외</span></span>
@@ -150,11 +152,18 @@
                     <span class="off">인플루언서 상세 전용</span></span>
                 <span class="chip alt">미분석 <b th:text="${funnel.windowPending()}">0</b>
                     <span class="off">분석 대기</span></span>
+                <span class="chip alt">사실만 <b th:text="${funnel.windowFactsOnly()}">0</b>
+                    <span class="off">광고·카테고리는 표시됨, 해석 대기</span></span>
             </div>
             <div class="split">
                 <span class="split-label">진짜 잔여</span>
                 <span class="chip alt"><b th:text="${funnel.truePending()}">0</b>건
                     <span class="off">자격 ∩ 미분석</span></span>
+                <span class="chip mute">그중 사실만 <b th:text="${funnel.factsOnlyTotal()}">0</b>
+                    <span class="off">파트 A 완료 · 파트 B 대기</span></span>
+                <span class="chip mute" th:if="${funnel.factsOnlyStranded() > 0}">사실만 · 해석 대상 아님 <b
+                        th:text="${funnel.factsOnlyStrandedText()}">0</b>
+                    <span class="off">파트 A만 채워진 채 성숙 후 후보 뷰 밖으로 나감 - 파트 B 영구 미생성</span></span>
                 <span class="chip">오늘 +<b th:text="${funnel.todayPlanned()}">0</b> 예정</span>
                 <span class="chip mute" th:if="${funnel.daysToFull() > 0}">완주까지 <b
                         th:text="${funnel.daysToFull()}">0</b>일</span>

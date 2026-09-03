@@ -14,9 +14,11 @@ import tools.jackson.databind.ObjectMapper;
  */
 public final class GeminiContentSynthesizer implements ContentSynthesisPort {
 
-	static final int MAX_OUTPUT_TOKENS = 2048; // 텍스트 5필드 — 통합(8192)보다 작다
+	/** 텍스트 5필드 - 통합(8192)보다 작다. 배치 라인 조립(analyze 패키지)도 읽으므로 public. */
+	public static final int MAX_OUTPUT_TOKENS = 2048;
 
-	static final String RESPONSE_SCHEMA = """
+	/** 해석 5필드 스키마 - 온라인 콜과 배치 라인이 공유한다. */
+	public static final String RESPONSE_SCHEMA = """
 			{"type":"object","properties":{
 			  "aiContentSummary":{"type":"string"},"contentsPattern":{"type":"string"},
 			  "aiCommentInsight":{"type":"string"},"commentAuthenticityGrade":{"type":"string"},
