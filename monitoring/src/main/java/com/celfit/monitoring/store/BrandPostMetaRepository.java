@@ -50,8 +50,12 @@ public class BrandPostMetaRepository {
 	 *     null이 "영상 없음"이 아니라 "이 콜이 꽝"일 수 있다(세션 복권 실측 08-04: 같은 엔드포인트가
 	 *     키를 실었다 뺐다 한다). 지우면 다음 스윕까지 하루 종일 영상이 안 나온다.</li>
 	 * <li>video_duration — COALESCE 보존. video_url과 한 몸(같은 노드에서 함께 실리고 함께 빠진다).</li>
-	 * <li>is_paid_partnership — EXCLUDED로 덮는다. 여기서 null은 취득 실패가 아니라 <b>판정
-	 *     unknown</b>이 계약이고(PostInfo 주석), 보존하면 협찬 해제를 영영 못 따라간다.</li>
+	 * <li>is_paid_partnership — COALESCE 보존(S3, 2026-09-03 배포 전 감사 수정). null은 대개 <b>판정
+	 *     unknown</b>이 계약이지만(PostInfo 주석), self(embed)는 이 필드를 취득할 수단이 아예 없어
+	 *     구조적으로 항상 null을 넘긴다 — Hiker가 먼저 관측한 진짜 unknown이 아니라 self의 "취득
+	 *     불가"다. EXCLUDED로 무조건 덮으면 광고 판정 Tier0 최우선 신호(AdDisclosureJudgeService)로
+	 *     이미 확정된 협찬 판정이 self 재수집에 지워진다. thumbnail_url·video_url과 같은 COALESCE
+	 *     보호로 통일한다.</li>
 	 * </ul>
 	 */
 	public void upsert(String shortCode, String username, String contentType, LocalDate uploadedAt,
@@ -70,7 +74,7 @@ public class BrandPostMetaRepository {
 				  thumbnail_url = COALESCE(EXCLUDED.thumbnail_url, brand_post_meta.thumbnail_url),
 				  video_url = COALESCE(EXCLUDED.video_url, brand_post_meta.video_url),
 				  video_duration = COALESCE(EXCLUDED.video_duration, brand_post_meta.video_duration),
-				  is_paid_partnership = EXCLUDED.is_paid_partnership""",
+				  is_paid_partnership = COALESCE(EXCLUDED.is_paid_partnership, brand_post_meta.is_paid_partnership)""",
 				shortCode, username, contentType, uploadedAt, caption, normalizedThumbnailUrl,
 				videoUrl, videoDuration, isPaidPartnership);
 	}

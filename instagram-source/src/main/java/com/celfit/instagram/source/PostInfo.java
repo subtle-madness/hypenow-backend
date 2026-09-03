@@ -53,6 +53,19 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 		Long shares, Long reposts, String videoUrl, Double videoDuration, Boolean isPaidPartnership,
 		boolean viewsTrusted, boolean likesHidden, boolean sharesHidden) {
 
+	/**
+	 * takenAt만 갈아끼운 사본 — self 셰이프(EmbedPostFetcher) 보강 전용(2026-09-03). embed HTML에는
+	 * taken_at이 없어 self 응답은 이 필드가 구조적으로 항상 null인데, brand_tagged_post.taken_at은
+	 * NOT NULL이라 그대로면 저장 자체가 불가하다 — 등록 시 확정·불변인 DB 값을 채워 넣어 저장
+	 * 가능한 사본을 만든다(BrandDirectCollectService.collectOne 참조).
+	 */
+	public PostInfo withTakenAt(Long newTakenAt) {
+		return new PostInfo(shortCode, username, ownerFullName, ownerProfilePicUrl, ownerUserId, contentType,
+				caption, thumbnailUrl, newTakenAt, likes, comments, views, fbPlays, saves, shares, reposts,
+				videoUrl, videoDuration, isPaidPartnership,
+				viewsTrusted, likesHidden, sharesHidden);
+	}
+
 	/** 재시도 콜에서 얻은 FB 몫만 갈아끼운 사본 — 나머지 지표는 원 콜 값을 유지한다. */
 	public PostInfo withFbPlays(Long newFbPlays) {
 		return new PostInfo(shortCode, username, ownerFullName, ownerProfilePicUrl, ownerUserId, contentType,
