@@ -399,4 +399,53 @@ class ContentBatchCollectJobTest {
 		assertEquals("timely", db.queryForObject(
 				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'cc_legacy'", String.class));
 	}
+
+	@Test
+	void kind_facts_대분류_미도출은_미분류로_종결_저장한다() {
+		// 분류 대상(isRelevant=true)이나 대분류를 못 얻은 경우 - asUnclassified()로 종결 저장
+		// (temperature 0 결정론이라 재대상해도 같은 결과 - 무한 재시도 방지, GeminiBatchLines 참고)
+		String unclassifiedJson = """
+				{"detectedBrands":null,"sponsoredSignalLevel":"low","sponsoredSignalReasons":null,
+				 "adDisclosure":"표기 없음","detectedProductCategories":null,"detectedProducts":null,
+				 "vlmAttributes":null,"isRelevant":true,"mainCategory":null,"subCategories":null,
+				 "detectedDistributors":null,"adType":"organic"}"""
+				.replace("\n", "");
+		insertPendingBatchJob("batches/f2", false, 1, sidecarLine("cc_f2", false), "facts");
+		String resultJsonl = """
+				{"key":"cc_f2","response":{"candidates":[{"content":{"parts":[{"text":%s}]}}]}}"""
+				.formatted(om.writeValueAsString(unclassifiedJson));
+
+		JobResult result = collectJob(succeededApi("files/f2", resultJsonl)).run();
+
+		assertEquals(1, result.processed());
+		assertNull(db.queryForObject(
+				"SELECT main_category FROM content_analyses WHERE short_code = 'cc_f2'", String.class));
+		assertEquals(Boolean.FALSE, db.queryForObject(
+				"SELECT is_beauty FROM content_analyses WHERE short_code = 'cc_f2'", Boolean.class));
+		assertEquals("pending", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'cc_f2'", String.class));
+		assertEquals("collected", db.queryForObject(
+				"SELECT status FROM content_batch_jobs WHERE batch_name = 'batches/f2'", String.class));
+	}
+
+	@Test
+	void kind_synthesis에서_candidate가_없으면_예외_없이_라인_실패로_센다() {
+		// 세이프티 차단 등으로 candidates[0]에 content가 없는 경우 - shortCodeAndText가 null을 돌려
+		// processSynthesisResultLine이 예외 대신 false를 반환한다(수거 잡 자체는 죽지 않는다).
+		db.update("""
+				INSERT INTO content_analyses (short_code, model, main_category, ad_type, is_beauty,
+				  metric_timeliness) VALUES ('cc_blocked', 'facts-model', 'cleansing', 'organic', true, 'pending')""");
+		insertPendingBatchJob("batches/s3", true, 1, sidecarLine("cc_blocked", true), "synthesis");
+		String resultJsonl = """
+				{"key":"cc_blocked","response":{"candidates":[{"finishReason":"SAFETY"}]}}""";
+
+		JobResult result = collectJob(succeededApi("files/s3", resultJsonl)).run();
+
+		assertEquals(0, result.processed());
+		assertEquals(0, result.failed()); // 배치 수준 예외가 아니라 라인 실패 - collectOne이 던지지 않았다
+		assertEquals("pending", db.queryForObject(
+				"SELECT metric_timeliness FROM content_analyses WHERE short_code = 'cc_blocked'", String.class));
+		assertEquals("collected", db.queryForObject(
+				"SELECT status FROM content_batch_jobs WHERE batch_name = 'batches/s3'", String.class));
+	}
 }

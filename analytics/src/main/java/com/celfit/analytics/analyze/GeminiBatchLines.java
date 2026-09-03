@@ -55,23 +55,12 @@ final class GeminiBatchLines {
 	 */
 	static ObjectNode requestLine(ObjectMapper om, String shortCode, Map<String, Object> r,
 			Map<String, Long> commentCategoryCounts, String system) {
-		Map<String, Object> baseline = PromptBaseline.ofRow(r);
 		ContentToAnalyze content = new ContentToAnalyze(shortCode, (String) r.get("account_handle"),
 				(String) r.get("caption"), (String) r.get("content_type"),
 				numberOf(r.get("views")), numberOf(r.get("likes")), numberOf(r.get("comments")),
-				baseline, commentCategoryCounts, (Boolean) r.get("ad_marked"));
-		ObjectNode line = om.createObjectNode();
-		line.put("key", shortCode);
-		ObjectNode request = line.putObject("request");
-		request.putObject("systemInstruction").putArray("parts").addObject().put("text", system);
-		request.putArray("contents").addObject().put("role", "user").putArray("parts")
-				.addObject().put("text", GeminiContentAnalyzer.userText(content));
-		ObjectNode gen = request.putObject("generationConfig");
-		gen.put("temperature", 0);
-		gen.put("responseMimeType", "application/json");
-		gen.set("responseSchema", om.readTree(GeminiContentAnalyzer.RESPONSE_SCHEMA));
-		gen.put("maxOutputTokens", GeminiContentAnalyzer.MAX_OUTPUT_TOKENS);
-		return line;
+				PromptBaseline.ofRow(r), commentCategoryCounts, (Boolean) r.get("ad_marked"));
+		return buildLine(om, shortCode, system, GeminiContentAnalyzer.userText(content),
+				GeminiContentAnalyzer.RESPONSE_SCHEMA, GeminiContentAnalyzer.MAX_OUTPUT_TOKENS);
 	}
 
 	/**
@@ -84,18 +73,8 @@ final class GeminiBatchLines {
 		ContentToAnalyze content = new ContentToAnalyze(shortCode, (String) r.get("account_handle"),
 				(String) r.get("caption"), (String) r.get("content_type"),
 				null, null, null, Map.of(), Map.of(), (Boolean) r.get("ad_marked"));
-		ObjectNode line = om.createObjectNode();
-		line.put("key", shortCode);
-		ObjectNode request = line.putObject("request");
-		request.putObject("systemInstruction").putArray("parts").addObject().put("text", system);
-		request.putArray("contents").addObject().put("role", "user").putArray("parts")
-				.addObject().put("text", GeminiContentAnalyzer.userTextFacts(content));
-		ObjectNode gen = request.putObject("generationConfig");
-		gen.put("temperature", 0);
-		gen.put("responseMimeType", "application/json");
-		gen.set("responseSchema", om.readTree(GeminiContentAnalyzer.RESPONSE_SCHEMA_FACTS));
-		gen.put("maxOutputTokens", GeminiContentAnalyzer.MAX_OUTPUT_TOKENS);
-		return line;
+		return buildLine(om, shortCode, system, GeminiContentAnalyzer.userTextFacts(content),
+				GeminiContentAnalyzer.RESPONSE_SCHEMA_FACTS, GeminiContentAnalyzer.MAX_OUTPUT_TOKENS);
 	}
 
 	/**
@@ -111,17 +90,27 @@ final class GeminiBatchLines {
 				(String) r.get("account_handle"), (String) r.get("content_type"),
 				numberOf(r.get("views")), numberOf(r.get("likes")), numberOf(r.get("comments")),
 				PromptBaseline.ofRow(r), commentCategoryCounts, facts);
+		return buildLine(om, shortCode, system, GeminiContentSynthesizer.userText(content),
+				GeminiContentSynthesizer.RESPONSE_SCHEMA, GeminiContentSynthesizer.MAX_OUTPUT_TOKENS);
+	}
+
+	/**
+	 * JSONL 요청 라인 조립 공통 뼈대 — key·systemInstruction·contents(userText)·generationConfig
+	 * (temperature 0 결정론·responseMimeType=JSON·responseSchema·maxOutputTokens). kind 3종이 공유.
+	 */
+	private static ObjectNode buildLine(ObjectMapper om, String shortCode, String systemText,
+			String userText, String schemaJson, int maxOutputTokens) {
 		ObjectNode line = om.createObjectNode();
 		line.put("key", shortCode);
 		ObjectNode request = line.putObject("request");
-		request.putObject("systemInstruction").putArray("parts").addObject().put("text", system);
+		request.putObject("systemInstruction").putArray("parts").addObject().put("text", systemText);
 		request.putArray("contents").addObject().put("role", "user").putArray("parts")
-				.addObject().put("text", GeminiContentSynthesizer.userText(content));
+				.addObject().put("text", userText);
 		ObjectNode gen = request.putObject("generationConfig");
 		gen.put("temperature", 0);
 		gen.put("responseMimeType", "application/json");
-		gen.set("responseSchema", om.readTree(GeminiContentSynthesizer.RESPONSE_SCHEMA));
-		gen.put("maxOutputTokens", GeminiContentSynthesizer.MAX_OUTPUT_TOKENS);
+		gen.set("responseSchema", om.readTree(schemaJson));
+		gen.put("maxOutputTokens", maxOutputTokens);
 		return line;
 	}
 
@@ -210,35 +199,23 @@ final class GeminiBatchLines {
 	static boolean processResultLine(JdbcTemplate analysis, ObjectMapper om, String line,
 			Map<String, Map<String, String>> sidecar, String model, BeautyTaxonomy taxonomy) {
 		try {
-			JsonNode node = om.readTree(line);
-			String vertexStatus = node.path("status").asString("");
-			if (!vertexStatus.isEmpty()) {
-				log.warn("배치 실패 라인 (status={}): {}", vertexStatus, abbreviate(line));
+			ParsedResult parsed = shortCodeAndText(om, line);
+			if (parsed == null) {
 				return false;
 			}
-			String shortCode = node.path("key").asString("");
-			if (shortCode.isEmpty()) {
-				shortCode = shortCodeFromEcho(node);
-			}
-			JsonNode text = node.path("response").path("candidates").path(0)
-					.path("content").path("parts").path(0).path("text");
-			if (shortCode.isEmpty() || text.isMissingNode()) {
-				log.warn("결과 라인 해석 불가/오류 응답: {}", abbreviate(line));
-				return false;
-			}
-			ContentInsight insight = GeminiContentAnalyzer.parse(om, text.asString(), taxonomy);
+			ContentInsight insight = GeminiContentAnalyzer.parse(om, parsed.text(), taxonomy);
 			if (insight.synthesis().aiContentSummary() == null
 					|| insight.synthesis().aiContentSummary().isBlank()) {
 				return false;
 			}
-			Map<String, String> base = sidecar.get(shortCode);
+			Map<String, String> base = sidecar.get(parsed.shortCode());
 			if (base == null) {
-				log.warn("사이드카에 없는 key: {}", shortCode);
+				log.warn("사이드카에 없는 key: {}", parsed.shortCode());
 				return false;
 			}
 			boolean hasCaption = base.get("caption") != null && !base.get("caption").isBlank();
 			boolean timely = "true".equals(base.get("timely"));
-			ContentAnalysisWriter.insert(analysis, om, shortCode, model, baselineOf(base),
+			ContentAnalysisWriter.insert(analysis, om, parsed.shortCode(), model, baselineOf(base),
 					hasCaption ? insight.attributes() : null, insight.synthesis(), true,
 					timely ? "timely" : "late_backfill");
 			return true;
@@ -248,8 +225,12 @@ final class GeminiBatchLines {
 		}
 	}
 
+	/** {@link #shortCodeAndText}의 반환값 — 결과 라인에서 꺼낸 (short_code, 응답 텍스트). */
+	private record ParsedResult(String shortCode, String text) {
+	}
+
 	/** 결과 라인에서 (short_code, 응답 텍스트)를 꺼낸다 - 실패면 null. kind 3종이 공유. */
-	private static String[] shortCodeAndText(ObjectMapper om, String line) {
+	private static ParsedResult shortCodeAndText(ObjectMapper om, String line) {
 		JsonNode node = om.readTree(line);
 		String vertexStatus = node.path("status").asString("");
 		if (!vertexStatus.isEmpty()) {
@@ -266,7 +247,7 @@ final class GeminiBatchLines {
 			log.warn("결과 라인 해석 불가/오류 응답: {}", abbreviate(line));
 			return null;
 		}
-		return new String[] {shortCode, text.asString()};
+		return new ParsedResult(shortCode, text.asString());
 	}
 
 	/**
@@ -279,23 +260,22 @@ final class GeminiBatchLines {
 	static boolean processFactsResultLine(JdbcTemplate analysis, ObjectMapper om, String line,
 			Map<String, Map<String, String>> sidecar, String model, BeautyTaxonomy taxonomy) {
 		try {
-			String[] parsed = shortCodeAndText(om, line);
+			ParsedResult parsed = shortCodeAndText(om, line);
 			if (parsed == null) {
 				return false;
 			}
-			String shortCode = parsed[0];
-			Map<String, String> base = sidecar.get(shortCode);
+			Map<String, String> base = sidecar.get(parsed.shortCode());
 			if (base == null) {
-				log.warn("사이드카에 없는 key: {}", shortCode);
+				log.warn("사이드카에 없는 key: {}", parsed.shortCode());
 				return false;
 			}
 			boolean hasCaption = base.get("caption") != null && !base.get("caption").isBlank();
-			ContentAttributes attrs = GeminiContentAnalyzer.parseFacts(om, parsed[1], taxonomy);
+			ContentAttributes attrs = GeminiContentAnalyzer.parseFacts(om, parsed.text(), taxonomy);
 			if (Boolean.TRUE.equals(attrs.isRelevant()) && attrs.mainCategory() == null) {
-				log.info("분류 대상이나 대분류 미도출 - 미분류로 종결 저장(재시도 루프 방지): {}", shortCode);
+				log.info("분류 대상이나 대분류 미도출 - 미분류로 종결 저장(재시도 루프 방지): {}", parsed.shortCode());
 				attrs = attrs.asUnclassified();
 			}
-			ContentAnalysisWriter.insertFacts(analysis, om, shortCode, model, hasCaption ? attrs : null);
+			ContentAnalysisWriter.insertFacts(analysis, om, parsed.shortCode(), model, hasCaption ? attrs : null);
 			return true;
 		} catch (Exception e) {
 			log.warn("파트 A 결과 라인 저장 실패: {}", abbreviate(line), e);
@@ -312,27 +292,26 @@ final class GeminiBatchLines {
 	static boolean processSynthesisResultLine(JdbcTemplate analysis, ObjectMapper om, String line,
 			Map<String, Map<String, String>> sidecar, String model) {
 		try {
-			String[] parsed = shortCodeAndText(om, line);
+			ParsedResult parsed = shortCodeAndText(om, line);
 			if (parsed == null) {
 				return false;
 			}
-			String shortCode = parsed[0];
-			Map<String, String> base = sidecar.get(shortCode);
+			Map<String, String> base = sidecar.get(parsed.shortCode());
 			if (base == null) {
-				log.warn("사이드카에 없는 key: {}", shortCode);
+				log.warn("사이드카에 없는 key: {}", parsed.shortCode());
 				return false;
 			}
-			Synthesis s = GeminiContentAnalyzer.parseSynthesis(om, parsed[1]);
+			Synthesis s = GeminiContentAnalyzer.parseSynthesis(om, parsed.text());
 			// 빈 종합은 저장하지 않는다 - 저장하면 pending이 풀려 다시 대상이 되지 않는다
 			if (s.aiContentSummary() == null || s.aiContentSummary().isBlank()) {
-				log.warn("해석 문구가 비어 있음 - 저장하지 않음(다음 실행 재대상): {}", shortCode);
+				log.warn("해석 문구가 비어 있음 - 저장하지 않음(다음 실행 재대상): {}", parsed.shortCode());
 				return false;
 			}
 			boolean timely = "true".equals(base.get("timely"));
-			int updated = ContentAnalysisWriter.updateSynthesis(analysis, shortCode, model,
+			int updated = ContentAnalysisWriter.updateSynthesis(analysis, parsed.shortCode(), model,
 					baselineOf(base), s, timely ? "timely" : "late_backfill");
 			if (updated == 0) {
-				log.warn("해석 UPDATE 0행 - 제출~수거 사이에 행이 사라짐: {}", shortCode);
+				log.warn("해석 UPDATE 0행 - 제출~수거 사이에 행이 사라짐: {}", parsed.shortCode());
 				return false;
 			}
 			return true;
