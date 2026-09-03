@@ -45,17 +45,7 @@ public class BrandAccountAssembler {
 	}
 
 	public BrandAccountResponse toResponse(BrandAccountRow row, String accountType, int collectionMonths) {
-		String status;
-		if (row.lastSweptOn() != null) {
-			status = STATUS_READY;
-		} else if (row.lastSweptAt() != null) {
-			// 첫 등록 배치 완결(fast-ready) / 재가입 직후 기존 데이터 보유(08-10 결정) / 기간 확장 중
-			// (08-13 — 확장이 완주 시각을 리셋하므로 이 분기로 온다). backfill_error가 남아 있어도
-			// 무시한다 — 데이터가 있는데 에러 화면을 띄우는 오보 방지.
-			status = STATUS_READY;
-		} else {
-			status = row.backfillError() != null ? STATUS_ERROR : STATUS_COLLECTING;
-		}
+		String status = collectionStatus(row);
 		BrandAccountResponse.CollectionError error = STATUS_ERROR.equals(status)
 				? new BrandAccountResponse.CollectionError(BACKFILL_FAILED, row.backfillError())
 				: null;
@@ -85,6 +75,23 @@ public class BrandAccountAssembler {
 				// 그대로 통과시킨다: 유도 대상이 아니라 monitoring이 백필 시점에 확정한 사실값이다.
 				row.collectionCapped(),
 				KstTimestamps.toKstIso(row.coveredUntil()));
+	}
+
+	/**
+	 * 상태 유도(클래스 javadoc 규칙) 단독 추출 — 어드민 브랜드 목록 계정 API(2026-09-03)가
+	 * {@code toResponse}의 프로필 조립까지 전부 타지 않고 이 판정만 재사용하기 위해 뗐다. 순수 함수라
+	 * 어느 호출부든 같은 입력엔 같은 문자열을 돌려준다.
+	 */
+	public static String collectionStatus(BrandAccountRow row) {
+		if (row.lastSweptOn() != null) {
+			return STATUS_READY;
+		} else if (row.lastSweptAt() != null) {
+			// 첫 등록 배치 완결(fast-ready) / 재가입 직후 기존 데이터 보유(08-10 결정) / 기간 확장 중
+			// (08-13 — 확장이 완주 시각을 리셋하므로 이 분기로 온다). backfill_error가 남아 있어도
+			// 무시한다 — 데이터가 있는데 에러 화면을 띄우는 오보 방지.
+			return STATUS_READY;
+		}
+		return row.backfillError() != null ? STATUS_ERROR : STATUS_COLLECTING;
 	}
 
 	private static BrandAccountResponse.Profile profile(BrandAccountRow row) {
