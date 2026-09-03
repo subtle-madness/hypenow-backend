@@ -945,10 +945,10 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
   -c "GRANT SELECT (started_at, completed_at, ok) ON sweep_run TO grafana_reader" \
   -c "GRANT SELECT (type, status, tracked_since, fetch_failing) ON target TO grafana_reader" \
   -c "GRANT SELECT (event_type, occurred_at, email_status, email_attempts) ON alarm_event TO grafana_reader" \
-  -c "GRANT SELECT (id, username, registered_at, closed_at, last_swept_at, last_swept_on, collection_months, backfill_completed_at, backfill_error) ON brand_account TO grafana_reader" \
+  -c "GRANT SELECT (id, username, registered_at, closed_at, last_swept_at, last_swept_on, sweep_completed_at, collection_months, backfill_completed_at, backfill_error) ON brand_account TO grafana_reader" \
   -c "GRANT SELECT (brand_id, called_on, calls) ON brand_call_count TO grafana_reader" \
   -c "GRANT SELECT (called_on, calls) ON target_call_count TO grafana_reader" \
-  -c "GRANT SELECT (brand_id, taken_at, first_seen_at, last_crawled_at, enriched_at) ON brand_tagged_post TO grafana_reader" \
+  -c "GRANT SELECT (brand_id, taken_at, first_seen_at, last_crawled_at, enriched_at, tag_detected_at, hashtag_detected_at, direct_registered_at, unavailable_at) ON brand_tagged_post TO grafana_reader" \
   -c "GRANT SELECT (verdict, first_seen_at) ON brand_hashtag_post TO grafana_reader" \
   -c "GRANT SELECT (short_code, username, ad_verdict, ad_verdict_source, ad_violations, ad_judged_at, judged_caption_hash) ON brand_post_meta TO grafana_reader"
 ```
@@ -1048,7 +1048,24 @@ ssh ubuntu@<IP> 'rm -f ~/deploy/grafana/provisioning/dashboards/json/{hypenow-di
   `hypenow-brand`·`hypenow-brand-ad`)를 참조하던 대시보드 내부 링크는 이 PR에서 전부 새 착지로
   재지정했다(홈 14곳·운영/모니터링 12곳). 외부에 적어 둔 북마크만 깨진다.
 
-#### 14-2-5. 브랜드 수집 신설 컬럼 GRANT (09-02, ⚠️ **운영 현재 권한 오류 — 즉시 서버 실행 필요**)
+#### 14-2-5. 브랜드 수집 신설 컬럼 GRANT (09-02 ✅ 실행됨 · 09-03 ⚠️ **`unavailable_at` 미실행 — 서버 실행 필요**)
+
+**09-03 추가분**: `24f2ab88`(부재 확정 행 재검증 스로틀)이 [흐름] 브랜드의 '오늘 게시물 갱신 — 티어별'·
+'미처리 브랜드별' 2패널 due 판정에 `brand_tagged_post.unavailable_at`을 새로 조회하는데 GRANT가
+누락됐다(09-03 운영 실측: 두 패널만 `permission denied for table brand_tagged_post`, 나머지 38쿼리는
+정상 — 09-02와 같은 재발). 컬럼은 `V20260825044536`으로 이미 있다. 실행 후 새로고침이면 끝.
+
+```bash
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
+  -c "GRANT SELECT (unavailable_at) ON brand_tagged_post TO grafana_reader"
+```
+
+검산 레시피(재발 시 그대로): 대시보드 JSON에서 `hypenow-monitoring-pg` 타깃의 rawSql을 전부 뽑아
+`SET ROLE grafana_reader;` 아래 붙여 monitoring DB에 흘리면 권한 누락 패널만 `ERROR`로 뜬다
+(Grafana 매크로 `$__timeFilter` 등은 `now() - interval '7 days'`로 치환). 위 ② 블록은 09-03 기준
+운영 grant 실측과 일치하도록 갱신했다(신규 구축 시 ②만 실행하면 된다).
+
+---
 
 09-02 배포분 두 건이 monitoring DB의 신설 컬럼을 대시보드에서 새로 조회하는데 GRANT가 누락됐다
 — 실행 전까지 운영에서 그 컬럼을 읽는 패널이 `permission denied for table ...`로 빈다
