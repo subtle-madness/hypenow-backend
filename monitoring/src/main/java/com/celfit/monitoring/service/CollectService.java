@@ -40,6 +40,16 @@ import org.springframework.stereotype.Service;
  * {@link #userTriggeredHiker}로 라우팅하는 {@link #retryReelsMetricsUserTriggered} 대응판을 따로
  * 둔다(필드+진입점 분리 패턴, BrandCollectService.enrichSync와 동형) — DailySweepJob은 그대로
  * {@link #retryReelsMetrics}(hiker, 자체 1순위)를 쓴다.
+ *
+ * <p><b>{@link #metricsRetryHiker}는 위 소스 분리와 다른 축</b>(2026-09-03 self 셰이프 회귀 수정) —
+ * 저장·공유·리포스트 단건 복권 재시도({@code retrySinglesOnce})의 fetchPost 콜만 이 Hiker 직결
+ * 소스로 고정한다. self(EmbedPostFetcher)는 3지표를 구조적으로 항상 null 반환하는데, 그 응답도
+ * 예외 없는 "성공"이라 FailoverInstagramSource가 폴백하지 않는다(route()는 무예외 반환을 전부
+ * 성공 처리) — self가 섞인 소스(hiker·userTriggeredHiker, self-paths 토글로 self가 켜지면)로
+ * 재시도하면 매 시도가 결정론적으로 꽝이라 최대 6회 재시도가 전부 무력화된다(09-03 운영 로그
+ * 15전 0승 실측, 소실률 3.0%→4.5% 회귀 원인). clips 경로({@code retryClipsOnce})는 self 절감
+ * 목적을 보존해 그대로 호출부 소스(hiker/userTriggeredHiker)를 쓴다 — self 미지원 표면이라
+ * UnsupportedOperationException 하드게이트로 이미 Hiker에 떨어진다(SelfCrawlBackend 참조).
  */
 @Service
 public class CollectService {
@@ -57,6 +67,9 @@ public class CollectService {
 	/** 등록 직후 메트릭 백필(사용자 트리거 비동기, {@link #retryReelsMetricsUserTriggered}) 전용 — 2026-09
 	 * 도입 시점 토글(userTriggeredInstagramSource, HikerConfig 참조). 클래스 javadoc 참조. */
 	private final InstagramSource userTriggeredHiker;
+	/** 저장·공유·리포스트 단건 복권 재시도({@code retrySinglesOnce}) 전용 — Hiker 직결(self 미경유).
+	 * 클래스 javadoc 참조(2026-09-03). */
+	private final InstagramSource metricsRetryHiker;
 	private final SnapshotWriter writer;
 	private final CommentRepository comments;
 	private final SnapshotRepository snapshots;
@@ -79,6 +92,7 @@ public class CollectService {
 	 */
 	public CollectService(InstagramSource hiker, @Qualifier("syncInstagramSource") InstagramSource syncHiker,
 			@Qualifier("userTriggeredInstagramSource") InstagramSource userTriggeredHiker,
+			@Qualifier("metricsRetryInstagramSource") InstagramSource metricsRetryHiker,
 			SnapshotWriter writer, CommentRepository comments,
 			SnapshotRepository snapshots,
 			@Value("${monitoring.enumerate-pages:1}") int enumeratePages,
@@ -89,6 +103,7 @@ public class CollectService {
 		this.hiker = hiker;
 		this.syncHiker = syncHiker;
 		this.userTriggeredHiker = userTriggeredHiker;
+		this.metricsRetryHiker = metricsRetryHiker;
 		this.writer = writer;
 		this.comments = comments;
 		this.snapshots = snapshots;
@@ -273,7 +288,8 @@ public class CollectService {
 				return;   // 인터럽트는 종료 신호 — 보강만 포기한다(내일 스윕이 다시 시도).
 			}
 			// 단건을 먼저 돈다 — clips 처리에서 방금 전환된 게시물이 같은 시도에 즉시 재콜되지 않게.
-			List<PostInfo> singleNext = retrySinglesOnce(source, singlePending, attempt);
+			// metricsRetryHiker 고정(source가 아님) — 클래스 javadoc 참조(2026-09-03 self 셰이프 회귀).
+			List<PostInfo> singleNext = retrySinglesOnce(metricsRetryHiker, singlePending, attempt);
 			if (!clipsPending.isEmpty()) {
 				clipsPending = retryClipsOnce(source, userId, clipsPending, singleNext, attempt);
 			}

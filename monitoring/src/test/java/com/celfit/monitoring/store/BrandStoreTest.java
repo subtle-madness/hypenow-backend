@@ -473,6 +473,22 @@ class BrandStoreTest {
 				.containsEntry("saves", 3L).containsEntry("shares", 4L).containsEntry("reposts", 5L);
 	}
 
+	/** S5(#715 보호 목록 누락 수정) — views도 saves·shares·reposts와 동형 COALESCE 보호(StoreTest 동형). */
+	@Test
+	void 조회수_null_관측은_기존_값을_보존한다() {
+		LocalDate day = LocalDate.of(2026, 8, 10);
+		var known = new PostInfo("BSC6", "creator", null, null, "999", "REELS", "캡션", null,
+				1754000000L, 10L, 2L, 100L, null, null, null, null, null, null, null, true, false, false);
+		snapshots.upsertPost(day, known);
+
+		var selfRetryMiss = new PostInfo("BSC6", "creator", null, null, "999", "REELS", "캡션", null,
+				1754000000L, 10L, 2L, null, null, null, null, null, null, null, null, false, false, false);
+		snapshots.upsertPost(day, selfRetryMiss);
+
+		assertThat(db.queryForMap("SELECT views FROM brand_post_snapshot WHERE short_code='BSC6'"))
+				.containsEntry("views", 100L);
+	}
+
 	@Test
 	void 댓글수_null_관측은_기존_값을_보존한다() {
 		LocalDate day = LocalDate.of(2026, 8, 10);
@@ -615,8 +631,10 @@ class BrandStoreTest {
 		assertThat(db.queryForObject(
 				"SELECT is_paid_partnership FROM brand_post_meta WHERE short_code='CodeB'", Boolean.class))
 				.isTrue();
-		// 재관측은 영상 URL·길이를 새 값으로 갱신하고(서명 만료 방어), 협찬 판정은 키 부재
-		// (null=unknown)를 그대로 반영한다(PostInfo 주석 §3-2 — 보존하면 협찬 해제를 못 따라간다).
+		// 재관측은 영상 URL·길이를 새 값으로 갱신하고(서명 만료 방어), 협찬 판정은 기존 값을
+		// 보존한다(S3, 2026-09-03 배포 전 감사 수정 — self는 이 필드를 취득할 수단이 없어 구조적으로
+		// 항상 null을 넘긴다. 과거엔 EXCLUDED로 무조건 덮어 self 재수집이 Hiker의 협찬 판정을
+		// 지웠다. video_url·video_duration과 같은 COALESCE 보호로 통일).
 		postMeta.upsert("CodeB", "creator", "REELS", LocalDate.of(2026, 8, 1), "캡션", "https://thumb1",
 				"https://video2.mp4", 30.0, null);
 		assertThat(db.queryForObject(
@@ -627,7 +645,7 @@ class BrandStoreTest {
 				.isEqualTo(30.0);
 		assertThat(db.queryForObject(
 				"SELECT is_paid_partnership FROM brand_post_meta WHERE short_code='CodeB'", Boolean.class))
-				.isNull();
+				.isTrue();
 	}
 
 	/**
@@ -660,6 +678,34 @@ class BrandStoreTest {
 		assertThat(db.queryForObject(
 				"SELECT like_count FROM brand_post_comment WHERE short_code='CodeA' AND id='c1'",
 				Long.class)).isEqualTo(9L);
+	}
+
+	/** S6(CommentRepository 동형 결함) — self의 ownerReplyText는 항상 null, Hiker 관측을 보존해야 한다. */
+	@Test
+	void 댓글_작성자_답글_null_관측은_기존_값을_보존한다() {
+		comments.upsertForPost("CodeB", List.of(
+				new CommentInfo("c1", "user1", "본문", 5L, Instant.now(), "감사합니다")));
+
+		comments.upsertForPost("CodeB", List.of(
+				new CommentInfo("c1", "user1", "본문", 5L, Instant.now(), null)));
+
+		assertThat(db.queryForObject(
+				"SELECT owner_reply_text FROM brand_post_comment WHERE short_code='CodeB' AND id='c1'",
+				String.class)).isEqualTo("감사합니다");
+	}
+
+	/** S6 — like_count도 동형: self의 likeCount는 nullable(파싱 실패 시 null)이라 같은 보호가 필요하다. */
+	@Test
+	void 댓글_like_count_null_관측은_기존_값을_보존한다() {
+		comments.upsertForPost("CodeC2", List.of(
+				new CommentInfo("c1", "user1", "본문", 5L, Instant.now(), null)));
+
+		comments.upsertForPost("CodeC2", List.of(
+				new CommentInfo("c1", "user1", "본문", null, Instant.now(), null)));
+
+		assertThat(db.queryForObject(
+				"SELECT like_count FROM brand_post_comment WHERE short_code='CodeC2' AND id='c1'",
+				Long.class)).isEqualTo(5L);
 	}
 
 	// ── 티어 판정 입력(정책 v1 — 2026-08-09 스펙 §6) ─────────────────────────
