@@ -60,8 +60,15 @@ monitoring:
     # 그중 사용자 대면 동기 경로 예약분 — 배치 레인은 (14 - 2)까지만 쓸 수 있어, 배치가 아무리
     # 몰려도 동기 콜이 배치에 밀려 대기하는 일이 구조적으로 없다.
     sync-reserved-permits: 2
-    batch-acquire-timeout: 60s   # 초과 시 그 콜만 실패(건 단위 격리가 흡수)
-    sync-acquire-timeout: 3s     # 초과 시 벤더 장애로 간주 → HikerFirst의 self 구조 시도로 넘어간다
+    # 배치 레인 대기 예산은 "지연 예산"이 아니라 교착 안전 밸브다 — 배치는 기다리는 사람이 없으니
+    # 대기가 곧 의도한 백프레셔다. 논리 콜 1건의 최악(15s × 3회 + 백오프 = ~51s)에 배치 스레드
+    # 대기열 2라운드를 곱한 값(~100s)보다 넉넉히 잡는다. 짧게 잡으면 보강 워커(10) + 브랜드 열거(3)가
+    # 12퍼밋을 두고 겹치는 평범한 야간 부하에서 헛실패가 난다.
+    batch-acquire-timeout: 180s
+    # 동기 레인은 예약 퍼밋 덕에 배치에 밀리지 않는다 — 대기가 생기는 유일한 경우는 동기 콜이
+    # 예약분(2건) 이상 동시에 뜬 때이고, 그때도 배치 퍼밋이 계속 반환되므로 실측 대기는 수백 ms다.
+    # was→monitoring read timeout 10s 예산 안에서 여유를 두고 5s로 끊는다.
+    sync-acquire-timeout: 5s     # 초과 시 벤더 장애로 간주 → HikerFirst의 self 구조 시도로 넘어간다
   proxy:
     residential-url: ${DATAIMPULSE_RESIDENTIAL_PROXY_URL:}
     mobile-url: ${DATAIMPULSE_MOBILE_PROXY_URL:}

@@ -50,8 +50,8 @@ public class HikerConfig {
 	public HikerConcurrencyLimiter hikerConcurrencyLimiter(MeterRegistry meterRegistry,
 			@Value("${monitoring.hiker.max-concurrent-calls:14}") int maxConcurrentCalls,
 			@Value("${monitoring.hiker.sync-reserved-permits:2}") int syncReservedPermits,
-			@Value("${monitoring.hiker.batch-acquire-timeout:60s}") Duration batchAcquireTimeout,
-			@Value("${monitoring.hiker.sync-acquire-timeout:3s}") Duration syncAcquireTimeout) {
+			@Value("${monitoring.hiker.batch-acquire-timeout:180s}") Duration batchAcquireTimeout,
+			@Value("${monitoring.hiker.sync-acquire-timeout:5s}") Duration syncAcquireTimeout) {
 		return new HikerConcurrencyLimiter(maxConcurrentCalls, syncReservedPermits, batchAcquireTimeout,
 				syncAcquireTimeout, meterRegistry);
 	}
