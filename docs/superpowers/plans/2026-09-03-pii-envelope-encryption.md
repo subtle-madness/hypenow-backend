@@ -678,17 +678,13 @@ CREATE INDEX signup_events_bidx_ix ON app.signup_events (email_bidx, created_at)
 
 이 지점에서 **PR 1(Task 1~6, 9, 10)을 머지·배포**하고, 읽기 전환(Task 8)은 백필 완료 후의 **PR 2**로 나눈다.
 
-- [ ] **Step 1: DEK 생성·래핑·등록(로컬 맥, 1회)** — 평문 DEK가 디스크에 남지 않게 파이프로:
-
-```bash
-# 64바이트 DEK 생성 → Vault KEK로 래핑 → base64 래핑본만 파일로
-openssl rand 64 | base64 > /tmp/dek-plain.b64   # 임시 — 등록 확인 후 즉시 삭제
-oci --profile HYPENOW kms crypto encrypt --key-id <KEK_OCID> --endpoint <CRYPTO_EP> \
-  --plaintext "$(cat /tmp/dek-plain.b64)" --query 'data.ciphertext' --raw-output > /tmp/dek-wrapped.b64
-# 서버 경유로 app DB에 등록 (읽기 전용 아님 — 사용자 확인 후):
-# INSERT INTO app.encryption_keys (key_id, wrapped_dek) VALUES (1, decode('<dek-wrapped.b64 내용>','base64'));
-shred -u /tmp/dek-plain.b64 2>/dev/null || rm -P /tmp/dek-plain.b64
-```
+- [x] **Step 1: DEK 생성·등록 — 자동 부트스트랩으로 대체(Task 11, 계획 결함 수정)**
+  최초 작성 시점엔 로컬에서 `openssl rand`로 DEK를 만들어 수동 등록하는 절차였으나, 이는
+  vault 모드 첫 부팅이 `app.encryption_keys` 행 부재로 죽는다는 결함이 있었다(테이블은 같은
+  부팅의 Flyway가 막 만들고, 행은 아무도 넣어두지 않는다). `CryptoConfig`/`DekStore`가 첫
+  부팅에서 행이 없으면 스스로 생성·래핑·`INSERT … ON CONFLICT DO NOTHING`·재조회까지
+  전부 수행한다 — 수동 단계는 없다. 이 Step은 이제 **첫 vault 기동 후 행 존재 확인만**:
+  `SELECT key_id, created_at FROM app.encryption_keys;`(deploy/README.md §6-3).
 
 - [ ] **Step 2: 스테이징(develop→staging)에서** `CRYPTO_MODE=vault` 기동 확인(언래핑 성공 로그) → 이중 쓰기 검증(신규 가입 1건 → enc 컬럼 확인)
 - [ ] **Step 3: 스테이징 백필** — `--crypto.backfill=true`로 1회 기동, 처리 건수 로그 확인

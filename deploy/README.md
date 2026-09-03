@@ -409,6 +409,70 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
 - **age 미설치면 업로드 생략**(fail-closed) — 크론 로그에 경고가 남고 로컬 폴백이 백업 공백을
   막는다. 서버 설치: `sudo apt-get install -y age` (setup-server.sh 대상 서버 재구축 시 포함할 것).
 
+### 6-3. PII 봉투 암호화 키 운영 (09-03~, 트랙 A)
+
+- **개요**: `app.users`·`app.inquiries`·`app.password_resets`·`app.signup_events`의 이메일 등
+  개인정보 컬럼은 AES-256-GCM DEK(+HMAC 블라인드 인덱스 키)로 암호화되고, DEK는 OCI Vault
+  KEK로 래핑된 채 각 환경(app DB)의 `app.encryption_keys`에 저장된다(설계:
+  [specs/2026-09-03-pii-envelope-encryption-design.md](../docs/superpowers/specs/2026-09-03-pii-envelope-encryption-design.md)).
+  앱은 부팅 시 1회 Vault로 DEK를 언래핑해 메모리에만 들고 있는다 — 평문 DEK는 디스크·로그
+  어디에도 남지 않는다.
+- **KEK**: `hypenow-pii-kek`(대칭 AES-256, SOFTWARE 보호 — Always Free 범위), 기존
+  `hypenow-vault` 안에 생성(Task 0). OCID:
+  `ocid1.key.oc1.ap-tokyo-1.ezvjprllaacng.abxhiljrxoa5bwu432rpge634dplnahnnwguxfca7dwwudwuzlm3chw72x6a`,
+  crypto endpoint: `https://ezvjprllaacng-crypto.kms.ap-tokyo-1.oraclecloud.com`. 둘 다 비밀이
+  아닌 식별자(실제 접근 통제는 아래 IAM 정책)라 `deploy/compose.yaml`·`compose.test.yaml`의
+  was/test-was environment에 직접 기재돼 있다 — 백업 age 키(§6-2)와 달리 `.env` 수동 등록
+  단계가 없다.
+- **IAM 정책**: `hypenow-pii-kek-use` — 서버 dynamic group(`hypenow-instances`)에 이 키
+  **1개**의 `use`만 허용(다른 키·시크릿은 여전히 불가). 인증은 인스턴스 프린시펄
+  (`VaultDekWrapper`가 `InstancePrincipalsAuthenticationDetailsProvider` 사용).
+- **DEK 자동 부트스트랩**(Task 11 — 최초 계획의 "Task 7 Step 1: 로컬에서 openssl로 DEK 생성 후
+  수동 INSERT"를 대체): vault 모드 첫 부팅에서 `app.encryption_keys`에 그 환경의 `key_id` 행이
+  없으면 앱이 스스로 (a) 64바이트 DEK를 메모리에 생성 → (b) KEK로 래핑 → (c)
+  `INSERT … ON CONFLICT (key_id) DO NOTHING` → (d) **반드시 다시 SELECT**해서 그 행을
+  언래핑해 사용한다(`DekStore`). 롤링 배포로 두 인스턴스가 동시에 부트스트랩해도 먼저 커밋한
+  쪽이 이기고, 진 쪽도 재조회로 같은 값에 수렴한다 — 수동으로 DEK를 생성·등록할 필요가 없다.
+  확인은 SQL 하나면 끝난다:
+  ```sql
+  -- 서버에서 (app DB 슈퍼유저로 접속 — §14-2 관용구)
+  SELECT key_id, created_at FROM app.encryption_keys;
+  ```
+  최초 vault 기동 로그에 `DEK 부트스트랩 — key_id=1 신규 래핑본 등록 시도`가 보이면 정상
+  (이후 재기동은 이 로그 없이 조용히 언래핑만 한다 — 키 바이트·base64는 어떤 로그에도 남지
+  않는다).
+- **환경별 DEK 분리**: 운영·스테이징은 서로 다른 app DB(각 `postgres`/`test-postgres` 컨테이너
+  안의 별개 DB)를 쓰므로 `encryption_keys` 행도 각자 독립적으로 부트스트랩된다 — 같은 KEK를
+  공유해도 운영 DEK와 스테이징 DEK 값은 다르다(한쪽 유출이 다른 쪽 데이터에 영향 없음).
+- **운영 fail-closed 가드**: `CryptoConfig`가 활성 프로파일에 `prod`가 있는데
+  `crypto.mode=local`이면 기동 자체를 막는다(`crypto.allow-local-in-prod`라는 우회 플래그가
+  있지만 테스트 전용이고 compose에는 없다). 즉 운영·스테이징 compose에서 `CRYPTO_MODE=vault`를
+  실수로 지우면 더미 키로 조용히 뜨는 대신 기동이 죽는다(의도된 동작 — 더미 키로 개인정보가
+  "암호화됐지만 사실상 평문"인 상태로 뜨는 사고를 차단).
+- **백필 실행**(`--crypto.backfill=true` 1회 기동, 트랙 A 스펙 §전환 2 — 이중 쓰기 배포 후,
+  bidx UNIQUE 마이그레이션·읽기 전환(PR 2) **전에** 완료해야 한다). `rollout.sh`가 관리하는
+  정식 `was` 컨테이너와는 별개로, 호스트 포트를 점유하지 않는 was 서비스 특성(Caddy가 도커
+  DNS로만 프록시)을 이용해 1회성 컨테이너를 추가로 띄운다:
+  ```bash
+  # 서버에서 (deploy/ 디렉토리 — compose.yaml과 같은 위치). foreground로 띄워 로그를 바로 본다.
+  docker compose run --rm --no-deps -e JAVA_OPTS="-Dcrypto.backfill=true" was
+  # 로그에 "PII 백필 완료 — users=NN, inquiries=NN, password_resets=NN, signup_events=NN"이
+  # 찍히면 Ctrl-C로 즉시 중단(--rm이 컨테이너를 자동 정리). PiiBackfillRunner는
+  # ApplicationRunner라 백필 후에도 앱 자체는 정상 기동·서빙을 계속하므로 오래 켜둬도 무해하지만,
+  # rollout.sh가 관리하지 않는 임시 컨테이너를 도커 DNS 라운드로빈에 남겨둘 이유가 없다.
+  ```
+  완료 확인: `SELECT count(*) FROM app.users WHERE email_enc IS NULL;`(0이어야 정상 — 나머지
+  3테이블도 `<table>_enc IS NULL` 패턴으로 동일 확인).
+- **KEK 로테이션 개요**: KEK를 바꿔도 DEK 자체(따라서 암호화된 데이터)는 그대로다 — 새 KEK로
+  기존 DEK를 다시 래핑해 `app.encryption_keys.wrapped_dek`만 갱신하면 된다. 데이터 재암호화는
+  불필요(암호문의 `v1:<key_id>:...` 접두사는 DEK 버전 식별용이지 KEK 버전과 무관).
+- **키 유실 시나리오**: `app.encryption_keys`의 래핑본 행이 유실되면(KEK 자체는 살아있어도)
+  그 환경의 암호화 컬럼은 **영구 복원 불가**(래핑된 DEK 없이는 KEK로도 원문에 못 감) —
+  평문 컬럼이 아직 살아있는 이중 쓰기 기간엔 재부트스트랩(새 DEK 생성) + 백필 재실행으로 복구
+  가능하지만, contract(평문 컬럼 DROP, PR 3) 이후엔 복구 경로가 없다. §6 백업은
+  `app.encryption_keys`를 포함한 app DB 전체를 덤프하므로(별도 제외 없음) 통상적인 DB 복원
+  경로로 같이 복원된다 — 뒤집어 말하면 그 백업이 이 행의 유일한 안전망이라는 뜻이기도 하다.
+
 ## 7. 프론트 연동 (www.hypenow.io)
 - 권장: **Vercel rewrite로 같은 오리진화** — celfit-front `vercel.json`에
   `{"rewrites":[{"source":"/api/:path*","destination":"https://api.hypenow.io/api/:path*"}]}`
