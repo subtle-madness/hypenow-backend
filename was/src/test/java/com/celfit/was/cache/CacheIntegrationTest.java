@@ -414,6 +414,7 @@ class CacheIntegrationTest extends IntegrationTest {
 				List.of(new BrandRow("glow", "롬앤")),
 				List.of(new ThumbRow("glow", "c1", null, "reels", "skincare", "organic",
 						OffsetDateTime.now(ZoneOffset.UTC), 1000L, 100L, 10L)),
+				List.of(),
 				List.of()).get(0);
 		SimilarInfluencers value = new SimilarInfluencers(List.of(card));
 
