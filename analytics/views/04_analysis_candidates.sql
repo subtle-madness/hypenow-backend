@@ -73,7 +73,22 @@ JOIN analytics.v_base_detail    d USING (content_id)
 JOIN analytics.v_pinned_metrics m USING (content_id)
 LEFT JOIN analytics.v_base_profile pr ON pr.username = p.owner_username;
 
-CREATE OR REPLACE VIEW analytics.v_analysis_candidates AS
+-- 파트 A(사실 추출) 입구 뷰 (2026-09-03 2단계 분리 설계 §4-1).
+-- 파트 A는 캡션(+유료 파트너십 태그)만 의존하므로 성숙(제때창 완전 경과)을 기다릴 이유가 없다.
+-- 구조는 구 v_analysis_candidates와 같다: 배리어(OFFSET 0) 안쪽에서 캡션 가드와
+-- timely·in_window·mature를 확정하고, OR 조건은 배리어 밖에서 적용한다.
+-- 달라진 점은 둘뿐이다.
+--   ① 성숙 가드를 안쪽 WHERE에서 mature 컬럼으로 승격 (식은 동일: 업로드일 + pin + slack <= 오늘 KST)
+--   ② 바깥 조건이 `NOT mature OR timely OR in_window`
+-- 왜 "성숙 무관 전량"이 아닌가: 성숙했는데 timely도 아니고 최근 N개 윈도우 밖인 게시물은
+-- 현행에서도 영구 제외 대상이다. 여기 열면 운영 백로그(계정당 12개 밖 옛 게시물 수만 건)가
+-- 한 번에 후보가 된다. 신규 게시물은 D+1에 recency_rank=1이라 NOT mature로 잡히므로,
+-- "제때창을 놓쳐 영구 제외되던 게시물"은 이 규칙만으로 전부 파트 A가 채워진다.
+-- 플랜 주의: 미성숙 행에도 timely LATERAL(content_snapshot_cache EXISTS)이 계산된다.
+-- 미성숙 행은 최근 3일치뿐이고 EXISTS는 인덱스 세미조인이라 증분은 작지만, 07-20의 배리어
+-- 회귀 전례가 있으므로 운영 적용 후 EXPLAIN으로 실행 시간을 재확인할 것(기준 ~150ms 대,
+-- 9초대로 튀면 배리어 무력화).
+CREATE OR REPLACE VIEW analytics.v_fact_candidates AS
 SELECT
   short_code,
   content_type,
@@ -87,9 +102,11 @@ SELECT
   comments,
   metric_captured_at,
   timely,
-  -- 인스타 유료 파트너십 태그 — 소스 뷰가 이미 핀 스냅샷에서 들고 있어 그대로 통과시킨다
+  -- 인스타 유료 파트너십 태그 - 소스 뷰가 이미 핀 스냅샷에서 들고 있어 그대로 통과시킨다
   -- (조인 추가 없음 = 플랜 불변). LLM 프롬프트에 확정 사실로 싣는 용도.
-  ad_marked
+  ad_marked,
+  -- 성숙(제때창 완전 경과) 여부. 파트 B 입구(v_analysis_candidates)가 이 컬럼으로 걸러진다.
+  mature
 FROM (
   SELECT
     v.short_code,
@@ -108,15 +125,22 @@ FROM (
     -- 최근 N개 윈도우 포함 여부도 배리어 안에서 미리 계산해 바깥 OR과 분리한다.
     -- 08-31: 01 뷰(뷰티 게이트) 위임 → 소스 뷰의 recency_rank 비교로 교체.
     (v.recency_rank <= COALESCE(
-       (SELECT value::int FROM app_setting WHERE key = 'analytics.recent-window'), 12)) AS in_window
+       (SELECT value::int FROM app_setting WHERE key = 'analytics.recent-window'), 12)) AS in_window,
+    -- 성숙: 제때창이 완전히 지난 날인가 (업로드일 + pin + slack <= 오늘 KST).
+    -- 09-03 이전엔 이 식이 안쪽 WHERE였다. 컬럼으로 승격했을 뿐 식은 한 글자도 바뀌지 않았다 -
+    -- 파트 B 입구가 `WHERE mature`로 이 조건을 그대로 다시 걸어 현행과 동치를 유지한다.
+    ((v.posted_at AT TIME ZONE 'Asia/Seoul')::date
+       + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
+       + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.analyze-timely-slack-days'), 1)
+     <= (now() AT TIME ZONE 'Asia/Seoul')::date) AS mature
   FROM analytics.v_analysis_source v
   CROSS JOIN LATERAL (
     SELECT EXISTS (
       -- 캡처 캘린더일(KST)이 [업로드일+pin, 업로드일+pin+slack)에 드는 usable 스냅샷이 있는가.
       -- 성능: captured_at을 행마다 date로 변환하지 않고, 캘린더일 경계를 KST 자정 timestamptz로
-      -- 계산해 captured_at을 그대로 범위 비교한다(sargable — 세미조인 플랜 유지, 스냅샷 뷰 1회 계산).
+      -- 계산해 captured_at을 그대로 범위 비교한다(sargable - 세미조인 플랜 유지, 스냅샷 뷰 1회 계산).
       -- 캡처가 KST일 X에 든다 ⟺ [KST자정(X), KST자정(X+1)) 이므로 결과는 날짜 변환과 완전 동치.
-      -- 08-31: 구 버전은 content_id를 얻으려 v_serving_content(뷰티 게이트)를 조인했다 —
+      -- 08-31: 구 버전은 content_id를 얻으려 v_serving_content(뷰티 게이트)를 조인했다 -
       -- 그대로 두면 F&B는 timely가 영원히 false다. 소스 뷰가 content_id를 직접 들고 있어 조인이 없어졌다.
       SELECT 1
       FROM analytics.content_snapshot_cache s
@@ -133,17 +157,38 @@ FROM (
     ) AS timely
   ) t
   WHERE v.caption IS NOT NULL AND btrim(v.caption) <> ''
-    -- 성숙: 제때창이 완전히 지난 날만 (업로드일 + pin + slack <= 오늘 KST) — 백필 경로도 동일 적용
-    AND (v.posted_at AT TIME ZONE 'Asia/Seoul')::date
-          + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.metric-pin-days'), 3)
-          + COALESCE((SELECT value::int FROM app_setting WHERE key = 'analytics.analyze-timely-slack-days'), 1)
-        <= (now() AT TIME ZONE 'Asia/Seoul')::date
   -- 최적화 배리어: OFFSET 0은 실제로 행을 건너뛰지 않지만(0개), 플래너가 이 서브쿼리 경계를 넘어
-  -- 바깥 WHERE(timely OR in_window)를 안쪽 스캔까지 밀어넣지 못하게 막는다(PG 관용구).
-  -- ⚠️ 비공식 동작(언어 계약 아님) — CTE 기본 인라인화(PG12) 전례처럼 무력화될 수 있으니
+  -- 바깥 WHERE를 안쪽 스캔까지 밀어넣지 못하게 막는다(PG 관용구).
+  -- 비공식 동작(언어 계약 아님) - CTE 기본 인라인화(PG12) 전례처럼 무력화될 수 있으니
   -- PG 메이저 업그레이드 시 EXPLAIN으로 배리어 유효성 재확인할 것.
   OFFSET 0
 ) candidates
-WHERE timely
-  -- 늦크롤 백필: 최근 N개 윈도우(01 뷰) 안이면 포함 — 지표는 핀(v_contents) 그대로, 마킹은 소비자가
-  OR in_window;
+-- 미성숙(창이 아직 안 닫힘) 신규분 + 제때 크롤분 + 늦크롤이지만 최근 N개 윈도우 안.
+-- 나머지(성숙 ∧ 늦크롤 ∧ 윈도우 밖)는 현행과 같이 영구 제외다.
+WHERE NOT mature
+   OR timely
+   OR in_window;
+
+-- 파트 B(해석) 입구 뷰 - 09-03 이전의 v_analysis_candidates와 컬럼·행 집합·timely 의미가
+-- 정확히 동치다. `NOT mature OR timely OR in_window` ∧ `mature` = `mature ∧ (timely OR in_window)`
+-- 이므로 구 정의(성숙 WHERE + 바깥 timely OR in_window)와 같은 집합이다.
+-- 뷰를 둘로 나눈 이유: mature 컬럼만 추가하고 소비자가 각자 `AND mature`를 붙이게 하면
+-- 기존 소비자 3곳(잡·check/pending.sh·어드민 퍼널) 중 하나만 빠뜨려도 미성숙 행이 파트 B
+-- 후보로 새어 07-28 계열(수식 이원화) 사고가 재현된다. 이름의 의미를 뷰가 고정한다.
+CREATE OR REPLACE VIEW analytics.v_analysis_candidates AS
+SELECT
+  short_code,
+  content_type,
+  account_handle,
+  uploaded_at,
+  caption,
+  thumbnail_url,
+  followers,
+  views,
+  likes,
+  comments,
+  metric_captured_at,
+  timely,
+  ad_marked
+FROM analytics.v_fact_candidates
+WHERE mature;

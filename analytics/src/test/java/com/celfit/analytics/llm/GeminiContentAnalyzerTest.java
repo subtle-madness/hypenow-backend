@@ -1,6 +1,7 @@
 package com.celfit.analytics.llm;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -195,5 +196,95 @@ class GeminiContentAnalyzerTest {
 		// propertyOrdering 배열 안에서 isBeauty가 mainCategory보다 앞서 생성되는지(눈속임 방지: 구간 스코프)
 		String ordering = schema.substring(schema.indexOf("propertyOrdering"));
 		assertTrue(ordering.indexOf("\"isRelevant\"") < ordering.indexOf("\"mainCategory\""));
+	}
+
+	static final String FACTS_RESPONSE = """
+			{"detectedBrands":[{"name":"브랜드A","evidence":"캡션 언급"}],
+			 "sponsoredSignalLevel":"high","sponsoredSignalReasons":["#협찬"],
+			 "adDisclosure":"표기 있음","detectedProductCategories":["클렌징폼"],
+			 "detectedProducts":[{"name":"딥클렌징폼","brand":null}],
+			 "vlmAttributes":[],"isRelevant":true,"mainCategory":"cleansing",
+			 "subCategories":["클렌징폼/젤","클렌징폼"],
+			 "detectedDistributors":["올리브영"],"adType":"sponsored"}""";
+
+	/** 파트 A 스키마에는 해석 5필드가 없어야 한다 - 있으면 배치가 해석까지 만들어 D+1에 미성숙 수치를 인용한다. */
+	@Test
+	void 사실_스키마에는_파트B_5필드가_없다() {
+		String schema = GeminiContentAnalyzer.RESPONSE_SCHEMA_FACTS;
+
+		assertTrue(schema.contains("\"detectedBrands\""));
+		assertTrue(schema.contains("\"isRelevant\""));
+		assertTrue(schema.contains("\"adType\""));
+		assertFalse(schema.contains("aiContentSummary"));
+		assertFalse(schema.contains("contentsPattern"));
+		assertFalse(schema.contains("aiCommentInsight"));
+		assertFalse(schema.contains("commentAuthenticityGrade"));
+		assertFalse(schema.contains("commentAuthenticityNote"));
+	}
+
+	/** 파트 A 유저 텍스트에는 지표·기준선·댓글 분포 줄이 없어야 한다(성숙 대기 이유가 이 세 줄이다). */
+	@Test
+	void 사실_유저텍스트에는_지표_기준선_댓글분포_줄이_없다() {
+		String user = GeminiContentAnalyzer.userTextFacts(content("reels", true));
+
+		assertTrue(user.contains("캡션A"));
+		assertTrue(user.contains("인스타 유료 파트너십 태그: 있음"));
+		assertFalse(user.contains("지표:"));
+		assertFalse(user.contains("계정 기준선:"));
+		assertFalse(user.contains("댓글 분류 분포:"));
+	}
+
+	/**
+	 * Vertex 배치 출력에는 key가 없어 GeminiBatchLines가 에코된 유저 텍스트 첫 줄
+	 * "콘텐츠: {shortCode} (" 에서 short_code를 복원한다. 파트 A 텍스트도 이 형식을 지켜야 한다.
+	 */
+	@Test
+	void 사실_유저텍스트_첫줄은_에코_복원_형식을_지킨다() {
+		String user = GeminiContentAnalyzer.userTextFacts(content("reels", true));
+
+		assertTrue(user.startsWith("콘텐츠: post_a (@acct1, reels)"), user);
+	}
+
+	/** 파트 A 지시문에는 파트 B 규칙이 없고, 파트 A 규칙·분류표는 통합과 같은 문장을 공유한다. */
+	@Test
+	void 사실_지시문은_파트B_규칙을_빼고_파트A_규칙과_분류표는_공유한다() {
+		String facts = GeminiContentAnalyzer.factsInstructions(taxonomy);
+		String unified = GeminiContentAnalyzer.instructions(taxonomy);
+
+		assertFalse(facts.contains("파트 B"), facts);
+		assertFalse(facts.contains("aiContentSummary"), facts);
+		assertTrue(facts.contains("detectedBrands"));
+		assertTrue(facts.contains("fnb 축으로 분류하라"));
+		assertTrue(facts.contains("공동구매(공구)"));
+		assertTrue(facts.contains("클렌징폼/젤")); // 분류표
+		// 파트 A 규칙 본문은 복제가 아니라 공유여야 한다 - 통합 프롬프트가 같은 문장을 담는다
+		assertTrue(unified.contains(GeminiContentAnalyzer.FACTS_RULES
+				.formatted(taxonomy.distributorsPrompt())));
+	}
+
+	/** 파트 A 파서는 속성만 돌려주고 sanitize(어휘 밖 제거·축 파생 is_beauty)를 통합과 공유한다. */
+	@Test
+	void parseFacts는_속성만_돌려주고_sanitize를_적용한다() {
+		ContentAttributes attrs = GeminiContentAnalyzer.parseFacts(
+				new tools.jackson.databind.ObjectMapper(), FACTS_RESPONSE, taxonomy);
+
+		assertEquals("브랜드A", attrs.detectedBrands().get(0).name());
+		assertEquals("cleansing", attrs.mainCategory());
+		assertEquals(Boolean.TRUE, attrs.isRelevant());
+		assertEquals(Boolean.TRUE, attrs.isBeauty()); // cleansing의 축이 beauty
+		assertEquals(List.of("올리브영"), attrs.detectedDistributors());
+	}
+
+	/** 포트로 호출하면 파트 A 스키마·프롬프트로 1콜이 나간다(온라인 폴백 경로). */
+	@Test
+	void extractFacts는_파트A_스키마로_1콜을_보낸다() {
+		ContentFactsPort port = new GeminiContentAnalyzer(fakeApi(FACTS_RESPONSE), () -> "m", () -> taxonomy);
+
+		ContentAttributes attrs = port.extractFacts(content("reels", true), null);
+
+		assertEquals(1, calls.size());
+		assertFalse(calls.get(0).schema().contains("aiContentSummary"));
+		assertFalse(calls.get(0).user().contains("계정 기준선:"));
+		assertEquals("cleansing", attrs.mainCategory());
 	}
 }
