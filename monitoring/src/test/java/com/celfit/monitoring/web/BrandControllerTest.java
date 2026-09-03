@@ -14,6 +14,7 @@ import com.celfit.instagram.source.PostShapeUnsupportedException;
 import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.service.BrandDirectCollectService;
+import com.celfit.monitoring.service.BrandHashtagSuggestionService;
 import com.celfit.monitoring.service.BrandRegistrationService;
 import com.celfit.monitoring.service.ValidationException;
 import com.celfit.monitoring.store.BrandHashtagRepository;
@@ -180,6 +181,24 @@ class BrandControllerTest {
 		}
 	}
 
+	/** 제안 계산 스텁(2026-09-03 자동 시드 재설계) — 판정은 BrandHashtagSuggestionServiceTest가 본다. */
+	private static final class StubSuggestion extends BrandHashtagSuggestionService {
+		Suggestion result = new Suggestion("FREQ", "닥피", 12, 40);
+		Long receivedBrandId;
+		String receivedUsername;
+
+		StubSuggestion() {
+			super(null, null, null, null, null);
+		}
+
+		@Override
+		public Suggestion suggest(long brandId, String username) {
+			receivedBrandId = brandId;
+			receivedUsername = username;
+			return result;
+		}
+	}
+
 	/** 태그 저장 스텁 — 조회 목록 주입 + 교체·추가·삭제 호출 인자 캡처. */
 	private static final class StubHashtagRepository extends BrandHashtagRepository {
 		List<String> tags = List.of();
@@ -236,12 +255,13 @@ class BrandControllerTest {
 	private final StubTaggedPosts taggedPosts = new StubTaggedPosts();
 	private final StubDirectCollect directCollect = new StubDirectCollect();
 	private final StubLegacyHistoryCopier legacyHistoryCopier = new StubLegacyHistoryCopier();
+	private final StubSuggestion suggestion = new StubSuggestion();
 	private MockMvc mvc;
 
 	@BeforeEach
 	void setUp() {
 		mvc = MockMvcBuilders.standaloneSetup(new BrandController(service, brands, hashtags, taggedPosts,
-						directCollect, legacyHistoryCopier))
+						directCollect, legacyHistoryCopier, suggestion))
 				.setControllerAdvice(new ApiExceptionHandler())
 				.build();
 	}
@@ -784,6 +804,40 @@ class BrandControllerTest {
 				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 		mvc.perform(put("/api/brands/brandx/hashtag-tags").contentType(MediaType.APPLICATION_JSON)
 						.content("{\"tags\":[\"a\"]}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+	}
+
+	// ---------- 해시태그 제안(2026-09-03 자동 시드 재설계 §3-1) ----------
+
+	@Test
+	void 해시태그_제안은_계산_결과를_그대로_돌려준다() throws Exception {
+		brands.row = new BrandRow(7L, "brandx", "1", BrandStatus.ACTIVE, null, 12, true);
+		suggestion.result = new BrandHashtagSuggestionService.Suggestion("AI", "닥터피엘", 3, 40);
+
+		mvc.perform(get("/api/brands/brandx/hashtag-suggestion"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.path").value("AI"))
+				.andExpect(jsonPath("$.tag").value("닥터피엘"))
+				.andExpect(jsonPath("$.topCount").value(3))
+				.andExpect(jsonPath("$.candidatePosts").value(40));
+
+		assertThat(suggestion.receivedBrandId).isEqualTo(7L);
+		assertThat(suggestion.receivedUsername).isEqualTo("brandx");
+	}
+
+	@Test
+	void 미등록_브랜드의_제안은_404다() throws Exception {
+		mvc.perform(get("/api/brands/nobody/hashtag-suggestion"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
+	}
+
+	@Test
+	void 비ACTIVE_브랜드의_제안은_404다() throws Exception {
+		brands.row = new BrandRow(8L, "closed", "1", BrandStatus.CLOSED, null, 12, true);
+
+		mvc.perform(get("/api/brands/closed/hashtag-suggestion"))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 	}

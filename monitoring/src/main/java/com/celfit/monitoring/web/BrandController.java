@@ -6,6 +6,7 @@ import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.domain.BrandStatus;
 import com.celfit.monitoring.service.BrandDirectCollectService;
 import com.celfit.monitoring.service.BrandHashtagRunStateResolver;
+import com.celfit.monitoring.service.BrandHashtagSuggestionService;
 import com.celfit.monitoring.service.BrandHashtagTags;
 import com.celfit.monitoring.service.BrandRegistrationService;
 import com.celfit.monitoring.service.ValidationException;
@@ -109,16 +110,20 @@ public class BrandController {
 	private final TaggedPostRepository taggedPosts;
 	private final BrandDirectCollectService directCollect;
 	private final BrandLegacyHistoryCopier legacyHistoryCopier;
+	/** 해시태그 제안 계산(2026-09-03 자동 시드 재설계 §3) — 쓰기 없음, 순수 계산. */
+	private final BrandHashtagSuggestionService suggestions;
 
 	public BrandController(BrandRegistrationService service, BrandRepository brands,
 			BrandHashtagRepository hashtags, TaggedPostRepository taggedPosts,
-			BrandDirectCollectService directCollect, BrandLegacyHistoryCopier legacyHistoryCopier) {
+			BrandDirectCollectService directCollect, BrandLegacyHistoryCopier legacyHistoryCopier,
+			BrandHashtagSuggestionService suggestions) {
 		this.service = service;
 		this.brands = brands;
 		this.hashtags = hashtags;
 		this.taggedPosts = taggedPosts;
 		this.directCollect = directCollect;
 		this.legacyHistoryCopier = legacyHistoryCopier;
+		this.suggestions = suggestions;
 	}
 
 	@PostMapping
@@ -254,6 +259,24 @@ public class BrandController {
 			return brandNotFound();
 		}
 		return ResponseEntity.ok(new HashtagTagsBody(hashtags.findTags(row.get().id())));
+	}
+
+	/**
+	 * 해시태그 자동 시드 제안(2026-09-03 자동 시드 재설계 §3-1) — 이 브랜드에 심을 태그 1개를
+	 * <b>계산해서 돌려주기만</b> 한다. monitoring은 {@code brand_hashtag}에 아무것도 쓰지 않는다
+	 * (08-28 "태그 생성 권한 was 일원화" 유지) — 저장·중복 방지·사용자 장부 반영은 전부 was 몫이다.
+	 *
+	 * <p>{@code tag}는 항상 비어 있지 않다(FREQ → AI → FALLBACK 3단). 상태를 저장하지 않고 AI가
+	 * temperature 0이라 같은 입력엔 같은 답이 나온다. <b>백필 완료 여부는 검사하지 않는다</b> —
+	 * 호출 시점 게이트는 was 책임이다(§4-2). 브랜드 미존재·비ACTIVE는 404(태그 GET과 동형).
+	 */
+	@GetMapping("/{username}/hashtag-suggestion")
+	public ResponseEntity<?> hashtagSuggestion(@PathVariable String username) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		return ResponseEntity.ok(suggestions.suggest(row.get().id(), row.get().username()));
 	}
 
 	/**
