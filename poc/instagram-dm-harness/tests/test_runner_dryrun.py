@@ -146,3 +146,68 @@ def test_dryrun_kill_switch_stops(tmp_path):
     r.run()
     assert client.sent == []              # 킬 스위치가 있으면 아무 발송 안 함
     assert r.fleet_stopped is True
+
+
+def test_dryrun_rate_limit_caps_sends_within_hour():
+    from datetime import datetime, timezone
+    cfg = _config()
+    cfg.params.max_sends_per_hour = 2
+    client = DryRunClient()
+    # 10초 간격으로 여러 틱 — 전부 같은 1시간 창 안 → 2건까지만 발송
+    clock = FakeClock(datetime(2026, 9, 4, 3, 0, tzinfo=timezone.utc), step_seconds=10.0)
+    r = _runner(cfg, client, clock, max_actions=10)
+    r.run()
+    assert r.ledger.cumulative_sends("s1") == 2  # 상한에서 막힘
+
+
+def test_dryrun_jitter_sleep_called_after_send():
+    calls = []
+    cfg = _config()
+    cfg.params.jitter_min_seconds = 60
+    cfg.params.jitter_max_seconds = 300
+    client = DryRunClient()
+    r = Runner(
+        config=cfg, ledger=Ledger(cfg.ledger_path), client=client,
+        clock_dt=_active_clock().now_dt, clock_ts=_active_clock().now_ts,
+        advance=lambda: None, sleep=lambda s: calls.append(s),
+        rng=random.Random(0), max_actions=1,
+    )
+    r.run()
+    # 발송 후 지터 sleep이 [min,max] 범위 값으로 호출됨
+    assert any(60 <= c <= 300 for c in calls), f"지터 sleep 미호출: {calls}"
+
+
+def test_dryrun_kill_switch_mid_tick_blocks_remaining_accounts(tmp_path):
+    cfg = _config(senders=[
+        SenderAccount("s1", "sender_one", "p", "phone", "send", "exit_1"),
+        SenderAccount("s2", "sender_two", "p", "phone", "send", "exit_2"),
+    ])
+    kill = tmp_path / "KILL"
+    cfg.kill_switch_path = str(kill)
+
+    class KillOnFirstSend(DryRunClient):
+        def send_dm(self, a, rcp, t):
+            res = super().send_dm(a, rcp, t)
+            kill.write_text("stop")  # s1 발송 직후 킬 투입
+            return res
+
+    client = KillOnFirstSend()
+    r = _runner(cfg, client, _active_clock(), max_actions=10)
+    r.run()
+    assert len(client.sent) == 1        # s1만 발송, s2는 계정 단위 킬 확인으로 차단
+    assert r.fleet_stopped is True
+
+
+def test_dryrun_repeated_login_required_kills_control():
+    cfg = _config(senders=[
+        SenderAccount("c1", "control_one", "p", "phone", "control", "exit_1"),
+    ])
+    cfg.params.non_dm_ratio = 1.0
+    client = DryRunClient(non_dm_scripted={
+        ("c1", 1): RawSignal(exc_name="LoginRequired"),
+        ("c1", 2): RawSignal(exc_name="LoginRequired"),
+    })
+    r = _runner(cfg, client, _active_clock(), max_actions=10)
+    r.run()
+    dist = r.ledger.death_cause_distribution()
+    assert dist.get("LoginRequired") == 1  # 대조군도 반복 LoginRequired면 死

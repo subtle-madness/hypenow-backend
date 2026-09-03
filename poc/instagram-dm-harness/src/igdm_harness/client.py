@@ -28,14 +28,20 @@ class Client(Protocol):
 
 
 class DryRunClient:
-    """실발송 0. 호출만 기록. scripted로 특정 (account, nth_send)에 신호 주입."""
+    """실발송 0. 호출만 기록. scripted/non_dm_scripted로 특정 (account, nth)에 신호 주입."""
 
-    def __init__(self, scripted: Optional[Dict[Tuple[str, int], RawSignal]] = None) -> None:
+    def __init__(
+        self,
+        scripted: Optional[Dict[Tuple[str, int], RawSignal]] = None,
+        non_dm_scripted: Optional[Dict[Tuple[str, int], RawSignal]] = None,
+    ) -> None:
         self.scripted = scripted or {}
+        self.non_dm_scripted = non_dm_scripted or {}
         self.sent: list[Tuple[str, str, str]] = []
         self.non_dm_calls: list[str] = []
         self.sessions: list[str] = []
         self._send_counts: Dict[str, int] = {}
+        self._non_dm_counts: Dict[str, int] = {}
 
     def ensure_session(self, account_alias: str, device_profile: Dict, proxy_url: Optional[str]) -> None:
         self.sessions.append(account_alias)
@@ -50,7 +56,12 @@ class DryRunClient:
         return ActionResult(ok=True, signal=None, raw_response="dryrun-ok")
 
     def do_non_dm(self, account_alias: str) -> ActionResult:
+        n = self._non_dm_counts.get(account_alias, 0) + 1
+        self._non_dm_counts[account_alias] = n
         self.non_dm_calls.append(account_alias)
+        sig = self.non_dm_scripted.get((account_alias, n))
+        if sig is not None:
+            return ActionResult(ok=False, signal=sig, raw_response=f"dryrun-nondm-scripted:{sig.exc_name}")
         return ActionResult(ok=True, signal=None, raw_response="dryrun-nondm")
 
     def check_delivery(self, dummy_username: str, from_username: str, text: str) -> DeliveryStatus:
