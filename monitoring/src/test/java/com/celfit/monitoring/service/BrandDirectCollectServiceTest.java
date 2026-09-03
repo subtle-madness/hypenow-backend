@@ -618,19 +618,19 @@ class BrandDirectCollectServiceTest {
 		assertThat(tagged.enriched).containsExactly("Alive");
 	}
 
-	// ── unenumeratedBusy 동시 실행 가드(2026-08-28 리뷰 지적) ───────────────────
+	// ── busyBrands 동시 실행 가드(2026-08-28 리뷰 지적 → 2026-09-03 브랜드 키화) ───────
 
 	/**
-	 * sweepUnenumerated(야간 스윕 2단계)가 처리 중일 때 기동 백필이 같은 게시물을 겹쳐 Hiker에
-	 * 이중 과금하지 않도록, 겹침이면 backfillUnenriched는 즉시 0을 반환하고 콜을 내지 않는다.
-	 * 실제 스레드 경합 대신 package-private 필드로 겹침 상태를 결정적으로 주입한다.
+	 * sweepUnenumerated(야간 스윕 2단계)가 <b>같은 브랜드</b>를 처리 중일 때 기동 백필이 같은 게시물을
+	 * 겹쳐 Hiker에 이중 과금하지 않도록, 겹침이면 backfillUnenriched는 즉시 0을 반환하고 콜을 내지
+	 * 않는다. 실제 스레드 경합 대신 package-private 집합으로 겹침 상태를 결정적으로 주입한다.
 	 */
 	@Test
-	void 겹침_상태에서는_backfillUnenriched가_콜_없이_0을_반환한다() {
+	void 같은_브랜드가_겹치면_backfillUnenriched가_콜_없이_0을_반환한다() {
 		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("Busy", Instant.ofEpochSecond(RECENT), null));
 		postResponses.put("Busy", postJson("Busy", RECENT, 403));
 		BrandDirectCollectService svc = service();
-		svc.unenumeratedBusy.set(true);   // sweepUnenumerated가 다른 브랜드를 처리 중이라고 가정
+		svc.busyBrands.add(brand.id());   // sweepUnenumerated가 이 브랜드를 처리 중이라고 가정
 
 		int backfilled = svc.backfillUnenriched(brand);
 
@@ -639,7 +639,25 @@ class BrandDirectCollectServiceTest {
 		assertThat(tagged.enriched).isEmpty();
 	}
 
-	/** 겹침이 없으면(플래그 false) 평소대로 동작 — 가드가 정상 경로를 막지 않는다는 회귀 방지. */
+	/**
+	 * 브랜드 스윕 병렬화(2026-09-03) 전제 — 가드는 브랜드 단위다. 다른 브랜드가 처리 중이어도 이
+	 * 브랜드는 평소대로 돈다(구 전역 AtomicBoolean은 병렬 스윕에서 서로의 2단계를 매일 건너뛰게 했다).
+	 */
+	@Test
+	void 다른_브랜드가_처리_중이어도_이_브랜드는_막히지_않는다() {
+		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("Free", Instant.ofEpochSecond(RECENT), null));
+		postResponses.put("Free", postJson("Free", RECENT, 404));
+		BrandDirectCollectService svc = service();
+		svc.busyBrands.add(99L);   // 다른 브랜드(id 99)가 병렬 스윕 중
+
+		int backfilled = svc.backfillUnenriched(brand);
+
+		assertThat(backfilled).isEqualTo(1);
+		assertThat(tagged.enriched).containsExactly("Free");
+		assertThat(svc.busyBrands).containsExactly(99L);   // 이 브랜드 것만 해제, 남의 것은 건드리지 않는다
+	}
+
+	/** 겹침이 없으면 평소대로 동작하고 처리 후 해제된다 — 가드가 정상 경로를 막지 않는다는 회귀 방지. */
 	@Test
 	void 겹침이_없으면_backfillUnenriched는_평소대로_동작한다() {
 		tagged.unenrichedDue.add(new TaggedPostRepository.TrackedPost("Free", Instant.ofEpochSecond(RECENT), null));
@@ -650,6 +668,6 @@ class BrandDirectCollectServiceTest {
 
 		assertThat(backfilled).isEqualTo(1);
 		assertThat(tagged.enriched).containsExactly("Free");
-		assertThat(svc.unenumeratedBusy.get()).isFalse();   // 처리 후 해제됨 — 다음 호출을 막지 않는다
+		assertThat(svc.busyBrands).isEmpty();   // 처리 후 해제됨 — 다음 호출을 막지 않는다
 	}
 }
