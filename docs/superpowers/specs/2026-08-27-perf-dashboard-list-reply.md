@@ -3,8 +3,8 @@
 > 상태: 🟢 활성 · 작성 2026-08-27 / 작성자 백엔드 / 수신 프론트엔드
 >
 > 원 요청: FE 개선요청 "성과 대시보드 목록 API 페이로드 + 탭별 전용 엔드포인트" (2026-08-27)
-> 설계: [2026-08-27 목록 API 최적화 설계](2026-08-27-perf-dashboard-list-api-optimization-design.md)
-> 선행: [2026-08-12 고정 지연 회신](2026-08-12-perf-dashboard-fixed-latency-reply.md)(슬림 조립)
+> 설계: [2026-08-27 목록 API 최적화 설계](archive/2026-08-27-perf-dashboard-list-api-optimization-design.md)
+> 선행: [2026-08-12 고정 지연 회신](archive/2026-08-12-perf-dashboard-fixed-latency-reply.md)(슬림 조립)
 
 ## 요약
 

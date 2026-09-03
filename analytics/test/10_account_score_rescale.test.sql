@@ -195,7 +195,7 @@ BEGIN
 
   -- 2) 앵커점 매핑: 기본 앵커 4점이 각각 10·45·80·97로 정확히 잡힌다.
   --    앵커값은 2026-08-17 재적합(댓글 가중 1.5 기준 운영 코퍼스 실측, 스펙
-  --    docs/superpowers/specs/2026-08-17-hype-comment-weight-design.md) —
+  --    docs/superpowers/specs/archive/2026-08-17-hype-comment-weight-design.md) —
   --    구값(1.2417/19.4383/52.2401/74.0179)에서 갱신됨.
   a05 := analytics.hype_account_score_precise(1.3665);
   a50 := analytics.hype_account_score_precise(26.6730);

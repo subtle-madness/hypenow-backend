@@ -4,7 +4,7 @@
 
 **Goal:** `BrandReadRepository`의 대량 행 쿼리 3개를 수동 RowMapper로 교체해 성과 대시보드 조립 8.4초를 ~3.5초로 내린다.
 
-**Architecture:** [설계](../specs/2026-08-31-dashboard-manual-rowmapper-design.md) 참조. `JdbcClient.query(Class)`의 `SimplePropertyRowMapper`(행당 ~47µs, raw JDBC의 20배 실측)를 컬럼명 기반 수동 람다로 바꾼다. SQL·record·메서드 시그니처·소비자 전부 무변경 — 변경 파일은 리포지토리 1개 + 테스트 1개.
+**Architecture:** [설계](../specs/archive/2026-08-31-dashboard-manual-rowmapper-design.md) 참조. `JdbcClient.query(Class)`의 `SimplePropertyRowMapper`(행당 ~47µs, raw JDBC의 20배 실측)를 컬럼명 기반 수동 람다로 바꾼다. SQL·record·메서드 시그니처·소비자 전부 무변경 — 변경 파일은 리포지토리 1개 + 테스트 1개.
 
 **Tech Stack:** Java 21, Spring Boot 4.1(`JdbcClient`), Testcontainers(PostgreSQL).
 
@@ -194,7 +194,7 @@ git commit -m "feat(was): findLatestSnapshotsForBrand·findAuthors 수동 RowMap
 
 **Files:**
 - Move: `docs/superpowers/plans/2026-08-31-dashboard-manual-rowmapper.md` → `docs/superpowers/plans/archive/`
-- Modify: `docs/superpowers/specs/2026-08-31-dashboard-manual-rowmapper-design.md` (상태 헤더 🟢 활성 → ✅ 구현됨)
+- Modify: `docs/superpowers/specs/archive/2026-08-31-dashboard-manual-rowmapper-design.md` (상태 헤더 🟢 활성 → ✅ 구현됨)
 
 **Interfaces:** 없음(검증·문서·PR)
 
@@ -206,9 +206,9 @@ Expected: PASS 전체. 실패가 있으면 원인 파악 전엔 다음 단계로
 - [ ] **Step 2: 스펙 상태 갱신 + 계획 아카이브**
 
 ```bash
-sed -i '' 's/> 상태: 🟢 활성 (2026-08-31 작성)/> 상태: ✅ 구현됨 (2026-08-31 작성·구현)/' docs/superpowers/specs/2026-08-31-dashboard-manual-rowmapper-design.md
+sed -i '' 's/> 상태: 🟢 활성 (2026-08-31 작성)/> 상태: ✅ 구현됨 (2026-08-31 작성·구현)/' docs/superpowers/specs/archive/2026-08-31-dashboard-manual-rowmapper-design.md
 git mv docs/superpowers/plans/2026-08-31-dashboard-manual-rowmapper.md docs/superpowers/plans/archive/
-git add docs/superpowers/specs/2026-08-31-dashboard-manual-rowmapper-design.md
+git add docs/superpowers/specs/archive/2026-08-31-dashboard-manual-rowmapper-design.md
 git commit -m "docs: 수동 RowMapper 응급 구현 완료 — 스펙 상태 갱신·계획 아카이브"
 ```
 
@@ -220,7 +220,7 @@ gh pr create --base develop --title "feat(was): 대시보드 대량 행 쿼리 3
 ## 무엇
 `BrandReadRepository`의 `findBrandPostIndex`·`findLatestSnapshotsForBrand`·`findAuthors`를 `query(Class)` → 컬럼명 기반 수동 람다 매퍼로 교체. SQL·record·시그니처·소비자 무변경.
 
-## 왜 (실측 — [설계 §1](docs/superpowers/specs/2026-08-31-dashboard-manual-rowmapper-design.md))
+## 왜 (실측 — [설계 §1](docs/superpowers/specs/archive/2026-08-31-dashboard-manual-rowmapper-design.md))
 성과 대시보드 조립 8.4초의 71%(~5.4s)가 `SimplePropertyRowMapper`의 행 매핑이다 — 행마다 camelCase `findColumn` 실패 예외(요청당 ~43만 개)·값당 ConversionService·리플렉션 생성으로 raw JDBC의 **20배**(로컬 47µs/행 vs 2µs/행). 커넥션 풀 대기(같은 요청 `findAccount` 14콜 8ms)·전송(80ms/12MB)·DB 고정비는 배제 확인.
 
 ## 기대 효과 (스테이징 유저 5, 브랜드 7연결 기준)
