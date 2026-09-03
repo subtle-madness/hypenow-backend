@@ -35,12 +35,12 @@ class BrandInfluencerAggregatorTest {
 		// FE summarizeBrandInfluencers — likesKnown = !likesHidden && likes !== null
 		List<BrandInfluencerResponse> rows = BrandInfluencerAggregator.summarize(List.of(
 				new InfluencerPost("A1", "ella", "엘라", "pic1", 1_000L, "2026-08-20T10:00:00", true,
-						null, 100L, false, 10L),
+						null, 100L, false, 10L, "ella"),
 				new InfluencerPost("A2", "ella", "엘라", "pic1", 1_000L, "2026-08-21T10:00:00", false,
-						500L, 50L, false, 5L),
+						500L, 50L, false, 5L, "ella"),
 				// 좋아요 숨김 — likes 값이 있어도 합산에서 빠지고 likesKnownCount도 안 오른다
 				new InfluencerPost("A3", "ella", "엘라", "pic1", 1_000L, "2026-08-19T10:00:00", true,
-						300L, 777L, true, null)));
+						300L, 777L, true, null, "ella")));
 
 		assertThat(rows).hasSize(1);
 		BrandInfluencerResponse r = rows.get(0);
@@ -53,6 +53,8 @@ class BrandInfluencerAggregatorTest {
 		assertThat(r.sponsoredCount()).isEqualTo(2L);
 		assertThat(r.latestPostAt()).isEqualTo("2026-08-21T10:00:00");
 		assertThat(r.profileUrl()).isEqualTo("https://www.instagram.com/ella/");
+		// influencerId(2026-09-03)는 username 단위 값이라 게시물이 몇 건이든 그대로 실린다.
+		assertThat(r.influencerId()).isEqualTo("ella");
 	}
 
 	@Test
@@ -60,7 +62,7 @@ class BrandInfluencerAggregatorTest {
 		// FE summarizeBrandInfluencers — likesKnown = !likesHidden && post.likes !== null
 		List<BrandInfluencerResponse> rows = BrandInfluencerAggregator.summarize(List.of(
 				new InfluencerPost("A1", "ella", null, null, null, "2026-08-20T10:00:00", false,
-						null, null, false, null)));
+						null, null, false, null, "ella")));
 
 		assertThat(rows.get(0).likes()).isZero();
 		assertThat(rows.get(0).likesKnownCount()).isZero();
@@ -72,11 +74,11 @@ class BrandInfluencerAggregatorTest {
 		// followers만 isNewer && 새 값 != null일 때 교체
 		List<BrandInfluencerResponse> rows = BrandInfluencerAggregator.summarize(List.of(
 				new InfluencerPost("A1", "ella", "옛이름", "old.jpg", 1_000L, "2026-08-19T10:00:00",
-						false, null, 10L, false, 1L),
+						false, null, 10L, false, 1L, "ella"),
 				new InfluencerPost("A2", "ella", null, null, null, "2026-08-25T10:00:00",
-						false, null, 20L, false, 2L),
+						false, null, 20L, false, 2L, "ella"),
 				new InfluencerPost("A3", "ella", "중간이름", "mid.jpg", 2_000L, "2026-08-22T10:00:00",
-						false, null, 30L, false, 3L)));
+						false, null, 30L, false, 3L, "ella")));
 
 		BrandInfluencerResponse r = rows.get(0);
 		assertThat(r.fullName()).isNull(); // 최신(A2) 값이 null이어도 교체 — FE와 동일
@@ -89,9 +91,9 @@ class BrandInfluencerAggregatorTest {
 	void 팔로워는_최신_게시물_값으로_교체된다() {
 		List<BrandInfluencerResponse> rows = BrandInfluencerAggregator.summarize(List.of(
 				new InfluencerPost("A1", "ella", "옛이름", "old.jpg", 1_000L, "2026-08-19T10:00:00",
-						false, null, 10L, false, 1L),
+						false, null, 10L, false, 1L, "ella"),
 				new InfluencerPost("A2", "ella", "새이름", "new.jpg", 3_000L, "2026-08-25T10:00:00",
-						false, null, 20L, false, 2L)));
+						false, null, 20L, false, 2L, "ella")));
 
 		BrandInfluencerResponse r = rows.get(0);
 		assertThat(r.followers()).isEqualTo(3_000L);
@@ -104,9 +106,9 @@ class BrandInfluencerAggregatorTest {
 		// 서버 한정 방어 — FE는 authorUsername이 항상 문자열이라 이 분기가 없다
 		List<BrandInfluencerResponse> rows = BrandInfluencerAggregator.summarize(List.of(
 				new InfluencerPost("A1", null, "이름", null, 100L, "2026-08-20T10:00:00", false,
-						null, 10L, false, 1L),
+						null, 10L, false, 1L, null),
 				new InfluencerPost("A2", "  ", "이름", null, 100L, "2026-08-20T10:00:00", false,
-						null, 10L, false, 1L),
+						null, 10L, false, 1L, null),
 				post("A3", "ella", "2026-08-20T10:00:00", 10L)));
 
 		assertThat(rows).extracting(BrandInfluencerResponse::username).containsExactly("ella");
@@ -123,6 +125,17 @@ class BrandInfluencerAggregatorTest {
 
 		assertThat(rows).extracting(BrandInfluencerResponse::username)
 				.containsExactly("zoe", "amy", "bob");
+	}
+
+	// ---------- influencerId(2026-09-03, 브랜드 모니터링 저장 연동) ----------
+
+	@Test
+	void influencerId는_발굴에_없으면_null로_그대로_전달된다() {
+		List<BrandInfluencerResponse> rows = BrandInfluencerAggregator.summarize(List.of(
+				new InfluencerPost("A1", "unknown_user", "미지의 사용자", null, 100L,
+						"2026-08-20T10:00:00", false, null, 10L, false, 1L, null)));
+
+		assertThat(rows).singleElement().satisfies(r -> assertThat(r.influencerId()).isNull());
 	}
 
 	// ---------- sort (FE sortBrandInfluencers) ----------
@@ -243,7 +256,7 @@ class BrandInfluencerAggregatorTest {
 	void matchesKeyword는_trim_소문자_부분일치() {
 		// FE filterBrandInfluencers
 		BrandInfluencerResponse ella = new BrandInfluencerResponse("ellabeauty", "엘라 뷰티", null,
-				null, 1_000L, 1, 0, 0, 0, 0, 1, "2026-08-20T10:00:00");
+				null, 1_000L, 1, 0, 0, 0, 0, 1, "2026-08-20T10:00:00", "ellabeauty");
 		assertThat(BrandInfluencerAggregator.matchesKeyword(ella, "ella")).isTrue();
 		assertThat(BrandInfluencerAggregator.matchesKeyword(ella, " ELLA ")).isTrue();
 		assertThat(BrandInfluencerAggregator.matchesKeyword(ella, "엘라")).isTrue();
@@ -253,7 +266,7 @@ class BrandInfluencerAggregatorTest {
 
 		// fullName null은 username만 검사(서버 한정 — FE는 항상 문자열)
 		BrandInfluencerResponse noName = new BrandInfluencerResponse("ellabeauty", null, null, null,
-				1_000L, 1, 0, 0, 0, 0, 1, "2026-08-20T10:00:00");
+				1_000L, 1, 0, 0, 0, 0, 1, "2026-08-20T10:00:00", "ellabeauty");
 		assertThat(BrandInfluencerAggregator.matchesKeyword(noName, "ella")).isTrue();
 		assertThat(BrandInfluencerAggregator.matchesKeyword(noName, "엘라")).isFalse();
 	}
@@ -292,10 +305,11 @@ class BrandInfluencerAggregatorTest {
 
 	// ---------- 픽스처 ----------
 
+	/** influencerId는 기본적으로 username과 같다고 본다(발굴에 있는 흔한 케이스) — null 케이스는 호출부가 직접 구성한다. */
 	private static InfluencerPost post(String shortcode, String username, String takenAtKst,
 			Long likes) {
 		return new InfluencerPost(shortcode, username, username + " 님", "pic.jpg", 1_000L, takenAtKst,
-				false, null, likes, false, 0L);
+				false, null, likes, false, 0L, username);
 	}
 
 	private static BrandInfluencerResponse row(String username, Long followers, long postCount,
@@ -309,7 +323,7 @@ class BrandInfluencerAggregatorTest {
 			long sponsoredCount) {
 		return new BrandInfluencerResponse(username, username + " 님", "pic.jpg",
 				"https://www.instagram.com/" + username + "/", followers, postCount, sponsoredCount,
-				views, likes, comments, likesKnownCount, latestPostAt);
+				views, likes, comments, likesKnownCount, latestPostAt, username);
 	}
 
 	private static BrandInfluencerResponse withFollowers(Long followers) {

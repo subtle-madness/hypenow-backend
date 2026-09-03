@@ -12,6 +12,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -20,12 +21,14 @@ import com.celfit.was.monitoring.BrandPostCampaignRepository;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.v1.common.KstTimestamps;
+import com.celfit.was.v1.influencer.V1InfluencerRepository;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -466,7 +469,7 @@ class BrandPostAssemblerTest {
 
 		var assembler = new BrandPostAssembler(repository, mock(BrandPostCampaignRepository.class),
 				directRepository, mock(TrackingItemAssembler.class), mock(MonitoringItemRepository.class),
-				hashtagTagRepository, false);
+				hashtagTagRepository, mockInfluencerRepository(), false);
 		var index = assembler.indexForBrand(7L, accountRow(), false);
 
 		assertThat(index.refs()).singleElement().satisfies(ref -> {
@@ -535,6 +538,112 @@ class BrandPostAssemblerTest {
 				List.of("AAA"), true);
 		assertThat(withComments).singleElement()
 				.satisfies(post -> assertThat(post.commentsCollectedCount()).isEqualTo(1));
+	}
+
+	// ---------- influencerId(2026-09-03, 브랜드 모니터링 저장 연동) ----------
+
+	/** 발굴 존재(accounts)에 있는 작성자는 그 handle이 influencerId로 채워진다. */
+	@Test
+	void assembleBrandPosts는_발굴에_있는_작성자에게_influencerId를_채운다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true))).willReturn(List.of(taggedRow("AAA")));
+		given(repository.findPostMeta(anyCollection())).willReturn(List.of());
+		given(repository.findSnapshots(anyCollection())).willReturn(List.of());
+		given(repository.findAuthors(anyCollection())).willReturn(List.of());
+		V1InfluencerRepository influencerRepository = mock(V1InfluencerRepository.class);
+		given(influencerRepository.findExistingHandlesByLower(Set.of("glowdeep_92")))
+				.willReturn(Map.of("glowdeep_92", "glowdeep_92"));
+
+		var assembler = new BrandPostAssembler(repository, mock(BrandPostCampaignRepository.class),
+				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
+				mock(MonitoringItemRepository.class), mock(com.celfit.was.monitoring.BrandHashtagTagRepository.class),
+				influencerRepository, false);
+		var posts = assembler.assembleBrandPosts(7L, accountRow(), false,
+				BrandPostAssembler.BrandPostScope.ENRICHED_ONLY, false, BrandAccountType.OWN);
+
+		assertThat(posts).singleElement().satisfies(post -> assertThat(post.influencerId()).isEqualTo("glowdeep_92"));
+	}
+
+	/** 발굴 존재에 없는 작성자는 influencerId가 명시적 null이다(FE 저장 버튼 비활성화 신호). */
+	@Test
+	void assembleBrandPosts는_발굴에_없는_작성자는_influencerId가_null이다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true))).willReturn(List.of(taggedRow("AAA")));
+		given(repository.findPostMeta(anyCollection())).willReturn(List.of());
+		given(repository.findSnapshots(anyCollection())).willReturn(List.of());
+		given(repository.findAuthors(anyCollection())).willReturn(List.of());
+		V1InfluencerRepository influencerRepository = mock(V1InfluencerRepository.class);
+		given(influencerRepository.findExistingHandlesByLower(any())).willReturn(Map.of());
+
+		var assembler = new BrandPostAssembler(repository, mock(BrandPostCampaignRepository.class),
+				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
+				mock(MonitoringItemRepository.class), mock(com.celfit.was.monitoring.BrandHashtagTagRepository.class),
+				influencerRepository, false);
+		var posts = assembler.assembleBrandPosts(7L, accountRow(), false,
+				BrandPostAssembler.BrandPostScope.ENRICHED_ONLY, false, BrandAccountType.OWN);
+
+		assertThat(posts).singleElement().satisfies(post -> assertThat(post.influencerId()).isNull());
+	}
+
+	/**
+	 * 대소문자 정규화 — 관측된 작성자명이 "Some_User"처럼 섞인 케이스라도 소문자로 정규화해 조회하고,
+	 * 반환값은 accounts에 저장된 원본 handle("some_user")이다(원본 handle이라야 상세 조회·저장의
+	 * 정확 일치가 그대로 성공한다).
+	 */
+	@Test
+	void influencerId_판정은_대소문자를_무시하고_원본_handle을_돌려준다() {
+		var repository = mock(BrandReadRepository.class);
+		var mixedCaseRow = new BrandReadRepository.BrandTaggedPostRow("AAA", "Some_User", "9001",
+				OffsetDateTime.parse("2026-08-06T01:00:00Z"), OffsetDateTime.parse("2026-08-06T02:00:00Z"),
+				7L, null, OffsetDateTime.parse("2026-08-06T02:00:00Z"), null, null, null);
+		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(true))).willReturn(List.of(mixedCaseRow));
+		given(repository.findPostMeta(anyCollection())).willReturn(List.of());
+		given(repository.findSnapshots(anyCollection())).willReturn(List.of());
+		given(repository.findAuthors(anyCollection())).willReturn(List.of());
+		V1InfluencerRepository influencerRepository = mock(V1InfluencerRepository.class);
+		given(influencerRepository.findExistingHandlesByLower(Set.of("some_user")))
+				.willReturn(Map.of("some_user", "some_user"));
+
+		var assembler = new BrandPostAssembler(repository, mock(BrandPostCampaignRepository.class),
+				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
+				mock(MonitoringItemRepository.class), mock(com.celfit.was.monitoring.BrandHashtagTagRepository.class),
+				influencerRepository, false);
+		var posts = assembler.assembleBrandPosts(7L, accountRow(), false,
+				BrandPostAssembler.BrandPostScope.ENRICHED_ONLY, false, BrandAccountType.OWN);
+
+		assertThat(posts).singleElement().satisfies(post -> assertThat(post.influencerId()).isEqualTo("some_user"));
+	}
+
+	/**
+	 * N+1 금지 — distinct 작성자 여럿(같은 작성자 포함)이어도 배치 조회는 <b>1회</b>만 나간다.
+	 * 하이드레이트 경로도 같은 배치 부착(attachInfluencerIds)을 타므로 여기서 페이지 단위 1회 계약을
+	 * 고정한다.
+	 */
+	@Test
+	void 하이드레이트는_influencerId_배치_조회를_페이지당_1회만_한다() {
+		var repository = mock(BrandReadRepository.class);
+		given(repository.findBrandPostIndex(eq(42L), any(), eq(true), any(), eq(true))).willReturn(List.of(
+				indexRow("AAA", "2026-08-06T01:00:00Z", "2026-08-06T02:00:00Z", null, null, null),
+				indexRow("BBB", "2026-08-05T01:00:00Z", "2026-08-05T02:00:00Z", null, null, null)));
+		given(repository.findBrandPostsByShortCodes(eq(42L), anyCollection()))
+				.willReturn(List.of(taggedRow("AAA"), taggedRow("BBB")));
+		given(repository.findPostMeta(anyCollection())).willReturn(List.of());
+		given(repository.findSnapshots(anyCollection())).willReturn(List.of());
+		given(repository.findAuthors(anyCollection())).willReturn(List.of());
+		V1InfluencerRepository influencerRepository = mock(V1InfluencerRepository.class);
+		given(influencerRepository.findExistingHandlesByLower(any())).willReturn(Map.of());
+
+		var assembler = new BrandPostAssembler(repository, mock(BrandPostCampaignRepository.class),
+				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
+				mock(MonitoringItemRepository.class), mock(com.celfit.was.monitoring.BrandHashtagTagRepository.class),
+				influencerRepository, false);
+		var index = assembler.indexForBrand(7L, accountRow(), false);
+		clearInvocations(influencerRepository);   // 인덱스 패스 자체의 배치 조회 1회는 이 검증 밖이다.
+		assembler.hydrate(7L, accountRow(), BrandAccountType.OWN, index, List.of("AAA", "BBB"), false);
+
+		// taggedRow가 둘 다 같은 작성자("glowdeep_92")를 쓰지만(distinct 1건) 카드는 2건이다 — 카드마다
+		// 조회했다면 2회 이상이 찍힌다. 하이드레이트 1페이지당 배치 1회만 나가야 한다.
+		verify(influencerRepository, times(1)).findExistingHandlesByLower(any());
 	}
 
 	// ---------- source 3원화·해시태그 격리(2026-08-27 설계 §3) ----------
@@ -685,7 +794,7 @@ class BrandPostAssemblerTest {
 
 		var assembler = new BrandPostAssembler(repository, mock(BrandPostCampaignRepository.class),
 				directRepository, mock(TrackingItemAssembler.class), mock(MonitoringItemRepository.class),
-				hashtagTagRepository, false);
+				hashtagTagRepository, mockInfluencerRepository(), false);
 		var posts = assembler.assembleBrandPosts(7L, accountRow(), false,
 				BrandPostAssembler.BrandPostScope.ALL, false, BrandAccountType.OWN);
 
@@ -703,7 +812,18 @@ class BrandPostAssemblerTest {
 			com.celfit.was.monitoring.BrandHashtagTagRepository hashtagTagRepository) {
 		return new BrandPostAssembler(repository, mock(BrandPostCampaignRepository.class),
 				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
-				mock(MonitoringItemRepository.class), hashtagTagRepository, false);
+				mock(MonitoringItemRepository.class), hashtagTagRepository, mockInfluencerRepository(), false);
+	}
+
+	/**
+	 * influencerId 배치 조회 mock(2026-09-03) — 발굴 존재 판정은 이 파일 대다수 테스트의 관심사가
+	 * 아니므로 기본은 항상 빈 결과(전부 미존재)로 고정한다. 판정 자체를 검증하는 테스트는
+	 * {@code 발굴에_있는_작성자는_influencerId를_받는다} 등 별도로 stub을 다시 건다.
+	 */
+	private static V1InfluencerRepository mockInfluencerRepository() {
+		V1InfluencerRepository repo = mock(V1InfluencerRepository.class);
+		given(repo.findExistingHandlesByLower(any())).willReturn(Map.of());
+		return repo;
 	}
 
 	// ---------- 노출 필터(등록자 전용, 08-19) ----------
@@ -1522,7 +1642,7 @@ class BrandPostAssemblerTest {
 			boolean exposeAdDisclosure) {
 		return new BrandPostAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, mock(com.celfit.was.monitoring.BrandHashtagTagRepository.class),
-				exposeAdDisclosure);
+				mockInfluencerRepository(), exposeAdDisclosure);
 	}
 
 	/**

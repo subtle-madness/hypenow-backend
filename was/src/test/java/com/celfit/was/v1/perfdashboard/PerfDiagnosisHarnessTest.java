@@ -12,6 +12,7 @@ import com.celfit.was.monitoring.CampaignRepository;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.monitoring.MonitoringReadRepository;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
+import com.celfit.was.v1.influencer.V1InfluencerRepository;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -62,7 +63,7 @@ class PerfDiagnosisHarnessTest {
 				campaignRepository, Optional.of(readRepository), new ObjectMapper());
 		BrandPostAssembler brandPostAssembler = new BrandPostAssembler(brandReadRepository,
 				postCampaignRepository, directPostRepository, trackingItemAssembler, itemRepository,
-				new BrandHashtagTagRepository(app), false);
+				new BrandHashtagTagRepository(app), new V1InfluencerRepository(app), false);
 		PerformanceContentAssembler assembler = new PerformanceContentAssembler(trackingItemAssembler,
 				linkRepository, campaignRepository, Optional.of(brandReadRepository),
 				Optional.of(brandPostAssembler));

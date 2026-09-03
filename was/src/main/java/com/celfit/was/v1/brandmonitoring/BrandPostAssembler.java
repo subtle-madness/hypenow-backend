@@ -13,6 +13,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
 import com.celfit.was.monitoring.BrandReadRepository.MatchedTagRow;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.v1.common.KstTimestamps;
+import com.celfit.was.v1.influencer.V1InfluencerRepository;
 import com.celfit.was.v1.monitoring.AuthorMask;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import com.celfit.was.v1.monitoring.TrackingItemResponse;
@@ -107,6 +108,13 @@ public class BrandPostAssembler {
 	private final MonitoringItemRepository monitoringItemRepository;
 	/** 해시태그 격리 필터(2026-08-27 설계 §3) — 조회자 본인의 태그 원장. */
 	private final BrandHashtagTagRepository hashtagTagRepository;
+	/**
+	 * influencerId 배치 부착(2026-09-03, 브랜드 모니터링 저장 연동) — 발굴 존재 판정 정본
+	 * ({@link com.celfit.was.v1.influencer.V1InfluencerController} GET 상세와 같은 predicate)을
+	 * 공유하는 analysis DB 조회. was 내부 패키지 간 참조라 시스템 경계(분석 결과 읽기 전용) 위반이
+	 * 아니다 — brandmonitoring도 was 소속이고, monitoring DB와 조인하지 않는다(자바 코드에서 결합).
+	 */
+	private final V1InfluencerRepository influencerRepository;
 	/** 광고 표기 판정 노출 게이트(스펙 §10-2 드라이런 후 개통) — 기본 false, was 문서화(Task 18)에서 개통 절차 안내. */
 	private final boolean exposeAdDisclosure;
 	private static final ObjectMapper OM = new ObjectMapper();
@@ -114,7 +122,7 @@ public class BrandPostAssembler {
 	public BrandPostAssembler(BrandReadRepository brandReadRepository,
 			BrandPostCampaignRepository postCampaignRepository, BrandDirectPostRepository directPostRepository,
 			TrackingItemAssembler trackingItemAssembler, MonitoringItemRepository monitoringItemRepository,
-			BrandHashtagTagRepository hashtagTagRepository,
+			BrandHashtagTagRepository hashtagTagRepository, V1InfluencerRepository influencerRepository,
 			@Value("${monitoring.brand.ad-disclosure.expose:false}") boolean exposeAdDisclosure) {
 		this.brandReadRepository = brandReadRepository;
 		this.postCampaignRepository = postCampaignRepository;
@@ -122,6 +130,7 @@ public class BrandPostAssembler {
 		this.trackingItemAssembler = trackingItemAssembler;
 		this.monitoringItemRepository = monitoringItemRepository;
 		this.hashtagTagRepository = hashtagTagRepository;
+		this.influencerRepository = influencerRepository;
 		this.exposeAdDisclosure = exposeAdDisclosure;
 	}
 
@@ -150,11 +159,16 @@ public class BrandPostAssembler {
 	 * @param takenAtKst 카드 {@code takenAt}과 같은 KST ISO 문자열(미상이면 null).
 	 * @param hashtags 캡션 추출 태그(등장 순, 정규화 키 dedup — BrandCaptionHashtags). 캡션은 인덱스
 	 *                 SQL({@code withCaptions=true})로 실어 와 추출 직후 버린다 — ref에는 태그만 남는다.
+	 * @param influencerId 2026-09-03, 브랜드 모니터링 저장 연동 — {@code authorUsername}이 발굴 존재
+	 *                     (accounts)에 있으면 그 handle, 없으면 null. {@link BrandInfluencerResponse}
+	 *                     (인플루언서 집계, {@code V1BrandInfluencersController})가 카드 조립 없이
+	 *                     이 필드를 그대로 쓴다 — {@link #brandPost} 카드의 influencerId와 같은 배치
+	 *                     조회 산지({@link #indexForBrand}가 1회 계산).
 	 */
 	public record PostRef(String shortcode, String source, String sponsorship, LocalDate uploadedOn,
 			Long latestViews, String contentType, String adVerdict, String authorUsername,
 			String authorFullName, String authorProfilePicUrl, Long authorFollowers, String takenAtKst,
-			List<String> hashtags) {
+			List<String> hashtags, String influencerId) {
 	}
 
 	/**
@@ -269,9 +283,20 @@ public class BrandPostAssembler {
 			}
 		}
 
+		// 게시자 해석을 먼저 끝내 둔다 — influencerId 배치 조회(아래)가 pool·legacy 양쪽의 최종
+		// authorUsername 집합을 한 번에 알아야 두 번째 DB 조회 없이 1회로 끝난다.
+		Map<String, IndexAuthor> poolAuthors = new LinkedHashMap<>();
+		for (BrandReadRepository.BrandPostIndexRow row : poolByCode.values()) {
+			poolAuthors.put(row.shortCode(), indexAuthor(row, fallbackAuthors));
+		}
+		List<String> candidateUsernames = new ArrayList<>(poolAuthors.size() + legacyByCode.size());
+		poolAuthors.values().forEach(a -> candidateUsernames.add(a.username()));
+		legacyByCode.values().forEach(legacy -> candidateUsernames.add(legacy.authorUsername()));
+		Map<String, String> influencerIdsByLower = resolveInfluencerIds(candidateUsernames);
+
 		List<PostRef> refs = new ArrayList<>(poolByCode.size() + legacyByCode.size());
 		for (BrandReadRepository.BrandPostIndexRow row : poolByCode.values()) {
-			IndexAuthor author = indexAuthor(row, fallbackAuthors);
+			IndexAuthor author = poolAuthors.get(row.shortCode());
 			refs.add(new PostRef(row.shortCode(),
 					resolveSource(row.tagDetectedAt(), row.directRegisteredAt(), row.hashtagDetectedAt(),
 							ownedShortCodes.contains(row.shortCode())),
@@ -284,7 +309,8 @@ public class BrandPostAssembler {
 					resolveImageUrl(author.imageObjectPath(), author.profilePicUrl()),
 					author.followers(),
 					KstTimestamps.toKstIso(row.takenAt()),
-					BrandCaptionHashtags.extract(row.caption())));
+					BrandCaptionHashtags.extract(row.caption()),
+					influencerIdOf(author.username(), influencerIdsByLower)));
 		}
 		for (BrandPostResponse legacy : legacyByCode.values()) {
 			TrackingItemResponse.SnapshotResponse latest = legacy.latestSnapshot();
@@ -295,7 +321,8 @@ public class BrandPostAssembler {
 					contentTypeOf(legacy.contentType()), null,
 					legacy.authorUsername(), legacy.authorFullName(), legacy.authorProfilePicUrl(),
 					legacy.authorFollowers(), legacy.takenAt(),
-					BrandCaptionHashtags.extract(legacy.caption())));
+					BrandCaptionHashtags.extract(legacy.caption()),
+					influencerIdOf(legacy.authorUsername(), influencerIdsByLower)));
 		}
 		// poolCodes는 keySet() 뷰가 아니라 복사본이다(2026-08-28 힙 실측) — 뷰를 넘기면 원시 행 맵
 		// (BrandPostIndexRow 전량)이 인덱스에 딸려 살아남는다. 인덱스가 요청마다 버려지던 시절엔
@@ -403,7 +430,7 @@ public class BrandPostAssembler {
 			}
 			out.add(withComments ? card : card.withoutRecentComments());
 		}
-		return out;
+		return attachInfluencerIds(out);
 	}
 
 	// ---------- 브랜드 풀 ----------
@@ -526,7 +553,7 @@ public class BrandPostAssembler {
 		// 토글이 꺼져 있으면 조회 자체를 생략한다(드라이런 중 불필요한 조회 방지).
 		Set<String> seededUsernames = !exposeAdDisclosure ? Set.of() : resolveSeededUsernames(userId);
 
-		return posts.stream()
+		List<BrandPostResponse> assembled = posts.stream()
 				.map(p -> {
 					BrandPostResponse card = brandPost(account.id(), p, metaByCode.get(p.shortCode()),
 							authorsByPost.get(p.shortCode()),
@@ -541,6 +568,7 @@ public class BrandPostAssembler {
 							: card;
 				})
 				.toList();
+		return attachInfluencerIds(assembled);
 	}
 
 	/**
@@ -620,6 +648,54 @@ public class BrandPostAssembler {
 			byCode.computeIfAbsent(link.shortCode(), k -> new ArrayList<>()).add(String.valueOf(link.campaignId()));
 		}
 		return byCode;
+	}
+
+	// ---------- influencerId(2026-09-03, 브랜드 모니터링 저장 연동) ----------
+
+	/**
+	 * "발굴 존재" 배치 판정 — usernames를 소문자 정규화해 {@link
+	 * V1InfluencerRepository#findExistingHandlesByLower}로 <b>1회</b> 조회한다(distinct 작성자 집합
+	 * 전체를 한 번에 묻는다 — 카드·ref 낱개마다 조회하면 N+1). 빈 입력이면 조회 자체를 생략한다.
+	 *
+	 * @return 키=소문자 정규화 username, 값=accounts.handle 원본(존재하는 것만)
+	 */
+	private Map<String, String> resolveInfluencerIds(Collection<String> usernames) {
+		Set<String> lowerUsernames = usernames.stream()
+				.filter(Objects::nonNull)
+				.map(u -> u.toLowerCase(Locale.ROOT))
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		return lowerUsernames.isEmpty() ? Map.of() : influencerRepository.findExistingHandlesByLower(lowerUsernames);
+	}
+
+	/** {@link #resolveInfluencerIds} 배치 결과에서 username 1건의 influencerId를 꺼낸다(없으면 null). */
+	private static String influencerIdOf(String username, Map<String, String> influencerIdsByLower) {
+		return username == null ? null : influencerIdsByLower.get(username.toLowerCase(Locale.ROOT));
+	}
+
+	/**
+	 * BrandPost 카드 목록에 influencerId를 배치 부착한다(2026-09-03) — {@link #brandPost}·
+	 * {@link #legacyPendingPost}는 순수 판정 함수라 이 필드를 항상 null로 채운 카드를 반환하고,
+	 * {@link #assembleBrandPosts}·{@link #hydrate}가 페이지 단위로 이 메서드를 호출해 값을 얹는다
+	 * ({@code withMatchedTags}와 같은 사후 교체 관용구). "발굴 존재" 판정은 GET
+	 * /v1/influencers/{influencerId}(상세 조회)가 성공하는 것과 같은 predicate다({@link
+	 * V1InfluencerRepository#findExistingHandlesByLower} 참조) — null이면 POST
+	 * /v1/saved-influencers 저장 시도가 404를 맞는다는 뜻이라 FE가 저장 버튼을 비활성화한다.
+	 */
+	public List<BrandPostResponse> attachInfluencerIds(List<BrandPostResponse> cards) {
+		if (cards.isEmpty()) {
+			return cards;
+		}
+		Map<String, String> existingByLower = resolveInfluencerIds(
+				cards.stream().map(BrandPostResponse::authorUsername).toList());
+		if (existingByLower.isEmpty()) {
+			return cards;
+		}
+		return cards.stream()
+				.map(c -> {
+					String handle = influencerIdOf(c.authorUsername(), existingByLower);
+					return handle == null ? c : c.withInfluencerId(handle);
+				})
+				.toList();
 	}
 
 	/**
@@ -831,7 +907,10 @@ public class BrandPostAssembler {
 				adViolations,
 				adEvidence,
 				meta == null ? List.of() : BrandCaptionHashtags.extract(meta.caption()),
-				seededAuthor);
+				seededAuthor,
+				// influencerId는 순수 판정 함수 안에서 채우지 않는다(DB 조회) — 항상 null, 호출부가
+				// attachInfluencerIds로 배치 부착한다(withMatchedTags와 같은 사후 교체 관용구).
+				null);
 	}
 
 	/**
@@ -1049,7 +1128,7 @@ public class BrandPostAssembler {
 				item.registeredAt(),
 				KstTimestamps.toKstIso(legacyLastCollectedAt),
 				// direct 산지는 광고 판정 정보가 없다(tagged 전용 — brand_post_meta 유래).
-				null, List.of(), List.of(), BrandCaptionHashtags.extract(caption), false);
+				null, List.of(), List.of(), BrandCaptionHashtags.extract(caption), false, null);
 	}
 
 	// 풀 우선 병합(mergeWithLegacyPending)은 indexForBrand의 legacyByCode 구성(풀 코드와 겹치면

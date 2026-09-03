@@ -35,6 +35,7 @@ import com.celfit.was.monitoring.BrandReadRepository.BrandTaggedPostRow;
 import com.celfit.was.monitoring.MonitoringItemRepository;
 import com.celfit.was.v1.common.V1ApiException;
 import com.celfit.was.v1.common.V1ExceptionAdvice;
+import com.celfit.was.v1.influencer.V1InfluencerRepository;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import java.time.Clock;
 import java.time.Instant;
@@ -92,6 +93,12 @@ class V1BrandPostsControllerTest {
 	TrackingItemAssembler trackingItemAssembler;
 	@MockitoBean
 	MonitoringItemRepository monitoringItemRepository;
+	/**
+	 * influencerId 배치 조회(2026-09-03) — Mockito 기본값이 빈 Map이라 미stub 시 전 카드
+	 * influencerId=null로 서빙된다. 판정 자체는 BrandPostAssemblerTest가 단위로 본다.
+	 */
+	@MockitoBean
+	V1InfluencerRepository influencerRepository;
 	/** 직접 등록(§6-4)의 판정 로직은 V1BrandDirectPostServiceTest가 본다 — 여기는 표면 계약만. */
 	@MockitoBean
 	V1BrandDirectPostService directPostService;
@@ -1413,6 +1420,8 @@ class V1BrandPostsControllerTest {
 		TrackingItemAssembler trackingItemAssembler;
 		@MockitoBean
 		MonitoringItemRepository monitoringItemRepository;
+		@MockitoBean
+		V1InfluencerRepository influencerRepository;
 		@MockitoBean
 		V1BrandDirectPostService directPostService;
 		@MockitoBean

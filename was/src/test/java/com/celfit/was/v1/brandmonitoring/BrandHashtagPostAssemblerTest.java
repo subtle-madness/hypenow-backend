@@ -38,7 +38,8 @@ class BrandHashtagPostAssemblerTest {
 				"https://cdn/author.jpg", false, 1000L, "unknown", null, "tracking",
 				"2026-08-06T11:00:00+09:00", null, latest, latest == null ? List.of() : List.of(latest),
 				comments, false, 0L, List.of(), List.of(), "2026-08-06T11:00:00+09:00",
-				"2026-08-08T03:00:00+09:00", null, List.of(), List.of(), List.of(), false);
+				"2026-08-08T03:00:00+09:00", null, List.of(), List.of(), List.of(), false,
+				"hashtag_influencer");
 	}
 
 	private static BrandAccountRow account() {
@@ -81,6 +82,8 @@ class BrandHashtagPostAssemblerTest {
 			assertThat(row.firstSeenAt()).isEqualTo("2026-08-06T11:00:00+09:00");
 			// 해시태그 게시물이 이제 전부 성과 측정 풀 소속이라 배지는 항상 켜진다.
 			assertThat(row.brandPostId()).isEqualTo("HHH");
+			// influencerId(2026-09-03)는 통합 풀 카드의 값을 판정 재구현 없이 그대로 옮긴다.
+			assertThat(row.influencerId()).isEqualTo("hashtag_influencer");
 		});
 	}
 
@@ -211,7 +214,7 @@ class BrandHashtagPostAssemblerTest {
 	private static BrandPostAssembler.PostRef ref(String code, String source, LocalDate uploadedOn) {
 		return new BrandPostAssembler.PostRef(code, source, "unknown", uploadedOn, null, "reels", null,
 				"hashtag_influencer", "해시태그 인플루언서", "https://cdn/author.jpg", 1000L,
-				"2026-08-06T10:00:00+09:00", List.of());
+				"2026-08-06T10:00:00+09:00", List.of(), "hashtag_influencer");
 	}
 
 	private static BrandPostAssembler.BrandPostIndex index(BrandPostAssembler.PostRef... refs) {
