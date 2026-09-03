@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: ✅ 실행 완료(2026-09-01) · 스펙: docs/superpowers/specs/2026-09-01-brand-ai-structural-quality-design.md
+> 상태: ✅ 실행 완료(2026-09-01) · 스펙: docs/superpowers/specs/archive/2026-09-01-brand-ai-structural-quality-design.md
 
 **Goal:** 조용한 근사를 구조로 차단한다 - sponsorship 축 인자·minSample·서버 강제 caveat·용어 사전·프리셋 verified 플랜·eval 골드셋 러너.
 

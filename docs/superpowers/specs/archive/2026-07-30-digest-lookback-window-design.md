@@ -1,11 +1,11 @@
 # 모니터링 다이제스트 자정 경계 유실 — 회고 창 재계산 설계
 
-> 상태: 🟢 활성 · ✅ 구현됨(PR 대기)
+> 상태: ✅ 구현됨(PR #243 머지, 2026-07-30)
 > 날짜: 2026-07-30
 
 ## 1. 배경
 
-was monitoring 다이제스트 크론([DigestJob.java](../../../was/src/main/java/com/celfit/was/monitoring/DigestJob.java))은
+was monitoring 다이제스트 크론([DigestJob.java](../../../../was/src/main/java/com/celfit/was/monitoring/DigestJob.java))은
 본틱 09:00 + 따라잡기 09:10~23:50(매 10분) 구성으로 하루 안에서 다이제스트 생성을 여러 번
 재시도한다. PR #223("모니터링 v3 was 표면", 트랙 EE) 본문이 "알려진 후속(비차단)"으로 남긴
 버그를 이번에 해소한다.
@@ -79,10 +79,10 @@ D+1에도 재계산되지 못하는 경우) 대비다.
 ## 6. 계약 영향
 
 없음. `alarm_event`·`sweep_run` 스키마와 monitoring↔was 계약
-([contracts/monitoring-was-contract.md](../../contracts/monitoring-was-contract.md) v2.3)에
+([contracts/monitoring-was-contract.md](../../../contracts/monitoring-was-contract.md) v2.3)에
 변화가 없다.
 
-프론트 계약([contracts/monitoring-frontend-api-spec.md](../../contracts/monitoring-frontend-api-spec.md))
+프론트 계약([contracts/monitoring-frontend-api-spec.md](../../../contracts/monitoring-frontend-api-spec.md))
 §6.32의 `date` 정의(이벤트 발생 KST 날짜)는 유지된다. §6.25의 "이틀치가 한 알림에 섞이면
 안 된다"도 날짜별로 각각 upsert하는 구조이므로 계속 지켜진다.
 

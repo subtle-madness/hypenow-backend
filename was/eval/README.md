@@ -2,7 +2,7 @@
 
 `goldset.json` 케이스를 로컬 was에 실제로 쏘고 `app.ai_chat_logs`에 남은 툴 호출·답변을 채점해
 "실측 사고가 다시 나면 CI 없이도 사람이 로컬에서 잡을 수 있는" 회귀 게이트를 만든다. 정본 설계는
-[`docs/superpowers/specs/2026-09-01-brand-ai-structural-quality-design.md`](../../docs/superpowers/specs/2026-09-01-brand-ai-structural-quality-design.md) §7.
+[`docs/superpowers/specs/archive/2026-09-01-brand-ai-structural-quality-design.md`](../../docs/superpowers/specs/archive/2026-09-01-brand-ai-structural-quality-design.md) §7.
 
 ## 전제
 

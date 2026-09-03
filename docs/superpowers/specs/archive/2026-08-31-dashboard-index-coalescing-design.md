@@ -61,7 +61,7 @@
 ```
 
 00:31:28~39 구간에 **7건이 동시 in-flight**다. `accountIds`는 인덱스를 **다 만든 뒤** 메모리에서
-거는 필터라([V1PerformanceDashboardController](../../../was/src/main/java/com/celfit/was/v1/perfdashboard/V1PerformanceDashboardController.java) growth 라우트),
+거는 필터라([V1PerformanceDashboardController](../../../../was/src/main/java/com/celfit/was/v1/perfdashboard/V1PerformanceDashboardController.java) growth 라우트),
 계정 6개면 6개 요청이 각자 6브랜드 전량을 만든다.
 
 경합이 붙기 전 같은 엔드포인트(`ji0nuz8g`, 00:31:00)의 분해가 **조립 1회의 진짜 비용**이다:

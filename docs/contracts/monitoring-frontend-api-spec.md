@@ -3,7 +3,7 @@
 > **⚠️ 사본(스냅샷)** — 정본은 celfit-front 리포의 `docs/api-spec.md` 6.25~6.33 (2차 개정, 2026-07-29).
 > 이 파일은 was 쪽 구현이 참조하는 시점의 스냅샷이며, 정본이 갱신되면 이 사본도 교체한다.
 > 원본의 절 번호(6.25~6.33)를 그대로 유지한다. 함께 볼 문서:
-> [specs/2026-07-29-monitoring-v3-backend-request.md](../superpowers/specs/2026-07-29-monitoring-v3-backend-request.md)(구현 요청 브리프),
+> [specs/archive/2026-07-29-monitoring-v3-backend-request.md](../superpowers/specs/archive/2026-07-29-monitoring-v3-backend-request.md)(구현 요청 브리프),
 > [monitoring-was-contract.md](monitoring-was-contract.md)(monitoring 모듈 계약 v1.0).
 
 hypenow의 콘텐츠 모니터링·알림 기능을 위한 백엔드 API 계약 문서. 프론트 구현이 완료된 상태에서 화면이 실제로 요구하는 것을 역산해 작성했다.
