@@ -35,6 +35,12 @@ import org.springframework.web.multipart.MultipartFile;
  * /v1/me 계정 관리(스펙 6.12~6.14) — 프로필 조회·부분 수정, 비밀번호 변경, 세션 목록/개별 로그아웃,
  * 프로필 이미지, 탈퇴. 전 경로 인증 필수(SecurityConfig `/v1/me/**` authenticated).
  * AppUserDetails는 안정 형상(userId·email)만 가지므로 프로필은 매 요청 UserRepository에서 읽는다.
+ *
+ * sessionService.*(principal.getUsername(), ...) 호출부(아래 4곳)는 트랙 A(09-03, 세션 principal
+ * 이메일 제거) 이후로 값의 의미가 이메일→userId 문자열로 바뀌었다 — SessionService의 principal_name
+ * 매칭 자체는 그대로 쓴다(신규 세션은 userId로 색인). **전환기 한계**: 트랙 A 배포 이전에 발급된
+ * email-principal 세션은 이 userId 문자열과 매칭되지 않아 세션 목록·타기기 로그아웃 대상에서 보이지
+ * 않는다 — 별도 백필 없이 세션 만료(자연 소거)로 정리된다.
  */
 @RestController
 public class V1MeController {
