@@ -13,6 +13,12 @@ import org.springframework.security.core.userdetails.UserDetails;
  * 필드 추가·변경 금지: 안정 식별자(userId, email)만 보유하고, 프로필 등 나머지는 매 요청 DB에서 읽는다.
  * (형상이 바뀌면 기존 세션 역직렬화가 깨져 전원 재로그인이 된다.)
  *
+ * email 필드는 **직렬화 호환용 잔존**이다(트랙 A, 09-03 — 세션 principal에서 이메일 PII 제거) —
+ * 필드 선언은 그대로 두되 값은 항상 null로 저장한다(형상 불변이 재로그인 없는 전환의 근거,
+ * AppUserDetailsPrincipalTest 참조). getUsername()도 이메일이 아니라 userId 문자열을 반환한다
+ * (principal_name 매칭 의미는 유지 — 신규 세션은 userId로 색인된다. 기존 email-principal 세션의
+ * 전환기 한계는 V1MeController 주석 참조).
+ *
  * password는 인증 검증 중에만 쓰는 일시 필드 — CredentialsContainer 구현으로 인증 성공 직후
  * ProviderManager가 eraseCredentials()를 호출해 지우므로, BCrypt 해시가 세션 테이블에 실리지 않는다.
  * role은 **transient** — principal의 직렬화 형상을 안정 필드만으로 유지한다. 단, 세션에는
@@ -34,7 +40,7 @@ public class AppUserDetails implements UserDetails, CredentialsContainer {
 
 	public AppUserDetails(AppUser user) {
 		this.userId = user.id();
-		this.email = user.email();
+		this.email = null; // 트랙 A(09-03) — 세션 principal에 이메일을 싣지 않는다, 필드는 직렬화 호환용
 		this.role = user.role();
 		this.password = user.passwordHash();
 	}
@@ -56,7 +62,8 @@ public class AppUserDetails implements UserDetails, CredentialsContainer {
 
 	@Override
 	public String getUsername() {
-		return email;
+		// 트랙 A(09-03) — 세션 principal에서 이메일 제거, userId 문자열로 매칭(principal_name 인덱스도 동일)
+		return String.valueOf(userId);
 	}
 
 	@Override
