@@ -77,12 +77,16 @@ Loki 마커(`브랜드 태그 수집 —`·`태그 부재 검증 — 브랜드`�
 `sweepUnenumerated` ↔ `backfillUnenriched` 겹침만 막는다(08-28 리뷰의 원 의도 — 재기동 백필과
 야간 스윕이 같은 게시물을 이중 과금하지 않게). 획득·해제 단위(브랜드 1건 처리)는 불변.
 
-### 3-3. DB 커넥션 풀 — 운영 compose env
+### 3-3. DB 커넥션 풀 — 변경 없음(실측으로 기각)
 
-`SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE=20`(기본 10)을 `deploy/compose.yaml` monitoring·`compose.test.yaml` test-monitoring env로 주입한다. `application.yml`에 두지 않는 이유: monitoring의 @SpringBootTest 컨텍스트 여러 개가 Testcontainers Postgres 한 대(max_connections 100)를 나눠 쓰는데, 컨텍스트당 풀 20이면 연결 한도에 닿아 CI가 깨진다(09-03 실측 — 3회 연속 SweepControllerTest 6건 FlywaySqlUnableToConnectToDb). 동시 DB 사용자 최악: 스윕 4 + 보강 워커 10
-+ 광고 판정 워커 4 + 스케줄러 2 + 웹. 점유는 짧지만 기본 10에서는 풀 대기(30초 초과 시 예외 →
-격리 실패로 집계)가 생길 수 있다. 운영 Postgres는 max_connections 100 중 ~52 사용(2026-09-03 실측)이라
-+10은 여유 안이다.
+설계 초안은 Hikari 풀 10→20이었다(동시 DB 사용자 최악치 스윕 4 + 보강 워커 10 + 광고 판정 4 + 스케줄러
+2를 세어 나온 예방적 값). 그러나 어젯밤 직렬 스윕의 HikariCP 실측(Prometheus 1분 샘플)은 **활성 커넥션
+최대 1/10, 평균 0.01, 풀 대기 0**이었다 — 이미 보강 워커 10 + 광고 판정 4가 동시에 도는 상태에서도
+풀은 비어 있었다. DB 점유가 밀리초 단위고 시간의 본체가 Hiker 대기라 스레드 수와 커넥션 수요는 비례하지
+않는다. 따라서 풀은 기본 10을 유지한다. 배포 후 첫 야간 스윕에서 `hikaricp_connections_pending`이 0을
+유지하는지 확인하고, 대기가 보이면 그 실측을 근거로 올린다. (부수 교훈: `application.yml`의 풀 값은
+@SpringBootTest 컨텍스트들이 물려받아 Testcontainers Postgres 한 대의 연결 한도에 닿을 수 있다 — CI 3회
+실패로 확인. 올릴 일이 생기면 운영 compose env로.)
 
 ### 3-4. 전역 Hiker 동시 콜 예산 — 문서 갱신
 

@@ -174,7 +174,6 @@ services:
     networks: [test, test-monitoring-net]   # test 브리지는 test-postgres 접속용
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://test-postgres:5432/monitoring
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "20"   # 운영 compose.yaml monitoring과 동일(브랜드 스윕 병렬화)
       SPRING_DATASOURCE_USERNAME: monitoring
       SPRING_DATASOURCE_PASSWORD: ${DEV_MONITORING_DB_PASSWORD:-}
       HIKER_API_KEY: ${HIKER_API_KEY:-}
