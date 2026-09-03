@@ -165,6 +165,17 @@ class BrandHashtagCollectServiceTest {
 		Set<String> matchedTagsOf(String shortCode) {
 			return matchedTags.getOrDefault(shortCode, new LinkedHashSet<>());
 		}
+
+		// 게시자 id 재사용/역보강(S8 결함 수정) — 이 테스트는 재사용 대상이 없다(no-op 대역).
+		@Override
+		public Map<String, String> authorIgUserIds(long brandId, Collection<String> shortCodes) {
+			return Map.of();
+		}
+
+		@Override
+		public void backfillAuthorIgUserIds(long brandId, Map<String, String> authorIdsByShortCode) {
+			// no-op — 이 테스트 스위트는 역보강 상태를 단언하지 않는다.
+		}
 	}
 
 	private static final class RecordingWriter extends BrandSnapshotWriter {

@@ -227,6 +227,8 @@ class BrandCollectServiceTest {
 		// markAbsenceChecked)의 상태 미러.
 		final List<String> unavailable = new ArrayList<>();
 		final Map<String, Instant> absenceChecked = new HashMap<>();
+		// 게시자 id 재사용/역보강(S8 결함 수정) 상태 미러 — 실 DB의 author_ig_user_id 컬럼 대역.
+		final Map<String, String> authorIds = new HashMap<>();
 		// 정산 마킹은 enrich 스레드 1개에서 나가지만, 다른 스텁(InMemoryAuthors.upserted)과 같은
 		// 이유로 스레드 안전 리스트를 쓴다 — 호출 지점이 워커로 옮겨가도 단언이 깨지지 않게.
 		final List<String> enriched = Collections.synchronizedList(new ArrayList<>());
@@ -326,6 +328,26 @@ class BrandCollectServiceTest {
 			}
 			enriched.addAll(codes);
 			callOrder.add("enriched");
+		}
+
+		@Override
+		public Map<String, String> authorIgUserIds(long brandId, Collection<String> shortCodes) {
+			Map<String, String> out = new HashMap<>();
+			for (String c : shortCodes) {
+				String id = authorIds.get(c);
+				if (id != null) {
+					out.put(c, id);
+				}
+			}
+			return out;
+		}
+
+		@Override
+		public void backfillAuthorIgUserIds(long brandId, Map<String, String> authorIdsByShortCode) {
+			// 실 SQL의 WHERE author_ig_user_id IS NULL 가드 대역 — 이미 있는 값은 덮지 않는다.
+			for (Map.Entry<String, String> e : authorIdsByShortCode.entrySet()) {
+				authorIds.putIfAbsent(e.getKey(), e.getValue());
+			}
 		}
 
 		@Override
@@ -960,6 +982,28 @@ class BrandCollectServiceTest {
 		assertThat(hidden.reposts()).isZero();
 	}
 
+	/**
+	 * S9(2026-09-03 감사 수정) — self(embed 등) 기원 게시물은 sharesHidden이 null(미확정)이다.
+	 * 태그 경로는 재시도 콜이 없어(비용 모델에 예산 없음) 이 한 번의 판정이 전부인데, 과거엔
+	 * self가 primitive false를 반환해 Hiker의 확정 false와 안 구분됐고 그 결과 진짜 숨김 게시물의
+	 * 공유가 0으로 영구 오기록됐다. {@link BrandCollectService#adjustLotteryMetrics}의 "①부재=0"은
+	 * 확정 false(Boolean.FALSE)일 때만 적용해야 한다 — 이 테스트는 sweep() 전체 경로 대신
+	 * adjustLotteryMetrics를 직접 호출해 self 미확정(null) PostInfo를 주입한다(HikerBackend JSON
+	 * 파싱은 항상 확정값을 주므로 sweep()으로는 이 셰이프를 재현할 수 없다).
+	 */
+	@Test
+	void 공유_숨김_미확정_self_관측은_부재_0_간주_대상에서_제외한다() {
+		PostInfo selfUnconfirmed = new PostInfo("SelfReel", "author", null, null, "101", "REELS", null, null,
+				RECENT, null, 2L, null, null, 7L, null, null, null, null, null, false, null, null);
+
+		List<PostInfo> adjusted = service(2000).adjustLotteryMetrics(List.of(selfUnconfirmed));
+
+		PostInfo result = adjusted.get(0);
+		assertThat(result.saves()).isEqualTo(7L);
+		assertThat(result.shares()).isNull();     // 미확정(self)이면 0으로 단정하지 않는다
+		assertThat(result.reposts()).isZero();    // 리포스트는 숨김 개념이 없어 그대로 0 간주
+	}
+
 	@Test
 	void 잔여_null은_0_캐리_이력으로_잇는다() {
 		snapshots.repostsCarry = Set.of("AllMiss");
@@ -1521,6 +1565,65 @@ class BrandCollectServiceTest {
 	private BrandCollectService serviceWithFollowup(Executor followup, FakeAdJudge adJudge) {
 		return new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments, tagged,
 				authors, brands, adJudge, Runnable::run, followup, 10000, 10000, 3, 30, true);
+	}
+
+	// ---------- 게시자 id 재사용/역보강(S8 결함 수정 — self 표면 ownerUserId 공백 보완) ----------
+
+	/**
+	 * self 표면(embed 등)은 ownerUserId를 구조적으로 항상 null로 준다 — 그 게시물이 <b>이전</b>
+	 * 관측(주로 Hiker)에서 이미 brand_tagged_post에 저장해 둔 author_ig_user_id가 있으면 그걸
+	 * 재사용해 프로필 생성·stale 갱신 파이프라인이 계속 돌아야 한다(수정 전엔 이번 관측만 보고
+	 * 조용히 건너뛰었다).
+	 */
+	@Test
+	void ownerUserId가_null이어도_DB에_저장된_author_id를_재사용한다() {
+		tagged.authorIds.put("AAA", "999");   // 이전 관측(Hiker)이 저장해 둔 값
+		PostInfo post = post("AAA", RECENT, null, 0L);   // 이번 관측은 self — ownerUserId null
+
+		service(2000).enrich(brand, List.of(post));
+
+		assertThat(authorCalls()).isEqualTo(1);
+		assertThat(authors.upserted).contains("999");
+	}
+
+	/** DB에도 저장값이 없으면(최초 관측부터 self만) 기존과 동일하게 건너뛴다 — 회귀 방지(대조군). */
+	@Test
+	void ownerUserId가_null이고_DB에도_없으면_보강을_건너뛴다() {
+		PostInfo post = post("AAA", RECENT, null, 0L);
+
+		service(2000).enrich(brand, List.of(post));
+
+		assertThat(authorCalls()).isEqualTo(0);
+		assertThat(authors.upserted).isEmpty();
+	}
+
+	/**
+	 * 이번 관측이 실 id를 줬는데 저장값이 비어 있으면(그 게시물의 최초 관측이 self였던 경우) 역보강
+	 * 한다 — 안 채우면 self가 우연히 한 번 실패해 Hiker로 폴백한 순간의 id가 그 순간에만 쓰이고
+	 * 버려져, self가 다시 안정되는 순간 재사용 경로 자체가 무력화된다.
+	 */
+	@Test
+	void ownerUserId가_있으면_DB의_빈_저장값을_역보강한다() {
+		PostInfo post = post("AAA", RECENT, "777", 0L);
+
+		service(2000).enrich(brand, List.of(post));
+
+		assertThat(tagged.authorIds).containsEntry("AAA", "777");
+	}
+
+	/**
+	 * 이미 저장값이 있으면 이번 관측으로 갈아끼우지 않는다 — direct·hashtag 편입(upsertDirect·
+	 * upsertHashtag)의 COALESCE와 같은 원칙(최초 관측값 고정). 매 관측마다 값이 흔들리면 재사용
+	 * 경로의 안정성이 깨진다.
+	 */
+	@Test
+	void 저장값이_이미_있으면_역보강이_최신_관측으로_덮지_않는다() {
+		tagged.authorIds.put("AAA", "111");
+		PostInfo post = post("AAA", RECENT, "222", 0L);
+
+		service(2000).enrich(brand, List.of(post));
+
+		assertThat(tagged.authorIds).containsEntry("AAA", "111");
 	}
 
 	// ---------- 계정 게이트 훅(onVisible, 2026-08-18 markServing 단축 — 스펙 §8 후속) ----------

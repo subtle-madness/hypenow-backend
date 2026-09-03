@@ -218,7 +218,8 @@ class V1MeControllerTest {
 				.andExpect(status().isNoContent());
 
 		then(userRepository).should().updatePasswordHash(eq(7L), anyString());
-		then(sessionService).should().deleteOthers("user@example.com", session.getId());
+		// 트랙 A(09-03) — principal.getUsername()은 이제 userId 문자열("7")이다
+		then(sessionService).should().deleteOthers("7", session.getId());
 	}
 
 	@Test
@@ -256,7 +257,8 @@ class V1MeControllerTest {
 
 	@Test
 	void 세션_목록은_alias_id와_current_판정을_담아_내린다() throws Exception {
-		given(sessionService.listSessions(eq("user@example.com"), any())).willReturn(List.of(
+		// 트랙 A(09-03) — principal.getUsername()은 이제 userId 문자열("7")이다
+		given(sessionService.listSessions(eq("7"), any())).willReturn(List.of(
 				new SessionService.SessionView("a1b2c3d4e5f60718", "Chrome", "Mac OS X",
 						"2026-07-15T09:00:00Z", true),
 				new SessionService.SessionView("0011223344556677", "Safari", "iOS",
@@ -276,7 +278,8 @@ class V1MeControllerTest {
 
 	@Test
 	void 세션_개별_삭제는_alias_매칭_시_204다() throws Exception {
-		given(sessionService.deleteByAlias("user@example.com", "a1b2c3d4e5f60718")).willReturn(true);
+		// 트랙 A(09-03) — principal.getUsername()은 이제 userId 문자열("7")이다
+		given(sessionService.deleteByAlias("7", "a1b2c3d4e5f60718")).willReturn(true);
 
 		mockMvc.perform(delete("/v1/me/sessions/a1b2c3d4e5f60718").with(user(principal())).with(csrf()))
 				.andExpect(status().isNoContent());
@@ -366,7 +369,8 @@ class V1MeControllerTest {
 
 		InOrder order = inOrder(accountDeletionService, sessionService, profileImageStore);
 		order.verify(accountDeletionService).deleteAccount(7L);
-		order.verify(sessionService).deleteAll("user@example.com");
+		// 트랙 A(09-03) — principal.getUsername()은 이제 userId 문자열("7")이다
+		order.verify(sessionService).deleteAll("7");
 		order.verify(profileImageStore).delete(7L);
 	}
 

@@ -45,6 +45,10 @@ dependencies {
 	annotationProcessor 'org.projectlombok:lombok'
 	runtimeOnly 'org.postgresql:postgresql'
 	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+	// OCI Vault KMS — PII DEK 언래핑(트랙 A). local 모드에선 로드만 되고 미사용.
+	// 두 아티팩트는 OCI SDK 릴리스에서 항상 같은 버전으로 짝지어 나온다(2026-09-03 Maven Central 확인).
+	implementation 'com.oracle.oci.sdk:oci-java-sdk-keymanagement:3.95.1'
+	implementation 'com.oracle.oci.sdk:oci-java-sdk-common-httpclient-jersey3:3.95.1'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
 	testImplementation 'org.springframework.security:spring-security-test'
