@@ -614,6 +614,22 @@ class BrandReadRepositoryTest extends IntegrationTest {
 		assertThat(rows).extracting(BrandCommentRow::id).containsExactly("a3", "a2", "b3", "b2");
 	}
 
+	/** 목록 표면용 저장 건수 집계(2026-09-03, FE 피드백 #4-B) — 행을 읽지 않고 게시물별 count(*)만 준다. */
+	@Test
+	void 댓글_저장_건수는_게시물별_집계로_읽는다() {
+		jdbc.sql("""
+				INSERT INTO brand_post_comment (short_code, id, author, body, like_count, commented_at)
+				VALUES ('SHORT1', 'a1', 'user_a', '본문', 1, '2026-08-01T00:00:00+09:00'),
+				       ('SHORT1', 'a2', 'user_b', '본문', 1, '2026-08-02T00:00:00+09:00'),
+				       ('SHORT2', 'b1', 'user_d', '본문', 1, '2026-08-01T00:00:00+09:00')
+				""").update();
+
+		var counts = repository.countComments(List.of("SHORT1", "SHORT2", "SHORT3"));
+
+		assertThat(counts).containsEntry("SHORT1", 2L).containsEntry("SHORT2", 1L).doesNotContainKey("SHORT3");
+		assertThat(repository.countComments(List.of())).isEmpty();
+	}
+
 	@Test
 	void 게시자_프로필은_id와_username_두_경로로_조회된다() {
 		jdbc.sql("""

@@ -25,6 +25,7 @@ import com.celfit.was.v1.monitoring.TrackingItemResponse;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -57,6 +58,8 @@ class BrandPostAssemblerTest {
 		var account = accountRow();
 		given(repository.findBrandPostsInWindow(eq(42L), any(), eq(false)))
 				.willReturn(List.of(taggedRow("ABC")));
+		// 댓글 행 대신 count(*) 집계로 저장 건수를 채운다(2026-09-03, FE 피드백 #4-B — 이전엔 0)
+		given(repository.countComments(anyCollection())).willReturn(Map.of("ABC", 45L));
 
 		var assembler = newAssembler(repository, campaignRepository, directRepository, trackingAssembler,
 				itemRepository, false);
@@ -65,7 +68,7 @@ class BrandPostAssemblerTest {
 		verify(repository, never()).findComments(anyCollection(), anyInt());
 		assertThat(posts).singleElement().satisfies(post -> {
 			assertThat(post.recentComments()).isEmpty();
-			assertThat(post.commentsCollectedCount()).isEqualTo(0);
+			assertThat(post.commentsCollectedCount()).isEqualTo(45L);
 		});
 	}
 
@@ -81,7 +84,8 @@ class BrandPostAssemblerTest {
 		var stripped = full.withoutRecentComments();
 
 		assertThat(stripped.recentComments()).isEmpty();
-		assertThat(stripped.commentsCollectedCount()).isZero();
+		// 저장 댓글 수는 유지(2026-09-03, FE 피드백 #4-B) — 목록에서도 "수집 댓글 N"을 표기해야 한다.
+		assertThat(stripped.commentsCollectedCount()).isEqualTo(1L);
 		// 나머지 필드는 전부 그대로 — 스냅샷 유래 지표(commentsTotal)와 표시 필드가 흔들리면 안 된다.
 		assertThat(stripped.commentsTotal()).isEqualTo(full.commentsTotal());
 		assertThat(stripped.snapshots()).isEqualTo(full.snapshots());
@@ -517,6 +521,8 @@ class BrandPostAssemblerTest {
 		given(repository.findComments(anyCollection(), anyInt())).willReturn(List.of(
 				new BrandReadRepository.BrandCommentRow("AAA", "c1", "user_a", "본문", 1L,
 						OffsetDateTime.parse("2026-08-06T03:00:00Z"), null)));
+		// 목록 경로는 행 대신 집계로 저장 건수를 채운다(2026-09-03, FE 피드백 #4-B) — 상한 없는 누적치.
+		given(repository.countComments(anyCollection())).willReturn(Map.of("AAA", 85L));
 
 		var assembler = newAssembler(repository, mock(BrandPostCampaignRepository.class),
 				mock(BrandDirectPostRepository.class), mock(TrackingItemAssembler.class),
@@ -528,7 +534,7 @@ class BrandPostAssemblerTest {
 		verify(repository, never()).findComments(anyCollection(), anyInt());
 		assertThat(withoutComments).singleElement().satisfies(post -> {
 			assertThat(post.recentComments()).isEmpty();
-			assertThat(post.commentsCollectedCount()).isZero();
+			assertThat(post.commentsCollectedCount()).isEqualTo(85L);
 		});
 
 		var withComments = assembler.hydrate(7L, accountRow(), BrandAccountType.OWN, index,
@@ -1143,6 +1149,18 @@ class BrandPostAssemblerTest {
 		assertThat(post.recentComments().get(0).author()).isEqualTo("gl***92");
 		assertThat(post.recentComments().get(0).reply().text()).isEqualTo("감사합니다");
 		assertThat(post.commentsCollectedCount()).isEqualTo(1L);
+	}
+
+	/** 답글 선행 @핸들 누출 차단(2026-09-03, FE 피드백 #4-D) — author 마스킹과 같은 규칙으로 본문도 가린다. */
+	@Test
+	void 댓글_답글의_선행_멘션도_마스킹된다() {
+		var row = new BrandReadRepository.BrandCommentRow("ABC", "c1", "nunu.zip_", "좋아요", 3L,
+				OffsetDateTime.parse("2026-08-06T05:00:00Z"), "@nunu.zip_ 감사합니다");
+
+		var post = brandPost(taggedRow("ABC"), meta("ABC", "REELS", null), null, List.of(), List.of(row), List.of());
+
+		assertThat(post.recentComments().get(0).author()).isEqualTo("nu***p_");
+		assertThat(post.recentComments().get(0).reply().text()).isEqualTo("@nu***p_ 감사합니다");
 	}
 
 	@Test

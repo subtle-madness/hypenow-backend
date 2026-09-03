@@ -364,6 +364,8 @@ class V1BrandPostsControllerTest {
 		given(brandReadRepository.findComments(any(), anyInt())).willReturn(List.of(
 				new BrandCommentRow("AAA", "c1", "glowdeep_92", "좋아요", 3L,
 						OffsetDateTime.parse("2026-08-06T05:00:00Z"), null)));
+		// 목록은 댓글 행 대신 집계로 저장 건수를 채운다(2026-09-03, FE 피드백 #4-B — 이전엔 0)
+		given(brandReadRepository.countComments(any())).willReturn(java.util.Map.of("AAA", 45L));
 		given(brandReadRepository.findAuthors(any())).willReturn(List.of(
 				new AuthorRow("9001", "glowdeep_92", "글로우딥", 12345L, "https://cdn/author.jpg", true, null)));
 
@@ -377,7 +379,7 @@ class V1BrandPostsControllerTest {
 				.andExpect(jsonPath("$.data[0].snapshots.length()").value(2))
 				.andExpect(jsonPath("$.data[0].latestSnapshot.views").value(300))
 				.andExpect(jsonPath("$.data[0].commentsTotal").value(12))
-				.andExpect(jsonPath("$.data[0].commentsCollectedCount").value(0))
+				.andExpect(jsonPath("$.data[0].commentsCollectedCount").value(45))
 				.andExpect(jsonPath("$.data[0]", Matchers.hasKey("recentComments")))
 				.andExpect(jsonPath("$.data[0].recentComments.length()").value(0))
 				// nullable 키는 생략하지 않고 명시적 null(계약 무결성 규칙 #1).

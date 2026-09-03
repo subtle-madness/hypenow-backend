@@ -280,8 +280,9 @@ public class TrackingItemAssembler {
 		if (row.author() == null || row.body() == null || row.likeCount() == null || row.commentedAt() == null) {
 			return null;
 		}
-		TrackingItemResponse.PostCommentResponse.Reply reply =
-				row.ownerReplyText() == null ? null : new TrackingItemResponse.PostCommentResponse.Reply(row.ownerReplyText());
+		// 답글 선행 @핸들도 마스킹(2026-09-03, FE 피드백 #4-D) — author 마스킹이 본문으로 새지 않게.
+		TrackingItemResponse.PostCommentResponse.Reply reply = row.ownerReplyText() == null ? null
+				: new TrackingItemResponse.PostCommentResponse.Reply(AuthorMask.maskReply(row.ownerReplyText()));
 		return new TrackingItemResponse.PostCommentResponse(row.id(), AuthorMask.mask(row.author()), row.body(),
 				row.likeCount(), KstTimestamps.toKstIso(row.commentedAt()), reply);
 	}

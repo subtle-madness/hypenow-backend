@@ -1,6 +1,7 @@
 package com.celfit.was.v1.brandmonitoring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -18,6 +19,7 @@ import com.celfit.was.monitoring.BrandLinkRow;
 import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
 import com.celfit.was.monitoring.MonitoringCommandClient;
+import com.celfit.was.v1.common.V1ApiException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashSet;
@@ -293,6 +295,58 @@ class V1BrandAccountServiceHashtagTagsTest {
 		service.putHashtagTags(USER_ID, BRAND_ID, null);
 
 		then(hashtagTagRepository).should().replaceTags(USER_ID, BRAND_ID, List.of());
+	}
+
+	// ---------- 상한 6개(2026-09-03, FE 피드백 09-01 #4-A) ----------
+
+	/** PUT은 내 장부 전체 교체라 입력(정규화·중복 제거 후) 자체가 상한을 넘으면 400 — 저장소 어느 쪽도 안 건드린다. */
+	@Test
+	void putHashtagTags는_정규화_후_7개면_400이고_아무것도_쓰지_않는다() {
+		List<String> seven = List.of("t1", "t2", "t3", "t4", "t5", "t6", "t7");
+
+		assertThatThrownBy(() -> service.putHashtagTags(USER_ID, BRAND_ID, seven))
+				.isInstanceOf(V1ApiException.class)
+				.satisfies(e -> assertThat(((V1ApiException) e).code()).isEqualTo("HASHTAG_TAG_LIMIT_EXCEEDED"));
+
+		then(commandClient).should(never()).putHashtagTags(anyString(), any());
+		then(hashtagTagRepository).should(never()).replaceTags(anyLong(), anyLong(), any());
+	}
+
+	/** 중복은 정규화에서 접히므로 상한 판정도 정규화 후 개수다 — "#T1"과 "t1"은 하나. */
+	@Test
+	void putHashtagTags는_중복을_접은_뒤_6개면_통과한다() {
+		given(hashtagTagRepository.unionByBrand(BRAND_ID)).willReturn(Set.of());
+		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID)).willReturn(Set.of());
+
+		service.putHashtagTags(USER_ID, BRAND_ID, List.of("#T1", "t1", "t2", "t3", "t4", "t5", "t6"));
+
+		then(hashtagTagRepository).should().replaceTags(USER_ID, BRAND_ID,
+				List.of("t1", "t2", "t3", "t4", "t5", "t6"));
+	}
+
+	/** POST는 합집합 추가라 모수가 "내 장부(자동 시드 포함) ∪ 입력"이다 — 장부 5 + 입력 2 = 7이면 400. */
+	@Test
+	void addHashtagTags는_내_장부와_합쳐_7개면_400이다() {
+		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID))
+				.willReturn(new LinkedHashSet<>(List.of(USERNAME, "a", "b", "c", "d")));
+
+		assertThatThrownBy(() -> service.addHashtagTags(USER_ID, BRAND_ID, List.of("e", "f")))
+				.isInstanceOf(V1ApiException.class)
+				.satisfies(e -> assertThat(((V1ApiException) e).code()).isEqualTo("HASHTAG_TAG_LIMIT_EXCEEDED"));
+
+		then(commandClient).should(never()).addHashtagTags(anyString(), any());
+		then(hashtagTagRepository).should(never()).addTags(eq(USER_ID), eq(BRAND_ID), eq(List.of("e", "f")));
+	}
+
+	/** 이미 장부에 있는 태그를 다시 POST하면 합집합 크기가 늘지 않는다 — 장부 6 + 기존 태그 재추가는 통과. */
+	@Test
+	void addHashtagTags는_이미_있는_태그_재추가는_상한에_걸리지_않는다() {
+		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID))
+				.willReturn(new LinkedHashSet<>(List.of(USERNAME, "a", "b", "c", "d", "e")));
+
+		service.addHashtagTags(USER_ID, BRAND_ID, List.of("e"));
+
+		then(commandClient).should().addHashtagTags(USERNAME, List.of("e"));
 	}
 
 	// ---------- 추가(POST) ----------

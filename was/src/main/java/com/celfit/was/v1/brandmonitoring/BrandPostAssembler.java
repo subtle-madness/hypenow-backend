@@ -352,6 +352,8 @@ public class BrandPostAssembler {
 	 *
 	 * <p>{@code withComments=false}면 댓글 배치 조회를 아예 돌리지 않고(08-12 관용구) 과도기 폴백
 	 * 카드도 {@link BrandPostResponse#withoutRecentComments()}로 비운다 — 목록 표면 계약(FE 요청 1).
+	 * 단 {@code commentsCollectedCount}는 채운다(2026-09-03, FE 피드백 09-01 #4-B) — 행 대신
+	 * {@link BrandReadRepository#countComments} 집계 1쿼리(인덱스 카운트)를 쓴다.
 	 */
 	public List<BrandPostResponse> hydrate(long userId, BrandAccountRow account, String viewerAccountType,
 			BrandPostIndex index, List<String> codes, boolean withComments) {
@@ -372,6 +374,7 @@ public class BrandPostAssembler {
 			Map<String, List<BrandCommentRow>> commentsByCode = !withComments ? Map.of()
 					: brandReadRepository.findComments(poolCodes, COMMENT_LIMIT).stream()
 							.collect(Collectors.groupingBy(BrandCommentRow::shortCode));
+			Map<String, Long> commentCounts = withComments ? Map.of() : brandReadRepository.countComments(poolCodes);
 			Map<String, AuthorRow> authorsByPost = resolveAuthors(posts);
 			Map<String, List<String>> campaignIdsByCode = campaignIdsByCode(account.id(), poolCodes);
 			Set<String> seededUsernames = !exposeAdDisclosure ? Set.of() : resolveSeededUsernames(userId);
@@ -387,6 +390,9 @@ public class BrandPostAssembler {
 				if (SOURCE_HASHTAG.equals(card.source())) {
 					card = card.withMatchedTags(
 							index.hashtagMatchedTags().getOrDefault(post.shortCode(), List.of()));
+				}
+				if (!withComments) {
+					card = card.withCommentsCollectedCount(commentCounts.getOrDefault(post.shortCode(), 0L));
 				}
 				poolCards.put(post.shortCode(), card);
 			}
@@ -450,8 +456,9 @@ public class BrandPostAssembler {
 	 * <p>{@code withComments=false}면 댓글 배치 조회를 아예 돌리지 않는다(08-12 성과 대시보드 고정
 	 * 지연 대응). 08-12 운영 덤프 실측에서 브랜드 1계정 조립 415ms 중 237ms(57%)가 댓글 윈도우 쿼리 +
 	 * 18,860행 매핑이었다 — 목록·비교 표면은 댓글을 렌더하지 않으므로(FE 실측 확인) 이 비용은 매
-	 * 요청 버려지고 있었다. 결과 게시물의 {@code recentComments}는 빈 목록,
-	 * {@code commentsCollectedCount}는 0이 된다 — 스냅샷 유래 지표({@code commentsTotal}·
+	 * 요청 버려지고 있었다. 결과 게시물의 {@code recentComments}는 빈 목록이고,
+	 * {@code commentsCollectedCount}는 행 대신 {@link BrandReadRepository#countComments} 집계로 채운다
+	 * (2026-09-03, FE 피드백 09-01 #4-B — 이전엔 0) — 스냅샷 유래 지표({@code commentsTotal}·
 	 * {@code commentsHidden})는 영향이 없다.
 	 *
 	 * <p>{@code scope}는 편의 오버로드를 두지 않는다 — 호출부가 표시(ENRICHED_ONLY)와 판정(ALL)을
@@ -521,6 +528,7 @@ public class BrandPostAssembler {
 		Map<String, List<BrandCommentRow>> commentsByCode = !withComments ? Map.of()
 				: brandReadRepository.findComments(codes, COMMENT_LIMIT).stream()
 						.collect(Collectors.groupingBy(BrandCommentRow::shortCode));
+		Map<String, Long> commentCounts = withComments ? Map.of() : brandReadRepository.countComments(codes);
 		Map<String, AuthorRow> authorsByPost = resolveAuthors(posts);
 		Map<String, List<String>> campaignIdsByCode = campaignIdsByCode(account.id(), codes);
 		// 토글이 꺼져 있으면 조회 자체를 생략한다(드라이런 중 불필요한 조회 방지).
@@ -534,6 +542,9 @@ public class BrandPostAssembler {
 							commentsByCode.getOrDefault(p.shortCode(), List.of()), account.lastSweptAt(),
 							campaignIdsByCode.getOrDefault(p.shortCode(), List.of()), exposeAdDisclosure,
 							seededUsernames, ownedShortCodes.contains(p.shortCode()), viewerAccountType);
+					if (!withComments) {
+						card = card.withCommentsCollectedCount(commentCounts.getOrDefault(p.shortCode(), 0L));
+					}
 					// matchedTags 배지(2026-08-31) — 이 메서드가 격리 판정에 이미 쓴 myTags·
 					// matchedTagsByCode를 재사용해 source=hashtag 카드에만 조회자 장부 교집합을 얹는다.
 					return SOURCE_HASHTAG.equals(card.source())
@@ -949,8 +960,9 @@ public class BrandPostAssembler {
 		if (row.author() == null || row.body() == null || row.commentedAt() == null) {
 			return null;
 		}
+		// 답글 선행 @핸들도 마스킹(2026-09-03, FE 피드백 #4-D) — author 마스킹이 본문으로 새지 않게.
 		TrackingItemResponse.PostCommentResponse.Reply reply = row.ownerReplyText() == null ? null
-				: new TrackingItemResponse.PostCommentResponse.Reply(row.ownerReplyText());
+				: new TrackingItemResponse.PostCommentResponse.Reply(AuthorMask.maskReply(row.ownerReplyText()));
 		return new TrackingItemResponse.PostCommentResponse(row.id(), AuthorMask.mask(row.author()), row.body(),
 				row.likeCount(), KstTimestamps.toKstIso(row.commentedAt()), reply);
 	}

@@ -22,6 +22,14 @@ import java.util.regex.Pattern;
  */
 public final class BrandHashtagTags {
 
+	/**
+	 * 사용자 1명이 브랜드 1개에 둘 수 있는 감지 해시태그 상한(2026-09-03, FE 피드백 09-01 #4-A) —
+	 * FE가 화면에서 막던 6개를 서버가 검증한다(초과 시 400 {@code HASHTAG_TAG_LIMIT_EXCEEDED}).
+	 * 모수는 <b>이 사용자의 장부</b>({@code app.brand_hashtag_tags}, 자동 시드 계정명 태그 포함) —
+	 * 같은 브랜드에 연결된 다른 사용자의 태그는 세지 않는다(사용자 스코프, 08-19 개정과 동일 단위).
+	 */
+	public static final int MAX_TAGS_PER_USER = 6;
+
 	/** IG 해시태그 허용 문자 — 글자(한글 포함)·숫자·언더스코어. 점(.)은 태그를 끊는다. */
 	private static final Pattern VALID_TAG = Pattern.compile("[\\p{L}\\p{N}_]+");
 

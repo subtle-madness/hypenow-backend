@@ -116,8 +116,9 @@ public class PerformanceContentAssembler {
 	 * assembleSlim과 같은 응답을 만든다})이 "구 경로와 같은 답"을 단정하는 테스트라 기준선이
 	 * 사라지면 단정 자체가 공허해지기 때문이다.
 	 *
-	 * <p>결과 콘텐츠의 {@code recentComments}는 빈 목록, {@code commentsCollectedCount}는 0이다 —
-	 * 스냅샷 유래 지표({@code commentsTotal}·{@code commentsHidden})와 나머지 필드는 전부 동일하다.
+	 * <p>결과 콘텐츠의 {@code recentComments}는 빈 목록이고 {@code commentsCollectedCount}는 저장
+	 * 건수 그대로다(2026-09-03, FE 피드백 #4-B — 이전엔 0) — 스냅샷 유래 지표({@code commentsTotal}·
+	 * {@code commentsHidden})와 나머지 필드는 전부 동일하다.
 	 * 댓글이 필요한 단건 조회는 {@link #assemble(long)}을 그대로 쓴다.
 	 */
 	Assembled assembleSlim(long userId) {
@@ -539,13 +540,17 @@ public class PerformanceContentAssembler {
 		// 댓글은 병합하지 않는다(두 산지의 id 공간·정렬이 달라 섞으면 순서가 무의미해진다) — 레거시가
 		// 한 건도 못 모은 경우에만 브랜드 수집분으로 메운다(빈 목록을 그대로 내보내는 것보다 낫다).
 		// 슬림 조립(목록·비교)은 댓글을 아예 싣지 않는다 — 두 표면은 댓글을 렌더하지 않는다(08-12).
-		List<TrackingItemResponse.PostCommentResponse> comments = !withComments ? List.of()
-				: !post.recentComments().isEmpty() || overlap == null ? post.recentComments() : overlap.recentComments();
+		// 저장 건수는 슬림에서도 채운다(2026-09-03, FE 피드백 09-01 #4-B): 레거시 댓글은 이미 읽혀
+		// 있고, 브랜드 풀 겹침은 집계값(commentsCollectedCount)을 들고 온다 — 추가 조회 없음.
+		List<TrackingItemResponse.PostCommentResponse> source =
+				!post.recentComments().isEmpty() || overlap == null ? post.recentComments() : overlap.recentComments();
+		long collected = source.isEmpty() && overlap != null ? overlap.commentsCollectedCount() : source.size();
+		List<TrackingItemResponse.PostCommentResponse> comments = withComments ? source : List.of();
 
 		return new PerformancePostResponse(post.url(), shortcode, post.contentType(), post.uploadedAt(),
 				post.caption(), post.matchedKeywords(), post.thumbnailUrl(), post.hiddenAt(), snapshots,
 				previousDayValues(snapshots), commentsTotal(snapshots), commentsHidden(snapshots),
-				comments.size(), comments);
+				collected, comments);
 	}
 
 	/**

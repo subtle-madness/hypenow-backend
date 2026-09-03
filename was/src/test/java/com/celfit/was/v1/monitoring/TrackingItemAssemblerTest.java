@@ -169,7 +169,7 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 		seedPostMeta("SHORT1", "glowdeep", "REELS", registeredOn, "캡션 원문", "http://cdn/thumb.jpg");
 		seedSnapshot("SHORT1", "glowdeep", registeredOn.plusDays(1), "REELS", 100L, 500L, 10L);
 		seedSuccessfulSweep(LocalDate.now());
-		seedComment("SHORT1", "c1", "author_ab", "댓글1", 5, OffsetDateTime.now(), "작성자 답글");
+		seedComment("SHORT1", "c1", "author_ab", "댓글1", 5, OffsetDateTime.now(), "@author_ab 작성자 답글");
 
 		TrackingItemAssembler.AssembledList assembled = assembler.assembleList(userId);
 
@@ -186,7 +186,8 @@ class TrackingItemAssemblerTest extends IntegrationTest {
 		assertThat(item.post().snapshots().get(0).views()).isEqualTo(500L);   // REELS는 views 보존
 		assertThat(item.post().recentComments()).hasSize(1);
 		assertThat(item.post().recentComments().get(0).author()).isEqualTo("au***ab");
-		assertThat(item.post().recentComments().get(0).reply().text()).isEqualTo("작성자 답글");
+		// 답글 선행 @핸들도 author와 같은 규칙으로 마스킹(2026-09-03, FE 피드백 #4-D)
+		assertThat(item.post().recentComments().get(0).reply().text()).isEqualTo("@au***ab 작성자 답글");
 	}
 
 	@Test

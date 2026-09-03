@@ -57,6 +57,7 @@ public record BrandPostResponse(
 		List<TrackingItemResponse.SnapshotResponse> snapshots,
 		Long commentsTotal,
 		boolean commentsHidden,
+		@Schema(description = "저장된 댓글 수(누적 합집합, 상한 없음) — 목록·상세 모두 채움(2026-09-03). 표시 댓글 수의 정본은 commentsTotal(최신 스냅샷)")
 		long commentsCollectedCount,
 		List<TrackingItemResponse.PostCommentResponse> recentComments,
 		List<String> campaignIds,
@@ -91,15 +92,30 @@ public record BrandPostResponse(
 	/**
 	 * 댓글만 비운 사본(2026-08-27 목록 타임아웃 해소 — FE 요청 1) — 목록 표면은 댓글을 렌더하지
 	 * 않아 {@code recentComments}를 싣지 않는다(상세만 포함). 계약 무결성 규칙 #1(키 생략 금지)대로
-	 * 키는 유지하고 빈 목록·0으로 내린다. 스냅샷 유래 지표({@code commentsTotal}·
-	 * {@code commentsHidden})는 그대로다 — 댓글 수 표시는 그쪽이 정본이다.
+	 * 키는 유지하고 빈 목록으로 내린다. {@code commentsCollectedCount}는 <b>유지</b>한다(2026-09-03,
+	 * FE 피드백 09-01 #4-B — 이전엔 0으로 내려 목록에서 "수집 댓글 수"를 표기할 수 없었다; 목록 경로는
+	 * {@link #withCommentsCollectedCount}로 집계 쿼리 값을 먼저 얹는다). 스냅샷 유래 지표
+	 * ({@code commentsTotal}·{@code commentsHidden})는 그대로다.
 	 */
 	public BrandPostResponse withoutRecentComments() {
 		return new BrandPostResponse(id, brandAccountId, source, matchedTags, postUrl, shortcode, contentType, takenAt,
 				caption, thumbnailUrl, videoUrl, videoDuration, authorProfileUrl, authorUsername, authorFullName,
 				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
 				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
-				commentsHidden, 0L, List.of(), campaignIds, createdAt, updatedAt,
+				commentsHidden, commentsCollectedCount, List.of(), campaignIds, createdAt, updatedAt,
+				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor);
+	}
+
+	/**
+	 * 저장 댓글 수만 바꾼 사본(2026-09-03, FE 피드백 09-01 #4-B) — 목록 경로가 댓글 행 대신
+	 * {@code count(*)} 집계로 채울 때 쓴다. 상세 경로는 조회한 댓글 행 수가 그대로 이 값이다.
+	 */
+	public BrandPostResponse withCommentsCollectedCount(long count) {
+		return new BrandPostResponse(id, brandAccountId, source, matchedTags, postUrl, shortcode, contentType, takenAt,
+				caption, thumbnailUrl, videoUrl, videoDuration, authorProfileUrl, authorUsername, authorFullName,
+				authorProfilePicUrl, authorIsVerified, authorFollowers, sponsorship, isPaidPartnership,
+				trackingStatus, trackingStartedAt, trackingEndedAt, latestSnapshot, snapshots, commentsTotal,
+				commentsHidden, count, recentComments, campaignIds, createdAt, updatedAt,
 				adDisclosure, adViolations, adEvidence, hashtags, seededAuthor);
 	}
 

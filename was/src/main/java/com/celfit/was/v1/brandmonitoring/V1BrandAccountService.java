@@ -312,6 +312,8 @@ public class V1BrandAccountService {
 		requireOwnership(userId, brandId);
 		String username = findAccountOrThrow(brandId).username();
 		List<String> normalized = normalizeTags(tags);
+		// PUT은 내 장부 전체 교체라 결과 장부 = normalized — 시딩 전에 검사해도 같은 답이다.
+		requireWithinTagLimit(normalized.size());
 		ensureSeeded(userId, brandId, username);
 
 		Set<String> union = new LinkedHashSet<>(hashtagTagRepository.unionByBrand(brandId));
@@ -333,9 +335,26 @@ public class V1BrandAccountService {
 		List<String> normalized = normalizeTags(tags);
 		if (!normalized.isEmpty()) {
 			ensureSeeded(userId, brandId, username);
+			// POST는 합집합 추가라 결과 장부 = 내 장부(시딩 반영 후) ∪ normalized — 시딩 뒤에 세야
+			// 자동 시드 태그가 자리를 차지한 상태로 판정된다(GET이 보여주는 수와 같은 모수).
+			Set<String> resulting = new LinkedHashSet<>(hashtagTagRepository.findByUserAndBrand(userId, brandId));
+			resulting.addAll(normalized);
+			requireWithinTagLimit(resulting.size());
 		}
 		commandClient.addHashtagTags(username, normalized);
 		hashtagTagRepository.addTags(userId, brandId, normalized);
+	}
+
+	/**
+	 * 감지 해시태그 상한(2026-09-03, FE 피드백 09-01 #4-A) — 결과 장부가
+	 * {@link BrandHashtagTags#MAX_TAGS_PER_USER}를 넘으면 400. monitoring 호출·장부 쓰기 전에 던진다
+	 * (두 저장소 어느 쪽도 건드리지 않는다).
+	 */
+	private static void requireWithinTagLimit(int resultingSize) {
+		if (resultingSize > BrandHashtagTags.MAX_TAGS_PER_USER) {
+			throw V1ApiException.badRequest("HASHTAG_TAG_LIMIT_EXCEEDED",
+					"감지 해시태그는 최대 " + BrandHashtagTags.MAX_TAGS_PER_USER + "개까지 등록할 수 있어요.");
+		}
 	}
 
 	/**

@@ -811,6 +811,13 @@ tombstone(`deleted_at`)이었다. 판정 자체는 비소급이지만(이미 저
 (`/api/brands/{username}/hashtag-tags` 계열)를 그대로 프록시한다 — 정규화(trim·선행 `#` 제거·
 소문자·중복 제거)와 유효 문자 검증은 monitoring이 한다.
 
+**상한 6개(2026-09-03, FE 피드백 09-01 #4-A).** 사용자 1명이 브랜드 1개에 둘 수 있는 태그는
+**자동 시드(계정명) 포함 최대 6개**다 — was가 검증한다(`BrandHashtagTags.MAX_TAGS_PER_USER`,
+`V1BrandAccountService`). PUT은 입력(정규화·중복 제거 후)이 7개 이상이면, POST는 "내 장부 ∪ 입력"이
+7개 이상이면 **400 `HASHTAG_TAG_LIMIT_EXCEEDED`**("감지 해시태그는 최대 6개까지 등록할 수 있어요.")를
+내고 monitoring·장부 어느 쪽도 건드리지 않는다. 모수는 사용자 스코프라 같은 브랜드의 다른 사용자
+태그는 세지 않는다(monitoring 합집합은 6을 넘을 수 있다 — 스윕 대상 상한은 별도 개념).
+
 **08-12 유저 결정: 표준 REST 단건 조작 추가.** 기존 GET·PUT 2종에 POST(단건·다건 추가)·
 `DELETE {tag}`(단건 삭제)·DELETE(전체 삭제) 3종을 더해 5종 표준 REST 표면이 됐다.
 **PUT 빈 목록 하한 가드는 폐지됐다**(전체 삭제 API가 정식 경로가 됐으므로) — 빈 목록 PUT은

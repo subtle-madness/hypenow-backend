@@ -532,7 +532,8 @@ class PerformanceContentAssemblerTest {
 		var post = assembler().assembleSlim(USER_ID).contents().get(0).item().post();
 
 		assertThat(post.recentComments()).isEmpty();
-		assertThat(post.commentsCollectedCount()).isEqualTo(0L);
+		// 저장 건수는 슬림에서도 유지(2026-09-03, FE 피드백 #4-B) — 댓글 본문만 싣지 않는다.
+		assertThat(post.commentsCollectedCount()).isEqualTo(1L);
 		// 스냅샷 유래 지표는 슬림과 무관하게 유지된다 — FE 목록 집계의 산지다.
 		assertThat(post.commentsTotal()).isEqualTo(9L);
 		assertThat(post.commentsHidden()).isFalse();

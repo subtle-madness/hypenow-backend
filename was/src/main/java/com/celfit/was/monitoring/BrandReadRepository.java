@@ -3,8 +3,10 @@ package com.celfit.was.monitoring;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -365,6 +367,30 @@ public class BrandReadRepository {
 				.param("perPostLimit", perPostLimit)
 				.query(BrandCommentRow.class)
 				.list();
+	}
+
+	/**
+	 * 게시물별 저장 댓글 수(2026-09-03, FE 피드백 09-01 #4-B) — 목록 표면({@code withComments=false})이
+	 * 댓글 행을 안 읽으면서도 {@code commentsCollectedCount}를 채우기 위한 집계. 행 매핑 없이
+	 * (short_code) 인덱스 카운트라 08-12가 걷어낸 "윈도우 쿼리 + 수천 행 매핑" 비용과 무관하다.
+	 * 댓글이 없는 게시물은 키가 없다(호출부가 0으로 폴백).
+	 */
+	public Map<String, Long> countComments(Collection<String> shortCodes) {
+		if (shortCodes.isEmpty()) {
+			return Map.of();
+		}
+		Map<String, Long> counts = new LinkedHashMap<>();
+		jdbc.sql("""
+				SELECT short_code, count(*) AS cnt
+				FROM brand_post_comment
+				WHERE short_code IN (:shortCodes)
+				GROUP BY short_code
+				""")
+				.param("shortCodes", shortCodes)
+				.query((rs, i) -> Map.entry(rs.getString("short_code"), rs.getLong("cnt")))
+				.list()
+				.forEach(e -> counts.put(e.getKey(), e.getValue()));
+		return counts;
 	}
 
 	/**
