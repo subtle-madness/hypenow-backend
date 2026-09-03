@@ -101,6 +101,7 @@ class V2InfluencerReportRepositoryTest extends IntegrationTest {
 		jdbcTemplate.execute("""
 				CREATE INDEX idx_content_analyses_brand_names_gin
 				    ON content_analyses USING gin ((jsonb_path_query_array(detected_brands, '$[*].name')))
+				    WITH (fastupdate = off)
 				    WHERE ad_type = 'sponsored'""");
 		jdbcTemplate.execute("""
 				CREATE TABLE account_analyses (
