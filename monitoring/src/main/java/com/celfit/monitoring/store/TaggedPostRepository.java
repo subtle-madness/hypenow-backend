@@ -293,7 +293,7 @@ public class TaggedPostRepository {
 	 * 실수집 없이 사라지지 않는다.
 	 */
 	public List<TrackedPost> unenumeratedDuePosts(long brandId, Instant minTakenAt) {
-		return unenumeratedDuePosts(brandId, minTakenAt, null);
+		return unenumeratedDuePosts(brandId, minTakenAt, null, null);
 	}
 
 	/**
@@ -303,21 +303,28 @@ public class TaggedPostRepository {
 	 * 기존과 동일하게 전부 돌려준다. <b>세트 밖 행을 여기서 걸러야 하는 이유</b>: 매일 티어(0~14일)
 	 * 는 last_crawled_at과 무관하게 매일 due라, 동결 touch만으로는 다음 스윕 모수에서 안 빠진다.
 	 */
-	public List<TrackedPost> unenumeratedDuePosts(long brandId, Instant minTakenAt, Instant hashtagFloor) {
+	public List<TrackedPost> unenumeratedDuePosts(long brandId, Instant minTakenAt, Instant hashtagFloor,
+			Instant unavailableRecheckBefore) {
 		Timestamp floor = hashtagFloor == null ? null : Timestamp.from(hashtagFloor);
+		Timestamp recheck = unavailableRecheckBefore == null ? null : Timestamp.from(unavailableRecheckBefore);
+		// 부재 확정 행 재검증 스로틀(2026-09-03) — unavailable_at이 recheckBefore 이후인(최근 확정)
+		// 행은 제외한다. 매일 티어는 due가 나이 기반이라 이 스로틀 없이는 삭제된 게시물에 매일 밤
+		// 404 단건 콜이 나가고, Hiker는 404도 과금한다. 주기를 넘긴 행만 생존 재확인으로 돌아오고,
+		// 재관측(touchCrawled)이 unavailable_at을 해제해 부활 경로는 유지된다. null = 스로틀 없음.
 		return db.query("""
 				SELECT short_code, taken_at, last_crawled_at FROM brand_tagged_post
 				WHERE brand_id = ?
 				  AND (direct_registered_at IS NOT NULL
 				       OR (hashtag_detected_at IS NOT NULL AND (?::timestamptz IS NULL OR taken_at >= ?)))
 				  AND taken_at >= ?
+				  AND (?::timestamptz IS NULL OR unavailable_at IS NULL OR unavailable_at < ?)
 				ORDER BY (enriched_at IS NULL) DESC, taken_at DESC""",
 				(rs, i) -> {
 					Timestamp last = rs.getTimestamp("last_crawled_at");
 					return new TrackedPost(rs.getString("short_code"),
 							rs.getTimestamp("taken_at").toInstant(),
 							last == null ? null : last.toInstant());
-				}, brandId, floor, floor, Timestamp.from(minTakenAt));
+				}, brandId, floor, floor, Timestamp.from(minTakenAt), recheck, recheck);
 	}
 
 	/**
