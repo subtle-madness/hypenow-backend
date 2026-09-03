@@ -606,12 +606,13 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 	}
 
 	/**
-	 * 분석 전 게시물은 썸네일에서 제외(2026-09-03, FE 피드백 #3) — contentId가 6.3(contents ⋈
-	 * content_analyses)으로 곧장 가므로, 분석이 없는 창 게시물을 내려주면 hover 프리페치가 404를 낸다.
+	 * 분석 여부와 무관하게 썸네일에 담는다(2026-09-04 제품 결정 — #749의 "분석 완료만" 필터 원복,
+	 * 인플루언서 상세 recentContents(6.4)와 동일 규칙). #749 당시 우려(6.3 hover 프리페치 404)는
+	 * 콘텐츠 분석 2단계 분리로 6.3이 D+1부터 200을 반환하게 되어 해소됐다.
 	 */
 	@Test
-	void 보강_썸네일은_분석_완료_게시물만_담는다() {
-		// g0: 창에는 있지만(미러 직후 최신 게시물) 아직 content_analyses가 없다 — 가장 최신이어도 빠져야 한다.
+	void 보강_썸네일은_분석_여부와_무관하게_담는다() {
+		// g0: 창에는 있지만(미러 직후 최신 게시물) 아직 content_analyses가 없다 — 가장 최신이니 1번으로 담긴다.
 		jdbcTemplate.update("""
 				INSERT INTO account_content_series (short_code, account_handle, posted_at,
 				  content_type, views, likes, comments, sponsored)
@@ -624,7 +625,11 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 
 		assertThat(glowThumbs).hasSize(4);
 		assertThat(glowThumbs).extracting(V1InfluencerDiscoveryRepository.ThumbRow::shortCode)
-				.containsExactly("g1", "g2", "g3", "g4"); // g0 제외, g5는 상한(4)에 밀림
+				.containsExactly("g0", "g1", "g2", "g3"); // 최신순 4개, g0 포함(미분석)·g4·g5는 상한에 밀림
+		V1InfluencerDiscoveryRepository.ThumbRow g0 = glowThumbs.get(0);
+		assertThat(g0.thumbnailUrl()).isEqualTo("https://cdn/g0.jpg"); // 아카이브 썸네일 없음 → contents 폴백
+		assertThat(g0.mainCategory()).isNull(); // 미분석 → 카테고리 없음
+		assertThat(g0.adType()).isEqualTo("organic"); // 미분석 → COALESCE 기본값
 	}
 
 	@Test
