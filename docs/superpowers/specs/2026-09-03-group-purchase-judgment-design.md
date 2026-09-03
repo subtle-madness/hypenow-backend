@@ -63,7 +63,9 @@ analytics 층에 소형 판정기로 둔다.
 
 - 입력: 캡션 1건. 질문: "이 게시물이 인플루언서 공동구매(공구) 판매 게시물인가. `공구`가 연장·도구
   의미로만 쓰였으면 아니오." 출력 JSON `{groupPurchase: boolean, reason: string}`.
-- 전송: `common-llm` Vertex 온라인(소량·즉시). 모델은 콘텐츠 분석과 같은 flash 계열.
+- 전송: analytics 자체 `llm` 패키지의 `GeminiApi`(구현 `VertexHttpApi`, 생성은 `LlmClientFactory`) 온라인
+  호출(소량·즉시). analytics는 `common-llm` 의존이 없다(monitoring·was만 사용). 모델·프로젝트는
+  콘텐츠 분석과 같은 설정(`LlmConfig`)을 재사용.
 - 콜 규모: 백로그 수백 건 1회 + 일 한두 건.
 
 ## 4. 데이터 모델 (analysis DB, analytics 소유)
@@ -89,7 +91,9 @@ group_purchase_judgments (
 
 - `JobName.GROUP_PURCHASE_JUDGE`. 후보 = `contents`에서 `caption ~ '공구|공동구매'`이고 판정 행이 없거나
   해시가 다른 것. 규칙 확정분은 LLM 없이 즉시 기록, 애매분만 LLM.
-- 주기: 미러 직후 1회(새 게시물 유입 시점) + 낮 시간 30분 간격(백필·재시도). 어드민 `/ui` 수동 트리거.
+- 주기: `ScheduleRunner` 패턴대로 `analytics.schedule.group-purchase-cron` 프로퍼티(기본 `-`=off)로
+  등록하고, 운영 compose env에 미러 완료 직후 1회 + 낮 시간 30분 간격 크론을 넣는다(배포 PR에 env 동반).
+  어드민 `/ui` 수동 트리거는 `AnalyticsJobService`에 `JobName` 추가로 자동 노출.
 - 실패 격리: 게시물 단위. LLM 실패는 verdict NULL로 남기고 다음 주기 재시도. 연속 실패 임계 도달 시
   런 중단(광고 판정 `llmFailureAbortThreshold` 패턴).
 - 킬 스위치·리셋: `app_setting` `analytics.group-purchase.enabled`(기본 true, 마이그레이션 시드). 사전·
