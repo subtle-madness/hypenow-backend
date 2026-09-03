@@ -22,6 +22,9 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * <p>{@code brandPostId}는 <b>항상 shortcode</b>다(2026-08-27 리라우팅 이후 — 구 승격 상태 조건부
  * 필드에서 전환) — 이 목록에 실리는 행은 이미 {@code source=hashtag}로 성과 측정 풀에 편입된
  * 게시물뿐이라 별도 존재 판정이 필요 없다.
+ *
+ * <p>{@code influencerId}(2026-09-03) — {@link BrandPostResponse#influencerId}를 그대로 옮긴 값이다
+ * (판정 재구현 없음, {@link BrandPostAssembler#attachInfluencerIds}가 이미 배치로 부착했다).
  */
 public record BrandHashtagPostResponse(
 		String shortcode,
@@ -39,5 +42,7 @@ public record BrandHashtagPostResponse(
 		Long comments,
 		@Schema(allowableValues = {"sponsored", "organic", "unknown"}) String sponsorship,
 		String firstSeenAt,
-		String brandPostId) {
+		String brandPostId,
+		@Schema(description = "작성자 handle이 발굴 상세 조회(GET /v1/influencers/{influencerId})가 성공하는 계정이면 그 handle, 아니면 null. POST /v1/saved-influencers 저장에 그대로 쓴다.")
+		String influencerId) {
 }

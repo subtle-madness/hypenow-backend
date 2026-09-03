@@ -51,7 +51,7 @@ class BrandControllerTest {
 
 		StubService() {
 			super(null, null, null, null, null, null, 2000,
-					Runnable::run, Runnable::run, Runnable::run);
+					Runnable::run, Runnable::run, Runnable::run, true);
 		}
 
 		/**
@@ -151,7 +151,7 @@ class BrandControllerTest {
 		Instant receivedRegisteredAt;
 
 		StubDirectCollect() {
-			super(null, null, null, null, null, null, 300, 2000);
+			super(null, null, null, null, null, null, null, 300, 2000);
 		}
 
 		@Override

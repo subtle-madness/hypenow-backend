@@ -409,6 +409,108 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
 - **age 미설치면 업로드 생략**(fail-closed) — 크론 로그에 경고가 남고 로컬 폴백이 백업 공백을
   막는다. 서버 설치: `sudo apt-get install -y age` (setup-server.sh 대상 서버 재구축 시 포함할 것).
 
+### 6-3. PII 봉투 암호화 키 운영 (09-03~, 트랙 A)
+
+- **개요**: `app.users`·`app.inquiries`·`app.password_resets`·`app.signup_events`의 이메일 등
+  개인정보 컬럼은 AES-256-GCM DEK(+HMAC 블라인드 인덱스 키)로 암호화되고, DEK는 OCI Vault
+  KEK로 래핑된 채 각 환경(app DB)의 `app.encryption_keys`에 저장된다(설계:
+  [specs/2026-09-03-pii-envelope-encryption-design.md](../docs/superpowers/specs/2026-09-03-pii-envelope-encryption-design.md)).
+  앱은 부팅 시 1회 Vault로 DEK를 언래핑해 메모리에만 들고 있는다 — 평문 DEK는 디스크·로그
+  어디에도 남지 않는다.
+- **KEK**: `hypenow-pii-kek`(대칭 AES-256, SOFTWARE 보호 — Always Free 범위), 기존
+  `hypenow-vault` 안에 생성(Task 0). OCID:
+  `ocid1.key.oc1.ap-tokyo-1.ezvjprllaacng.abxhiljrxoa5bwu432rpge634dplnahnnwguxfca7dwwudwuzlm3chw72x6a`,
+  crypto endpoint: `https://ezvjprllaacng-crypto.kms.ap-tokyo-1.oraclecloud.com`. 둘 다 비밀이
+  아닌 식별자(실제 접근 통제는 아래 IAM 정책)라 `deploy/compose.yaml`·`compose.test.yaml`의
+  was/test-was environment에 직접 기재돼 있다 — 백업 age 키(§6-2)와 달리 `.env` 수동 등록
+  단계가 없다.
+- **IAM 정책**: `hypenow-pii-kek-use` — 서버 dynamic group(`hypenow-instances`)에 이 키
+  **1개**의 `use`만 허용(다른 키·시크릿은 여전히 불가). 인증은 인스턴스 프린시펄
+  (`VaultDekWrapper`가 `InstancePrincipalsAuthenticationDetailsProvider` 사용).
+- **DEK 자동 부트스트랩**(Task 11 — 최초 계획의 "Task 7 Step 1: 로컬에서 openssl로 DEK 생성 후
+  수동 INSERT"를 대체): vault 모드 첫 부팅에서 `app.encryption_keys`에 그 환경의 `key_id` 행이
+  없으면 앱이 스스로 (a) 64바이트 DEK를 메모리에 생성 → (b) KEK로 래핑 → (c)
+  `INSERT … ON CONFLICT (key_id) DO NOTHING` → (d) **반드시 다시 SELECT**해서 그 행을
+  언래핑해 사용한다(`DekStore`). 롤링 배포로 두 인스턴스가 동시에 부트스트랩해도 먼저 커밋한
+  쪽이 이기고, 진 쪽도 재조회로 같은 값에 수렴한다 — 수동으로 DEK를 생성·등록할 필요가 없다.
+  확인은 SQL 하나면 끝난다:
+  ```sql
+  -- 서버에서: docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis (analysis DB의 app 스키마)
+  SELECT key_id, created_at FROM app.encryption_keys;
+  ```
+  최초 vault 기동 로그에 `DEK 부트스트랩 — key_id=1 신규 래핑본 등록 시도`가 보이면 정상
+  (이후 재기동은 이 로그 없이 조용히 언래핑만 한다 — 키 바이트·base64는 어떤 로그에도 남지
+  않는다).
+- **환경별 DEK 분리**: 운영·스테이징은 서로 다른 app DB(각 `postgres`/`test-postgres` 컨테이너
+  안의 별개 DB)를 쓰므로 `encryption_keys` 행도 각자 독립적으로 부트스트랩된다 — 같은 KEK를
+  공유해도 운영 DEK와 스테이징 DEK 값은 다르다(한쪽 유출이 다른 쪽 데이터에 영향 없음).
+  **단서**: 이 분리는 각 환경이 스스로 부트스트랩한 채로 있을 때만 유효하다 — 스테이징 DB를
+  운영 덤프로 복원하면 `encryption_keys`의 운영 래핑본이 통째로 따라와 그 순간부터 스테이징도
+  운영과 같은 DEK를 쓰게 된다(같은 KEK로 언래핑하므로 동작 자체엔 문제없다 — 다만 "환경별로
+  DEK가 다르다"는 위 전제가 그 시점부터 깨진다는 점은 인지하고 있을 것).
+- **운영 fail-closed 가드**: `CryptoConfig`가 활성 프로파일에 `prod`가 있는데
+  `crypto.mode=local`이면 기동 자체를 막는다(`crypto.allow-local-in-prod`라는 우회 플래그가
+  있지만 테스트 전용이고 compose에는 없다). 즉 운영·스테이징 compose에서 `CRYPTO_MODE=vault`를
+  실수로 지우면 더미 키로 조용히 뜨는 대신 기동이 죽는다(의도된 동작 — 더미 키로 개인정보가
+  "암호화됐지만 사실상 평문"인 상태로 뜨는 사고를 차단).
+- **백필 실행**(`--crypto.backfill=true` 1회 기동, 트랙 A 스펙 §전환 2 — 이중 쓰기 배포 후,
+  bidx UNIQUE 마이그레이션·읽기 전환(PR 2) **전에** 완료해야 한다). `rollout.sh`가 관리하는
+  정식 `was` 컨테이너와는 별개로, 호스트 포트를 점유하지 않는 was 서비스 특성(Caddy가 도커
+  DNS로만 프록시)을 이용해 1회성 컨테이너를 추가로 띄운다. **주의**: 이 컨테이너는 백필
+  러너만 도는 게 아니라 **정상 was 인스턴스 전체**라 모든 `@Scheduled` 배치가 함께 뜬다 —
+  특히 `WeeklyDigestJob.catchUp`(평일 09:10~23:50 KST 10분마다, **메일 실발송 포함** — 재진입
+  가드가 JVM 내 `AtomicBoolean`이라 이 두 번째 컨테이너를 막지 못한다)과 등록 복구 스케줄러
+  2종(`RecoverStalePendingScheduler`·`BrandDirectRegistrationRecoveryScheduler`, 10분 간격)이
+  위험하다. 아래처럼 그 크론들을 `"-"`(Spring `@Scheduled` cron 비활성 마커 — CLAUDE.md
+  "임시 중단은 둘 다 `"-"`로 덮어 재기동" 관용구와 동일)로 덮어 무력화한 채로 띄운다(보존
+  스케줄러 2종도 같은 창에 걸릴 가능성을 없애기 위해 함께 무력화):
+  ```bash
+  # 서버에서 (deploy/ 디렉토리 — compose.yaml과 같은 위치). foreground로 띄워 로그를 바로 본다.
+  # -e JAVA_OPTS="-Dcrypto.backfill=true"는 was 서비스의 JAVA_OPTS(-Xms2g -Xmx2g
+  # -XX:+AlwaysPreTouch …)를 통째로 대체한다 — 의도된 것: 백필은 짧게 끝나는 1회성 작업이라
+  # 라이브 옆에 2GiB 힙을 미리 채워 띄울 이유가 없다.
+  docker compose run --rm --no-deps \
+    -e JAVA_OPTS="-Dcrypto.backfill=true" \
+    -e MONITORING_DIGEST_WEEKLY_CRON="-" -e MONITORING_DIGEST_WEEKLY_CATCHUP_CRON="-" \
+    -e MONITORING_RECOVER_CRON="-" -e MONITORING_BRAND_REGISTRATION_RECOVER_CRON="-" \
+    -e ADMIN_AUDIT_LOG_RETENTION_CRON="-" -e SIGNUP_EVENTS_RETENTION_CRON="-" \
+    was
+  # 로그에 "PII 백필 완료 — users=NN, inquiries=NN, password_resets=NN, signup_events=NN"이
+  # 찍히면 **그 즉시** Ctrl-C로 중단한다(--rm이 컨테이너를 자동 정리). PiiBackfillRunner는
+  # ApplicationRunner라 백필 후에도 앱은 정상 기동 상태로 계속 살아있다 — 위 크론 무력화가
+  # 예약 배치의 위험만 상쇄할 뿐 이 컨테이너 자체가 무해해지는 건 아니므로 빨리 내린다.
+  # (docker compose run은 --use-aliases 없이는 서비스 별칭을 못 받아 도커 DNS에 안 실리므로
+  # Caddy → was 라운드로빈에는 애초에 안 들어간다 — 남겨두면 위험한 건 라운드로빈 진입이 아니라
+  # 예약 배치가 무력화된 채로 도는 정상 was 인스턴스가 불필요하게 떠 있는 것 자체다.)
+  ```
+  완료 확인: `SELECT count(*) FROM app.users WHERE email_enc IS NULL;`(0이어야 정상 — 나머지
+  3테이블도 `<table>_enc IS NULL` 패턴으로 동일 확인).
+- **KEK 로테이션 개요**: KEK를 바꿔도 DEK 자체(따라서 암호화된 데이터)는 그대로다 — 새 KEK로
+  기존 DEK를 다시 래핑해 `app.encryption_keys.wrapped_dek`만 갱신하면 된다. 데이터 재암호화는
+  불필요(암호문의 `v1:<key_id>:...` 접두사는 DEK 버전 식별용이지 KEK 버전과 무관).
+- **키 유실 시나리오**: `app.encryption_keys`의 래핑본 행이 유실되면(KEK 자체는 살아있어도)
+  그 환경의 암호화 컬럼은 **영구 복원 불가**(래핑된 DEK 없이는 KEK로도 원문에 못 감) —
+  평문 컬럼이 아직 살아있는 이중 쓰기 기간엔 재부트스트랩(새 DEK 생성) + 백필 재실행으로 복구
+  가능하지만, contract(평문 컬럼 DROP, PR 3) 이후엔 복구 경로가 없다. **`DekStore`는 이 사고를
+  자동 감지해 fail-closed로 막는다**: `encryption_keys` 행이 없는데 4개 테이블
+  (`users`/`inquiries`/`password_resets`/`signup_events`) 중 어느 하나라도 `*_enc IS NOT NULL`
+  행이 있으면(구 백업 복원·잘못된 DB 지정·행 실수 삭제 등 — 첫 부팅과 "행 없음" 모양이 똑같아
+  구분이 안 된다) 자동 부트스트랩을 거부하고 `IllegalStateException`("encryption_keys 행은
+  없는데 암호문이 존재 — 키 유실 의심, 자동 부트스트랩 거부. 백업의 encryption_keys 복원
+  필요")으로 기동을 중단한다 — 이 검사가 없으면 같은 `key_id=1`로 새 DEK가 조용히
+  부트스트랩돼 `v1:1:` 접두사 검사까지 통과하지만 GCM 태그 검증에서 기존 암호문 전량이
+  복호화 실패로 죽는, 훨씬 늦게 발견되는 사고(fail-open)가 됐을 것이다. 첫 부팅처럼 4개
+  테이블이 전부 비어 있는 정상 케이스는 이 검사를 그대로 통과해 부트스트랩된다. 유일한
+  복구 경로는 §6 백업에서 `app.encryption_keys`를 되살리는 것뿐이다(별도 제외 없이 app DB
+  전체 덤프에 포함되므로 통상 DB 복원 경로로 같이 복원된다) — 뒤집어 말하면 그 백업이 이
+  행의 유일한 안전망이라는 뜻이기도 하다.
+- **힙덤프·디버그 로그는 키 재료로 취급**: 부트스트랩·언래핑 과정에서 평문 DEK가 담긴 base64
+  `String`이 OCI SDK 시그니처(`EncryptDataDetails.plaintext`/`DecryptedData.getPlaintext()`가
+  `String`을 요구)상 GC 전까지 불가피하게 힙에 잔존한다 — was 힙덤프(§ OOM 자동 덤프 등)는
+  백업 age 키(§6-2)와 동등한 민감도로 취급할 것. 같은 이유로 `com.oracle.bmc`(OCI SDK) 로거를
+  DEBUG로 올리면 HTTP 요청 본문(평문 DEK 포함)이 로그에 찍힐 수 있다 — 운영에서 이 로거
+  레벨을 올리지 말 것.
+
 ## 7. 프론트 연동 (www.hypenow.io)
 - 권장: **Vercel rewrite로 같은 오리진화** — celfit-front `vercel.json`에
   `{"rewrites":[{"source":"/api/:path*","destination":"https://api.hypenow.io/api/:path*"}]}`
@@ -775,6 +877,10 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 - 일일 스윕은 컨테이너 env `MONITORING_SCHEDULE_SWEEP_CRON`(UTC 17:00 = KST 02:00).
   임시 중단은 값을 `"-"`로 두고 `docker compose up -d monitoring` — 서버에서 직접 고친 값은
   다음 CD 배포가 레포 compose로 덮는다(crawler 스케줄과 같은 규칙, §4-2).
+- 브랜드 등록 백필 열거 실패 재시도 스케줄러(2026-09, 5분 틱·최대 3회)는 `.env`에
+  `MONITORING_BRAND_BACKFILL_RETRY_ENABLED=false`를 넣고 `docker compose up -d monitoring`으로
+  끈다(기본 true) — 벤더 장애 중 재시도가 증폭으로 작용할 때의 롤백 수단. 꺼져 있으면 등록
+  즉시 실패 문구도 exhausted(다음 새벽 정기 수집 안내)로 곧장 간다.
 - 주간 리포트 메일은 **was**가 보낸다(2026-08-27 주간 개편). monitoring의 5분 틱 디스패처와
   `MONITORING_ALARM_*`·`alarm_reader` 롤은 폐지됐다 - monitoring은 `alarm_event` 적재만 한다.
   - 발송 스케줄: 매주 월요일 09:00 KST 다이제스트 생성 직후(따라잡기 09:10~23:50, 10분 간격).
@@ -802,7 +908,7 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 재편한 뒤, 같은 날 브랜드 탭을 별도 폴더로 떼어냈고(3장), 08-23에 그중 운영 건강·수집 현황을
 한 장으로 합쳐 지금은 **HypeNow 5탭 + 브랜드 모니터링 폴더 2장**(총 7장) 체제다(설계:
 `docs/superpowers/specs/2026-08-18-grafana-dashboard-redesign-design.md`, 폴더 분리:
-`docs/superpowers/specs/2026-08-18-grafana-brand-folder-design.md`, 합본 근거: DECISIONS 08-23).
+`docs/superpowers/specs/archive/2026-08-18-grafana-brand-folder-design.md`, 합본 근거: DECISIONS 08-23).
 **레포에서 대시보드 JSON을 지우거나 옮기면 서버 파일은 CD가 지우지 않는다**(cd.yml의 프로비저닝
 동기화가 `scp -r` 추가 전용) — 잔존 파일은 수동으로 정리해야 한다(§14-2-2 ④).
 **Caddy 라우트가 없다** — 호스트 루프백(`127.0.0.1:3000`)에만 열고 analytics 어드민(§8)·crawler
@@ -945,10 +1051,10 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
   -c "GRANT SELECT (started_at, completed_at, ok) ON sweep_run TO grafana_reader" \
   -c "GRANT SELECT (type, status, tracked_since, fetch_failing) ON target TO grafana_reader" \
   -c "GRANT SELECT (event_type, occurred_at, email_status, email_attempts) ON alarm_event TO grafana_reader" \
-  -c "GRANT SELECT (id, username, registered_at, closed_at, last_swept_at, last_swept_on, collection_months, backfill_completed_at, backfill_error) ON brand_account TO grafana_reader" \
+  -c "GRANT SELECT (id, username, registered_at, closed_at, last_swept_at, last_swept_on, sweep_completed_at, collection_months, backfill_completed_at, backfill_error) ON brand_account TO grafana_reader" \
   -c "GRANT SELECT (brand_id, called_on, calls) ON brand_call_count TO grafana_reader" \
   -c "GRANT SELECT (called_on, calls) ON target_call_count TO grafana_reader" \
-  -c "GRANT SELECT (brand_id, taken_at, first_seen_at, last_crawled_at, enriched_at) ON brand_tagged_post TO grafana_reader" \
+  -c "GRANT SELECT (brand_id, taken_at, first_seen_at, last_crawled_at, enriched_at, tag_detected_at, hashtag_detected_at, direct_registered_at, unavailable_at) ON brand_tagged_post TO grafana_reader" \
   -c "GRANT SELECT (verdict, first_seen_at) ON brand_hashtag_post TO grafana_reader" \
   -c "GRANT SELECT (short_code, username, ad_verdict, ad_verdict_source, ad_violations, ad_judged_at, judged_caption_hash) ON brand_post_meta TO grafana_reader"
 ```
@@ -1048,7 +1154,24 @@ ssh ubuntu@<IP> 'rm -f ~/deploy/grafana/provisioning/dashboards/json/{hypenow-di
   `hypenow-brand`·`hypenow-brand-ad`)를 참조하던 대시보드 내부 링크는 이 PR에서 전부 새 착지로
   재지정했다(홈 14곳·운영/모니터링 12곳). 외부에 적어 둔 북마크만 깨진다.
 
-#### 14-2-5. 브랜드 수집 신설 컬럼 GRANT (09-02, ⚠️ **운영 현재 권한 오류 — 즉시 서버 실행 필요**)
+#### 14-2-5. 브랜드 수집 신설 컬럼 GRANT (09-02 ✅ 실행됨 · 09-03 ⚠️ **`unavailable_at` 미실행 — 서버 실행 필요**)
+
+**09-03 추가분**: `24f2ab88`(부재 확정 행 재검증 스로틀)이 [흐름] 브랜드의 '오늘 게시물 갱신 — 티어별'·
+'미처리 브랜드별' 2패널 due 판정에 `brand_tagged_post.unavailable_at`을 새로 조회하는데 GRANT가
+누락됐다(09-03 운영 실측: 두 패널만 `permission denied for table brand_tagged_post`, 나머지 38쿼리는
+정상 — 09-02와 같은 재발). 컬럼은 `V20260825044536`으로 이미 있다. 실행 후 새로고침이면 끝.
+
+```bash
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
+  -c "GRANT SELECT (unavailable_at) ON brand_tagged_post TO grafana_reader"
+```
+
+검산 레시피(재발 시 그대로): 대시보드 JSON에서 `hypenow-monitoring-pg` 타깃의 rawSql을 전부 뽑아
+`SET ROLE grafana_reader;` 아래 붙여 monitoring DB에 흘리면 권한 누락 패널만 `ERROR`로 뜬다
+(Grafana 매크로 `$__timeFilter` 등은 `now() - interval '7 days'`로 치환). 위 ② 블록은 09-03 기준
+운영 grant 실측과 일치하도록 갱신했다(신규 구축 시 ②만 실행하면 된다).
+
+---
 
 09-02 배포분 두 건이 monitoring DB의 신설 컬럼을 대시보드에서 새로 조회하는데 GRANT가 누락됐다
 — 실행 전까지 운영에서 그 컬럼을 읽는 패널이 `permission denied for table ...`로 빈다
@@ -1247,3 +1370,167 @@ CD가 scp + `docker compose restart alloy`/grafana로 반영, §15 말미 참조
 `config.alloy`를 고칠 때는 `deploy/alloy/test/`의 리그로 먼저 확인한다 — 운영과 같은 compose
 서비스명·네트워크 이름을 흉내내 relabel과 multiline 병합이 실제로 걸리는지 본다. 사용법은
 [deploy/alloy/test/README.md](alloy/test/README.md). **서버에서 실행 금지**(운영과 같은 이름 공간).
+
+## 17. 콘텐츠 분석 2단계 분리 (파트 A 사실 D+1 · 파트 B 해석 D+4)
+
+설계: [docs/superpowers/specs/2026-09-03-content-analysis-two-phase-split-design.md](../docs/superpowers/specs/2026-09-03-content-analysis-two-phase-split-design.md)
+
+코드 배포만으로는 아무 것도 바뀌지 않는다(`analytics.analyze-mode` 기본값 `unified`, crawler
+Flyway가 `app_setting`에 시드). 아래 순서로 켠다.
+
+### 17-1. 배포 순서 (하드 순서 - 어겨서 되는 것 아님)
+
+1. **뷰 적용**(운영 raw DB, 1회) - 분석 뷰는 Flyway가 아니라 수동 적용이다(런북은 메모리
+   `analytics-prod-view-apply-mirror`).
+
+   ```bash
+   ssh <host> 'docker exec -i deploy-postgres-raw-1 psql -U crawler -d crawler -v ON_ERROR_STOP=1 -q' \
+       < analytics/views/04_analysis_candidates.sql
+   ```
+
+2. **적용 직후 EXPLAIN** - 07-20에 배리어가 무력화돼 152ms에서 9초대로 폭주한 전례가 있다.
+   `v_fact_candidates`는 이번에 새로 생긴 뷰이므로 반드시 같이 잰다.
+
+   ```bash
+   docker exec -i deploy-postgres-raw-1 psql -U crawler -d crawler -c \
+     "EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM analytics.v_fact_candidates;"
+   docker exec -i deploy-postgres-raw-1 psql -U crawler -d crawler -c \
+     "EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM analytics.v_analysis_candidates;"
+   ```
+
+   기준: 수백 ms 대(~150ms). 초 단위로 튀면 **③ 이후 단계로 진행하지 말고** 배리어부터 확인한다.
+   어드민 퍼널(`PipelineStatsService`)이 `v_fact_candidates`를 조건 없이 직접 읽으므로, 뷰가
+   깨진 채로 코드를 배포하면 어드민 화면이 바로 죽는다 - 순서 ①→③을 반드시 지킨다.
+
+3. **analytics 이미지 배포** - Flyway `V20260903093312__content_analyses_timeliness_pending.sql`·
+   `V20260903093412__content_batch_jobs_kind.sql`이 자동 적용된다. `content_analyses.metric_timeliness`
+   CHECK 재정의는 V38 전례와 동일하게 짧은 ACCESS EXCLUSIVE 락을 잡는다(초 단위, 트래픽 낮은 시간대
+   권장).
+
+4. **crawler 이미지 배포** - `app_setting` 시드 마이그레이션
+   `V20260903093512__analytics_analyze_mode.sql`(`ON CONFLICT DO NOTHING`, 값은 `unified`)이 자동
+   적용된다.
+
+5. **확인**:
+
+   ```bash
+   docker exec -it deploy-postgres-raw-1 psql -U crawler -d crawler -c \
+     "SELECT value FROM app_setting WHERE key='analytics.analyze-mode';"
+   ```
+
+   `unified`가 나오면 배포는 끝 - 이 시점까지 운영 행동은 하나도 안 바뀐다.
+
+### 17-2. 전환 전제조건
+
+- `analytics.analyze-transport = batch`(온라인이면 split 이득이 작다 - 이 트랙은 배치 경로가 정본).
+- `analytics.vlm-enabled = false`. split과 vlm을 동시에 켜면 첫날 미성숙 백로그(~1만 건)가 전부
+  온라인 + 썸네일 경로로 나가 버려 배치 이득이 사라진다.
+- 프로바이더가 `gemini`/`vertex`여야 한다 - `anthropic`이면 `factsPort`/`synthesisPort`가 null이라
+  FACT_ANALYZE·SYNTHESIS가 `IllegalStateException`으로 죽는다(조용한 no-op이 아니라 명시적 실패 -
+  의도된 동작). 프로바이더를 바꾼 직후라면 analytics를 재기동한 뒤에 전환한다(포트는 기동 시
+  1회 결선).
+- 광고 표기 트랙 골드셋 20~30건으로 통합 프롬프트 출력과 파트 A 출력을 대조해 adType·mainCategory·
+  adDisclosure가 어긋나지 않는지 확인한다(스펙 §9-3, 지표·기준선·댓글 분포 줄이 빠진 입력에서
+  사실 판정이 달라지는지가 관건).
+
+### 17-3. 전환
+
+```sql
+-- raw DB (crawler)
+UPDATE app_setting SET value = 'split' WHERE key = 'analytics.analyze-mode';
+```
+
+0행이면 시드가 아직 안 도달한 것 - 17-1④를 다시 확인하고 중단한다. 재기동 불필요(잡 시작마다
+읽는다). 다음 새벽부터 KST 05:00 파트 A(FACT_ANALYZE), 05:30 파트 B(ANALYZE), 06:00
+LATE_BACKFILL_ANALYZE(파트 B 늦크롤)가 돈다.
+
+### 17-4. 첫날 기대치
+
+- **FACT_ANALYZE(05:00)**가 미성숙 3일치(D+1~D+3, ~1만 건) + 성숙인데 아직 미분석인 잔여를 한꺼번에
+  후보로 잡아 배치 청크 상한(`analytics.batch-chunk-size`, 기본 3,000)으로 자동 분할 제출한다
+  (≈$5, 1회성).
+- **같은 날 ANALYZE(05:30)는 "대상 없음"으로 끝난다** - pending 행이 아직 수거되지 않았거나 막
+  생겼을 뿐이라 SYNTHESIS 후보(A 존재 ∩ B 미완)가 비어 있다. 이건 실패가 아니라 정상이다.
+- 그 첫 코호트의 파트 B는 **다음 날 아침**(D+2 05:30, 즉 대상 관점에서는 제출 다음 날)부터
+  순차적으로 채워진다.
+
+### 17-5. 둘째 날 확인 쿼리
+
+```bash
+# ① pending 건수 ≈ 첫날 FACT_ANALYZE 제출 건수
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis -c \
+  "SELECT count(*) FROM content_analyses WHERE metric_timeliness = 'pending';"
+
+# ② kind별 배치 상태 - facts pending 잔존이 없어야 한다(수거 완료)
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis -c \
+  "SELECT kind, status, count(*) FROM content_batch_jobs
+   WHERE submitted_at > now() - interval '1 day' GROUP BY 1, 2 ORDER BY 1, 2;"
+
+# ③ 상태 분해 정본
+PG_CONTAINER=deploy-postgres-raw-1 analytics/check/pending.sh
+```
+
+`pending.sh`의 상태 11(미성숙·사실만)이 미성숙 백로그와 비슷한 규모, 24/34(랭킹·상세 트랙·사실만)는
+아직 소수여야 한다. `/ui/coverage` 18(드로어 AI 카피 3종)·19(드로어 성과 비교 기준선)·22(댓글 신뢰도
+판정) 세 행이 배포 즉시 "준비됨"으로 뛰는 것은 분리 자체와 무관한 **분모 변경**(파트 B 미완 행을
+분모에서 빼도록 재정의됨)에 따른 정상 변화다 - 놀랄 것 없다.
+
+### 17-6. 3일 후 확인
+
+pending 추이가 D+4마다 파트 B로 빠지며 정체해야 한다(유입과 유출이 균형).
+
+```bash
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d analysis -c \
+  "SELECT count(*) FROM content_analyses WHERE metric_timeliness = 'pending';"
+```
+
+하루치 파트 A 제출 건수 × 3(D+1~D+3 누적) 근처에서 안정되면 정상. 계속 단조 증가하면 파트 B가
+안 돌고 있다는 뜻이니 17-5②의 `synthesis` kind 수거 결과부터 본다.
+
+### 17-7. 롤백
+
+두 갈래다.
+
+```sql
+-- raw DB (crawler) - 한 줄, 재기동 불필요, 다음 잡부터 즉시 반영
+UPDATE app_setting SET value = 'unified' WHERE key = 'analytics.analyze-mode';
+```
+
+다음 잡부터 FACT_ANALYZE는 no-op, ANALYZE/LATE_BACKFILL은 통합 콜로 복귀한다. 뷰·마이그레이션은
+롤백 불요(추가만이라 구 코드와 호환).
+
+**롤백이 되돌리지 않는 것: 이미 만들어진 파트 A만(`pending`) 행.** 통합 잡은 "행 존재"를 제외로
+보므로 이 행들은 파트 B를 영영 못 받는다.
+
+- **(a) split 재전환 예정이면 그냥 둔다** - SYNTHESIS가 자연 재대상한다.
+- **(b) 통합으로 영구 복귀면** 사용자 확인 후 순서대로 실행한다. 순서가 중요하다 - `updateSynthesis`
+  계열이 `updateSynthesisPending`(WHERE `metric_timeliness = 'pending'`)로 가드돼 있어서, DELETE
+  전에 진행 중인 배치를 먼저 죽여야 사고를 막는다.
+
+  ```sql
+  -- (1) 위 unified 전환을 먼저 실행했는지 확인
+
+  -- (2) 아직 수거 안 된 파트 A/B 배치를 취소 - 순서 필수
+  UPDATE content_batch_jobs SET status = 'failed', note = '롤백 취소', sidecar_jsonl = NULL
+    WHERE status = 'pending' AND kind IN ('facts', 'synthesis');
+
+  -- (3) (2) 이후에만 실행 - pending 행 삭제(파트 A는 다음 통합 잡이 다시 만든다)
+  DELETE FROM content_analyses WHERE metric_timeliness = 'pending';
+  ```
+
+  (2)를 건너뛰고 바로 (3)을 실행하면, 그 뒤에 뒤늦게 수거되는 파트 A 배치(`insertFacts`,
+  `ON CONFLICT DO NOTHING`)가 방금 지운 것과 같은 `short_code`로 고아 `pending` 행을 다시 만들어
+  버린다 - 통합 잡은 "행 존재"를 제외로 보므로 이 좀비 행은 조용히 방치된다.
+
+### 17-8. 알려진 한계
+
+- **스윕 3중 실행**: `ContentAnalysisJob.runQuery`가 배치 제출 전 pending 수거를 `JobLock` 없이
+  직접 호출한다(§2 정정). FACT_ANALYZE(05:00) 직전 스윕·정기 BATCH_COLLECT(05:10)·ANALYZE(05:30)
+  직전 스윕이 겹치면 같은 배치를 최대 3번 중복 조회할 수 있다 - 비용만 든다(수용, 데이터는
+  ON CONFLICT DO NOTHING / 멱등 UPDATE로 안전).
+- **RUNNING 배치 잔류**: 수거 시점에 아직 `RUNNING`인 배치는 다음 잡 실행까지 no-op으로 남는데,
+  그사이 같은 short_code가 다시 후보로 잡히면 같은 콘텐츠가 새 배치로 재제출될 수 있다(LLM 콜
+  1회 중복, 데이터 무해 - 나중 수거가 먼저 것을 덮어써도 같은 값).
+- **`ContentSynthesisRefreshJob`은 pending 행을 구제하지 않는다** - 대상 SQL에
+  `AND metric_timeliness IS DISTINCT FROM 'pending'` 가드가 있어, 아직 파트 A만 있는 행은 이
+  재생성 잡(어드민 수동 트리거 전용)의 대상이 아니다.

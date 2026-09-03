@@ -210,7 +210,7 @@ onVisible 훅(nullable `Runnable`)을 추가해 markEnriched와 **같은 finally
 첫 페이지분(~21건)만 보이고 나머지는 스트리밍으로 채워진다.
 
 캡션 기반 광고 표기 판정(2026-08-18 — 구현 완료, 브랜치 `feat/brand-ad-disclosure`,
-[spec 2026-08-17](../superpowers/specs/2026-08-17-brand-ad-disclosure-design.md) ·
+[spec 2026-08-17](../superpowers/specs/archive/2026-08-17-brand-ad-disclosure-design.md) ·
 [plan 2026-08-17](../superpowers/plans/archive/2026-08-17-brand-ad-disclosure.md)): 브랜드 태그 게시물
 캡션이 공정위예규 제499호 Ⅴ.6 광고 표기 규정을 지켰는지 게시물 단위로 자동 판정한다. 규칙
 선처리(Tier0 메타·Tier1 고신뢰 사전) → LLM은 문구 추출만(Tier2, `AdDisclosureExtractorGemini`,
@@ -432,6 +432,21 @@ DB 왕복 자체는 13.5→107.2ms로 늘었다(구 경로의 Java 판정 87.1ms
 DB 측 전송분이 ~7.5ms뿐이라 로컬 하니스로는 ~1.9초 고정비의 본체(JDBC 매핑·GC·2코어 경합)를
 못 잰다 — **dev-api 배포 후 FE와 동일 조건 재측정이 판정 지점**(아래 미결·후속).
 
+브랜드 단위 병렬 스윕(2026-09-03 — DECISIONS 09-03 행,
+[spec 2026-09-03](../superpowers/specs/2026-09-03-brand-sweep-parallel-design.md)): 야간 스윕이
+**6시간 44분**(139브랜드, 실패 0)까지 늘어 04:30 미러 침범이 예정돼 있었다. Loki 마커 역산으로
+직렬 합계 404분 중 상위 13개가 343분(mom.twins 40.6·kayali 38.1·celimax.korea 37.6 …), 무거움은 ①열거
+상한 2,000의 커서 96페이지(브랜드 안 병렬 불가) ②해시태그 세트 큰 브랜드의 2·3단계 단건 루프 두
+종류. 컨테이너 CPU 평균 0.03코어 — 본체는 Hiker 대기. `BrandSweepJob`이 브랜드 1건=태스크 1건을
+`brandSweepExecutor`(`monitoring.brand.sweep-concurrency:4`)에 제출하고 join, 제출 순서는 전날
+`brand_call_count` 내림차순(`findActiveHeaviestFirst`, LPT). 브랜드 안 3단계 순서·격리·touchSwept
+불변. 동반 수정 — direct 2단계 겹침 가드 `unenumeratedBusy`(서비스 전역)를 `busyBrands`(브랜드 키
+집합)로: 전역이면 병렬 브랜드가 서로의 2단계를 "겹침"으로 건너뛴다. Hikari 풀은 기본 10 유지(초안의 20은 실측으로 기각 — 직렬 스윕 중 활성 커넥션 최대 1/10·대기 0), 전역 Hiker
+동시 콜 예산 최악 14→17(08-12 램프 실측 20 이내, 힙 +30MB). 브랜드별 `브랜드 스윕 완료 — {u} {ms}ms
+(태그·direct·해시태그)` 로그 신설. 기대 105~140분(KST 03:45~04:20 종료), 롤백은
+`MONITORING_BRAND_SWEEP_CONCURRENCY=1`. **스윕 뒤 이미지 아카이브 57분(CPU 0.34~0.38코어)은 범위
+밖** — 전체 잡 종료는 04:45~05:20.
+
 ## 잔여 작업
 
 - **[수집 상한 v2 배포 후] 기존 capped 브랜드 커버리지 운영 보정 1회** — `collection_capped`·
@@ -507,6 +522,10 @@ DB 측 전송분이 ~7.5ms뿐이라 로컬 하니스로는 ~1.9초 고정비의 
     영구 실패 건의 무한 재시도(매 호출마다 1회씩 재시도 후 배치 종료 — 서비스 코드 §7-1
     "영구 실패 배치는 무한 재조회하지 않는다" 참조)뿐이고, 이는 LLM 비용이 소량 낭비되는
     수준이라 무해하다.
+
+- **병렬 스윕 배포 후 실측(09-03)** — 첫 야간 스윕의 `브랜드 스윕 완료 —` 로그로 총 소요·브랜드별 꼬리를
+  확인한다. 꼬리가 한 브랜드(40분급)에 묶이면 2안(브랜드 안 direct 단건 콜 워커 풀 팬아웃)을 얹는다.
+  아카이브 57분을 앞당기려면 별도 설계(썸네일 아카이브 병렬화 또는 스윕과 분리).
 
 ## 미결·후속
 
@@ -597,3 +616,50 @@ DB 측 전송분이 ~7.5ms뿐이라 로컬 하니스로는 ~1.9초 고정비의 
   - **재검토 트리거는 "브랜드 창 안 총 행수"**(엔트리 수도 유저 수도 아니다 — 상주량이 여기에 선형).
     08-28 기준 156개 브랜드 69,972행. 3배(약 21만)가 되면 절대 상한이 500MB대라 상한·구조를 다시 볼 것.
   - 힙 재측정 레시피(로컬 실데이터 기동 + `jcmd GC.run`/`GC.heap_info`/`GC.class_histogram`)는 메모리 노트 참조.
+- **등록 백필 완주 스탬프 축소(09-03, DECISIONS 09-03 행, 계약 v2.17)** — `backfill_completed_at`
+  (FE `collectionCompletedAt`)의 의미를 "전 페이지 게시물·게시자 보강 정산(`markEnriched`) 완료"로
+  좁히고, 댓글 수집·광고 표기 판정을 이 표식 밖 후행 단계로 분리했다. 종전엔 댓글·판정까지 끝나야
+  스탬프가 찍혀, 신규 백필의 모든 게시물이 `commentsCollectedCount=0`이라 댓글 게이트가 전부 열리는
+  2,000건급 브랜드에서 스탬프가 수십 분 밀렸다(게시물당 최대 3콜, 최대 ~6,000콜이 줄을 섬) — 그
+  사이 FE는 `collectionCompletedAt == null`을 근거로 계정 목록 전체(2,281건)를 60초 폴링으로
+  재조회했다. 배선: `BrandCollectService`의 private `enrich`가 후행 실행기(Executor)를 인자로 받아,
+  등록 백필 전용 신규 진입점 `enrichUserTriggeredDeferred`만 신설 전용 executor
+  `brandFollowupExecutor`(기본 1스레드, `monitoring.brand.followup-concurrency`)에 detached
+  제출한다. 야간 스윕·해시태그 스윕·direct 동기 등록은 무변 — 전부 direct executor(`Runnable::run`)를
+  넘겨 실행 의미가 바이트 수준으로 종전과 같다. 전역 Hiker 동시 콜 상한(14)도 불변 — 후행 콜도
+  `brandEnrichWorkerPool`을 통해 나갈 뿐 별도 콜 예산이 아니다. 두 백스톱(광고 판정은 전역
+  `backfillUnjudged`, 댓글은 워터마크 — 단 댓글은 180일 이내 게시물 한정)이 있어 후행 유실은
+  스탬프 지연이 아니라 그 뒤 조용한 채움 지연으로만 남는다. was는 이 값을 해석 없이 통과시킬 뿐이라
+  별도 스탬프 컬럼 신설 없이 기존 컬럼 의미만 좁혔다(계약 §11 참조).
+- **열거 실패 재시도 스케줄러(09-03, 결함 1, DECISIONS 09-03 행, 계약 v2.17 §11)** — 초기 백필
+  열거(`sweepCore`) 실패로 `backfill_error`만 찍히고 재시도 주체가 없던 문제를 해소했다. monitoring
+  내부 5분 주기 스케줄러(`BrandBackfillRetryScheduler` → `BrandBackfillRetryJob`)가 최대 3회·선형
+  백오프(5·10·15분)로 재제출한다. 후보는 `status=ACTIVE AND last_swept_on IS NULL AND
+  backfill_error IS NOT NULL AND backfill_attempts < maxAttempts`(정상 진행 중 브랜드는 `backfill_error`가
+  null이라 자연 제외) + 나이 창 6시간(앵커는 `collection_started_at` — was FE 폴링 30분 상한과 같은
+  값, 등록·재등록·기간확장 모두 갱신) + 틱당 배치 5. 시도 횟수는 메모리가 아니라 신규 컬럼
+  `brand_account.backfill_attempts`·`backfill_attempted_at`(마이그레이션
+  `V20260903084414__brand_account_backfill_retry.sql`, expand ADD COLUMN 2개, was 미참조라 배포
+  순서 결합 없음)에 영속화 — monitoring이 재기동 배포(롤링 아님)라 메모리 카운터는 배포마다
+  리셋돼 벤더 장애(08-27 Hiker 503) 중 재배포가 재시도 예산을 증폭시키는 문제를 막는다. 중복
+  실행 방지 3중(틱 AtomicBoolean·`BrandSweepScheduler`에서 추출한 공유 `BrandSweepGuard`로 야간
+  스윕 중 스킵·브랜드 단위 in-flight 셋). 성공 시 `touchSwept`가 `backfill_error`와 함께 attempts도
+  0으로 클리어. `backfillError.message`가 재시도 예산 상태에 따라 2종(예산 있음: "잠시 후 자동으로
+  다시 시도해요" / 소진: "다음 새벽 정기 수집에서 다시 시도해요")으로 갈린다 — `code`는
+  `BACKFILL_FAILED` 불변, was·FE는 문자열로 분기 금지(표시만). 킬 스위치
+  `monitoring.brand.backfill-retry.enabled`(기본 true) off 시 즉시 실패 문구도 소진 문구를 쓴다
+  (재시도가 없으니 "잠시 후 다시 시도"는 과약속). was 코드·API 표면 변화 없음(monitoring 단독
+  재기동으로 충분). 잔여 리스크(서킷브레이커 없음·후행 유실 창 확대 등)는 설계 문서 §5 참조.
+- **PR #741 후속 수정 4건(09-03, DECISIONS 09-03 행, 계약 v2.18)** — 감사에서 확인된 결함
+  ① 후행(댓글·판정) 완료 시점에 `touchProgress`가 안 찍혀 was 캐시(ETag·`BrandIndexCache`)가
+  회전 안 함 → `enrich`의 후행 태스크 finally에 `brands.touchProgress(brand.id())` 추가(계약
+  §11을 이 메커니즘으로 정정, v2.18) ② 재등록(`insertOrReactivate`)·기간확장(`expandWindow`)이
+  `backfill_attempts`·`backfill_attempted_at`을 리셋 안 해 재시도 상한 소진 상태로 재가입하면
+  첫 실패가 곧장 exhausted로 떨어짐 → 두 UPDATE에 리셋 추가 ③ `@SpringBootTest` 컨텍스트에서
+  재시도 스케줄러 5분 틱이 도는 문제 → 해당 7개 테스트 클래스에 `monitoring.brand.backfill-retry.
+  enabled=false` properties 추가(test resources `application.yml` 신설은 기각 — 실측 결과 test
+  리소스가 main보다 클래스패스 우선순위가 앞서 main `application.yml` 전체를 가려버림) ④ compose
+  킬 스위치 `MONITORING_BRAND_BACKFILL_RETRY_ENABLED`(기본 true) 노출, `deploy/README.md`에
+  끄는 법 추가. staging(`compose.test.yaml`)은 운영 compose를 상속하지 않는 완전 별도 정의라
+  이 키가 없으면 이미지 기본값(true)으로 켜진 채 배포됨 — 별도 오버라이드는 붙이지 않기로 결정
+  (판단만, 끄지 않음).

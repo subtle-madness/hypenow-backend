@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: ✅ 실행됨(2026-08-19, 태스크 5/5 완료 — PR #501) · 스펙: [2026-08-18-grafana-brand-folder-design.md](../../specs/2026-08-18-grafana-brand-folder-design.md)
+> 상태: ✅ 실행됨(2026-08-19, 태스크 5/5 완료 — PR #501) · 스펙: [2026-08-18-grafana-brand-folder-design.md](../../specs/archive/2026-08-18-grafana-brand-folder-design.md)
 
 **Goal:** Grafana 폴더 "브랜드 모니터링"을 신설하고 그 아래 대시보드 3장([브랜드] 운영 건강 이관 + 수집 현황·광고 표기 신설)을 둔다.
 

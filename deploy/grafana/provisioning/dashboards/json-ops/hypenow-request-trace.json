@@ -20,8 +20,8 @@
     {
       "id": 4,
       "type": "timeseries",
-      "title": "요청 추이 (상태코드별, 엣지 기준)",
-      "description": "엣지(caddy) 액세스 로그 기준 시간대별 요청 수를 상태코드별로 쌓아 본다 — 아래 \"최근 요청\" 테이블과 같은 소스·같은 필터(/health 제외). 특정 시각의 급증·5xx 물결을 먼저 눈으로 잡고, 그 구간을 드래그해 시간창을 좁힌 뒤 테이블에서 개별 요청(request_id)으로 내려간다. 4xx 물결은 대부분 스캐너(.env 등 404·401)라 놀랄 일 아님 — path를 테이블에서 확인.",
+      "title": "응답 시간 추이 (상태코드별 최대 ms, 엣지 기준)",
+      "description": "엣지(caddy) 액세스 로그 기준 시간대별 응답 시간(ms)을 상태코드별로 본다 — 각 막대는 그 구간에서 가장 느렸던 요청의 소요(최대값, caddy duration 초 × 1000). 플레임 그래프처럼 막대 색이 느린 정도를 나타낸다: 1초까지 초록, 1~3초 노랑, 3초 이상 빨강(아래 \"단계 분해\" 패널의 1s·3s 임계값과 동일). 점선은 그 임계값 — 1초 이상이면 was가 단계 로그를 남긴다. 상태코드는 범례·툴팁(느린 순)으로 구분한다. 아래 \"최근 요청\" 테이블과 같은 소스·같은 필터(/health 제외). 느린 요청 스파이크를 먼저 눈으로 잡고, 그 구간을 드래그해 시간창을 좁힌 뒤 테이블에서 개별 요청(request_id)으로 내려간다(테이블 duration은 초 단위). 요청 수(횟수) 추이는 \"운영 / 모니터링\" 대시보드의 상태코드별 요청 추이 패널에서 본다.",
       "gridPos": {
         "h": 8,
         "w": 24,
@@ -34,87 +34,48 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "ms",
           "decimals": 0,
           "min": 0,
           "noValue": "기간 내 요청 없음",
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
           "custom": {
             "drawStyle": "bars",
             "lineWidth": 1,
-            "fillOpacity": 70,
+            "fillOpacity": 100,
+            "gradientMode": "scheme",
             "barAlignment": 0,
+            "barWidthFactor": 1,
             "stacking": {
-              "mode": "normal",
+              "mode": "none",
               "group": "A"
             },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
             "spanNulls": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 3000
+              }
+            ]
           }
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/^2../"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "green"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/^3../"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "blue"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/^4../"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "orange"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/^5../"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "red"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "legend": {
@@ -122,7 +83,7 @@
           "placement": "bottom",
           "showLegend": true,
           "calcs": [
-            "sum"
+            "max"
           ]
         },
         "tooltip": {
@@ -139,7 +100,7 @@
           },
           "queryType": "range",
           "legendFormat": "{{status}}",
-          "expr": "sum by (status) (count_over_time({service=\"caddy-access\"} | json status=\"status\" | regexp `\"uri\":\"(?P<path>[^\"?]+)` | path != `/health` [$__auto]))"
+          "expr": "max by (status) (max_over_time({service=\"caddy-access\"} | json status=\"status\", duration=\"duration\" | regexp `\"uri\":\"(?P<path>[^\"?]+)` | path != `/health` | unwrap duration [$__auto])) * 1000"
         }
       ]
     },

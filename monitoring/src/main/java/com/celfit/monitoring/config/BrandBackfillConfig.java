@@ -28,9 +28,10 @@ import org.springframework.context.annotation.Configuration;
  * <p>캠페인 등록의 metricsBackfillExecutor와 분리하는 이유: 브랜드 백필 1건은 수십 초~분 단위
  * 콜 체인이라 공유하면 캠페인 등록 백필(최대 ~1분)이 그 뒤에 줄을 선다. Hiker 콜 병렬화는
  * enrich 내부의 brandEnrichWorkerPool(동시 10)이 담당한다. 전역 동시 콜은 스윕과 등록 백필이
- * 겹치는 최악의 경우 워커 10 + 스윕 core 1 + 등록 core 2 + 해시태그 스윕 1 = <b>최대 14</b>이다
- * (08-18 해시태그 스윕 전용 executor 분리 반영 — 태그당 최대 4페이지 열거뿐이라 +1로 최소화했다.
- * 08-13 워커 상향 전에는 9였다). 08-12 운영 서버 동시성 램프 실측(레벨당 30콜)에서는 동시 20까지
+ * 겹치는 최악의 경우 워커 10 + 스윕 core 4 + 등록 core 2 + 해시태그 스윕 1 = <b>최대 17</b>이다
+ * (2026-09-03 브랜드 스윕 병렬화로 스윕 core 1 → 4. 08-18 해시태그 스윕 전용 executor 분리 시점엔
+ * 14 — 태그당 최대 4페이지 열거뿐이라 +1로 최소화했다. 08-13 워커 상향 전에는 9였다). 08-12 운영
+ * 서버 동시성 램프 실측(레벨당 30콜)에서는 동시 20까지
  * 429·5xx 0건으로 하드 리밋이 없는 대신 동시 12부터 15~22초 꼬리가 상시화돼 안전 구간을 ~10으로
  * 잡았지만, <b>08-13 재실측에서 그 상한 근거가 서지 않았다</b>: 정상 브랜드로 워커 6/8/10 세
  * 레벨을 돌려 5초 초과 콜이 세 레벨 모두 0건이었다(레벨 간 증가 없음). 관측되는 꼬리는 동시성에
@@ -38,6 +39,11 @@ import org.springframework.context.annotation.Configuration;
  * in-flight 콜당 ~10MB(TAGGED body 1.7MB + 파싱 트리)로 계산한다 — rawJson 제거(08-12) 전제.
  * 종료로 끊겨도 last_swept_on null(core) 또는 게시자 stale·댓글 워터마크(enrichment)로 다음
  * 스윕이 백스톱한다(미정산분은 다음 스윕의 페이지 배치가 정산까지 다시 태운다).
+ *
+ * <p><b>brandFollowupExecutor(2026-09 완주 스탬프 축소 개정)는 위 "전역 동시 콜 최대 14" 계산에
+ * 들어가지 않는다</b> — 등록 백필 전용 후행 단계(댓글 수집·광고 표기 판정)의 <b>제출 주체</b>일
+ * 뿐, 콜은 여전히 전부 brandEnrichWorkerPool(Hiker)·ad-disclosure 전용 풀(LLM)로 나간다. 이
+ * executor를 늘려도 Hiker·LLM 동시 콜 예산은 늘지 않는다.</p>
  */
 @Configuration
 public class BrandBackfillConfig {
@@ -102,6 +108,26 @@ public class BrandBackfillConfig {
 	}
 
 	/**
+	 * 야간 브랜드 스윕의 브랜드 단위 병렬 풀(2026-09-03 설계 §3-1) — 브랜드 1건 = 태스크 1건.
+	 * 스윕 6시간 44분(139브랜드, 직렬)의 본체는 Hiker 응답 대기라 CPU는 거의 안 쓴다(컨테이너 평균
+	 * 0.03코어). 브랜드 간 의존이 없으므로 4스레드로 105~140분을 기대한다. 전역 Hiker 동시 콜은
+	 * 스윕 core 1 → 4로 최악 17(클래스 javadoc) — 08-12 램프 실측 안전 구간(20) 안. 힙은 in-flight
+	 * 콜당 ~10MB로 +30MB. 무제한 큐(다른 executor들과 같은 이유 — 유계 큐 + AbortPolicy는 제출
+	 * 루프에서 동기 예외가 터져 격리 규칙을 깬다). 롤백은 동시성 1(env
+	 * {@code MONITORING_BRAND_SWEEP_CONCURRENCY=1}) — 코드 경로가 같아 현행 직렬과 동일하게 돈다.
+	 */
+	@Bean(name = "brandSweepExecutor")
+	public Executor brandSweepExecutor(
+			@Value("${monitoring.brand.sweep-concurrency:4}") int concurrency) {
+		AtomicInteger seq = new AtomicInteger();
+		return Executors.newFixedThreadPool(concurrency, r -> {
+			Thread t = new Thread(r, "brand-sweep-" + seq.incrementAndGet());
+			t.setDaemon(true);
+			return t;
+		});
+	}
+
+	/**
 	 * enrich 내부 Hiker 콜(게시자 프로필·댓글) 병렬 실행용 워커 풀 — 전역 Hiker 동시 콜의 실질
 	 * 상한이다(brandEnrichExecutor를 늘려도 여기가 안 늘면 콜은 안 늘어난다). 반드시 brandEnrichExecutor와
 	 * <b>별도 풀</b>이어야 한다: enrich는 brandEnrichExecutor 스레드에서 join()으로 워커 완료를
@@ -115,6 +141,33 @@ public class BrandBackfillConfig {
 		AtomicInteger seq = new AtomicInteger();
 		return Executors.newFixedThreadPool(concurrency, r -> {
 			Thread t = new Thread(r, "brand-enrich-worker-" + seq.incrementAndGet());
+			t.setDaemon(true);
+			return t;
+		});
+	}
+
+	/**
+	 * 후행(댓글 수집·광고 표기 판정) 전용 큐 — 2026-09 완주 스탬프 축소 개정 신설. 등록 백필
+	 * ({@link com.celfit.monitoring.service.BrandCollectService#enrichUserTriggeredDeferred})만
+	 * 여기 제출한다. 야간 스윕·해시태그 스윕·direct 동기 등록은 그대로 direct 실행(제자리)이라 이
+	 * executor를 참조하지 않는다(무변 보장의 배선 근거).
+	 *
+	 * <p>기존 brandEnrichExecutor 재사용을 기각한 이유(설계 §2-3) — 08-18 운영 사고(느린 LLM 판정이
+	 * 빠른 Hiker 보강 큐를 분 단위로 점유해 뒤 계정 백필을 지연시킨 구조)의 재현이다. 정산·ready
+	 * 임계 경로(게시자 보강)와 후행 꼬리(댓글·판정)가 같은 스레드 풀을 나눠 갖는 건 그 사고와 같은
+	 * 실수라 전용 풀로 분리했다.
+	 *
+	 * <p>동시성 기본값 1(설정 {@code monitoring.brand.followup-concurrency}) — 후행은 꼬리 작업이고
+	 * 큐가 길어지는 건 의도한 동작이다. 올리면 같은 워커 풀(brandEnrichWorkerPool, 10)의 슬롯을
+	 * 정산·ready 임계 경로와 더 나눠 갖게 돼 스탬프가 다시 느려진다. <b>Hiker·LLM 동시 콜 예산에는
+	 * 영향 없다</b>(클래스 javadoc 참조) — 여기서 늘리는 건 제출 주체 수뿐이다.
+	 */
+	@Bean(name = "brandFollowupExecutor")
+	public Executor brandFollowupExecutor(
+			@Value("${monitoring.brand.followup-concurrency:1}") int concurrency) {
+		AtomicInteger seq = new AtomicInteger();
+		return Executors.newFixedThreadPool(concurrency, r -> {
+			Thread t = new Thread(r, "brand-followup-" + seq.incrementAndGet());
 			t.setDaemon(true);
 			return t;
 		});

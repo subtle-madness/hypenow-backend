@@ -13,6 +13,7 @@ import com.celfit.was.v1.brandmonitoring.BrandAccountType;
 import com.celfit.was.v1.brandmonitoring.BrandHashtagPostAssembler;
 import com.celfit.was.v1.brandmonitoring.BrandPostAssembler;
 import com.celfit.was.v1.common.KstTimestamps;
+import com.celfit.was.v1.influencer.V1InfluencerRepository;
 import com.celfit.was.v1.monitoring.TrackingItemAssembler;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -113,9 +114,12 @@ class BrandAiToolboxIntegrationTest extends IntegrationTest {
 	 */
 	private BrandAiToolbox newToolbox(JdbcClient monitoringJdbc, boolean exposeAdDisclosure) {
 		BrandReadRepository brandReadRepository = new BrandReadRepository(monitoringJdbc);
+		// influencerId 배치 조회는 이 파일의 관심사가 아니다(발굴 존재 판정 자체는
+		// V1InfluencerRepositoryTest·BrandPostAssemblerTest가 본다) — analysis DB accounts 테이블을
+		// 이 스키마에 새로 깔지 않도록 mock으로 DI만 충족한다(Mockito 기본값이 빈 Map).
 		BrandPostAssembler postAssembler = new BrandPostAssembler(brandReadRepository, postCampaignRepository,
 				directPostRepository, trackingItemAssembler, monitoringItemRepository, hashtagTagRepository,
-				exposeAdDisclosure);
+				org.mockito.Mockito.mock(V1InfluencerRepository.class), exposeAdDisclosure);
 		BrandHashtagPostAssembler hashtagPostAssembler = new BrandHashtagPostAssembler(postAssembler,
 				brandReadRepository);
 		return new BrandAiToolbox(linkRepository, brandReadRepository, postAssembler, hashtagPostAssembler,

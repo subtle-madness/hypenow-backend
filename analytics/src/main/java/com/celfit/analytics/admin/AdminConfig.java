@@ -60,12 +60,13 @@ public class AdminConfig {
 			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
 			ObjectProvider<ImageArchiveJob> archiveJob,
 			ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob,
+			ObjectProvider<com.celfit.analytics.grouppurchase.GroupPurchaseJudgeJob> groupPurchaseJudgeJob,
 			JobProgressRegistry jobProgressRegistry, RunHistory runHistory,
 			DerivedViewRefresher derivedViewRefresher) {
 		return new AnalyticsJobService(jobLock, jobTaskExecutor, mirrorJob, mirrorRegistry,
 				classifyJob, analyzeJob, batchCollectJob, accountBatchCollectJob, accountAnalyzeJob,
-				synthesisRefreshJob, archiveJob, traitCanonJob, jobProgressRegistry, runHistory,
-				derivedViewRefresher);
+				synthesisRefreshJob, archiveJob, traitCanonJob, groupPurchaseJudgeJob, jobProgressRegistry,
+				runHistory, derivedViewRefresher);
 	}
 
 	@Bean(initMethod = "register", destroyMethod = "unregister")
@@ -84,8 +85,10 @@ public class AdminConfig {
 			@Value("${analytics.schedule.classify-cron:-}") String classifyCron,
 			@Value("${analytics.schedule.analyze-cron:-}") String analyzeCron,
 			@Value("${analytics.schedule.account-analyze-cron:-}") String accountCron,
-			@Value("${analytics.schedule.archive-cron:-}") String archiveCron) {
-		return new ScheduleInfo(enabled, mirrorCron, classifyCron, analyzeCron, accountCron, archiveCron);
+			@Value("${analytics.schedule.archive-cron:-}") String archiveCron,
+			@Value("${analytics.schedule.fact-analyze-cron:-}") String factAnalyzeCron) {
+		return new ScheduleInfo(enabled, mirrorCron, classifyCron, analyzeCron, accountCron,
+				archiveCron, factAnalyzeCron);
 	}
 
 	@Bean

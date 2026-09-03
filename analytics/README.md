@@ -25,7 +25,7 @@ raw DB(crawler)를 읽어 분석 결과를 analysis DB에 내놓는 모듈.
   - `20_landing_stats.sql` — 랜딩 통계 뷰 (`v_landing_stats`)
   - `30_crawl_cost.sql` — 크롤러 파이프라인 유료 요청 일별 집계 (`v_crawl_call_daily`) —
     `crawl_run.request_count > 0`인 실행을 잡·KST 달력일로 접는다. was 어드민 전역 크롤링 비용
-    API가 미러를 읽는다([설계](../docs/superpowers/specs/2026-08-13-admin-global-crawling-cost-design.md)).
+    API가 미러를 읽는다([설계](../docs/superpowers/specs/archive/2026-08-13-admin-global-crawling-cost-design.md)).
 - `mirror/` — 타입 기반 미러: 뷰 SELECT → 공유 record 매핑 → analysis DB 테이블
   TRUNCATE+INSERT (한 트랜잭션, 컬럼↔record 대조 가드). 대상 등록은 `MirrorConfig`.
   대상: accounts·contents·content_comments·account_summaries·account_content_series·

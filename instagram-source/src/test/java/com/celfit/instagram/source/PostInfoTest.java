@@ -88,4 +88,123 @@ class PostInfoTest {
 		// 유료협찬도 coalesce — 관측된 판정이 unknown(null)보다 낫다
 		assertThat(merged.isPaidPartnership()).isTrue();
 	}
+
+	private static PostInfo withContentType(String contentType) {
+		return new PostInfo("ReelA", "acct", null, null, "999", contentType, "캡션", "https://cdn/thumb.jpg",
+				1_700_000_000L, 10L, 2L, 222L, null, null, null, null,
+				null, null, null, true, false, false);
+	}
+
+	/**
+	 * S4 — self(embed/feed-user)가 콘텐츠 타입을 확정하지 못하면(구조적 신호 부재) contentType이
+	 * null로 온다(EmbedPostFetcher·FeedUserPostsFetcher 참조). 과거 mergedWith는 정본의 contentType을
+	 * 무조건 채택해 정본이 null이면 폴백(Hiker)이 이미 확정한 값까지 버렸다 — 다른 표시 메타 필드
+	 * (캡션·썸네일·videoUrl 등)와 동일한 non-null 우선 규칙으로 통일한다.
+	 */
+	@Test
+	void mergedWith는_정본에_없는_콘텐츠_타입을_폴백에서_가져온다() {
+		PostInfo primary = withContentType(null);
+		PostInfo fallback = withContentType("REELS");
+
+		PostInfo merged = primary.mergedWith(fallback);
+
+		assertThat(merged.contentType()).isEqualTo("REELS");
+	}
+
+	/** 정본이 이미 확정 콘텐츠 타입(REELS/FEED)을 가지면 폴백과 무관하게 정본이 이긴다(non-null 우선). */
+	@Test
+	void mergedWith는_정본의_확정된_콘텐츠_타입을_보존한다() {
+		PostInfo primary = withContentType("FEED");
+		PostInfo fallback = withContentType("REELS");
+
+		PostInfo merged = primary.mergedWith(fallback);
+
+		assertThat(merged.contentType()).isEqualTo("FEED");
+	}
+
+	// ── S9(2026-09-03 감사 수정) — likesHidden·sharesHidden 3상태 병합 ─────────
+
+	private static PostInfo withHidden(Long likes, Boolean likesHidden, Boolean sharesHidden) {
+		return new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
+				1_700_000_000L, likes, 2L, 222L, null, null, null, null, null, null, null,
+				true, likesHidden, sharesHidden);
+	}
+
+	/**
+	 * 과거 버그(self 단독 채택) — 정본(self)이 likesHidden 미확정(null)이고 폴백(Hiker)이 이미
+	 * 확정 true를 들고 있으면, 정본 값만 채택하는 옛 규칙은 폴백의 확정을 버렸다. sharesHidden과
+	 * 같은 병합 규칙(둘 중 하나라도 확정 true면 true)을 적용해야 한다.
+	 */
+	@Test
+	void mergedWith는_정본이_미확정이고_폴백이_확정_숨김이면_숨김을_채택한다() {
+		PostInfo primary = withHidden(83L, null, null);      // self — 미확정
+		PostInfo fallback = withHidden(null, true, null);    // Hiker — 확정 숨김(likes도 마스킹 null)
+
+		PostInfo merged = primary.mergedWith(fallback);
+
+		assertThat(merged.likesHidden()).isTrue();
+		assertThat(merged.likes()).isNull();   // 합친 판정이 숨김이므로 likes는 마스킹 취급
+	}
+
+	/** 둘 다 미확정(self만 관측)이면 병합 결과도 미확정으로 남는다 — 근거 없이 false로 단정하지 않는다. */
+	@Test
+	void mergedWith는_양쪽_다_미확정이면_미확정을_유지한다() {
+		PostInfo primary = withHidden(83L, null, null);
+		PostInfo fallback = withHidden(83L, null, null);
+
+		PostInfo merged = primary.mergedWith(fallback);
+
+		assertThat(merged.likesHidden()).isNull();
+		assertThat(merged.sharesHidden()).isNull();
+		assertThat(merged.likes()).isEqualTo(83L);   // 미확정이므로 마스킹하지 않는다
+	}
+
+	/**
+	 * S9 보완(2026-09-03 리뷰 지적) — 정본(embed)이 좋아요 숫자를 실제로 보고 확정 비숨김(false)을
+	 * 줬는데, 폴백(feed/user·wpi)이 키 부재를 확정 true로 오단정하던 과거 결함이 있었다면
+	 * mergedWith의 OR 병합에서 폴백의 근거 없는 true가 정본의 진짜 확정을 덮어 likes가 null로
+	 * 강제됐을 것이다(CollectService#retrySinglesOnce의 single.mergedWith(enumerated) 시나리오).
+	 * 폴백이 규칙대로 null(미확정)을 주면 정본의 확정 false가 그대로 살아남고 likes도 보존돼야 한다.
+	 */
+	@Test
+	void mergedWith는_정본이_확정_비숨김이고_폴백이_미확정이면_비숨김과_likes를_보존한다() {
+		PostInfo primary = withHidden(485_267L, false, null);   // embed — 좋아요 숫자를 실제로 봄
+		PostInfo fallback = withHidden(null, null, null);       // feed/user — 키 부재(미확정, S9 보완)
+
+		PostInfo merged = primary.mergedWith(fallback);
+
+		assertThat(merged.likesHidden()).isFalse();
+		assertThat(merged.likes()).isEqualTo(485_267L);
+	}
+
+	/** mergedMetrics(3-arg)는 새 숨김 정보가 없다는 뜻 — 기존 sharesHidden(미확정 포함)을 그대로 보존한다. */
+	@Test
+	void mergedMetrics_3항은_기존_공유_숨김_상태를_보존한다() {
+		PostInfo unconfirmed = withHidden(83L, null, null).mergedMetrics(5L, null, 7L);
+
+		assertThat(unconfirmed.sharesHidden()).isNull();
+		assertThat(unconfirmed.saves()).isEqualTo(5L);
+	}
+
+	/**
+	 * S9 핵심 — 단건 재시도(항상 Hiker 직결)가 새로 관측한 공유 숨김 확정을 mergedMetrics가
+	 * 되싣어야 한다. 과거엔 이 정보가 버려져 self 기원 미확정 게시물이 매일 재시도 상한까지
+	 * 헛돌고 소진 시 공유가 0으로 잘못 기록됐다.
+	 */
+	@Test
+	void mergedMetrics_4항은_새로_관측된_공유_숨김_확정을_되싣는다() {
+		PostInfo merged = withHidden(83L, null, null).mergedMetrics(5L, null, 7L, true);
+
+		assertThat(merged.sharesHidden()).isTrue();
+		assertThat(merged.saves()).isEqualTo(5L);
+		assertThat(merged.reposts()).isEqualTo(7L);
+	}
+
+	/** 새로 관측된 값이 확정 false여도 이미 확정 true였다면 true가 이긴다(숨김은 관측되면 참). */
+	@Test
+	void mergedMetrics_4항은_이미_확정된_숨김을_비숨김_관측으로_덮지_않는다() {
+		PostInfo merged = withHidden(83L, null, true).mergedMetrics(5L, null, 7L, false);
+
+		assertThat(merged.sharesHidden()).isTrue();
+	}
 }

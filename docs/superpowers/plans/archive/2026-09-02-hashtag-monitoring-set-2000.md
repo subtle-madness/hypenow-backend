@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: 🟢 활성 · 스펙: [2026-09-02-hashtag-monitoring-set-2000-design.md](../specs/2026-09-02-hashtag-monitoring-set-2000-design.md)
+> 상태: 🟢 활성 · 스펙: [2026-09-02-hashtag-monitoring-set-2000-design.md](../specs/archive/2026-09-02-hashtag-monitoring-set-2000-design.md)
 
 **Goal:** 해시태그 편입을 1,000 하드스톱(신규 드랍)에서 "게시일 최신 2,000 롤링 감시 세트"로 전환하고, 2단계 단건 재수집이 세트 전체를 정책대로 갱신하게 하며, was 노출 상한을 폐지한다.
 
@@ -754,12 +754,12 @@ git commit -m "fix(grafana): 미처리 브랜드별 출처 2열 분리 — 해�
 
 **Files:**
 - Modify: `DECISIONS.md` (맨 위에 결정 추가)
-- Modify: `docs/superpowers/specs/2026-09-02-hashtag-monitoring-set-2000-design.md` (상태 헤더 → ✅ 구현됨)
+- Modify: `docs/superpowers/specs/archive/2026-09-02-hashtag-monitoring-set-2000-design.md` (상태 헤더 → ✅ 구현됨)
 - Move: `docs/superpowers/plans/2026-09-02-hashtag-monitoring-set-2000.md` → `docs/superpowers/plans/archive/`
 
 - [ ] **Step 1: DECISIONS.md 맨 위에 결정 추가** (기존 항목 서식 그대로):
 
-내용 요지 — "2026-09-02 해시태그 감시 세트 2,000 롤링 전환: 편입 하드스톱(1,000, 도달 시 신규 드랍) 폐기 → 게시일 최신 2,000 롤링 세트(세트 밖은 동결 touch·저장 유지). 2단계 재수집 상한 300→2,000(모수를 세트로 한정). was 노출 컷 2,000 폐지. 근거: 09-02 미처리 1,828건 진단(캠페인 브랜드 일일 due가 상한을 매일 초과 + celimax 2종 편입 상한 포화). 비용: 캠페인 피크 브랜드당 월 $20~40 승인. 스펙: docs/superpowers/specs/2026-09-02-hashtag-monitoring-set-2000-design.md".
+내용 요지 — "2026-09-02 해시태그 감시 세트 2,000 롤링 전환: 편입 하드스톱(1,000, 도달 시 신규 드랍) 폐기 → 게시일 최신 2,000 롤링 세트(세트 밖은 동결 touch·저장 유지). 2단계 재수집 상한 300→2,000(모수를 세트로 한정). was 노출 컷 2,000 폐지. 근거: 09-02 미처리 1,828건 진단(캠페인 브랜드 일일 due가 상한을 매일 초과 + celimax 2종 편입 상한 포화). 비용: 캠페인 피크 브랜드당 월 $20~40 승인. 스펙: docs/superpowers/specs/archive/2026-09-02-hashtag-monitoring-set-2000-design.md".
 
 - [ ] **Step 2: 스펙 상태 헤더 갱신** — `> 상태: 🟢 활성 …` → `> 상태: ✅ 구현됨 (2026-09-02)`.
 
@@ -773,7 +773,7 @@ Expected: PASS 전부. 실패 시 해당 태스크로 돌아가 수정(원인 �
 ```bash
 mkdir -p docs/superpowers/plans/archive
 git mv docs/superpowers/plans/2026-09-02-hashtag-monitoring-set-2000.md docs/superpowers/plans/archive/
-git add DECISIONS.md docs/superpowers/specs/2026-09-02-hashtag-monitoring-set-2000-design.md
+git add DECISIONS.md docs/superpowers/specs/archive/2026-09-02-hashtag-monitoring-set-2000-design.md
 git commit -m "docs: 해시태그 감시 세트 2,000 전환 결정 기록·스펙 상태 갱신·plan 아카이브"
 ```
 
@@ -790,7 +790,7 @@ gh pr create --base develop --title "feat(monitoring/was): 해시태그 감시 �
 ## 배포 운영 절차
 상향 배포 시 monitoring에 `MONITORING_BRAND_HASHTAG_DEEP_RESWEEP_ON_STARTUP=true` 1회 주입, 완료 로그("해시태그 딥 재백필 완료") 확인 후 다음 배포에서 제거.
 
-스펙: docs/superpowers/specs/2026-09-02-hashtag-monitoring-set-2000-design.md (비용 월 $20~40/캠페인 브랜드 — 09-02 사용자 승인)
+스펙: docs/superpowers/specs/archive/2026-09-02-hashtag-monitoring-set-2000-design.md (비용 월 $20~40/캠페인 브랜드 — 09-02 사용자 승인)
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF

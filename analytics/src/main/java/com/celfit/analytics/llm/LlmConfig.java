@@ -11,6 +11,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.annotation.Primary;
 
 /**
  * LLM 빈 배선. 게이트가 모두 꺼져 있으면 클라이언트를 아예 만들지 않는다 (API 키 불필요).
@@ -84,6 +85,28 @@ public class LlmConfig {
 		return new GeminiContentAnalyzer(gemini.getObject(), settings::geminiModel, taxonomyLoader::get);
 	}
 
+	/**
+	 * 파트 A(사실 추출) 전용 포트 - 2단계 분리(analytics.analyze-mode=split)의 온라인 폴백이 쓴다.
+	 * {@link ContentSynthesisPort}와 같은 이유로 Gemini/Vertex만 지원한다: split 모드 자체가
+	 * 배치 전송을 전제로 설계됐고, anthropic은 롤백 경로(unified)로 남는다.
+	 * 프로바이더가 anthropic이면 JobConfig가 이 빈을 조회하지 않는다(batchApiOrNull과 같은 관용구).
+	 *
+	 * <p>{@code @Primary} 필수: {@link GeminiContentAnalyzer}가 {@link ContentInsightPort}·
+	 * {@link ContentFactsPort} 둘 다 구현해서, {@code contentInsightPort} 빈의 실제 런타임 타입도
+	 * ContentFactsPort에 대입 가능하다 — JobConfig가 {@code ObjectProvider<ContentFactsPort>}로
+	 * 조회하면(getIfAvailable, 실제 인스턴스화를 강제) 후보가 2개(contentInsightPort·contentFactsPort)로
+	 * 잡혀 NoUniqueBeanDefinitionException이 난다(2026-09-03 스테이징 장애 — contentAnalysisJob 빈
+	 * 생성 실패, analyze-mode 무관하게 통합 ANALYZE까지 깨짐). ContentInsightPort 쪽은 직접(비
+	 * ObjectProvider) 주입이라 선언 타입만으로 후보가 하나로 좁혀져 영향 없다.
+	 */
+	@Bean
+	@Lazy
+	@Primary
+	public ContentFactsPort contentFactsPort(AnalyticsSettings settings,
+			ObjectProvider<GeminiApi> gemini, BeautyTaxonomyLoader taxonomyLoader) {
+		return new GeminiContentAnalyzer(gemini.getObject(), settings::geminiModel, taxonomyLoader::get);
+	}
+
 	@Bean
 	@Lazy
 	public TraitTaxonomyLoader traitTaxonomyLoader(
@@ -119,5 +142,31 @@ public class LlmConfig {
 	public ContentSynthesisPort contentSynthesisPort(AnalyticsSettings settings,
 			ObjectProvider<GeminiApi> gemini) {
 		return new GeminiContentSynthesizer(gemini.getObject(), settings::geminiModel);
+	}
+
+	/**
+	 * 공동구매(공구) 애매분 판정 포트 — {@link ContentSynthesisPort}와 같은 이유로 Gemini/Vertex
+	 * 전용이다(콜 규모가 백로그 수백 건 1회 + 일 한두 건이라 프로바이더 폴백까지 둘 필요가 없다,
+	 * 스펙 §3).
+	 *
+	 * <p>provider=anthropic(롤백 경로)이면 {@link GeminiApi} 빈을 아예 조회하지 않는다 —
+	 * {@code gemini.getObject()}는 @Lazy 빈이라도 호출 즉시 생성을 강제해, GEMINI_API_KEY 없이
+	 * anthropic만으로 운영 중인 환경에서 첫 GROUP_PURCHASE_JUDGE 트리거가 {@code
+	 * GeminiHttpApi.fromEnv()}의 키 부재 예외로 죽는다({@code com.celfit.analytics.config.JobConfig#batchApiOrNull}과 같은
+	 * 방어). 대신 호출 시 즉시 실패하는 포트를 반환해 잡이 게시물 단위로 verdict NULL 격리 처리하고
+	 * 연속 실패 서킷브레이커로 빠르게 멈추게 한다.
+	 */
+	@Bean
+	@Lazy
+	public com.celfit.analytics.grouppurchase.GroupPurchaseJudgePort groupPurchaseJudgePort(
+			AnalyticsSettings settings, ObjectProvider<GeminiApi> gemini) {
+		if ("anthropic".equals(settings.llmProvider())) {
+			return caption -> {
+				throw new IllegalStateException(
+						"공동구매 판정은 gemini/vertex 프로바이더에서만 지원합니다 (provider=anthropic)");
+			};
+		}
+		return new com.celfit.analytics.grouppurchase.GeminiGroupPurchaseJudge(
+				gemini.getObject(), settings::geminiModel);
 	}
 }

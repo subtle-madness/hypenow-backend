@@ -27,6 +27,9 @@ public record ContentCardRow(
 		String brandsJson,
 		String productsJson,
 		String distributorsJson,
+		// 공동구매 판정(2026-09-03, 스펙 2026-09-03-group-purchase-judgment-design.md §6) — 서버 판정
+		// 테이블 group_purchase_judgments.verdict를 그대로 싣는다. 미판정(행 없음·verdict NULL)은 false.
+		boolean groupPurchase,
 		String handle,
 		String displayName,
 		String profileImageUrl,
@@ -36,7 +39,9 @@ public record ContentCardRow(
 		BigDecimal hypeScorePrecise) {
 
 	/** 카드 SELECT 절 공통 상수 — 목록(6.1)·recentContents(6.4) 리포지토리가 같이 쓴다.
-	 *  아카이브된 이미지는 /img/ 상대경로(Vercel rewrite→오브젝트 스토리지), 미아카이브는 원본 CDN 폴백. */
+	 *  아카이브된 이미지는 /img/ 상대경로(Vercel rewrite→오브젝트 스토리지), 미아카이브는 원본 CDN 폴백.
+	 *  group_purchase 컬럼은 group_purchase_judgments LEFT JOIN(별칭 gpj — IMAGE_JOINS 또는 FROM 절에
+	 *  직접 붙는 곳 모두 동반 필수)이 공급한다. */
 	public static final String SELECT = """
 			SELECT c.short_code,
 			       COALESCE('/img/' || it.object_path, c.thumbnail_url) AS thumbnail_url,
@@ -47,14 +52,16 @@ public record ContentCardRow(
 			       an.detected_brands::text AS brands_json,
 			       an.detected_products::text AS products_json,
 			       an.detected_distributors::text AS distributors_json,
+			       COALESCE(gpj.verdict, false) AS group_purchase,
 			       a.handle, a.display_name,
 			       COALESCE('/img/' || ip.object_path, a.profile_image_url) AS profile_image_url,
 			       a.followers, c.hype_score_precise
 			""";
 
-	/** SELECT의 it·ip 별칭 공급 — 카드 FROM 절에 반드시 함께 붙인다. */
+	/** SELECT의 it·ip·gpj 별칭 공급 — 카드 FROM 절에 반드시 함께 붙인다(gpj는 group_purchase 컬럼 재료). */
 	public static final String IMAGE_JOINS = """
 			LEFT JOIN image_assets it ON it.kind = 'thumbnail' AND it.key = c.short_code
 			LEFT JOIN image_assets ip ON ip.kind = 'profile' AND ip.key = a.handle
+			LEFT JOIN group_purchase_judgments gpj ON gpj.short_code = c.short_code
 			""";
 }

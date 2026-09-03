@@ -49,14 +49,17 @@ class V1InfluencerControllerTest {
 	private static V1InfluencerRepository.ProfileRow profile() {
 		return new V1InfluencerRepository.ProfileRow("hype_official", "하입 오피셜",
 				"https://img.example.com/p.jpg", 12345L, "https://hype.example.com",
-				321L, 456L, "안녕하세요 하입 오피셜입니다.");
+				321L, 456L, "안녕하세요 하입 오피셜입니다.", "hype@example.com");
 	}
 
 	private static ContentCardRow row(String code) {
+		// groupPurchase는 code="c1"만 true — 로그인 개인화 필드 테스트가 recentContents[0]에서
+		// true/false 대비를 확인할 수 있도록(2026-09-03 6.4 groupPurchase 확장).
 		return new ContentCardRow(code, "https://thumb/" + code, "캡션",
 				OffsetDateTime.parse("2026-07-02T03:00:00Z"), "reels", new BigDecimal("20"),
 				"https://ig/" + code, 1000L, 100L, 10L, 500L,
 				OffsetDateTime.parse("2026-07-05T03:00:00Z"), "makeup", null, "organic", null, null, null,
+				"c1".equals(code),
 				"hype_official", "하입 오피셜", "https://pic/hype.jpg", 12345L, new BigDecimal("500"));
 	}
 
@@ -69,7 +72,9 @@ class V1InfluencerControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.success").value(true))
 				.andExpect(jsonPath("$.data.influencer.handle").value("hype_official"))
-				.andExpect(jsonPath("$.data.influencer.email").value(org.hamcrest.Matchers.nullValue()))
+				// email은 account_summaries.email(목록 6.21·유사 6.23과 같은 소스) — 상세만 null 상수였던
+				// 결함(2026-09-03 FE 피드백 #1) 회귀 방지.
+				.andExpect(jsonPath("$.data.influencer.email").value("hype@example.com"))
 				.andExpect(jsonPath("$.data.recentContents").isArray());
 	}
 
@@ -101,6 +106,8 @@ class V1InfluencerControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.isInfluencerSaved").value(true))
 				.andExpect(jsonPath("$.data.recentContents[0].isContentsSaved").value(true))
-				.andExpect(jsonPath("$.data.recentContents[1].isContentsSaved").value(false));
+				.andExpect(jsonPath("$.data.recentContents[1].isContentsSaved").value(false))
+				.andExpect(jsonPath("$.data.recentContents[0].groupPurchase").value(true))
+				.andExpect(jsonPath("$.data.recentContents[1].groupPurchase").value(false));
 	}
 }

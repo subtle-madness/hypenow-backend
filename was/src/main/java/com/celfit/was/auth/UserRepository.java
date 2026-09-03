@@ -4,6 +4,7 @@ import com.celfit.was.archive.ArchiveReason;
 import com.celfit.was.archive.ArchiveTable;
 import com.celfit.was.archive.ArchiveTables;
 import com.celfit.was.archive.ArchiveWriter;
+import com.celfit.was.crypto.FieldCipher;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -30,23 +31,39 @@ public class UserRepository {
 	private static final List<String> PATCHABLE_COLUMNS = List.of("name", "nickname", "job_title",
 			"phone_country_code", "phone_number", "company_name", "agreed_marketing");
 
+	/**
+	 * 이중 쓰기 대상(스펙 §전환 1) — PATCHABLE_COLUMNS 중 암호화 대상 컬럼만 매핑. 화이트리스트
+	 * 검사 자체는 건드리지 않고, 이 목록에 있는 컬럼이 SET될 때만 코드가 파생한 `<col>_enc` SET을
+	 * 추가로 붙인다(enc 컬럼명은 외부 입력이 아니라 이 맵의 상수라 화이트리스트 불변식이 유지된다).
+	 */
+	private static final Map<String, String> PATCH_ENC_COLUMNS = Map.of(
+			"name", "name_enc", "nickname", "nickname_enc", "phone_number", "phone_number_enc");
+
 	private final JdbcClient jdbcClient;
 	private final ArchiveWriter archiveWriter;
+	private final FieldCipher fieldCipher;
 
-	public UserRepository(JdbcClient jdbcClient, ArchiveWriter archiveWriter) {
+	public UserRepository(JdbcClient jdbcClient, ArchiveWriter archiveWriter, FieldCipher fieldCipher) {
 		this.jdbcClient = jdbcClient;
 		this.archiveWriter = archiveWriter;
+		this.fieldCipher = fieldCipher;
 	}
 
-	/** 중복 이메일이면 DataIntegrityViolationException(구현체: DuplicateKeyException) — app.users.email UNIQUE 제약. */
+	/**
+	 * 중복 이메일이면 DataIntegrityViolationException(구현체: DuplicateKeyException) — app.users.email
+	 * UNIQUE 제약. email_enc/email_bidx도 함께 채운다(스펙 §전환 1 이중 쓰기 — 읽기는 아직 평문).
+	 */
 	public AppUser insert(String email, String passwordHash) {
+		String normalized = normalizeEmail(email);
 		return jdbcClient.sql("""
-				INSERT INTO app.users (email, password_hash)
-				VALUES (:email, :passwordHash)
+				INSERT INTO app.users (email, password_hash, email_enc, email_bidx)
+				VALUES (:email, :passwordHash, :emailEnc, :emailBidx)
 				RETURNING id, email, password_hash, role, created_at
 				""")
-				.param("email", normalizeEmail(email))
+				.param("email", normalized)
 				.param("passwordHash", passwordHash)
+				.param("emailEnc", fieldCipher.encrypt(normalized))
+				.param("emailBidx", fieldCipher.blindIndex(normalized))
 				.query(AppUser.class)
 				.single();
 	}
@@ -56,17 +73,20 @@ public class UserRepository {
 	 * marketing_updated_at은 마케팅 동의(true)일 때만 가입 시각으로 기록한다(동의 시각 추적 — 스펙 6.13).
 	 */
 	public UserProfile insertProfile(NewUser newUser, String passwordHash) {
+		String normalizedEmail = normalizeEmail(newUser.email());
 		return jdbcClient.sql("""
 				INSERT INTO app.users (email, password_hash, name, nickname, user_type, signup_route,
 				                       phone_country_code, phone_number, company_name, company_size,
 				                       industry, job_title, usage_purpose, agreed_terms, agreed_privacy,
-				                       agreed_age14, agreed_marketing, marketing_updated_at)
+				                       agreed_age14, agreed_marketing, marketing_updated_at,
+				                       email_enc, email_bidx, name_enc, nickname_enc, phone_number_enc)
 				VALUES (:email, :passwordHash, :name, :nickname, :userType, :signupRoute,
 				        :phoneCountryCode, :phoneNumber, :companyName, :companySize,
 				        :industry, :jobTitle, :usagePurpose, :agreedTerms, :agreedPrivacy,
-				        :agreedAge14, :agreedMarketing, CASE WHEN :agreedMarketing THEN now() END)
+				        :agreedAge14, :agreedMarketing, CASE WHEN :agreedMarketing THEN now() END,
+				        :emailEnc, :emailBidx, :nameEnc, :nicknameEnc, :phoneNumberEnc)
 				RETURNING\s""" + PROFILE_COLUMNS)
-				.param("email", normalizeEmail(newUser.email()))
+				.param("email", normalizedEmail)
 				.param("passwordHash", passwordHash)
 				.param("name", newUser.name())
 				.param("nickname", newUser.nickname())
@@ -83,6 +103,11 @@ public class UserRepository {
 				.param("agreedPrivacy", newUser.agreedPrivacy())
 				.param("agreedAge14", newUser.agreedAge14())
 				.param("agreedMarketing", newUser.agreedMarketing())
+				.param("emailEnc", fieldCipher.encrypt(normalizedEmail))
+				.param("emailBidx", fieldCipher.blindIndex(normalizedEmail))
+				.param("nameEnc", fieldCipher.encrypt(newUser.name()))
+				.param("nicknameEnc", fieldCipher.encrypt(newUser.nickname()))
+				.param("phoneNumberEnc", fieldCipher.encrypt(newUser.phoneNumber()))
 				.query(UserProfile.class)
 				.single();
 	}
@@ -114,6 +139,7 @@ public class UserRepository {
 			throw new IllegalArgumentException("patch 화이트리스트 밖 컬럼: " + columns.keySet());
 		}
 		List<String> sets = new ArrayList<>();
+		Map<String, Object> encParams = new HashMap<>();
 		for (String column : PATCHABLE_COLUMNS) {
 			if (!columns.containsKey(column)) {
 				continue;
@@ -123,12 +149,22 @@ public class UserRepository {
 				sets.add("marketing_updated_at = CASE WHEN agreed_marketing IS DISTINCT FROM :agreed_marketing"
 						+ " THEN now() ELSE marketing_updated_at END");
 			}
+			String encColumn = PATCH_ENC_COLUMNS.get(column);
+			if (encColumn != null) {
+				// enc 컬럼명은 PATCH_ENC_COLUMNS(코드 상수)에서만 나온다 — columns의 키(외부 입력)가
+				// SQL 조각으로 쓰이는 것은 이 for문의 PATCHABLE_COLUMNS 순회 자체가 이미 막고 있다.
+				sets.add(encColumn + " = :" + encColumn);
+				encParams.put(encColumn, fieldCipher.encrypt((String) columns.get(column)));
+			}
 		}
 		JdbcClient.StatementSpec spec = jdbcClient
 				.sql("UPDATE app.users SET " + String.join(", ", sets)
 						+ " WHERE id = :id RETURNING " + PROFILE_COLUMNS)
 				.param("id", id);
 		for (Map.Entry<String, Object> entry : columns.entrySet()) {
+			spec = spec.param(entry.getKey(), entry.getValue());
+		}
+		for (Map.Entry<String, Object> entry : encParams.entrySet()) {
 			spec = spec.param(entry.getKey(), entry.getValue());
 		}
 		return spec.query(UserProfile.class).single();

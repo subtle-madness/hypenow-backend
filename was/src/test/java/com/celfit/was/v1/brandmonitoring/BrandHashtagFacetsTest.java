@@ -10,7 +10,7 @@ class BrandHashtagFacetsTest {
 
 	private static BrandPostAssembler.PostRef ref(String shortcode, String... hashtags) {
 		return new BrandPostAssembler.PostRef(shortcode, null, null, null, null, null, null,
-				null, null, null, null, null, List.of(hashtags));
+				null, null, null, null, null, List.of(hashtags), null);
 	}
 
 	@Test

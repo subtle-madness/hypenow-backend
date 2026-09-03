@@ -20,8 +20,12 @@ package com.celfit.was.v1.brandmonitoring;
  * @param comments 댓글 합.
  * @param likesKnownCount 좋아요를 실제로 센 게시물 수. 0이면 {@code likes}와 참여율은 의미가 없다.
  * @param latestPostAt 가장 최근 게시물의 KST 게시 시각(팔로워 값의 시점 근거).
+ * @param influencerId 2026-09-03, 브랜드 모니터링 저장 연동 — {@code username}이 발굴 상세 조회
+ *                     (GET /v1/influencers/{influencerId})가 성공하는 계정이면 그 handle, 아니면
+ *                     null. POST /v1/saved-influencers 저장에 그대로 쓴다. username 단위로 결정되는
+ *                     값이라 이 작성자의 게시물이 몇 건이든 항상 같다({@link BrandInfluencerAggregator}).
  */
 public record BrandInfluencerResponse(String username, String fullName, String profilePicUrl,
 		String profileUrl, Long followers, long postCount, long sponsoredCount, long views,
-		long likes, long comments, long likesKnownCount, String latestPostAt) {
+		long likes, long comments, long likesKnownCount, String latestPostAt, String influencerId) {
 }

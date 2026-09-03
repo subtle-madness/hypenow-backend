@@ -19,8 +19,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 /**
- * Spring Session JDBC 영속화 계약 — 로그인하면 app.spring_session에 행이 생기고(principal_name=이메일,
- * 30일 슬라이딩), Set-Cookie가 스펙 4절(hypenow-session·SameSite=Lax·Max-Age)을 지키는지 실측한다.
+ * Spring Session JDBC 영속화 계약 — 로그인하면 app.spring_session에 행이 생기고
+ * (principal_name=userId 문자열, 트랙 A 09-03 — 세션 principal에서 이메일 PII 제거 이후), 30일
+ * 슬라이딩, Set-Cookie가 스펙 4절(hypenow-session·SameSite=Lax·Max-Age)을 지키는지 실측한다.
  * Boot 프로퍼티(spring.session.timeout / server.servlet.session.cookie.*)가 실제
  * CookieSerializer·세션 저장소에 반영되는지가 검증 대상이라 헤더·DB를 직접 본다.
  */
@@ -68,7 +69,8 @@ class SessionPersistenceIntegrationTest extends IntegrationTest {
 				.contains("SameSite=Lax")
 				.contains("Max-Age=2592000");
 
-		// ② DB 영속화 — 로그인 쿠키의 session_id 행, principal_name=이메일, 비활동 만료 30일(2592000초)
+		// ② DB 영속화 — 로그인 쿠키의 session_id 행, principal_name=userId 문자열(트랙 A 09-03 —
+		// 세션 principal에서 이메일 제거 이후), 비활동 만료 30일(2592000초)
 		String cookieValueForDb = sessionSetCookie.substring("hypenow-session=".length(), sessionSetCookie.indexOf(';'));
 		String sessionId = new String(java.util.Base64.getDecoder().decode(cookieValueForDb),
 				java.nio.charset.StandardCharsets.US_ASCII);
@@ -78,7 +80,11 @@ class SessionPersistenceIntegrationTest extends IntegrationTest {
 				.param("sessionId", sessionId)
 				.query()
 				.singleRow();
-		assertThat(row.get("principal_name")).isEqualTo(EMAIL);
+		Long userId = jdbcClient.sql("select id from app.users where email = :email")
+				.param("email", EMAIL)
+				.query(Long.class)
+				.single();
+		assertThat(row.get("principal_name")).isEqualTo(String.valueOf(userId));
 		assertThat(row.get("max_inactive_interval")).isEqualTo(2592000);
 
 		// ③ 로그인 시점 UA attribute가 세션과 함께 저장된다 (스펙 6.14 세션 목록 재료)
@@ -103,8 +109,11 @@ class SessionPersistenceIntegrationTest extends IntegrationTest {
 				.query(String.class)
 				.single();
 		String contextText = new String(contextBytes, java.nio.charset.StandardCharsets.ISO_8859_1);
-		assertThat(contextText).contains(EMAIL); // 읽은 바이트가 진짜 직렬화 본문인지 양성 대조
+		// 읽은 바이트가 진짜 직렬화 본문인지 양성 대조 — 클래스명은 직렬화 스트림에 항상 UTF 문자열로 실린다
+		assertThat(contextText).contains("AppUserDetails");
 		assertThat(contextText).doesNotContain(passwordHash);
+		// 트랙 A(09-03) — 세션 principal에서 이메일 PII 제거가 이 테스트의 핵심 계약이다
+		assertThat(contextText).doesNotContain(EMAIL);
 
 		// ⑤ 쿠키 왕복 — DB에 실린 세션으로 /v1/me 인증이 성립한다(재시작 생존과 같은 경로)
 		mockMvc.perform(get("/v1/me").cookie(new Cookie("hypenow-session", cookieValueForDb)))

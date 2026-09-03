@@ -3,6 +3,7 @@ package com.celfit.monitoring.service;
 import com.celfit.instagram.source.InstagramSource;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.PostShapeUnsupportedException;
+import com.celfit.instagram.source.PrivateAccountException;
 import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.store.BrandRow;
@@ -13,7 +14,8 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -47,6 +49,14 @@ public class BrandDirectCollectService {
 	/** 동기 단건 등록 전용({@link #collectAndEnrich}, BrandController POST .../direct-posts) — Hiker
 	 * 1순위 + 장애 시에만 self 구조. */
 	private final InstagramSource syncHiker;
+	/**
+	 * taken_at 미상 응답의 재확인 전용(S13, 2026-09-03 감사) — Hiker 직결, self 완전 미경유
+	 * ({@link com.celfit.monitoring.config.HikerConfig#metricsRetryInstagramSource}와 동일 빈).
+	 * self(embed 등)는 taken_at을 구조적으로 못 주므로 재확인을 self가 섞인 {@link #syncHiker}로
+	 * 돌리면 같은 결과(구조적 null)만 반복해 재시도가 결정론적으로 무력화된다 — CollectService의
+	 * metricsRetryHiker와 같은 이유로 별도 소스를 쓴다. {@link #recheckTakenAt}만 쓴다.
+	 */
+	private final InstagramSource takenAtRecheckHiker;
 	private final BrandCallContext callContext;
 	private final BrandSnapshotWriter writer;
 	private final TaggedPostRepository taggedPosts;
@@ -56,24 +66,27 @@ public class BrandDirectCollectService {
 	/** 해시태그 감시 세트 크기(2026-09-02 설계 §1) — 편입 쪽(BrandHashtagCollectService)과 같은 키. */
 	private final int monitoringSetSize;
 	/**
-	 * unenumerated 처리 동시 실행 가드(2026-08-28 리뷰 지적) — {@link #sweepUnenumerated}(야간 스윕
-	 * 2단계)와 {@link #backfillUnenriched}(기동 즉시 백필)는 같은 모수(direct∪hashtag 미크롤 행)를
-	 * 겹쳐 건드릴 수 있다(배포 재기동이 새벽 스윕 시간대 근처에 걸리면). {@link
-	 * com.celfit.monitoring.ad.AdDisclosureJudgeService#backfillRunning}과 같은 단일 공유
-	 * AtomicBoolean으로 겹침을 막는다 — 두 진입점 다 브랜드 1건 처리 단위로 획득·해제하므로, 겹치면
+	 * unenumerated 처리 동시 실행 가드(2026-08-28 리뷰 지적, 2026-09-03 브랜드 키화) — {@link
+	 * #sweepUnenumerated}(야간 스윕 2단계)와 {@link #backfillUnenriched}(기동 즉시 백필)는 같은 모수
+	 * (direct∪hashtag 미크롤 행)를 겹쳐 건드릴 수 있다(배포 재기동이 새벽 스윕 시간대 근처에 걸리면).
+	 * <b>같은 브랜드</b>의 겹침만 막는다 — 두 진입점 다 브랜드 1건 처리 단위로 획득·해제하므로, 겹치면
 	 * 그 브랜드(그 호출) 한 건만 스킵되고 데이터가 깨지지는 않는다(같은 게시물을 두 콜이 동시에
 	 * Hiker에 이중 과금하는 것만 막는 목적 — upsert·markEnriched 자체는 멱등이라 스킵된 쪽은 다음
 	 * 스윕이나 다음 기동이 다시 잡는다).
 	 *
+	 * <p>구 서비스 전역 AtomicBoolean은 브랜드 스윕 병렬화(2026-09-03 설계 §3-2)와 양립하지 않았다 —
+	 * 브랜드 4개가 동시에 돌면 서로의 2단계를 "겹침"으로 건너뛰어 그날 2단계가 통째로 빠진다.
+	 *
 	 * <p>package-private으로 열어 테스트가 겹침 상태를 직접 주입할 수 있게 한다(동시 호출 타이밍을
 	 * 실제 스레드 경합으로 재현하지 않고 결정적으로 검증하기 위함 — {@code judgeOne}과 같은 이유).
 	 */
-	final AtomicBoolean unenumeratedBusy = new AtomicBoolean(false);
+	final Set<Long> busyBrands = ConcurrentHashMap.newKeySet();
 
 	public BrandDirectCollectService(InstagramSource hiker,
 			@Qualifier("syncInstagramSource") InstagramSource syncHiker,
 			BrandCallContext callContext, BrandSnapshotWriter writer,
 			TaggedPostRepository taggedPosts, BrandCollectService collect,
+			@Qualifier("metricsRetryInstagramSource") InstagramSource takenAtRecheckHiker,
 			@Value("${monitoring.brand.unenumerated-sweep-limit:2000}") int sweepLimit,
 			@Value("${monitoring.brand.hashtag.post-limit:2000}") int monitoringSetSize) {
 		this.hiker = hiker;
@@ -82,6 +95,7 @@ public class BrandDirectCollectService {
 		this.writer = writer;
 		this.taggedPosts = taggedPosts;
 		this.collect = collect;
+		this.takenAtRecheckHiker = takenAtRecheckHiker;
 		this.sweepLimit = sweepLimit;
 		this.monitoringSetSize = monitoringSetSize;
 	}
@@ -100,6 +114,11 @@ public class BrandDirectCollectService {
 		// PrivateAccount는 그대로 전파.
 		PostInfo post = syncHiker.fetchPost(shortCode);
 		if (post.takenAt() == null) {
+			// Hiker 장애로 self가 구조했는데 self(embed 등)는 taken_at을 구조적으로 못 준다(S13,
+			// 2026-09-03 감사) — 즉시 422로 정산하기 전에 Hiker 단건 재확인을 1회 허용한다.
+			post = recheckTakenAt(shortCode, post);
+		}
+		if (post.takenAt() == null) {
 			// brand_tagged_post.taken_at은 NOT NULL이라 저장 불가 — 호출자가 422로 정산하게 던진다.
 			throw new PostShapeUnsupportedException("게시일 미상: " + shortCode);
 		}
@@ -109,6 +128,38 @@ public class BrandDirectCollectService {
 		taggedPosts.touchCrawled(brand.id(), List.of(shortCode), Instant.now());
 		collect.enrichSync(brand, List.of(adjusted));   // 게시자 + 댓글(syncHiker) + markEnriched(finally)
 		return adjusted;
+	}
+
+	/**
+	 * taken_at 미상 응답의 Hiker 단건 재확인(S13, 2026-09-03 감사) — 등록 요청 DTO
+	 * ({@code DirectPostRegisterRequest})에는 게시 시각 후보가 없다(registeredAt은 "등록한" 시각이지
+	 * "게시된" 시각이 아니라 대체값으로 쓸 수 없다 — FE 계약 변경 없이 대안 ①은 불가). 등록은 저빈도
+	 * 동기 경로라 추가 콜 1회는 허용하되(대안 ②), self를 다시 태우면 같은 구조적 null만 반복하므로
+	 * {@link #takenAtRecheckHiker}(Hiker 직결, self 미경유)로만 재확인한다 — 무한 재시도가 아니라
+	 * 정확히 1회로 끝난다.
+	 *
+	 * <p>재확인이 {@link SubjectNotFoundException}·{@link PrivateAccountException}(Hiker의 결정적
+	 * 판정 — 그 사이 삭제·비공개 전환)을 주면 그대로 전파해 호출자가 그 판정대로 매핑하게 한다(422로
+	 * 뭉개면 진짜 부재·비공개가 오분류된다). 그 외 재확인 실패(벤더 장애 지속)나 재확인도 taken_at
+	 * 없는 응답은 원 결과를 그대로 반환해 호출부가 기존 422 정산으로 수렴하게 한다 — taken_at 없이
+	 * 저장하면 NOT NULL 제약과 하류(제때창 판정 등)가 깨지므로 명시적 실패를 유지하는 쪽이 맞다.
+	 */
+	private PostInfo recheckTakenAt(String shortCode, PostInfo fallback) {
+		PostInfo recheck;
+		try {
+			recheck = takenAtRecheckHiker.fetchPost(shortCode);
+		} catch (SubjectNotFoundException | PrivateAccountException decisive) {
+			throw decisive;
+		} catch (RuntimeException e) {
+			log.info("direct 등록 taken_at 재확인 실패 — 원 결과로 정산: {} ({})", shortCode, e.toString());
+			return fallback;
+		}
+		if (recheck.takenAt() == null) {
+			log.info("direct 등록 taken_at 재확인도 미상 — 원 결과로 정산: {}", shortCode);
+			return fallback;
+		}
+		log.info("direct 등록 taken_at 재확인 성공: {}", shortCode);
+		return recheck;
 	}
 
 	/**
@@ -125,11 +176,11 @@ public class BrandDirectCollectService {
 	 * <p>게시자 프로필·댓글 병렬화는 {@code enrich} 안의 공유 워커 풀이 이미 한다 — 여기서 추가
 	 * 병렬화하지 않는다(전역 동시 콜 상한 계산이 깨진다).
 	 *
-	 * <p>{@link #unenumeratedBusy}로 {@link #backfillUnenriched}와의 동시 실행을 막는다(2026-08-28
+	 * <p>{@link #busyBrands}로 {@link #backfillUnenriched}와의 동시 실행을 막는다(2026-08-28
 	 * 리뷰 지적) — 겹치면 이번 브랜드 호출은 즉시 스킵하고 정상 반환한다(다음 스윕이 자연 재시도).
 	 */
 	public void sweepUnenumerated(BrandRow brand) {
-		if (!unenumeratedBusy.compareAndSet(false, true)) {
+		if (!busyBrands.add(brand.id())) {
 			log.info("unenumerated 처리 겹침 - 이번 호출 스킵 brand={}", brand.username());
 			return;
 		}
@@ -139,7 +190,7 @@ public class BrandDirectCollectService {
 				return null;
 			});
 		} finally {
-			unenumeratedBusy.set(false);
+			busyBrands.remove(brand.id());
 		}
 	}
 
@@ -201,7 +252,7 @@ public class BrandDirectCollectService {
 	 * 나이 티어 필터와 {@code sweepLimit} 스윕당 상한을 <b>적용하지 않는다</b> — 이 행들은 이관 직후
 	 * 한 번도 크롤된 적 없는 재고라 "천천히 갚아도 되는" 정상 운영 전제(점진 소진)가 성립하지 않는다.
 	 *
-	 * <p>{@link #unenumeratedBusy}로 {@link #sweepUnenumerated}와의 동시 실행을 막는다(2026-08-28
+	 * <p>{@link #busyBrands}로 {@link #sweepUnenumerated}와의 동시 실행을 막는다(2026-08-28
 	 * 리뷰 지적 — 배포 재기동이 새벽 스윕 시간대 근처에 걸리면 같은 게시물을 이중으로 Hiker에
 	 * 과금할 수 있다). 겹치면 이번 브랜드 호출은 즉시 0을 반환한다 — 스킵된 행은 멱등이라 데이터
 	 * 유실 없이 다음 야간 스윕(또는 다음 재기동)이 그대로 잡는다.
@@ -210,14 +261,14 @@ public class BrandDirectCollectService {
 	 * 합산 로그에 쓴다.
 	 */
 	public int backfillUnenriched(BrandRow brand) {
-		if (!unenumeratedBusy.compareAndSet(false, true)) {
+		if (!busyBrands.add(brand.id())) {
 			log.info("unenumerated 처리 겹침 - 이번 호출 스킵 brand={}", brand.username());
 			return 0;
 		}
 		try {
 			return callContext.scoped(brand.id(), () -> doBackfillUnenriched(brand));
 		} finally {
-			unenumeratedBusy.set(false);
+			busyBrands.remove(brand.id());
 		}
 	}
 

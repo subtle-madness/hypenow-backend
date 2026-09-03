@@ -34,17 +34,23 @@ public class PipelineStatsService {
 	private static final java.time.Duration TTL = java.time.Duration.ofMinutes(30);
 
 	/**
-	 * 무거운 집계 스냅샷 (G1·G2) — raw 쪽 수치는 REPEATABLE READ 한 트랜잭션에서 읽어 서로 정합.
-	 * analysis 쪽 셋(기분석 short_code·카피 handle)은 다른 DB라 스냅샷 정합이 원리적으로 불가 —
+	 * 무거운 집계 스냅샷 (G1·G2) - raw 쪽 수치는 REPEATABLE READ 한 트랜잭션에서 읽어 서로 정합.
+	 * analysis 쪽 셋(기분석 short_code·카피 handle)은 다른 DB라 스냅샷 정합이 원리적으로 불가 -
 	 * 집계 시각 표기로 보완한다(후보 뷰는 판정 진행 중엔 분 단위로 변한다).
 	 *
-	 * <p>트랙 구분: timely(제때 크롤 — 분석되면 랭킹 노출) vs 윈도우 전용(늦크롤 — 분석돼도 인플루언서
-	 * 상세만). 항등식: candidates = timelyTotal + windowTotal, 각 트랙 total = 기분석 + 미분석.
+	 * <p>트랙 구분: timely(제때 크롤 - 분석되면 랭킹 노출) vs 윈도우 전용(늦크롤 - 분석돼도 인플루언서
+	 * 상세만). 항등식: candidates = timelyTotal + windowTotal,
+	 * 각 트랙 total = 파트 B 완료(Done) + 미완(Pending).
+	 *
+	 * <p>2026-09-03 2단계 분리: 행 존재 = 기분석이라는 등식이 깨졌다. 파트 A만 채워진 행
+	 * (metric_timeliness='pending')은 랭킹에 못 뜨므로 Done이 아니라 FactsOnly로 따로 세고,
+	 * Pending(해야 할 일)에는 그대로 포함한다. factCandidates/factAnalyzed는 파트 A 잡의 대상·완료다.
 	 */
 	public record Heavy(
 			long candidates,
-			long timelyTotal, long timelyDone,
-			long windowTotal, long windowDone,
+			long timelyTotal, long timelyDone, long timelyFactsOnly,
+			long windowTotal, long windowDone, long windowFactsOnly,
+			long factCandidates, long factAnalyzed,
 			long servingContents, long servingAnalyzed,
 			long immaturePool, long lateExcluded,
 			long beautyHandles, long beautyCopied,
@@ -59,9 +65,19 @@ public class PipelineStatsService {
 			return windowTotal - windowDone;
 		}
 
-		/** 진짜 잔여 — 후보 ∩ 미분석 (사용자가 알고 싶던 그 숫자). */
+		/** 진짜 잔여 - 후보 ∩ 파트 B 미완('사실만' 포함). */
 		public long truePending() {
 			return timelyPending() + windowPending();
+		}
+
+		/** 사실만 채워진 후보 - 화면에 광고 판정·카테고리는 이미 떠 있고 해석만 대기 중이다. */
+		public long factsOnlyTotal() {
+			return timelyFactsOnly + windowFactsOnly;
+		}
+
+		/** 파트 A 잡의 잔여 - 캡션은 있는데 아직 사실 추출이 안 된 것. */
+		public long factPending() {
+			return factCandidates - factAnalyzed;
 		}
 	}
 
@@ -126,7 +142,7 @@ public class PipelineStatsService {
 	 * 섞여 있어 v3에선 각주 취급. copiedAccounts도 누적 핸들(탈락 계정 포함) — 현 모수 대비는 heavy.
 	 */
 	public record Funnel(long rawContents,
-			long analyzed, long timelyMarked, long backfillMarked,
+			long analyzed, long timelyMarked, long backfillMarked, long pendingMarked,
 			long served, long mirrorAccounts,
 			long copiedAccounts, long accountTarget,
 			Accounts accounts, Heavy heavy,
@@ -192,11 +208,12 @@ public class PipelineStatsService {
 		refreshHeavyIfStale();
 		long rawContents = count(raw, "SELECT count(*) FROM content");
 		Accounts accounts = accounts();
-		// content_analyses 집계 1패스 — 전체·timely·late_backfill을 한 번에 (개별 count 반복 제거).
+		// content_analyses 집계 1패스 - 전체·timely·late_backfill·pending을 한 번에 (개별 count 반복 제거).
 		Map<String, Object> ca = analysis.queryForMap("""
 				SELECT count(*) AS total,
 				       count(*) FILTER (WHERE metric_timeliness = 'timely')        AS timely,
-				       count(*) FILTER (WHERE metric_timeliness = 'late_backfill') AS backfill
+				       count(*) FILTER (WHERE metric_timeliness = 'late_backfill') AS backfill,
+				       count(*) FILTER (WHERE metric_timeliness = 'pending')       AS pending
 				FROM content_analyses""");
 		long served = count(analysis, "SELECT count(*) FROM contents");
 		long mirrorAccounts = count(analysis, "SELECT count(*) FROM accounts");
@@ -205,7 +222,7 @@ public class PipelineStatsService {
 		// 잔여는 크로스 DB 대조의 "진짜 잔여"(후보 ∩ 미분석) — 누적 마킹 수로 빼면 리비전이 섞인다.
 		long remaining = heavy == null ? -1 : heavy.truePending();
 		return new Funnel(rawContents,
-				num(ca.get("total")), num(ca.get("timely")), num(ca.get("backfill")),
+				num(ca.get("total")), num(ca.get("timely")), num(ca.get("backfill")), num(ca.get("pending")),
 				served, mirrorAccounts, copied, accountTarget(), accounts, heavy,
 				remaining < 0 ? 0 : todayPlanned(remaining),
 				remaining < 0 ? 0 : daysToFull(remaining),
@@ -312,26 +329,37 @@ public class PipelineStatsService {
 		return remaining > 0 ? 1 : 0;
 	}
 
-	/** 트랙별 대조 (G1 핵심) — 후보(short_code→timely)와 기분석 셋의 Java 교집합. 항등식 보장 지점. */
-	record TrackSplit(long timelyTotal, long timelyDone, long windowTotal, long windowDone) {
+	/** 트랙별 대조 (G1 핵심) - 후보(short_code→timely) × (파트 B 완료 / 사실만 / 미착수). */
+	record TrackSplit(long timelyTotal, long timelyDone, long timelyFactsOnly,
+			long windowTotal, long windowDone, long windowFactsOnly) {
 	}
 
-	static TrackSplit split(Map<String, Boolean> candidates, Set<String> analyzed) {
+	/**
+	 * @param analyzed content_analyses에 행이 있는 short_code 전량
+	 * @param factsOnly 그중 파트 A만 채워진 것(metric_timeliness='pending').
+	 *        행 존재만으로 Done을 세면 파트 A 행이 "랭킹 노출 가능"으로 잘못 잡힌다(2026-09-03).
+	 */
+	static TrackSplit split(Map<String, Boolean> candidates, Set<String> analyzed, Set<String> factsOnly) {
 		long timelyTotal = 0;
 		long timelyDone = 0;
+		long timelyFacts = 0;
 		long windowTotal = 0;
 		long windowDone = 0;
+		long windowFacts = 0;
 		for (Map.Entry<String, Boolean> e : candidates.entrySet()) {
-			boolean done = analyzed.contains(e.getKey());
+			boolean facts = factsOnly.contains(e.getKey());
+			boolean done = analyzed.contains(e.getKey()) && !facts;
 			if (Boolean.TRUE.equals(e.getValue())) {
 				timelyTotal++;
 				if (done) timelyDone++;
+				if (facts) timelyFacts++;
 			} else {
 				windowTotal++;
 				if (done) windowDone++;
+				if (facts) windowFacts++;
 			}
 		}
-		return new TrackSplit(timelyTotal, timelyDone, windowTotal, windowDone);
+		return new TrackSplit(timelyTotal, timelyDone, timelyFacts, windowTotal, windowDone, windowFacts);
 	}
 
 	private void refreshHeavyIfStale() {
@@ -363,6 +391,9 @@ public class PipelineStatsService {
 	private Heavy computeHeavy() {
 		Set<String> analyzedCodes = new HashSet<>(
 				analysis.queryForList("SELECT short_code FROM content_analyses", String.class));
+		// 파트 A만 채워진 행(2026-09-03) - 부분 인덱스로 좁혀진 집합이라 통짜 로드가 싸다.
+		Set<String> factsOnlyCodes = new HashSet<>(analysis.queryForList(
+				"SELECT short_code FROM content_analyses WHERE metric_timeliness = 'pending'", String.class));
 		Set<String> copiedHandles = copiedHandles();
 		// 아카이브 기록 셋 — 다른 DB(analysis)라 raw 스냅샷과 정합 불가는 기존 셋들과 같은 한계.
 		Set<String> archivedThumbs = new HashSet<>(analysis.queryForList(
@@ -380,15 +411,26 @@ public class PipelineStatsService {
 				con.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
 				con.setReadOnly(true);
 				try (Statement st = con.createStatement()) {
-					// ① 분석 자격 — 트랙(timely/윈도우) × (기분석/미분석) 4분할을 Java에서 대조.
+					// ① 분석 자격 - 파트 A 입구 뷰를 1회 스캔해 파트 A 축과 파트 B 트랙을 함께 얻는다.
+					//    v_analysis_candidates = v_fact_candidates WHERE mature 이므로 mature 행만
+					//    추리면 구 스캔과 결과가 같다(스캔 횟수 불변 - 뷰 평가가 이 집계의 본체다).
 					Map<String, Boolean> candidateRows = new java.util.LinkedHashMap<>();
+					long factCandidates = 0;
+					long factAnalyzed = 0;
 					try (ResultSet rs = st.executeQuery(
-							"SELECT short_code, timely FROM v_analysis_candidates")) {
+							"SELECT short_code, timely, mature FROM v_fact_candidates")) {
 						while (rs.next()) {
-							candidateRows.put(rs.getString(1), rs.getBoolean(2));
+							String shortCode = rs.getString(1);
+							factCandidates++;
+							if (analyzedCodes.contains(shortCode)) {
+								factAnalyzed++;
+							}
+							if (rs.getBoolean(3)) {
+								candidateRows.put(shortCode, rs.getBoolean(2));
+							}
 						}
 					}
-					TrackSplit tracks = split(candidateRows, analyzedCodes);
+					TrackSplit tracks = split(candidateRows, analyzedCodes, factsOnlyCodes);
 					// ② 자격 밖 분해 — 캡션 풀·성숙 풀(04 뷰 성숙 가드와 동일식).
 					long captionPool;
 					long maturePool;
@@ -434,8 +476,9 @@ public class PipelineStatsService {
 					con.commit();
 					long candidates = tracks.timelyTotal() + tracks.windowTotal();
 					return new Heavy(candidates,
-							tracks.timelyTotal(), tracks.timelyDone(),
-							tracks.windowTotal(), tracks.windowDone(),
+							tracks.timelyTotal(), tracks.timelyDone(), tracks.timelyFactsOnly(),
+							tracks.windowTotal(), tracks.windowDone(), tracks.windowFactsOnly(),
+							factCandidates, factAnalyzed,
 							serving, servingAnalyzed,
 							Math.max(0, captionPool - maturePool),
 							Math.max(0, maturePool - candidates),

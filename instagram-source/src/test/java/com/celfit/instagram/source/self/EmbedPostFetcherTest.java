@@ -36,6 +36,24 @@ class EmbedPostFetcherTest {
 		assertThat(p.caption()).contains("With your powers combined");
 		assertThat(p.viewsTrusted()).isFalse();
 		assertThat(p.likesHidden()).isFalse();
+		// S9 — 공유 횟수는 embed HTML에 구조적으로 안 실려 "숨김"과 "이 표면이 원래 못 주는 값"을
+		// 구분할 신호가 없다 — 확정 false(비숨김)로 단정하지 않고 미확정(null)을 반환한다.
+		assertThat(p.sharesHidden()).isNull();
+	}
+
+	/**
+	 * S14 — embed HTML의 게시물 커버 이미지({@code class="EmbeddedMediaImage"})에서 thumbnailUrl을
+	 * 뽑는다. 과거엔 이 필드가 항상 null이라, 저장 계층의 COALESCE 보호(PostMetaRepository)가
+	 * "일시적 미취득"으로 오인해 기존(만료 예정) CDN URL을 영구 보존했다 — 서명 만료 후 아카이브
+	 * 잡이 선행되지 않으면 썸네일이 조용히 깨진다(07-30 프로필 이미지 만료 사건 동형).
+	 */
+	@Test
+	void 이미지_게시물의_썸네일_URL을_파싱한다() {
+		PostInfo p = fetcher(fixture("embed_image_en.html"), 200).fetch("DcOX3hWFiey");
+		assertThat(p.thumbnailUrl())
+				.startsWith("https://scontent-gmp1-1.cdninstagram.com/v/t51.82787-15/780550892_18639053554049152_7611034912661011809_n.jpg")
+				.contains("_nc_cat=1")
+				.doesNotContain("&amp;");
 	}
 
 	/**
@@ -60,23 +78,45 @@ class EmbedPostFetcherTest {
 		assertThat(p.contentType()).isEqualTo("REELS");
 		assertThat(p.caption()).contains("Soothing spacewalk");
 		assertThat(p.viewsTrusted()).isTrue();
+		assertThat(p.likesHidden()).isFalse();   // 좋아요 숫자를 실제로 봤으니 확정 비숨김
+		assertThat(p.sharesHidden()).isNull();   // S9 — 공유는 embed에 구조적으로 안 실려 항상 미확정
+	}
+
+	/** S14 — 릴스도 커버 프레임을 같은 클래스로 렌더한다(embed_reel_en.html 실측). */
+	@Test
+	void 릴스_게시물의_썸네일_URL도_파싱한다() {
+		PostInfo p = fetcher(fixture("embed_reel_en.html"), 200).fetch("DcMXl1IPNtB");
+		assertThat(p.thumbnailUrl())
+				.startsWith("https://scontent-gmp1-1.cdninstagram.com/v/t51.82787-15/779017700_18615481711026724_2930580986888954454_n.jpg")
+				.doesNotContain("&amp;");
+	}
+
+	/** S14 — 커버 이미지 태그 자체가 없으면(예상외 셰이프) 예외 없이 null로 남긴다. */
+	@Test
+	void 커버_이미지_태그가_없으면_썸네일은_null이다() {
+		String body = "<html><body><span class=\"UsernameText\">nasa</span>"
+				+ "<a data-log-event=\"likeCountClick\">100 likes</a></body></html>";
+		PostInfo p = fetcher(body, 200).fetch("SC5");
+		assertThat(p.thumbnailUrl()).isNull();
 	}
 
 	/**
 	 * 좋아요 카운트 렌더 텍스트가 없으면(정규식 파싱 실패 — 로케일 변경 등) "숨김"으로 단정하면 안
 	 * 된다(수정 2 — 파싱 실패를 숨김으로 오분류하면 저장 계층에 영구 오염을 남긴다, findings 참조).
-	 * self는 숨김 여부를 확정할 신뢰 가능한 신호가 없으므로 항상 false를 반환하고, "미확정" 보호는
-	 * 저장 계층(SnapshotRepository)이 likes_hidden=false와 짝지어 담당한다.
+	 * self는 숨김 여부를 확정할 신뢰 가능한 신호가 없으므로 likesHidden을 null(미확정)로 남긴다
+	 * (S9, 2026-09-03 감사 수정 — 과거엔 항상 false를 반환해 Hiker의 확정 false와 안 구분됐다).
+	 * "미확정" 보호는 여전히 저장 계층(SnapshotRepository)이 담당하지만, 이제 인메모리 재시도·0
+	 * 간주 판단도 진짜 미확정과 확정 false를 구분할 수 있다.
 	 */
 	@Test
-	void 좋아요_파싱_실패는_숨김으로_단정하지_않는다() {
+	void 좋아요_파싱_실패는_미확정_null로_반환된다() {
 		// 좋아요 카운트 패턴이 없는 렌더 텍스트 — username은 있어 빈 셸(NOT_FOUND)로는 분류되지 않는다.
 		String body = "<html><body><span class=\"UsernameText\">nasa</span>"
 				+ "<a>View all 12 comments</a></body></html>";
 		PostInfo p = fetcher(body, 200).fetch("SC1");
 
 		assertThat(p.likes()).isNull();
-		assertThat(p.likesHidden()).isFalse();
+		assertThat(p.likesHidden()).isNull();
 	}
 
 	/**
@@ -112,5 +152,38 @@ class EmbedPostFetcherTest {
 				.isInstanceOf(SelfCrawlException.class)
 				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
 						.isEqualTo(SelfErrorClass.NOT_FOUND));
+	}
+
+	/**
+	 * S4 — 과거 판정은 {@code body.contains("product_type\":\"clips")}로 접두사만 봤다. 실값이
+	 * "clips_v2"처럼 "clips"로 시작만 하고 다른 product_type이어도 접두 일치로 REELS 오판정됐다.
+	 * 구조적 파싱(값 전체를 캡처해 "clips"와 완전 일치 비교)이면 이 오탐이 사라진다.
+	 */
+	@Test
+	void product_type_접두사만_같고_실값이_다르면_REELS로_오판정하지_않는다() {
+		// 런타임 텍스트: <script>{\"product_type\":\"clips_v2\"}</script> — embed 실 HTML의
+		// 이스케이프된 JSON 블롭(VIEWS 패턴 주석 참조)과 같은 셰이프.
+		String escapedJson = "{\\\"product_type\\\":\\\"clips_v2\\\"}";
+		String body = "<html><body><span class=\"UsernameText\">nasa</span>"
+				+ "<a data-log-event=\"likeCountClick\">100 likes</a>"
+				+ "<script>" + escapedJson + "</script></body></html>";
+
+		PostInfo p = fetcher(body, 200).fetch("SC3");
+
+		assertThat(p.contentType()).isEqualTo("FEED");
+		assertThat(p.views()).isNull();
+	}
+
+	/** product_type이 정확히 "clips"면(views 신호 없이도) REELS로 확정한다 — 구조적 추출의 정상 경로. */
+	@Test
+	void product_type이_정확히_clips면_views_없이도_REELS로_확정한다() {
+		String escapedJson = "{\\\"product_type\\\":\\\"clips\\\"}";
+		String body = "<html><body><span class=\"UsernameText\">nasa</span>"
+				+ "<a data-log-event=\"likeCountClick\">100 likes</a>"
+				+ "<script>" + escapedJson + "</script></body></html>";
+
+		PostInfo p = fetcher(body, 200).fetch("SC4");
+
+		assertThat(p.contentType()).isEqualTo("REELS");
 	}
 }

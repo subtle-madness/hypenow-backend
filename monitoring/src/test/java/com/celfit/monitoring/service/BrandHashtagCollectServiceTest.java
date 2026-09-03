@@ -165,6 +165,17 @@ class BrandHashtagCollectServiceTest {
 		Set<String> matchedTagsOf(String shortCode) {
 			return matchedTags.getOrDefault(shortCode, new LinkedHashSet<>());
 		}
+
+		// 게시자 id 재사용/역보강(S8 결함 수정) — 이 테스트는 재사용 대상이 없다(no-op 대역).
+		@Override
+		public Map<String, String> authorIgUserIds(long brandId, Collection<String> shortCodes) {
+			return Map.of();
+		}
+
+		@Override
+		public void backfillAuthorIgUserIds(long brandId, Map<String, String> authorIdsByShortCode) {
+			// no-op — 이 테스트 스위트는 역보강 상태를 단언하지 않는다.
+		}
 	}
 
 	private static final class RecordingWriter extends BrandSnapshotWriter {
@@ -287,7 +298,7 @@ class BrandHashtagCollectServiceTest {
 		// adDisclosureEnabled=false — 광고 판정은 이 테스트의 관심사가 아니고, 꺼져 있으면
 		// judgeAdDisclosuresSafely가 adJudge를 아예 부르지 않아 null을 넘겨도 안전하다.
 		BrandCollectService collect = new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments,
-				tagged, authors, new InertBrands(), null, Runnable::run, 10000, 2000, 3, 30, false);
+				tagged, authors, new InertBrands(), null, Runnable::run, Runnable::run, 10000, 2000, 3, 30, false);
 		return new BrandHashtagCollectService(client(), callContext, tags, tagged, writer, collect,
 				maxPages, postLimit);
 	}
@@ -341,7 +352,7 @@ class BrandHashtagCollectServiceTest {
 		});
 		BrandCollectService collect = new BrandCollectService(hikerBackend, hikerBackend, userTriggeredBackend,
 				callContext, writer, snapshots, comments, tagged, authors, new InertBrands(), null,
-				Runnable::run, 10000, 2000, 3, 30, false);
+				Runnable::run, Runnable::run, 10000, 2000, 3, 30, false);
 		BrandHashtagCollectService hashtag = new BrandHashtagCollectService(client(), callContext, tags, tagged,
 				writer, collect, 4, 1000);
 
