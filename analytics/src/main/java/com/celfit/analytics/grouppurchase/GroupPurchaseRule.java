@@ -17,16 +17,26 @@ import java.util.regex.Pattern;
  * 5) 둘 다 없음                    → CONFIRMED_FALSE
  * </pre>
  *
- * <p>도구 어휘는 근처 N자가 아니라 <b>캡션 전체</b> 대상이다 — 넉넉하게 잡아도 애매 분류로
- * 늘어나는 건 LLM 콜 몇백 건뿐이고, "드릴게요"류 오분류는 LLM이 걸러주므로 무해하다(애매 분류는
- * "보류"이지 "거짓"이 아니다 — 스펙 §3).
+ * <p>도구 어휘는 근처 N자가 아니라 <b>캡션 전체</b> 대상이다. 단 일상어와 겹치는 두 어휘는 좁혀
+ * 잡는다(2026-09-04 운영 실측: 후보 4,808건 중 애매 1,717건의 원인이 "드릴게요"류 995건과
+ * "부담없이"류 957건 — 도구와 무관한데 LLM 콜 1,700건과 오탐 2건을 만들었다. 좁힌 뒤 애매 239건):
+ * "드릴"은 동사 활용("드릴게요·드릴까요·드릴 수")을 제외한 명사형만, "없이"는 "공구 없이"만.
  */
 public final class GroupPurchaseRule {
 
-	/** 도구 어휘(애매 분류 트리거) — 스펙 §3 어휘 그대로. DIY만 대소문자 무관. */
+	/**
+	 * 도구 어휘(애매 분류 트리거) — 스펙 §3 어휘에서 "없이"·"드릴"을 뺀 부분 문자열 매칭. DIY만
+	 * 대소문자 무관. 뺀 둘은 아래 정규식으로 좁혀 잡는다(클래스 javadoc의 운영 실측 참조).
+	 */
 	private static final List<String> TOOL_WORDS = List.of(
-			"없이", "조립", "설치", "나사", "드릴", "망치", "볼트", "드라이버", "렌치", "톱",
+			"조립", "설치", "나사", "망치", "볼트", "드라이버", "렌치", "톱",
 			"목재", "목공", "철물", "전동", "수리", "공구함", "공구통", "공구박스", "공구세트");
+
+	/** 명사형 "드릴"만 — "드릴게요·드릴께요·드릴까요·드릴 수·드릴지·드릴테니·드릴려고"는 동사 활용이라 제외. */
+	private static final Pattern TOOL_DRILL_NOUN = Pattern.compile("드릴(?! ?(게|께|까|수|지|테|려))");
+
+	/** "없이"는 도구 문맥인 "공구 없이"만 — "부담없이·고민없이"는 일상어. */
+	private static final Pattern TOOL_WITHOUT = Pattern.compile("공구 ?없이");
 
 	private static final String TOOL_WORD_DIY = "DIY";
 
@@ -70,6 +80,8 @@ public final class GroupPurchaseRule {
 		if (caption.toUpperCase(Locale.ROOT).contains(TOOL_WORD_DIY)) {
 			return true;
 		}
-		return TOOL_PHRASE.matcher(caption).find();
+		return TOOL_DRILL_NOUN.matcher(caption).find()
+				|| TOOL_WITHOUT.matcher(caption).find()
+				|| TOOL_PHRASE.matcher(caption).find();
 	}
 }
