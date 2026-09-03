@@ -877,6 +877,10 @@ staging 브랜치 검증용 스택. **staging CI 성공마다** `.github/workflo
 - 일일 스윕은 컨테이너 env `MONITORING_SCHEDULE_SWEEP_CRON`(UTC 17:00 = KST 02:00).
   임시 중단은 값을 `"-"`로 두고 `docker compose up -d monitoring` — 서버에서 직접 고친 값은
   다음 CD 배포가 레포 compose로 덮는다(crawler 스케줄과 같은 규칙, §4-2).
+- 브랜드 등록 백필 열거 실패 재시도 스케줄러(2026-09, 5분 틱·최대 3회)는 `.env`에
+  `MONITORING_BRAND_BACKFILL_RETRY_ENABLED=false`를 넣고 `docker compose up -d monitoring`으로
+  끈다(기본 true) — 벤더 장애 중 재시도가 증폭으로 작용할 때의 롤백 수단. 꺼져 있으면 등록
+  즉시 실패 문구도 exhausted(다음 새벽 정기 수집 안내)로 곧장 간다.
 - 주간 리포트 메일은 **was**가 보낸다(2026-08-27 주간 개편). monitoring의 5분 틱 디스패처와
   `MONITORING_ALARM_*`·`alarm_reader` 롤은 폐지됐다 - monitoring은 `alarm_event` 적재만 한다.
   - 발송 스케줄: 매주 월요일 09:00 KST 다이제스트 생성 직후(따라잡기 09:10~23:50, 10분 간격).
