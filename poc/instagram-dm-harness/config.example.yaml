@@ -1,0 +1,50 @@
+# 인스타 DM POC 1단계 실행 정의 예시.
+# ⚠️ 실제 크리덴셜을 넣은 파일은 config.yaml 로 저장(.gitignore에서 무시됨).
+# ⚠️ 발송 계정·수신 더미는 100% 버릴 테스트 계정만. 운영자가 직접 조달한다.
+dry_run: true                 # 실발송 없이 스케줄·기록만. 실계정 투입 전 반드시 true로 검증.
+ledger_path: "ledger.db"
+session_dir: "sessions"       # 계정당 dump_settings 세션 파일 위치(.gitignore 무시)
+kill_switch_path: "KILL"      # 이 파일을 만들면 함대 전체 즉시 정지
+
+params:
+  active_start_hour: 10       # KST 활성 시작(포함)
+  active_end_hour: 22         # KST 활성 끝(배타)
+  timezone: "Asia/Seoul"
+  jitter_min_seconds: 60      # 발송 간 최소 간격
+  jitter_max_seconds: 300     # 발송 간 최대 간격(1~5분)
+  max_sends_per_hour: 21      # 계정당 시간당 상한(피처링 Max 앵커)
+  non_dm_ratio: 0.3           # DM 사이 비DM 액션 삽입 확률
+  circuit_window_seconds: 900 # 함대 서킷브레이커 창(15분)
+  circuit_threshold: 2        # 창 안 하드신호 계정 N개면 전체 정지
+  login_required_death_streak: 2  # 연속 LoginRequired N회면 死
+  post_send_observe_days: 3   # 발송 종료 후 관찰(지연 밴 포착)
+
+proxies:                      # 한국 sticky 레지던셜, 계정:출구 1:1 미중첩
+  exit_1: "http://USER:PASS@resi.vendor.example:8000?country=kr&session=REPLACE_A"
+  exit_2: "http://USER:PASS@resi.vendor.example:8000?country=kr&session=REPLACE_B"
+
+senders:                      # 신규 버릴 계정. arm=send(콜드DM) / control(비DM만)
+  - alias: s1
+    username: REPLACE_sender_1
+    password: REPLACE_pw_1
+    verification: phone       # phone / email
+    arm: send
+    proxy_exit: exit_1
+  - alias: s2
+    username: REPLACE_sender_2
+    password: REPLACE_pw_2
+    verification: email
+    arm: control
+    proxy_exit: exit_2
+
+dummies:                      # 우리 통제 수신 더미(받기전용, 프록시 불요). 화이트리스트 정본.
+  - alias: d1
+    username: REPLACE_dummy_1
+    password: REPLACE_dpw_1
+  - alias: d2
+    username: REPLACE_dummy_2
+    password: REPLACE_dpw_2
+
+messages:                     # 콜드 첫 DM 문구 변형(message_variant로 기록)
+  - id: v1
+    text: "안녕하세요, 브랜드 협업 제안 드리려 연락드립니다."
