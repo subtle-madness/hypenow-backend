@@ -38,6 +38,10 @@ public class BrandSnapshotRepository {
 	 * likes·shares는 숨김 플래그(likes_hidden·shares_hidden)와 얽혀 있어, EXCLUDED가 (값 null +
 	 * hidden=false)인 행만 "미확정"으로 보고 값·hidden 플래그를 함께 보존하고, 진짜 숨김 관측
 	 * (hidden=true)은 정상적으로 덮는다.
+	 *
+	 * <p>PostInfo.likesHidden·sharesHidden은 인메모리 Boolean(nullable, null=미확정 — S9,
+	 * 2026-09-03 감사 수정)이지만 DB 컬럼은 boolean NOT NULL이라 저장 직전 null은 false로 접는다
+	 * (SnapshotRepository와 동형 — false가 원래도 위 CASE의 "미확정 관측" 신호였다).
 	 */
 	public void upsertPost(LocalDate on, PostInfo p) {
 		Long fb = p.fbPlays() != null ? p.fbPlays() : latestFbPlays(p.shortCode(), on);
@@ -68,18 +72,27 @@ public class BrandSnapshotRepository {
 				               THEN brand_post_snapshot.shares_hidden ELSE EXCLUDED.shares_hidden END,
 				  reposts = COALESCE(EXCLUDED.reposts, brand_post_snapshot.reposts)""",
 				p.username(), p.shortCode(), on, p.contentType(),
-				p.likes(), p.likesHidden(), p.comments(), views, fb,
-				p.saves(), p.shares(), p.sharesHidden(), p.reposts());
+				p.likes(), Boolean.TRUE.equals(p.likesHidden()), p.comments(), views, fb,
+				p.saves(), p.shares(), Boolean.TRUE.equals(p.sharesHidden()), p.reposts());
 	}
 
-	/** 브랜드 계정 프로필 추이 — 매일 스윕의 프로필 1콜을 일 1행으로(profile_snapshot 동형). */
+	/**
+	 * 브랜드 계정 프로필 추이 — 매일 스윕의 프로필 1콜을 일 1행으로(profile_snapshot 동형).
+	 *
+	 * <p>같은 날 재수집 시 null 관측의 덮어쓰기 보호(S15 보완) — SnapshotRepository.upsertProfile과
+	 * 동형 결함을 그대로 물려받고 있었다. og 표면은 media_count가 og:description 영어 정규식
+	 * 파싱 의존이라 부분 파싱 실패(null)가 흔하고, followers·following도 문서 JSON에 해당 키가
+	 * 없으면 null로 온다. BrandCollectService가 이 메서드로 같은 og/wpi fetcher 결과를 쓰므로
+	 * COALESCE 보호를 동형 적용한다.
+	 */
 	public void upsertBrandProfile(String username, LocalDate on, ProfileInfo p) {
 		db.update("""
 				INSERT INTO brand_profile_snapshot (username, captured_on, followers, following, media_count)
 				VALUES (?, ?, ?, ?, ?)
 				ON CONFLICT (username, captured_on) DO UPDATE SET
-				  followers=EXCLUDED.followers, following=EXCLUDED.following,
-				  media_count=EXCLUDED.media_count""",
+				  followers=COALESCE(EXCLUDED.followers, brand_profile_snapshot.followers),
+				  following=COALESCE(EXCLUDED.following, brand_profile_snapshot.following),
+				  media_count=COALESCE(EXCLUDED.media_count, brand_profile_snapshot.media_count)""",
 				username, on, p.followers(), p.following(), p.mediaCount());
 	}
 

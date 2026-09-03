@@ -1,0 +1,15 @@
+-- 광고 고지 판정 백필 조회 가속(2026-09-03 monitoring 풀스캔 점검) — BrandPostMetaRepository의
+-- findUnjudged·countUnjudged는 ad_verdict IS NULL 잔량을 고를 때
+--   EXISTS (SELECT 1 FROM brand_tagged_post t JOIN brand_account b ON b.id = t.brand_id
+--           WHERE t.short_code = m.short_code AND b.has_own_link = true)
+-- 로 "own 연결이 있는 브랜드에 태그된 게시물"만 남긴다. brand_tagged_post의 접근 경로는
+-- PK (brand_id, short_code)와 brand_id 선두 부분 인덱스 2개뿐이라 short_code 단독 조건은
+-- 아무것도 타지 못해 통합 풀 전체를 훑는다. AdDisclosureJudgeService.backfillUnjudged가
+-- 배치 루프마다 countUnjudged를 다시 호출하므로(기동 러너 + 야간 브랜드 스윕 말미), 잔량 N에
+-- batchSize당 1번씩 brand_tagged_post 풀스캔이 반복됐다.
+--
+-- CONCURRENTLY 미적용 — 선례(V20260827171444)와 같은 판단. 일반 CREATE INDEX는 빌드 동안
+-- 쓰기 잠금을 걸지만, brand_tagged_post의 쓰기는 야간 브랜드 스윕(KST 02:00)과 등록 요청뿐이고
+-- 마이그레이션은 배포 기동 시점에 돌아 겹치지 않는다. 테이블이 크게 자라면 트랜잭션 밖 별도
+-- 마이그레이션으로 CONCURRENTLY 재고할 것.
+CREATE INDEX brand_tagged_post_short_code_idx ON brand_tagged_post (short_code);

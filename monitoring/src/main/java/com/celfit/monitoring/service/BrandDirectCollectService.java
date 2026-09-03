@@ -3,6 +3,7 @@ package com.celfit.monitoring.service;
 import com.celfit.instagram.source.InstagramSource;
 import com.celfit.instagram.source.PostInfo;
 import com.celfit.instagram.source.PostShapeUnsupportedException;
+import com.celfit.instagram.source.PrivateAccountException;
 import com.celfit.instagram.source.SubjectNotFoundException;
 import com.celfit.monitoring.hiker.BrandCallContext;
 import com.celfit.monitoring.store.BrandRow;
@@ -47,6 +48,14 @@ public class BrandDirectCollectService {
 	/** 동기 단건 등록 전용({@link #collectAndEnrich}, BrandController POST .../direct-posts) — Hiker
 	 * 1순위 + 장애 시에만 self 구조. */
 	private final InstagramSource syncHiker;
+	/**
+	 * taken_at 미상 응답의 재확인 전용(S13, 2026-09-03 감사) — Hiker 직결, self 완전 미경유
+	 * ({@link com.celfit.monitoring.config.HikerConfig#metricsRetryInstagramSource}와 동일 빈).
+	 * self(embed 등)는 taken_at을 구조적으로 못 주므로 재확인을 self가 섞인 {@link #syncHiker}로
+	 * 돌리면 같은 결과(구조적 null)만 반복해 재시도가 결정론적으로 무력화된다 — CollectService의
+	 * metricsRetryHiker와 같은 이유로 별도 소스를 쓴다. {@link #recheckTakenAt}만 쓴다.
+	 */
+	private final InstagramSource takenAtRecheckHiker;
 	private final BrandCallContext callContext;
 	private final BrandSnapshotWriter writer;
 	private final TaggedPostRepository taggedPosts;
@@ -74,6 +83,7 @@ public class BrandDirectCollectService {
 			@Qualifier("syncInstagramSource") InstagramSource syncHiker,
 			BrandCallContext callContext, BrandSnapshotWriter writer,
 			TaggedPostRepository taggedPosts, BrandCollectService collect,
+			@Qualifier("metricsRetryInstagramSource") InstagramSource takenAtRecheckHiker,
 			@Value("${monitoring.brand.unenumerated-sweep-limit:2000}") int sweepLimit,
 			@Value("${monitoring.brand.hashtag.post-limit:2000}") int monitoringSetSize) {
 		this.hiker = hiker;
@@ -82,6 +92,7 @@ public class BrandDirectCollectService {
 		this.writer = writer;
 		this.taggedPosts = taggedPosts;
 		this.collect = collect;
+		this.takenAtRecheckHiker = takenAtRecheckHiker;
 		this.sweepLimit = sweepLimit;
 		this.monitoringSetSize = monitoringSetSize;
 	}
@@ -100,6 +111,11 @@ public class BrandDirectCollectService {
 		// PrivateAccount는 그대로 전파.
 		PostInfo post = syncHiker.fetchPost(shortCode);
 		if (post.takenAt() == null) {
+			// Hiker 장애로 self가 구조했는데 self(embed 등)는 taken_at을 구조적으로 못 준다(S13,
+			// 2026-09-03 감사) — 즉시 422로 정산하기 전에 Hiker 단건 재확인을 1회 허용한다.
+			post = recheckTakenAt(shortCode, post);
+		}
+		if (post.takenAt() == null) {
 			// brand_tagged_post.taken_at은 NOT NULL이라 저장 불가 — 호출자가 422로 정산하게 던진다.
 			throw new PostShapeUnsupportedException("게시일 미상: " + shortCode);
 		}
@@ -109,6 +125,38 @@ public class BrandDirectCollectService {
 		taggedPosts.touchCrawled(brand.id(), List.of(shortCode), Instant.now());
 		collect.enrichSync(brand, List.of(adjusted));   // 게시자 + 댓글(syncHiker) + markEnriched(finally)
 		return adjusted;
+	}
+
+	/**
+	 * taken_at 미상 응답의 Hiker 단건 재확인(S13, 2026-09-03 감사) — 등록 요청 DTO
+	 * ({@code DirectPostRegisterRequest})에는 게시 시각 후보가 없다(registeredAt은 "등록한" 시각이지
+	 * "게시된" 시각이 아니라 대체값으로 쓸 수 없다 — FE 계약 변경 없이 대안 ①은 불가). 등록은 저빈도
+	 * 동기 경로라 추가 콜 1회는 허용하되(대안 ②), self를 다시 태우면 같은 구조적 null만 반복하므로
+	 * {@link #takenAtRecheckHiker}(Hiker 직결, self 미경유)로만 재확인한다 — 무한 재시도가 아니라
+	 * 정확히 1회로 끝난다.
+	 *
+	 * <p>재확인이 {@link SubjectNotFoundException}·{@link PrivateAccountException}(Hiker의 결정적
+	 * 판정 — 그 사이 삭제·비공개 전환)을 주면 그대로 전파해 호출자가 그 판정대로 매핑하게 한다(422로
+	 * 뭉개면 진짜 부재·비공개가 오분류된다). 그 외 재확인 실패(벤더 장애 지속)나 재확인도 taken_at
+	 * 없는 응답은 원 결과를 그대로 반환해 호출부가 기존 422 정산으로 수렴하게 한다 — taken_at 없이
+	 * 저장하면 NOT NULL 제약과 하류(제때창 판정 등)가 깨지므로 명시적 실패를 유지하는 쪽이 맞다.
+	 */
+	private PostInfo recheckTakenAt(String shortCode, PostInfo fallback) {
+		PostInfo recheck;
+		try {
+			recheck = takenAtRecheckHiker.fetchPost(shortCode);
+		} catch (SubjectNotFoundException | PrivateAccountException decisive) {
+			throw decisive;
+		} catch (RuntimeException e) {
+			log.info("direct 등록 taken_at 재확인 실패 — 원 결과로 정산: {} ({})", shortCode, e.toString());
+			return fallback;
+		}
+		if (recheck.takenAt() == null) {
+			log.info("direct 등록 taken_at 재확인도 미상 — 원 결과로 정산: {}", shortCode);
+			return fallback;
+		}
+		log.info("direct 등록 taken_at 재확인 성공: {}", shortCode);
+		return recheck;
 	}
 
 	/**

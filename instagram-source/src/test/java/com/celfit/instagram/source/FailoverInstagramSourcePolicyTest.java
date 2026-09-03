@@ -342,6 +342,46 @@ class FailoverInstagramSourcePolicyTest {
 		assertThat(metrics.records).containsExactly("fetchPost|self|notfound");
 	}
 
+	// ── 확정 판정(부재·비공개) 전파 — Hiker 재확인 없이 그대로 던진다 ──────────────
+
+	@Test
+	void self가_PrivateAccountException을_던지면_전파되고_hiker는_호출되지_않는다() {
+		InstagramSource self = new ThrowingSource("self") {
+			@Override
+			public ProfileInfo fetchProfile(String username) {
+				throw new PrivateAccountException("비공개 계정: " + username);
+			}
+		};
+		InstagramSource hiker = new ThrowingSource("hiker");
+		RecordingMetrics metrics = new RecordingMetrics();
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, () -> true, metrics);
+
+		assertThatThrownBy(() -> source.fetchProfile("secret"))
+				.isInstanceOf(PrivateAccountException.class)
+				.hasMessage("비공개 계정: secret");
+
+		assertThat(metrics.records).containsExactly("fetchProfile|self|private");
+	}
+
+	@Test
+	void self가_SubjectNotFoundException을_직접_던지면_전파되고_hiker는_호출되지_않는다() {
+		InstagramSource self = new ThrowingSource("self") {
+			@Override
+			public ProfileInfo fetchProfile(String username) {
+				throw new SubjectNotFoundException("계정 부재: " + username);
+			}
+		};
+		InstagramSource hiker = new ThrowingSource("hiker");
+		RecordingMetrics metrics = new RecordingMetrics();
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, () -> true, metrics);
+
+		assertThatThrownBy(() -> source.fetchProfile("ghost"))
+				.isInstanceOf(SubjectNotFoundException.class)
+				.hasMessage("계정 부재: ghost");
+
+		assertThat(metrics.records).containsExactly("fetchProfile|self|notfound");
+	}
+
 	// ── 경로별(표면별) 자체크롤 토글 — Predicate<String> 생성자(부분 개통 지원) ──────
 
 	@Test

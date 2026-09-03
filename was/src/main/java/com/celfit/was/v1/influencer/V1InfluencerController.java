@@ -12,8 +12,12 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 6.4 인플루언서 프로필 + 최근 12개 — influencerId는 handle 그대로(설계 확정). 인증 Optional:
- * 로그인 시에만 recentContents 카드의 isContentsSaved·프로필의 isInfluencerSaved를 채운다(스펙 2절, 비로그인=필드 부재).
+ * 6.4 인플루언서 프로필 + 최근 12개 — influencerId는 handle 그대로(설계 확정).
+ *
+ * <p>인증은 <b>Required</b>다(SecurityConfig — 발굴 목록 6.21만 비로그인 공개, 상세는 잠김 유지).
+ * FE api-spec 6.4의 "인증: Optional" 표기는 스펙 오기이며 구현이 의도다(2026-09-03 FE 피드백 회신).
+ * 아래 principal null 분기는 그 잠금이 풀릴 경우를 대비한 Optional 규약(스펙 2절 — 비로그인이면
+ * isContentsSaved·isInfluencerSaved 필드 부재)이라 그대로 둔다.
  */
 @RestController
 public class V1InfluencerController {
@@ -43,7 +47,7 @@ public class V1InfluencerController {
 		InfluencerProfileResponse.Influencer influencer = new InfluencerProfileResponse.Influencer(
 				row.handle(), row.handle(), row.displayName(), row.profileImageUrl(),
 				row.followers(), row.postsCount(), row.followsCount(), row.biography(),
-				null, row.externalLink());
+				row.email(), row.externalLink());
 
 		var recentContents = repository.findRecentCards(influencerId).stream()
 				.map(r -> assembler.toCard(r, savedCodes == null ? null : savedCodes.contains(r.shortCode())))

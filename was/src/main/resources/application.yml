@@ -77,6 +77,16 @@ springdoc:
     csrf:
       enabled: true                   # try-it-out에 XSRF-TOKEN 쿠키를 헤더로 동봉 — /v1/auth/login 호출 후
                                       # 세션 쿠키(동일 오리진)로 잠긴 엔드포인트도 Swagger에서 테스트 가능
+# 개인정보 봉투 암호화(트랙 A, 2026-09-03 설계) — FieldCipher 빈 조립(CryptoConfig).
+# mode: local(기본) | vault. local-key-base64 기본값은 전부 0인 64바이트 더미 키로, 로컬 개발·
+# 테스트(별도 test 프로파일 없이 이 기본 컨텍스트를 그대로 쓴다)에서만 쓰인다 — 운영은
+# compose env로 CRYPTO_MODE=vault를 주입해 이 값 자체를 무시한다(운영 실키는 Vault에만 존재).
+crypto:
+  mode: ${CRYPTO_MODE:local}
+  local-key-base64: ${CRYPTO_LOCAL_KEY_BASE64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==}
+  kek-ocid: ${CRYPTO_KEK_OCID:}
+  crypto-endpoint: ${CRYPTO_CRYPTO_ENDPOINT:}
+  key-id: ${CRYPTO_KEY_ID:1}
 codes:
   api-key: ${CODES_API_KEY:}   # 어드민 코드 적재용 정적 토큰 — 빈 값이면 /admin/signup-codes 전면 거부(fail-closed)
 was:

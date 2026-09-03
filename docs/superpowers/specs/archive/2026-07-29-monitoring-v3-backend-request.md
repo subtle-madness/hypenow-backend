@@ -1,9 +1,9 @@
 # 콘텐츠 모니터링 백엔드 구현 요청
 
-> 상태: 🟢 활성 · ✅ 구현 완료(2026-07-30)
+> 상태: ✅ 구현 완료(2026-07-30, PR #195 머지)
 >
 > 프론트(celfit-front) 쪽에서 작성된 구현 요청 브리프의 스냅샷. 계약 정본은
-> [contracts/monitoring-frontend-api-spec.md](../../contracts/monitoring-frontend-api-spec.md)(6.25~6.33).
+> [contracts/monitoring-frontend-api-spec.md](../../../contracts/monitoring-frontend-api-spec.md)(6.25~6.33).
 > 이 문서의 2절(기존 자산과의 관계)은 crawler 파이프라인 확장을 전제로 쓰였으나,
 > **07-30 결정으로 수집·감지는 monitoring 모듈(별도 컨테이너)이 담당**한다 —
 > was 구현 관점의 실제 격차는 plans/2026-07-30-monitoring-v3-was.md 참조.

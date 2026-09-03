@@ -13,6 +13,7 @@ import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -21,9 +22,15 @@ import org.springframework.web.bind.annotation.RestController;
  * getRemoteAddr()에 실제 클라이언트 IP(X-Forwarded-For)를 반영하는지 실 톰캣 기동으로 확인.
  * 레이트리밋 키가 remoteAddr 기반이라 이 동작이 깨지면 전 사용자가 Caddy IP 버킷 하나를 공유한다.
  * MockMvc는 톰캣 밸브(RemoteIpValve)를 타지 않아 RANDOM_PORT 실 서버로 검증한다.
+ *
+ * <p>{@code crypto.allow-local-in-prod=true}: CryptoConfig의 운영 fail-closed 가드(Task 11)는
+ * prod 프로파일 + crypto.mode=local 조합을 기동 실패로 막는다. 이 테스트는 prod 프로파일만
+ * 필요할 뿐 Vault 언래핑을 검증할 목적이 아니므로(Vault 실통신 불가 환경) 가드를 명시적으로
+ * 우회한다 — 운영 compose에는 이 플래그가 없어 실 배포 경로에서는 가드가 살아 있다.
  */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("prod")
+@TestPropertySource(properties = "crypto.allow-local-in-prod=true")
 class ProdForwardedHeadersTest extends IntegrationTest {
 
 	@LocalServerPort

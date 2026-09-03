@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: ✅ 실행 완료(2026-08-31) · 스펙: docs/superpowers/specs/2026-08-31-brand-ai-tool-limits-redesign-design.md
+> 상태: ✅ 실행 완료(2026-08-31) · 스펙: docs/superpowers/specs/archive/2026-08-31-brand-ai-tool-limits-redesign-design.md
 
 **Goal:** 브랜드 AI 어시스턴트의 집합 연산을 서버로 옮기고(조합형 aggregate_posts·댓글 배치·파생 지표 서버 계산), 가드레일 한계를 뿌리(시간 90초·토큰 10만)에서 재도출한다.
 
@@ -40,7 +40,7 @@ Expected: 워크트리 생성, HEAD=277de176.
 git -C /Users/woomin/Project/hypenow-backend/.worktrees/brand-ai-tool-redesign cherry-pick 99e8397b <계획문서커밋SHA>
 ```
 
-Expected: docs/superpowers/specs/2026-08-31-brand-ai-tool-limits-redesign-design.md와 이 계획 파일이 구현 브랜치에 존재.
+Expected: docs/superpowers/specs/archive/2026-08-31-brand-ai-tool-limits-redesign-design.md와 이 계획 파일이 구현 브랜치에 존재.
 
 - [ ] **Step 0-3: 빌드 정상 확인**
 
@@ -989,7 +989,7 @@ git add -A && git commit -m "feat(was): AI 챗 응답에 limitReached 구조 고
 
 **Files:**
 - Modify: `DECISIONS.md` (구현 브랜치)
-- Modify: `docs/superpowers/specs/2026-08-31-brand-ai-tool-limits-redesign-design.md` (상태 헤더)
+- Modify: `docs/superpowers/specs/archive/2026-08-31-brand-ai-tool-limits-redesign-design.md` (상태 헤더)
 - Move: 이 계획 파일 → `docs/superpowers/plans/archive/`
 
 - [ ] **Step 8-1: was 전체 테스트**

@@ -6,7 +6,7 @@
 
 **Goal:** CDN 만료(~4일) 전에 프로필·릴스 썸네일·게시글 썸네일을 OCI `hypenow-images` 버킷에 적재하고, was가 `/img/` 상대경로로 서빙하게 한다.
 
-**Architecture:** analytics에 데일리 아카이브 잡 신설(raw 뷰에서 URL 읽기 → HTTP 다운로드 → 쓰기 PAR로 OCI PUT → analysis DB `image_assets` 기록). was는 조회 SQL에 `image_assets` LEFT JOIN + `COALESCE('/img/'||object_path, 원본 URL)`만 추가(읽기 전용 유지). 프론트 Vercel rewrite(`/img/:path*` → OCI)는 이미 배포됨. 설계 근거: [specs/2026-07-21-image-archive-design.md](../../specs/2026-07-21-image-archive-design.md).
+**Architecture:** analytics에 데일리 아카이브 잡 신설(raw 뷰에서 URL 읽기 → HTTP 다운로드 → 쓰기 PAR로 OCI PUT → analysis DB `image_assets` 기록). was는 조회 SQL에 `image_assets` LEFT JOIN + `COALESCE('/img/'||object_path, 원본 URL)`만 추가(읽기 전용 유지). 프론트 Vercel rewrite(`/img/:path*` → OCI)는 이미 배포됨. 설계 근거: [specs/archive/2026-07-21-image-archive-design.md](../../specs/archive/2026-07-21-image-archive-design.md).
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · `java.net.http.HttpClient`(SDK 무추가 — 업로드는 OCI 쓰기 PAR에 PUT) · Flyway(analysis DB) · Testcontainers 2.x(`org.testcontainers.postgresql.PostgreSQLContainer`)
 
@@ -239,7 +239,7 @@ git commit -m "feat(analytics): 오브젝트 스토리지 쓰기 PAR 어댑터 (
 `analytics/src/main/resources/db/migration/analysis/V35__image_assets.sql`:
 
 ```sql
--- 서빙 이미지 아카이브 매핑 (태스크 J, specs/2026-07-21-image-archive-design.md).
+-- 서빙 이미지 아카이브 매핑 (태스크 J, specs/archive/2026-07-21-image-archive-design.md).
 -- 잡 소유 누적 테이블 — 미러(MirrorConfig) 대상 아님 (content_analyses 전례).
 -- key: thumbnail=short_code / profile=handle. source_name: 원본 URL 파일명(호스트·서명 제외)
 -- — 프로필 실제 교체 감지용(같으면 재다운로드 생략).
@@ -1120,7 +1120,7 @@ develop→main 머지(CD 배포) 후: 어드민 `/ui`(SSH 터널 8082)에서 ARC
 
 **Files:**
 - Modify: `ARCHITECTURE.md` §5 태스크 J 상태(📋 설계 확정 → ✅) + §7 구현 결정 한 줄 추가
-- Modify: `docs/superpowers/specs/2026-07-21-image-archive-design.md` 상태 헤더 → `🟢 활성 · ✅ 구현됨`
+- Modify: `docs/superpowers/specs/archive/2026-07-21-image-archive-design.md` 상태 헤더 → `🟢 활성 · ✅ 구현됨`
 - Move: 본 계획 → `docs/superpowers/plans/archive/2026-07-21-image-archive.md` (상태 헤더 `✅ 실행 완료`)
 
 - [ ] **Step 1: 문서 3종 갱신** — §7 추가 줄은 구현 요약(V35·잡 04:50 KST·was COALESCE 적용 범위 /v1+/api·운영 개통 여부)과 PR 링크 포함.

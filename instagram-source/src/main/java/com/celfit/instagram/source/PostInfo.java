@@ -40,6 +40,16 @@ package com.celfit.instagram.source;
  * 숨김 게시물은 저장·리포스트 재시도 판정에서 공유 항을 빼고(헛 재시도 방지), 소진 시
  * 공유 0 간주 대상에서도 제외한다(숨김은 0이 아니라 비공개).
  *
+ * <p>likesHidden·sharesHidden은 {@code Boolean}(nullable)이다 — <b>null=미확정, true/false=확정</b>
+ * (S9, 2026-09-03 감사 수정). Hiker는 명시 플래그(like_and_view_counts_disabled·
+ * share_count_disabled)로 항상 확정값을 준다. self(embed·feed/user·wpi)는 그런 신호가 구조적으로
+ * 없어 "숨김 아님"을 단정할 수 없는데, 과거엔 primitive boolean이라 기본값 false를 반환해 Hiker의
+ * 확정 false와 구분이 안 됐다 — 그 결과 {@code mergedMetrics}가 재시도 관측을 되싣지 못하는 문제와
+ * 겹쳐, 공유 숨김 릴스가 self 관측 위에서 매일 재시도 상한까지 헛돌고 소진 시 공유 0으로
+ * 오기록되는 결함을 냈다(CollectService#assumeZeroForOmittedKeys 참조). null은 "아직 확인 못 함"
+ * 그대로 남겨 재시도는 계속하되, 근거 없는 0 간주는 막는다 — DB 저장 시엔 기존 계약대로
+ * null도 false로 접는다(SnapshotRepository — "미확정 관측" 보호는 원래도 false를 그 신호로 썼다).
+ *
  * <p>videoUrl·videoDuration·isPaidPartnership은 브랜드 was 계약 필드(2026-08-07 스펙 §3-2 —
  * brand_post_meta 표시 메타)다. 전부 같은 media 노드에서 추가 콜 0으로 뽑는다:
  * videoUrl은 video_versions[0].url(썸네일과 마찬가지로 CDN 서명 만료가 있어 스윕마다 갱신 대상),
@@ -51,7 +61,7 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 		String ownerUserId, String contentType, String caption, String thumbnailUrl,
 		Long takenAt, Long likes, Long comments, Long views, Long fbPlays, Long saves,
 		Long shares, Long reposts, String videoUrl, Double videoDuration, Boolean isPaidPartnership,
-		boolean viewsTrusted, boolean likesHidden, boolean sharesHidden) {
+		boolean viewsTrusted, Boolean likesHidden, Boolean sharesHidden) {
 
 	/**
 	 * takenAt만 갈아끼운 사본 — self 셰이프(EmbedPostFetcher) 보강 전용(2026-09-03). embed HTML에는
@@ -78,13 +88,30 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 	 * clips 재시도 관측에서 저장·공유·리포스트만 채운 사본 — 이미 있는 값은 유지한다(non-null 우선).
 	 * 재생수는 건드리지 않는다: views·fbPlays는 캐리포워드·역전파 체계(08-03)가 따로 관리하는 지표라
 	 * 재시도 관측으로 덮으면 그 체계와 두 군데서 경합한다.
+	 *
+	 * <p>새로 관측된 공유 숨김 정보가 없을 때(clips 열거·0 간주처럼 hidden 신호 자체가 없는 호출부)의
+	 * 편의 오버로드 — {@link #mergedMetrics(Long, Long, Long, Boolean)}에 {@code null}(정보 없음)을
+	 * 넘겨 기존 sharesHidden을 그대로 보존한다.
 	 */
 	public PostInfo mergedMetrics(Long newSaves, Long newShares, Long newReposts) {
+		return mergedMetrics(newSaves, newShares, newReposts, null);
+	}
+
+	/**
+	 * clips/단건 재시도 관측에서 저장·공유·리포스트 + 이번 관측의 공유 숨김 확정 여부를 함께 반영한
+	 * 사본(S9, 2026-09-03 감사 수정) — 과거엔 sharesHidden을 되싣지 않아, self 기원의 미확정
+	 * PostInfo가 단건 재시도(항상 Hiker 직결, {@code CollectService#retrySinglesOnce})로 진짜
+	 * 숨김을 확인해도 그 사실이 버려져 매일 재시도 상한까지 헛돌고 소진 시 공유가 0으로 잘못
+	 * 기록됐다. {@code newSharesHidden}에 이번 호출이 새로 관측한 값(미관측이면 null)을 넘기면
+	 * {@link #mergedWith}와 같은 규칙(둘 중 하나라도 확정 true면 true, 아니면 확정값이 있는 쪽,
+	 * 둘 다 미확정이면 null)으로 합친다 — clips 열거는 숨김 신호 자체가 없어 항상 null을 넘긴다.
+	 */
+	public PostInfo mergedMetrics(Long newSaves, Long newShares, Long newReposts, Boolean newSharesHidden) {
 		return new PostInfo(shortCode, username, ownerFullName, ownerProfilePicUrl, ownerUserId, contentType,
 				caption, thumbnailUrl, takenAt, likes, comments, views, fbPlays,
 				coalesce(saves, newSaves), coalesce(shares, newShares), coalesce(reposts, newReposts),
 				videoUrl, videoDuration, isPaidPartnership,
-				viewsTrusted, likesHidden, sharesHidden);
+				viewsTrusted, likesHidden, mergeHidden(sharesHidden, newSharesHidden));
 	}
 
 	/**
@@ -92,21 +119,34 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 	 * 세션이 저장·공유·리포스트 키를 실었다 뺐다 하는데(운영 채움율 11~58% 요동, 08-04 실측) 같은
 	 * 시각에도 응답 경로별로 다르게 걸리므로, 정본이 폴백을 null로 덮으면 방금 관측한 값을 유실한다.
 	 *
-	 * <p>likes만 예외로 정본의 숨김 판정을 따른다 — 숨김 게시물의 likes는 마스킹값이라 null로 비웠는데
-	 * (레코드 주석 참조), 폴백의 값으로 coalesce하면 비워둔 마스킹값이 되살아난다.
+	 * <p>likes는 <b>합친 좋아요 숨김 판정</b>을 따른다 — 숨김 게시물의 likes는 마스킹값이라 null로
+	 * 비웠는데(레코드 주석 참조), 폴백의 값으로 coalesce하면 비워둔 마스킹값이 되살아난다.
 	 * views는 값과 viewsTrusted 플래그가 한 몸이라 같은 쪽에서 함께 가져온다.
+	 *
+	 * <p>contentType도 non-null 우선(S4, 2026-09-03 배포 전 감사 수정) — self(embed·feed/user)는
+	 * REELS/FEED를 구조적으로 확정하지 못하면 null을 반환한다(EmbedPostFetcher·FeedUserPostsFetcher
+	 * 참조). 과거엔 정본의 contentType을 무조건 채택해, 정본이 self의 미확정 null이고 폴백(Hiker)이
+	 * 이미 확정값을 들고 있어도 null로 덮어 버렸다.
+	 *
+	 * <p>likesHidden·sharesHidden 머지(S9, 2026-09-03 감사 수정) — 과거 likesHidden은 정본(primary)
+	 * 값만 채택해, 정본이 self의 미확정(현재는 null, 과거엔 하드코딩 false)이고 폴백(Hiker)이 이미
+	 * 확정 true를 들고 있어도 정본이 덮어 버렸다(self 단독 채택 버그). {@link #mergeHidden}으로
+	 * sharesHidden과 같은 규칙(둘 중 하나라도 확정 true면 true, 아니면 확정값이 있는 쪽, 둘 다
+	 * 미확정이면 null)을 적용한다 — sharesHidden은 원래도 이 OR 규칙이었다(버그 아님).
 	 */
 	public PostInfo mergedWith(PostInfo fallback) {
 		boolean viewsFromFallback = views == null && fallback.views != null;
+		Boolean mergedLikesHidden = mergeHidden(likesHidden, fallback.likesHidden);
+		Boolean mergedSharesHidden = mergeHidden(sharesHidden, fallback.sharesHidden);
 		return new PostInfo(shortCode, username,
 				coalesce(ownerFullName, fallback.ownerFullName),
 				coalesce(ownerProfilePicUrl, fallback.ownerProfilePicUrl),
 				coalesce(ownerUserId, fallback.ownerUserId),
-				contentType,
+				coalesce(contentType, fallback.contentType),
 				coalesce(caption, fallback.caption),
 				coalesce(thumbnailUrl, fallback.thumbnailUrl),
 				coalesce(takenAt, fallback.takenAt),
-				likesHidden ? null : coalesce(likes, fallback.likes),
+				Boolean.TRUE.equals(mergedLikesHidden) ? null : coalesce(likes, fallback.likes),
 				coalesce(comments, fallback.comments),
 				viewsFromFallback ? fallback.views : views,
 				coalesce(fbPlays, fallback.fbPlays),
@@ -119,12 +159,23 @@ public record PostInfo(String shortCode, String username, String ownerFullName, 
 				coalesce(videoDuration, fallback.videoDuration),
 				coalesce(isPaidPartnership, fallback.isPaidPartnership),
 				viewsFromFallback ? fallback.viewsTrusted : viewsTrusted,
-				likesHidden,
-				// 숨김 플래그는 어느 쪽 응답에서든 관측되면 참 — 값과 달리 켜짐이 정보다.
-				sharesHidden || fallback.sharesHidden);
+				mergedLikesHidden,
+				mergedSharesHidden);
 	}
 
 	private static <T> T coalesce(T primary, T secondary) {
 		return primary != null ? primary : secondary;
+	}
+
+	/**
+	 * 숨김 플래그 3상태 병합(S9) — 어느 쪽이든 확정 true면 true(숨김은 관측되면 참, 값과 달리 켜짐이
+	 * 정보다). 아니면 확정값(true/false)이 있는 쪽을 신뢰하고, 둘 다 미확정(null — self가 구조적으로
+	 * 판정 불가)이면 null(여전히 미확정, 근거 없이 false로 단정하지 않는다).
+	 */
+	private static Boolean mergeHidden(Boolean a, Boolean b) {
+		if (Boolean.TRUE.equals(a) || Boolean.TRUE.equals(b)) {
+			return true;
+		}
+		return a != null ? a : b;
 	}
 }

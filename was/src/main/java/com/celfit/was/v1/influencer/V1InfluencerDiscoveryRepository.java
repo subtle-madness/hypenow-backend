@@ -290,7 +290,18 @@ public class V1InfluencerDiscoveryRepository {
 						""").param("handles", handles).query(BrandRow.class).list();
 	}
 
-	/** recentThumbs 재료 — postedAt 내림차순 최대 4개. 썸네일은 아카이브 /img/ 경로 우선(카드 관용구). */
+	/**
+	 * recentThumbs 재료 — postedAt 내림차순 최대 4개. 썸네일은 아카이브 /img/ 경로 우선(카드 관용구).
+	 *
+	 * <p><b>분석 완료(content_analyses 보유) 게시물만</b>(2026-09-03, FE 피드백 #3). 썸네일의
+	 * contentId는 FE가 {@code GET /v1/contents/{id}/ai-report}(6.3)에 그대로 넣어 hover 프리페치하는데,
+	 * 6.3은 {@code contents ⋈ content_analyses}(INNER)라 분석이 없으면 404다. 창(account_content_series)은
+	 * 미러 직후 최신 게시물을 곧바로 담지만 콘텐츠 분석은 게시 후 ~3일 뒤 야간 배치로 붙어서, 상위 노출
+	 * 계정(활발히 올리는 계정)일수록 최신 4개가 "아직 분석 전"이었다 — 운영 30일 404 199건 중 표본 60건
+	 * 전량이 이 시차(404 시점엔 미분석, 지금은 40/60이 분석 완료)로 확인됐다. 6.3이 없는 콘텐츠를
+	 * 썸네일로 내려주지 않는 쪽(②)을 택했다 — was만으로 끝나고 FE가 제시한 두 안 중 하나다. 트레이드오프:
+	 * 최신 1~3일치 게시물이 카드 썸네일에서 빠진다(창 지표·recentContents(6.4)는 영향 없음).
+	 */
 	public List<ThumbRow> findThumbs(List<String> handles) {
 		if (handles.isEmpty()) {
 			return List.of();
@@ -306,8 +317,8 @@ public class V1InfluencerDiscoveryRepository {
 						             row_number() OVER (PARTITION BY s.account_handle
 						                                ORDER BY s.posted_at DESC, s.short_code) AS rn
 						      FROM account_content_series s
+						      JOIN content_analyses an ON an.short_code = s.short_code
 						      LEFT JOIN contents c ON c.short_code = s.short_code
-						      LEFT JOIN content_analyses an ON an.short_code = s.short_code
 						      LEFT JOIN image_assets it ON it.kind = 'thumbnail' AND it.key = s.short_code
 						      WHERE s.account_handle IN (:handles)) x
 						WHERE rn <= 4

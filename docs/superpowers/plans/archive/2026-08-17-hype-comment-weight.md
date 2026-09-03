@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 상태: ✅ 실행 완료(2026-08-17) · 스펙 [2026-08-17-hype-comment-weight-design.md](../../specs/2026-08-17-hype-comment-weight-design.md) 승인됨
+> 상태: ✅ 실행 완료(2026-08-17) · 스펙 [2026-08-17-hype-comment-weight-design.md](../../specs/archive/2026-08-17-hype-comment-weight-design.md) 승인됨
 
 **Goal:** 하입 스코어 참여 항의 댓글 가중을 ×3에서 ×1.5로 낮추고 app_setting 키로 설정화하며, 4종 앵커를 신 가중 기준으로 재적합한다.
 
@@ -489,7 +489,7 @@ Expected: 1위가 실조회 기반 계정(설계 시점 시뮬레이션에서는
 
 **Files:**
 - Modify: `DECISIONS.md` (맨 위에 결정 추가)
-- Modify: `docs/superpowers/specs/2026-08-17-hype-comment-weight-design.md` (상태 헤더)
+- Modify: `docs/superpowers/specs/archive/2026-08-17-hype-comment-weight-design.md` (상태 헤더)
 - Move: `docs/superpowers/plans/2026-08-17-hype-comment-weight.md` → `docs/superpowers/plans/archive/`
 
 - [ ] **Step 1: DECISIONS.md 결정 추가**
@@ -502,7 +502,7 @@ Expected: 1위가 실조회 기반 계정(설계 시점 시뮬레이션에서는
   운영 시뮬레이션(w∈{3,2,1.5})에서 ×1.5만 실조회 기반 계정을 1위로 올려 채택. 가중은
   `analytics.hype-comment-weight`(기본 1.5, 함수 COALESCE 단일 소스)로 설정화 — 키에 3을 넣으면
   순위 응급 롤백(척도 완전 복원은 뷰 원복 필요). 앵커 4종 재적합 동반, refit 하니스는 단일 체인
-  v2로 개편(미러 점수 대신 신 가중 재계산). [스펙](../../specs/2026-08-17-hype-comment-weight-design.md)
+  v2로 개편(미러 점수 대신 신 가중 재계산). [스펙](../../specs/archive/2026-08-17-hype-comment-weight-design.md)
 ```
 
 - [ ] **Step 2: 스펙 상태 헤더 갱신**

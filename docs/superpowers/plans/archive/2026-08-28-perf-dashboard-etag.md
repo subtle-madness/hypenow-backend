@@ -4,11 +4,11 @@
 
 **Goal:** 대시보드 4표면(`/contents`·`/comparison`·`/influencers`·`/growth`)에 약한 ETag + 조기 304를 얹어 무변경 재요청의 조립·직렬화·전송을 전부 생략한다.
 
-**Architecture:** [08-13 설계](../../specs/2026-08-13-performance-dashboard-etag-design.md)를 그대로 구현한다 — 버전키는 데이터 유래 지문(md5: cacheEpoch·userId·KST 날짜·레거시/브랜드 스윕 워터마크·유저 소유 행 지문), **조립 전** 계산해 If-None-Match 일치 시 304 조기 반환. 캐시 헤더는 4표면만 `private, no-cache`로 전환. 단건 라우트는 제외(원 설계).
+**Architecture:** [08-13 설계](../../specs/archive/2026-08-13-performance-dashboard-etag-design.md)를 그대로 구현한다 — 버전키는 데이터 유래 지문(md5: cacheEpoch·userId·KST 날짜·레거시/브랜드 스윕 워터마크·유저 소유 행 지문), **조립 전** 계산해 If-None-Match 일치 시 304 조기 반환. 캐시 헤더는 4표면만 `private, no-cache`로 전환. 단건 라우트는 제외(원 설계).
 
 **Tech Stack:** Java 21 · Spring Boot 4.1 · JdbcClient(app DataSource) · MessageDigest md5.
 
-**스펙:** 08-13 설계 전체 + [2026-08-27 설계 §6](../../specs/2026-08-27-perf-dashboard-list-api-optimization-design.md)(표면 4종 확장·지문 재점검)
+**스펙:** 08-13 설계 전체 + [2026-08-27 설계 §6](../../specs/archive/2026-08-27-perf-dashboard-list-api-optimization-design.md)(표면 4종 확장·지문 재점검)
 
 ## Global Constraints
 
@@ -210,8 +210,8 @@ public class DashboardVersion {
 ### Task 3: 문서·전체 검증
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-08-13-performance-dashboard-etag-design.md` (상태 헤더만: `미구현` → `✅ 구현/반영됨(PR ④ — 표면 4종 확장·아카이브 워터마크 생략, 2026-08-28)`)
-- Modify: `docs/superpowers/specs/2026-08-27-perf-dashboard-list-api-optimization-design.md` (상태 헤더: `§1~§5(PR ①~③) 구현됨 · §6 미구현` → `§1~§6 전부 구현됨(PR ①~④)`)
+- Modify: `docs/superpowers/specs/archive/2026-08-13-performance-dashboard-etag-design.md` (상태 헤더만: `미구현` → `✅ 구현/반영됨(PR ④ — 표면 4종 확장·아카이브 워터마크 생략, 2026-08-28)`)
+- Modify: `docs/superpowers/specs/archive/2026-08-27-perf-dashboard-list-api-optimization-design.md` (상태 헤더: `§1~§5(PR ①~③) 구현됨 · §6 미구현` → `§1~§6 전부 구현됨(PR ①~④)`)
 - Modify: `DECISIONS.md` (`(PR ①~③ 구현됨 · ④ 미구현)` → `(PR ①~④ 전부 구현됨)`)
 - Modify: `docs/superpowers/specs/2026-08-27-perf-dashboard-list-reply.md` — §7 표의 ④ 행 `구현됨(스테이징 검증 후 운영)`으로 갱신 + 말미에 `## 10. PR ④ ETag (2026-08-28 추가)` 절: FE 변경 불필요(브라우저 자동 If-None-Match — fetch에 cache 옵션 없어야 함), 적용 표면 4종·단건 제외, **운영 승격 전 스테이징 수동 검증 8종(08-13 §5)이 게이트**임을 명시.
 
