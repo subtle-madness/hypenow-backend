@@ -38,6 +38,18 @@ class EmbedPostFetcherTest {
 		assertThat(p.likesHidden()).isFalse();
 	}
 
+	/**
+	 * S7 — 캡션 div가 `<a class="CaptionUsername">nasa</a><br/><br/>본문` 구조라 태그를 통째로
+	 * 벗기면 작성자 username이 캡션 앞에 "nasa\n\n"으로 섞여 들어간다(09-03 운영 실측 23건, 캡션
+	 * 해시 요동→광고 재판정 반복 유발). CaptionUsername 앵커를 내용째 제거한 뒤 본문만 남아야 한다.
+	 */
+	@Test
+	void 캡션에_작성자_username_접두가_섞이지_않는다() {
+		PostInfo p = fetcher(fixture("embed_image_en.html"), 200).fetch("DcOX3hWFiey");
+		assertThat(p.caption()).doesNotStartWith("nasa");
+		assertThat(p.caption()).startsWith("With your powers combined");
+	}
+
 	@Test
 	void 릴스_영상_조회수까지_파싱한다() {
 		PostInfo p = fetcher(fixture("embed_reel_en.html"), 200).fetch("DcMXl1IPNtB");

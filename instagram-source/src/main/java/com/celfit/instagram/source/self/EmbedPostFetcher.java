@@ -59,6 +59,11 @@ public class EmbedPostFetcher {
 	// 캡션: <div class="Caption">…(중첩 div는 CaptionComments뿐 — 그 앞까지가 캡션 본문)
 	private static final Pattern CAPTION =
 			Pattern.compile("class=\"Caption\">(.*?)(?:<div |</div>)", Pattern.DOTALL);
+	// S7 — 캡션 본문 맨 앞의 <a class="CaptionUsername">…</a> 앵커(작성자 username, 내용 포함) —
+	// 태그 스트립 전에 통째로 제거해야 한다. 문자열 매치(예: 본문 첫 단어가 우연히 username과
+	// 같은 경우)가 아니라 앵커 태그 자체를 기준으로 제거해 오삭제를 막는다.
+	private static final Pattern CAPTION_USERNAME_ANCHOR =
+			Pattern.compile("<a class=\"CaptionUsername\"[^>]*>.*?</a>", Pattern.DOTALL);
 	private static final Pattern NUMERIC_ENTITY = Pattern.compile("&#(\\d+);");
 
 	private final SelfFetch http;
@@ -118,13 +123,18 @@ public class EmbedPostFetcher {
 		return s == null ? null : Long.valueOf(s.replace(",", ""));
 	}
 
-	/** Caption div 본문 → 태그 제거 + 엔티티 디코드. 소유자 username으로 시작하는 게 정상 셰이프다. */
+	/**
+	 * Caption div 본문 → 태그 제거 + 엔티티 디코드. 원 HTML은
+	 * {@code <a class="CaptionUsername">작성자</a><br/><br/>본문} 셰이프라, 그 앵커를 내용째
+	 * 먼저 제거하지 않으면(S7) 작성자 username이 캡션 본문 앞에 섞여 들어간다.
+	 */
 	private static String caption(String body) {
 		String raw = first(CAPTION, body);
 		if (raw == null) {
 			return null;
 		}
-		String text = raw.replaceAll("<br ?/?>", "\n").replaceAll("<[^>]*>", "");
+		String withoutUsername = CAPTION_USERNAME_ANCHOR.matcher(raw).replaceFirst("");
+		String text = withoutUsername.replaceAll("<br ?/?>", "\n").replaceAll("<[^>]*>", "");
 		return decodeEntities(text).strip();
 	}
 
