@@ -49,7 +49,10 @@ HMAC 블라인드 인덱스(`*_bidx`)로 대체해 암호화 후에도 UNIQUE·�
 5. `SELECT count(*) FROM app.users WHERE email_enc IS NULL;` = 0 확인
    (`inquiries`·`password_resets`·`signup_events`도 동일 패턴).
 6. 운영 배포(staging→main) 후 1~5를 운영에서 반복.
-7. 위 전부 통과하면 PR 2(읽기 전환 + bidx UNIQUE 마이그레이션) 진행 승인.
+7. 구 세션 principal_name 이전 확인(`SELECT count(*) FROM app.spring_session WHERE
+   principal_name LIKE '%@%'` = 0) — 0이 아니면 마이그레이션이 아직 안 돈 것이거나
+   email 형태의 principal_name을 만드는 다른 경로가 남아있다는 뜻.
+8. 위 전부 통과하면 PR 2(읽기 전환 + bidx UNIQUE 마이그레이션) 진행 승인.
 
 ## 미해결로 남긴 것
 
@@ -61,10 +64,13 @@ HMAC 블라인드 인덱스(`*_bidx`)로 대체해 암호화 후에도 UNIQUE·�
    검색어 경로는 `WHERE` 없이 전체 SELECT 후 복호화·`contains` 필터·수동 페이지네이션이
    된다(암호문은 부분일치 검색이 불가능해서 — 블라인드 인덱스는 등가 검색만 지원).
    클로즈베타 규모(수백 명) 전제이며, 사용자 수가 늘면 재작업이 필요하다.
-3. **세션 전환기 잔존** — Task 9(세션 principal 이메일→userId) 배포 시점에 이미 살아있던
-   기존 email-principal 세션은 세션 목록·강제 로그아웃 화면에서 보이지 않는다(principal_name
-   매칭이 깨짐). 재로그인을 강제하지 않는 설계라 별도 마이그레이션 없이 세션 만료(자연 소거)로
-   해소된다.
+3. **세션 전환기 잔존(대부분 해소)** — Task 9(세션 principal 이메일→userId) 배포 시점에 이미
+   살아있던 기존 email-principal 세션은 배포 후 첫 요청에서 spring-session-jdbc가
+   PRINCIPAL_NAME을 자가 재기록해 이전된다. 그 사이 남는 공백(배포 후 한 번도 요청이 안 온
+   구 세션)은 마이그레이션(`V20260903080645__session_principal_email_to_user_id.sql`)이
+   `app.users`와 조인해 전량 이전한다 — 재로그인 강제 없이, 세션 만료(자연 소거)를 기다릴
+   필요도 없이 해소. 세션 목록·강제 로그아웃(`SessionService.deleteOthers`/`deleteAll`)이
+   이제 배포 이전 세션까지 포함해 정상 동작한다.
 
 ## 검증
 

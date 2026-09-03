@@ -107,8 +107,9 @@ public class V1PasswordResetController {
 		// 탈취 세션 차단(요청서 5절). DB(password_hash)가 정본 — 정리 실패로 500을 내리면
 		// 클라이언트가 "재설정 실패"로 오해하므로 best-effort(6.13 관용구, V1MeController 참조)
 		// 트랙 A(09-03) — sessionService의 principal_name은 이제 userId 문자열이라 이메일이 아니라
-		// user.id()로 매칭해야 실제 세션이 지워진다(전환 전 email-principal 세션은 어차피 못 지운다 —
-		// V1MeController 클래스 주석의 전환기 한계와 동일).
+		// user.id()로 매칭해야 실제 세션이 지워진다. 전환 전 email-principal 세션도 마이그레이션
+		// (V20260903080645__session_principal_email_to_user_id.sql)이 전량 이전해 두므로 함께 지워진다
+		// — V1MeController 클래스 주석 참조.
 		try {
 			sessionService.deleteAll(String.valueOf(user.id()));
 		} catch (RuntimeException e) {

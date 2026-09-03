@@ -38,9 +38,10 @@ import org.springframework.web.multipart.MultipartFile;
  *
  * sessionService.*(principal.getUsername(), ...) 호출부(아래 4곳)는 트랙 A(09-03, 세션 principal
  * 이메일 제거) 이후로 값의 의미가 이메일→userId 문자열로 바뀌었다 — SessionService의 principal_name
- * 매칭 자체는 그대로 쓴다(신규 세션은 userId로 색인). **전환기 한계**: 트랙 A 배포 이전에 발급된
- * email-principal 세션은 이 userId 문자열과 매칭되지 않아 세션 목록·타기기 로그아웃 대상에서 보이지
- * 않는다 — 별도 백필 없이 세션 만료(자연 소거)로 정리된다.
+ * 매칭 자체는 그대로 쓴다(신규 세션은 userId로 색인). 트랙 A 배포 이전에 발급된 email-principal
+ * 세션은 배포 후 첫 요청에서 spring-session-jdbc가 principal_name을 자가 재기록해 이전되고,
+ * 한 번도 요청이 안 온 나머지는 마이그레이션(V20260903080645)이 전량 이전한다 — 세션 목록·타기기
+ * 로그아웃 모두 배포 이전 세션까지 포함해 정상 동작한다.
  */
 @RestController
 public class V1MeController {
