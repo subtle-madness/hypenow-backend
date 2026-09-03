@@ -597,3 +597,85 @@ DB 측 전송분이 ~7.5ms뿐이라 로컬 하니스로는 ~1.9초 고정비의 
   - **재검토 트리거는 "브랜드 창 안 총 행수"**(엔트리 수도 유저 수도 아니다 — 상주량이 여기에 선형).
     08-28 기준 156개 브랜드 69,972행. 3배(약 21만)가 되면 절대 상한이 500MB대라 상한·구조를 다시 볼 것.
   - 힙 재측정 레시피(로컬 실데이터 기동 + `jcmd GC.run`/`GC.heap_info`/`GC.class_histogram`)는 메모리 노트 참조.
+
+## 해시태그 자동 시드 재설계(2026-09-03) — 계정명 절삭 폐기
+
+- 상태: 구현 완료·**운영 정리 미실행**. 설계 정본은 [spec 2026-09-03](../superpowers/specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md), 실행 계획은 [plan](../superpowers/plans/2026-09-03-brand-hashtag-auto-seed-redesign.md).
+- 자동 태그가 계정명 절삭 → **3단 계산**으로 바뀌었다. ① FREQ: 태그된 게시물 캡션의 해시태그 빈도(최다 태그의 등장 게시물 수 ≥ `brand.hashtag-seed.min-posts`, 기본 7) ② AI: IG 표시명(`brand_account.full_name`) + 계정명으로 상호 해시태그 1개 ③ FALLBACK: 계정명에서 점·언더스코어를 뺀 소문자. **결과는 브랜드당 항상 1개**(경쟁사 포함).
+- **역할 분담**: monitoring은 `GET /api/brands/{username}/hashtag-suggestion`으로 **계산만** 하고 DB에 쓰지 않는다. 저장·push·장부 반영은 was `V1BrandAccountService.ensureAutoSeeded`가 전담한다(08-28 태그 생성 권한 was 일원화 유지).
+- **시점**: 링크 생성이 아니라 **초기 백필 완료 뒤 첫 조회**. 훅은 단건 폴링 `GET /accounts/{id}`(수집 완료일 때만)·`GET /accounts/{id}/hashtag-tags`·`GET /accounts/{id}/hashtag-posts`·`.../hashtag-posts/count` 4개 표면에 걸려 있다. 메인 목록 `GET /accounts/{id}/posts`에는 없다(수집 중 초 단위 폴링 경로).
+- **멱등 장치 두 겹**: `app.brand_hashtag_seed`(brand_id PK — 계산·AI 콜은 브랜드 생애 1회) + `app.brand_monitorings.hashtag_seeded_at`(장부 삽입은 사용자당 1회). 사용자가 지운 자동 태그는 표식 때문에 되살아나지 않는다. 이미 사용자 관리 태그가 있는 브랜드는 `path='SKIP'`(tag NULL)만 기록하고 아무것도 심지 않는다.
+- 런타임 토글(monitoring app_setting, TTL 5초): `brand.hashtag-seed.min-posts` / `brand.hashtag-seed.stoplist` / `brand.hashtag-seed.ai-enabled`. AI 킬 스위치는 SQL 한 줄이고 끄면 FREQ 미달이 곧장 FALLBACK으로 간다.
+  ```sql
+  UPDATE app_setting SET value = 'false' WHERE key = 'brand.hashtag-seed.ai-enabled';
+  ```
+- 관측: monitoring 응답 1건당 info 로그 1줄(`브랜드 해시태그 제안 — username=… path=FREQ|AI|FALLBACK tag=… topCount=… candidatePosts=…`) + Micrometer 카운터 `brand.hashtag.suggest`(태그 `path`=freq|ai|fallback, `result`=ok|error). was는 계산 시점에 `해시태그 자동 시드 계산` info 1줄을 남긴다. **FALLBACK 비율이 높으면 AI 경로가 죽은 것**이다.
+
+### 운영 데이터 정리 (배포 후 1회 — 미실행)
+
+실행 전 대상 목록을 먼저 뽑아 **눈으로 확인한다**. IG 계정명은 ASCII·점·언더스코어만 허용되므로
+절삭 접두사 = 첫 점 앞 구간이다.
+
+```sql
+-- 1) 대상 확인(monitoring DB)
+SELECT h.brand_id, a.username, h.tag, h.created_at, h.deleted_at
+FROM brand_hashtag h JOIN brand_account a ON a.id = h.brand_id
+WHERE position('.' in a.username) > 0
+  AND h.tag = lower(split_part(a.username, '.', 1))
+ORDER BY h.brand_id;
+```
+
+- `created_at`이 그 브랜드의 링크 생성 시각과 **다른** 행은 사용자가 직접 넣은 태그일 수 있다 —
+  그런 행은 대상에서 뺀다(아래 DELETE 실행 전에 손으로 제외할 것).
+
+```sql
+-- 2) monitoring: hard DELETE (tombstone이 아니다 — 사용자가 의도한 태그가 아니다)
+DELETE FROM brand_hashtag h
+USING brand_account a
+WHERE a.id = h.brand_id
+  AND position('.' in a.username) > 0
+  AND h.tag = lower(split_part(a.username, '.', 1));
+```
+
+```sql
+-- 3) was(app 스키마): 같은 (brand_id, tag) 집합을 장부에서도 삭제
+-- monitoring DB와 물리적으로 분리돼 있어 조인이 불가능하다 — 1)에서 뽑은 목록을 그대로 나열한다.
+DELETE FROM app.brand_hashtag_tags
+WHERE (brand_id, tag) IN ( (:brandId1, :tag1), (:brandId2, :tag2) /* … 1)의 결과 전량 */ );
+```
+
+- 그 태그로 이미 수집된 `brand_hashtag_post`·매칭 태그 행은 **남긴다** — 격리 필터가 장부 기준이라
+  화면에서 사라지고, 스윕은 태그가 없으니 더 긁지 않는다. 물리 정리는 비범위. FREQ 집계 쿼리
+  (`findCaptionsForSeed`)에 `tag_detected_at IS NOT NULL` 가드가 있어 남겨 둔 게시물의 캡션이
+  집계를 오염시키지 않는다.
+- **재시드 스크립트는 없다.** 정리로 태그가 0개가 된 브랜드는 사용자의 다음 조회에서 훅이 계산·시드한다.
+  기존 링크는 전부 `hashtag_seeded_at IS NULL`로 시작하므로 배포 직후부터 자연히 돈다.
+
+### 배포 다음 날 검토 (필수)
+
+AI 결과 품질의 자동 검증은 없다(spec §7) — 사람이 한 번 본다.
+
+```sql
+-- path 분포(was app DB)
+SELECT path, count(*) FROM app.brand_hashtag_seed GROUP BY path ORDER BY count(*) DESC;
+
+-- AI·FALLBACK 태그 전수(계정명과 나란히 보려면 brand_id로 monitoring brand_account를 대조한다)
+SELECT brand_id, path, tag, seeded_at FROM app.brand_hashtag_seed
+WHERE path IN ('AI', 'FALLBACK') ORDER BY seeded_at DESC;
+```
+
+- **FALLBACK 비율이 높으면 AI 경로가 죽은 것**이다(Gemini 자격증명·쿼터·`ai-enabled` 확인).
+- 명백히 잘못된 태그는 monitoring 태그 관리 API로 지운다 — `brand_hashtag_seed` 행이 남아 있어
+  자동으로 되살아나지 않는다.
+- 검토 결과(분포 수치·수정한 브랜드)를 이 절에 기록한다.
+
+### 잔여·후속
+
+- **FE 통지 1건** — 응답 계약은 그대로이고, 자동 태그가 "등록 즉시"가 아니라 "초기 수집 완료 뒤 첫
+  조회"에 나타나도록 타이밍만 바뀌었다.
+- **메인 게시물 목록(`GET /accounts/{id}/posts`)에는 훅이 없다**(spec §7) — FE가 태그 목록·해시태그
+  탭 호출을 없애면 자동 태그 반영이 늦어질 수 있다. 그 경우 폴링 비용을 감수하고 훅을 추가할지
+  재검토한다.
+- **다중 태그 시드(국문·영문 병행)·주기적 재시드는 비범위**. 브랜드당 1개·1회 고정이고, 추가는
+  사용자가 태그 관리 UI로 한다.
+- 수집된 `#dr` 게시물의 물리 정리.
