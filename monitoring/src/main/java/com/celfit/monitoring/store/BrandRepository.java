@@ -197,13 +197,18 @@ public class BrandRepository {
 	 * 백필({@link com.celfit.monitoring.service.BrandRegistrationService#runBackfillSafely})의
 	 * 페이지 join이 후행을 기다리지 않고 여기가 찍힌 뒤 후행 전용 executor에서 조용히 채워질 수
 	 * 있다(계약 {@code docs/contracts/monitoring-was-contract.md} collectionCompletedAt 절 참조).
+	 *
+	 * <p><b>backfill_attempts도 여기서 0으로 되돌린다(2026-09 열거 실패 재시도 스케줄러 신설)</b> —
+	 * 성공이 재시도 예산의 유일한 해제 지점이라는 backfill_error와 같은 규율의 연장이다. 이걸 안 하면
+	 * 이후 기간 확장 재백필({@link #expandWindow})이 지난 등록의 소진된 예산을 물려받아 재시도가
+	 * 열리지 않는다({@link com.celfit.monitoring.service.BrandBackfillRetryJob} 참조).
 	 */
 	public void touchSwept(long brandId, LocalDate on) {
 		db.update("""
 				UPDATE brand_account
 				SET last_swept_on = ?, last_swept_at = now(), sweep_completed_at = now(),
 				    backfill_completed_at = COALESCE(backfill_completed_at, now()),
-				    backfill_error = NULL
+				    backfill_error = NULL, backfill_attempts = 0
 				WHERE id = ?""", on, brandId);
 	}
 
@@ -244,6 +249,69 @@ public class BrandRepository {
 	public void markBackfillError(long brandId, String message) {
 		db.update("UPDATE brand_account SET backfill_error = ? WHERE id = ? AND last_swept_on IS NULL",
 				message, brandId);
+	}
+
+	/**
+	 * 백필 재시도 후보 조회(2026-09 열거 실패 재시도 스케줄러, {@link
+	 * com.celfit.monitoring.service.BrandBackfillRetryJob} 전용) — 세 조건이 함께 "정상 진행 중"과
+	 * "상한 소진"을 자연 배제한다:
+	 * <ul>
+	 *   <li>{@code last_swept_on IS NULL} — 한 번이라도 완주한 브랜드는 대상 아님</li>
+	 *   <li>{@code backfill_error IS NOT NULL} — 정상 진행 중인 브랜드는 이 값이 null이라(신규 삽입·
+	 *       기간 확장 둘 다 NULL로 시작) 자동 제외된다. {@link #markBackfillError}가 {@code sweepCore}
+	 *       예외 시에만 찍는 구조(페이지별 댓글·판정 실패는 내부에서 삼켜짐) 덕에 성립한다</li>
+	 *   <li>{@code backfill_attempts < maxAttempts} — 상한 소진 브랜드는 자동 제외</li>
+	 * </ul>
+	 * 나이 앵커는 {@code registered_at}이 아니라 {@code collection_started_at}이다 — 등록·재등록·
+	 * 기간 확장 모두가 {@code now()}로 갱신하고(was의 FE 폴링 30분 상한과 같은 앵커), 이 재시도의
+	 * 목적이 "폴링 중인 사용자 화면 구제"이지 범용 수리 도구가 아니라는 것과, 최초 배포 시 기존
+	 * 실패 잔량이 한꺼번에 예산을 받는 herd를 자르는 것 둘 다의 근거다. 백오프는 시도 횟수에
+	 * 비례해 선형으로 늘어난다({@code backoffMinutes * (attempts + 1)}) — 상한 3 기준 대략
+	 * t+5, t+15, t+30분에 재시도가 들어간다. 정렬은 최신 등록 우선(화면을 보고 있을 확률이 높은 순).
+	 */
+	public List<BrandRow> findBackfillRetryCandidates(int maxAttempts, int maxAgeMinutes,
+			int backoffMinutes, int limit) {
+		return db.query("""
+				SELECT id, username, ig_user_id, status, last_swept_on, collection_months, has_own_link
+				FROM brand_account
+				WHERE status = 'ACTIVE'
+				  AND last_swept_on IS NULL
+				  AND backfill_error IS NOT NULL
+				  AND backfill_attempts < ?
+				  AND collection_started_at > now() - make_interval(mins => ?)
+				  AND (backfill_attempted_at IS NULL
+				       OR backfill_attempted_at < now() - make_interval(mins => ? * (backfill_attempts + 1)))
+				ORDER BY collection_started_at DESC
+				LIMIT ?""",
+				BrandRepository::toRow, maxAttempts, maxAgeMinutes, backoffMinutes, limit);
+	}
+
+	/**
+	 * 재시도 제출 직전 호출 — 완료 시점이 아니라 <b>제출 직전</b>에 증가시킨다: 완료 시 증가로 하면
+	 * 재시도 도중 프로세스가 죽었을 때 예산이 환불돼 무한 재시도가 된다. {@code last_swept_on IS
+	 * NULL} 가드는 {@link #markBackfillError}와 같은 이유 — 그사이 다른 경로(동시 재가입 등)가
+	 * 이미 완주시켰으면 더 이상 재시도 대상이 아니다.
+	 */
+	public void markBackfillAttempt(long brandId) {
+		db.update("""
+				UPDATE brand_account SET backfill_attempts = backfill_attempts + 1, backfill_attempted_at = now()
+				WHERE id = ? AND last_swept_on IS NULL""", brandId);
+	}
+
+	/**
+	 * 재시도 예산 소진 브랜드의 {@code backfill_error} 문구를 "다음 새벽 정기 수집에서 다시
+	 * 시도해요."로 교체한다 — 상한 소진 후보는 {@link #findBackfillRetryCandidates}가 애초에 뽑지
+	 * 않으므로(attempts &lt; maxAttempts 조건), 문구 교체는 매 틱 이 별도 UPDATE로 한다.
+	 * {@code backfill_error <> ?} 조건이 멱등성을 준다 — 이미 교체된 행은 재틱에서 다시 세지 않는다
+	 * (반환값은 <b>이번 틱에 새로</b> 교체된 행 수).
+	 */
+	public int markBackfillRetryExhausted(String message, int maxAttempts) {
+		return db.update("""
+				UPDATE brand_account
+				SET backfill_error = ?
+				WHERE status = 'ACTIVE' AND last_swept_on IS NULL AND backfill_error IS NOT NULL
+				  AND backfill_attempts >= ? AND backfill_error <> ?""",
+				message, maxAttempts, message);
 	}
 
 	/**

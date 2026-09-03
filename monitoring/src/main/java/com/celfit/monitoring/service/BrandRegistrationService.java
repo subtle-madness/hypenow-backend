@@ -69,6 +69,20 @@ public class BrandRegistrationService {
 	private static final Set<Integer> ALLOWED_MONTHS = Set.of(1, 3, 6, 12);
 	private static final int DEFAULT_MONTHS = 12;
 
+	/**
+	 * backfillError 문구 2종(2026-09 열거 실패 재시도 스케줄러, 계약 §11) — 사용자 대면이라 내부
+	 * 예외 문자열을 안 싣는다(기존 규칙 유지), 엠대시 금지(전역 지침). {@code code}는 둘 다
+	 * {@code BACKFILL_FAILED}로 불변이므로 was·FE는 문구 문자열로 분기하면 안 되고 표시만 한다.
+	 *
+	 * <p>재시도 예산이 남아 있을 때({@link #runBackfillSafely} 최초 실패)는
+	 * {@link #BACKFILL_FAILED_RETRY_PENDING}, {@link BrandBackfillRetryJob}이 상한 소진을 확인하면
+	 * {@link #BACKFILL_FAILED_RETRY_EXHAUSTED}로 교체한다. 킬 스위치
+	 * ({@code monitoring.brand.backfill-retry.enabled})가 꺼져 재시도 자체가 없으면 최초 실패도
+	 * 곧장 exhausted 문구를 쓴다 — "잠시 후 다시 시도해요"는 재시도가 없으면 과약속이라서다.
+	 */
+	static final String BACKFILL_FAILED_RETRY_PENDING = "초기 수집에 실패했어요. 잠시 후 자동으로 다시 시도해요.";
+	static final String BACKFILL_FAILED_RETRY_EXHAUSTED = "초기 수집에 실패했어요. 다음 새벽 정기 수집에서 다시 시도해요.";
+
 	/** 등록 결과 — replayed는 HTTP 코드(201/200) 결정용(RegistrationService.Result 관용구). */
 	public record Result(long brandId, String username, Long followers, boolean replayed) {}
 
@@ -91,6 +105,11 @@ public class BrandRegistrationService {
 	private final Executor backfill;
 	private final Executor enrich;
 	private final Executor hashtagSweep;
+	/** 재시도 킬 스위치(2026-09) — {@link #runBackfillSafely} catch 문구 분기 전용. 스케줄러 자체의
+	 * on/off는 {@link BrandBackfillRetryScheduler}의 {@code @ConditionalOnProperty}가 같은 키로
+	 * 별도로 본다(빈 등록 여부) — 여기는 "재시도가 실제로 돌 것이다"라는 사실을 문구에 반영하는
+	 * 용도라 값 자체(boolean)로 충분하다. */
+	private final boolean backfillRetryEnabled;
 
 	public BrandRegistrationService(@Qualifier("syncInstagramSource") InstagramSource hiker,
 			BrandRepository brands,
@@ -100,7 +119,8 @@ public class BrandRegistrationService {
 			@Value("${monitoring.brand.collection-post-limit:2000}") int collectionPostLimit,
 			@Qualifier("brandBackfillExecutor") Executor backfill,
 			@Qualifier("brandEnrichExecutor") Executor enrich,
-			@Qualifier("brandHashtagSweepExecutor") Executor hashtagSweep) {
+			@Qualifier("brandHashtagSweepExecutor") Executor hashtagSweep,
+			@Value("${monitoring.brand.backfill-retry.enabled:true}") boolean backfillRetryEnabled) {
 		this.hiker = hiker;
 		this.brands = brands;
 		this.collect = collect;
@@ -111,6 +131,7 @@ public class BrandRegistrationService {
 		this.backfill = backfill;
 		this.enrich = enrich;
 		this.hashtagSweep = hashtagSweep;
+		this.backfillRetryEnabled = backfillRetryEnabled;
 	}
 
 	/** competitor 계정 타입 리터럴(was BrandAccountType.COMPETITOR와 동형) — 이 값 외엔 전부 own 취급. */
@@ -279,6 +300,9 @@ public class BrandRegistrationService {
 	 * <p>열거·보강 모두 사용자 트리거 비동기 전용 라우팅(sweepCoreUserTriggered·아래 runEnrichSafely의
 	 * enrichUserTriggered)을 탄다 — 2026-09 도입 시점 토글(ig-source.self-user-triggered, 시드 false)이
 	 * 켜지기 전까지는 이 백필 경로가 Hiker 1순위로 남는다(새벽 스윕은 그대로 자체 1순위).
+	 *
+	 * <p>이 메서드는 최초 등록·기간 확장·{@link #retryBackfillAsync} 재시도 <b>공통</b> 진입점이다 —
+	 * 셋 다 같은 실패 격리·같은 완주 규율을 따른다(2026-09 열거 실패 재시도 스케줄러 신설).
 	 */
 	private void runBackfillSafely(BrandRow row) {
 		try {
@@ -303,8 +327,23 @@ public class BrandRegistrationService {
 			log.warn("브랜드 등록 백필 실패(격리) — {} 다음 스윕이 백스톱: {}", row.username(), e.toString());
 			// was 폴링 계약(§5-2) — collecting에서 빠져나올 신호. 다음 스윕 성공(touchSwept)이 클리어한다.
 			// markServing 이후 실패면 ready가 이미 열려 있고(정산된 페이지 서빙) 이 문구는 FE에서 무시된다.
-			brands.markBackfillError(row.id(), "초기 수집에 실패했어요. 자동으로 재시도 중이에요.");
+			// 문구는 재시도 킬 스위치를 본다(2026-09) — 꺼져 있으면 재시도가 없으니 "잠시 후 다시
+			// 시도해요"는 과약속이라 곧장 exhausted 문구(정기 수집 안내)를 쓴다.
+			String message = backfillRetryEnabled ? BACKFILL_FAILED_RETRY_PENDING : BACKFILL_FAILED_RETRY_EXHAUSTED;
+			brands.markBackfillError(row.id(), message);
 		}
+	}
+
+	/**
+	 * 열거 실패 재시도 제출(2026-09, {@link BrandBackfillRetryJob} 전용) — {@link #runBackfillSafely}를
+	 * {@code backfill} executor에서 비동기로 돌리고 완료를 관측 가능한 {@link CompletableFuture}로
+	 * 돌려준다. 호출부(재시도 잡)가 이 future의 {@code whenComplete}에서 브랜드 단위 in-flight
+	 * 표시를 해제한다 — 재시도 1회가 수 분 걸리므로 그게 없으면 다음 틱이 같은 브랜드를 또 제출한다.
+	 * 실패 격리·문구·완주 규율은 {@link #runBackfillSafely}와 완전히 같다(별도 catch 없음 — 이
+	 * 메서드는 제출만 하고 예외를 던지지 않는다).
+	 */
+	public CompletableFuture<Void> retryBackfillAsync(BrandRow row) {
+		return CompletableFuture.runAsync(() -> runBackfillSafely(row), backfill);
 	}
 
 	/**

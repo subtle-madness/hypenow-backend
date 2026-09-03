@@ -611,5 +611,23 @@ DB 측 전송분이 ~7.5ms뿐이라 로컬 하니스로는 ~1.9초 고정비의 
   `brandEnrichWorkerPool`을 통해 나갈 뿐 별도 콜 예산이 아니다. 두 백스톱(광고 판정은 전역
   `backfillUnjudged`, 댓글은 워터마크 — 단 댓글은 180일 이내 게시물 한정)이 있어 후행 유실은
   스탬프 지연이 아니라 그 뒤 조용한 채움 지연으로만 남는다. was는 이 값을 해석 없이 통과시킬 뿐이라
-  별도 스탬프 컬럼 신설 없이 기존 컬럼 의미만 좁혔다(계약 §11 참조). 잔여: 열거 실패 재시도
-  스케줄러(결함 1)는 별도 커밋.
+  별도 스탬프 컬럼 신설 없이 기존 컬럼 의미만 좁혔다(계약 §11 참조).
+- **열거 실패 재시도 스케줄러(09-03, 결함 1, DECISIONS 09-03 행, 계약 v2.17 §11)** — 초기 백필
+  열거(`sweepCore`) 실패로 `backfill_error`만 찍히고 재시도 주체가 없던 문제를 해소했다. monitoring
+  내부 5분 주기 스케줄러(`BrandBackfillRetryScheduler` → `BrandBackfillRetryJob`)가 최대 3회·선형
+  백오프(5·10·15분)로 재제출한다. 후보는 `status=ACTIVE AND last_swept_on IS NULL AND
+  backfill_error IS NOT NULL AND backfill_attempts < maxAttempts`(정상 진행 중 브랜드는 `backfill_error`가
+  null이라 자연 제외) + 나이 창 6시간(앵커는 `collection_started_at` — was FE 폴링 30분 상한과 같은
+  값, 등록·재등록·기간확장 모두 갱신) + 틱당 배치 5. 시도 횟수는 메모리가 아니라 신규 컬럼
+  `brand_account.backfill_attempts`·`backfill_attempted_at`(마이그레이션
+  `V20260903084414__brand_account_backfill_retry.sql`, expand ADD COLUMN 2개, was 미참조라 배포
+  순서 결합 없음)에 영속화 — monitoring이 재기동 배포(롤링 아님)라 메모리 카운터는 배포마다
+  리셋돼 벤더 장애(08-27 Hiker 503) 중 재배포가 재시도 예산을 증폭시키는 문제를 막는다. 중복
+  실행 방지 3중(틱 AtomicBoolean·`BrandSweepScheduler`에서 추출한 공유 `BrandSweepGuard`로 야간
+  스윕 중 스킵·브랜드 단위 in-flight 셋). 성공 시 `touchSwept`가 `backfill_error`와 함께 attempts도
+  0으로 클리어. `backfillError.message`가 재시도 예산 상태에 따라 2종(예산 있음: "잠시 후 자동으로
+  다시 시도해요" / 소진: "다음 새벽 정기 수집에서 다시 시도해요")으로 갈린다 — `code`는
+  `BACKFILL_FAILED` 불변, was·FE는 문자열로 분기 금지(표시만). 킬 스위치
+  `monitoring.brand.backfill-retry.enabled`(기본 true) off 시 즉시 실패 문구도 소진 문구를 쓴다
+  (재시도가 없으니 "잠시 후 다시 시도"는 과약속). was 코드·API 표면 변화 없음(monitoring 단독
+  재기동으로 충분). 잔여 리스크(서킷브레이커 없음·후행 유실 창 확대 등)는 설계 문서 §5 참조.

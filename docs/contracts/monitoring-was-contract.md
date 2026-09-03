@@ -6,7 +6,8 @@
 > P2 표면(댓글·계정 메타·매칭 키워드·share 해소)의 확장 요구 근거는
 > [monitoring-v3-extension-request.md](monitoring-v3-extension-request.md) P2.
 > 상태: **v2.17 (브랜드 등록 백필 완주 스탬프 의미 확정 — `collectionCompletedAt`이 게시물·게시자
-> 보강 정산 완료만 뜻하고 댓글·광고 표기 판정은 그 밖의 후행 단계임을 명문화. 2026-09-03, §11)** ·
+> 보강 정산 완료만 뜻하고 댓글·광고 표기 판정은 그 밖의 후행 단계임을 명문화 + 열거 실패 재시도
+> 스케줄러 신설로 `backfillError` 문구가 2종으로 갈림을 명문화. 2026-09-03, §11)** ·
 > 명령 API **3종**(등록·연장·해지) +
 > share 해소 1종·조회 표면(테이블 8 + 알람 대장 + 뷰 2)·알람은 **monitoring 소유**(was는 알람 경로에서 빠짐)·
 > 에러 어휘 전부 구현과 일치. **v2.8부터 별도 서브시스템**(브랜드 태그 모니터링 — target/캠페인
@@ -126,14 +127,20 @@
 > 폐기(이제 tagged도 hidden 가능). 설계
 > [2026-08-25 tagged 확장](../superpowers/specs/2026-08-25-brand-tagged-deletion-verify-design.md),
 > `feat/brand-tagged-deletion-verify`.)
-> → **v2.17**(2026-09-03, 등록 백필 완주 스탬프 의미 확정 — 코드·DB 변경 없음, **계약 명문화만**.
-> `collectionCompletedAt`(= `backfill_completed_at`)이 "열거된 전 페이지의 게시물·게시자 보강
+> → **v2.17**(2026-09-03, 등록 백필 완주 스탬프 의미 확정 + 열거 실패 재시도 스케줄러 신설 —
+> **was 코드 변경 없음, monitoring 내부 DB·스케줄러 변경 동반**(아래 둘째 문단). was 배포
+> 불필요(monitoring 단독 재기동으로 충분), 계약 표면은 §11 하나로 함께 명문화한다.
+> ① `collectionCompletedAt`(= `backfill_completed_at`)이 "열거된 전 페이지의 게시물·게시자 보강
 > 정산(markEnriched) 완료"만을 뜻함을 확정하고, 댓글 수집·광고 표기 판정은 이 표식 **밖**의
-> 후행 단계로 정의한다(§11). 종전엔 "댓글·판정까지 포함한 완주"였는데, 2,000건급 브랜드에서
-> 이 완주까지 수십 분이 걸려 FE가 계정 목록 전체를 60초 폴링으로 계속 재조회하는 원인이었다 —
-> was 소비 코드(`BrandAccountAssembler`)는 애초에 이 값을 해석 없이 통과시킬 뿐이라(판정 포함
-> 완주에 의존하는 소비자 없음) 좁혀도 계약 위반이 아니다. was 배포 불필요(monitoring 단독
-> 재기동으로 충분).)
+> 후행 단계로 정의한다. 종전엔 "댓글·판정까지 포함한 완주"였는데, 2,000건급 브랜드에서 이 완주까지
+> 수십 분이 걸려 FE가 계정 목록 전체를 60초 폴링으로 계속 재조회하는 원인이었다 — was 소비 코드
+> (`BrandAccountAssembler`)는 애초에 이 값을 해석 없이 통과시킬 뿐이라(판정 포함 완주에 의존하는
+> 소비자 없음) 좁혀도 계약 위반이 아니다.
+> ② 초기 백필 열거 실패(`backfillError`)에 monitoring 내부 5분 주기 복구 스케줄러를 신설했다
+> (최대 3회·선형 백오프, 시도 횟수는 `brand_account.backfill_attempts`·`backfill_attempted_at`
+> 신규 컬럼에 영속화 — was는 이 두 컬럼을 SELECT하지 않아 배포 순서 결합은 없다). 그 결과
+> `backfillError.message`(= `collectionError.message`, `code: "BACKFILL_FAILED"` 불변)가 상황에
+> 따라 2종으로 갈린다 — was·FE는 문구 문자열로 분기하지 말고 표시만 할 것.)
 > 이후 변경은 이 문서를 먼저 갱신한 뒤 코드에 반영한다.
 
 ## 0. 한 장 요약
@@ -1107,8 +1114,10 @@ was `BrandReadRepository`가 `collection_capped`·`covered_until`을 **무조건
 
 ## 11. `collectionCompletedAt`의 확정 의미 (v2.17, 2026-09-03)
 
-> ⚠️ §8~§10과 마찬가지로 브랜드 태그 모니터링 서브시스템 한정. 코드·DB 변경 없이 기존 필드의
-> 의미를 명문화하는 절이다 — was 배포 불필요.
+> ⚠️ §8~§10과 마찬가지로 브랜드 태그 모니터링 서브시스템 한정. **was 코드·API 표면 변경 없음** —
+> 앞부분(`collectionCompletedAt`)은 기존 필드의 의미를 명문화만 하고, 뒷부분(`backfillError` 문구
+> 2종)은 monitoring 내부 전용 재시도 스케줄러 신설에 따른 문구 변경이다(monitoring 내부 DB
+> 컬럼·스케줄러 추가는 있으나 was가 읽는 컬럼·API 계약은 그대로다). was 배포 불필요.
 
 `BrandAccountResponse.collectionCompletedAt`(DB `brand_account.backfill_completed_at`)은
 **"열거된 모든 페이지의 게시물·게시자 보강이 정산(`markEnriched`)됨 — 목록·지표·게시자 정보가
@@ -1143,3 +1152,17 @@ was `BrandReadRepository`가 `collection_capped`·`covered_until`을 **무조건
 **`backfillError`(= `collectionError.message`, `code: "BACKFILL_FAILED"`)와의 관계** — 이 필드는
 "열거(sweepCore) 자체의 실패"만 가리키고, 이번 절의 후행 단계(댓글·판정)와는 무관하다. 후행
 단계의 실패는 격리되어(다음 스윕이 재시도) `backfillError`에 나타나지 않는다.
+
+**`backfillError.message`의 문구 2종(2026-09-03 신설, 열거 실패 재시도 스케줄러)** — monitoring
+내부에 초기 백필 열거 실패를 5분 주기로 재시도하는 스케줄러가 생기면서(최대 3회, 선형 백오프),
+사용자에게 노출되는 문구가 재시도 예산 상태에 따라 갈린다. `code`는 두 경우 모두
+`"BACKFILL_FAILED"`로 불변이므로 **was·FE는 문구 문자열로 분기하면 안 되고, 그대로 표시만 할
+것.**
+
+- 재시도 예산이 남아 있을 때: `"초기 수집에 실패했어요. 잠시 후 자동으로 다시 시도해요."`
+- 재시도 상한(3회)을 소진했을 때: `"초기 수집에 실패했어요. 다음 새벽 정기 수집에서 다시
+  시도해요."` — 이후 복구는 익일 KST 02:00 정기 스윕이 백스톱한다.
+
+재시도는 monitoring 단독 내부 동작이라 was 코드·API 표면 변화는 없다. was가 보는 것은 여전히
+`backfillError.message` 문자열 하나뿐이고, 재시도 자체(시도 횟수·다음 시도 시각)는 was에
+노출되지 않는다 — 필요하면 향후 확장 후보(현재는 미노출).
