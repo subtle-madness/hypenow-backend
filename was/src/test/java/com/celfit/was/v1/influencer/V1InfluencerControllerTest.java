@@ -49,7 +49,7 @@ class V1InfluencerControllerTest {
 	private static V1InfluencerRepository.ProfileRow profile() {
 		return new V1InfluencerRepository.ProfileRow("hype_official", "하입 오피셜",
 				"https://img.example.com/p.jpg", 12345L, "https://hype.example.com",
-				321L, 456L, "안녕하세요 하입 오피셜입니다.");
+				321L, 456L, "안녕하세요 하입 오피셜입니다.", "hype@example.com");
 	}
 
 	private static ContentCardRow row(String code) {
@@ -72,7 +72,9 @@ class V1InfluencerControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.success").value(true))
 				.andExpect(jsonPath("$.data.influencer.handle").value("hype_official"))
-				.andExpect(jsonPath("$.data.influencer.email").value(org.hamcrest.Matchers.nullValue()))
+				// email은 account_summaries.email(목록 6.21·유사 6.23과 같은 소스) — 상세만 null 상수였던
+				// 결함(2026-09-03 FE 피드백 #1) 회귀 방지.
+				.andExpect(jsonPath("$.data.influencer.email").value("hype@example.com"))
 				.andExpect(jsonPath("$.data.recentContents").isArray());
 	}
 

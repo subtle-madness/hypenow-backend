@@ -1,11 +1,14 @@
 package com.celfit.instagram.source.self;
 
+import com.celfit.instagram.source.PrivateAccountException;
 import com.celfit.instagram.source.ProfileInfo;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * og 프로필 fetcher — 로그아웃 프로필 문서(https://www.instagram.com/{username}/)의 서버렌더
@@ -22,8 +25,19 @@ import java.util.regex.Pattern;
  * <p>오류 분류: 정상 응답도 HTML이라 SelfErrorClassifier의 200-HTML 휴리스틱(LOGIN_WALL)을 그대로
  * 던질 수 없다 — 파싱까지 해보고 통계가 전무한 빈 셸일 때만 LOGIN_WALL(HTML 셸)/NOT_FOUND로
  * 확정한다. 3xx 리다이렉트는 계정 부재/게이트로 NOT_FOUND.
+ *
+ * <p>비공개 계정(S15): 문서 JSON 블롭에도 wpi(web_profile_info)와 동일하게 {@code "is_private"}
+ * 마커가 실린다(실측 픽스처 og_profile.html에 {@code "is_private":false} 확인) — wpi와 동일 계약으로
+ * PrivateAccountException을 던진다. 프로필 표면 토글(og↔wpi)이 예외 계약을 바꾸면 안 되기 때문이다.
+ * 이 판정은 즉시 확정(FailoverInstagramSource가 Hiker 재확인 없이 그대로 전파)이라 오탐 가드가
+ * 필요하다: {@code "is_private"}가 문서에 여러 번 실리면(다른 user 객체가 혼재할 수 있음) 첫 매치가
+ * 대상 계정 소속임을 보장할 수 없다 — 전 출현이 true일 때만 비공개로 확정하고, 하나라도 false가
+ * 섞이면(모호) 확정하지 않고 보수적으로 정상 ProfileInfo를 반환한다. 단일 출현이면 그 값을 그대로
+ * 쓴다(현행 유지).
  */
 public class OgProfileFetcher {
+
+	private static final Logger log = LoggerFactory.getLogger(OgProfileFetcher.class);
 
 	private static final Map<String, String> HEADERS = Map.of(
 			"Accept", "text/html",
@@ -45,6 +59,7 @@ public class OgProfileFetcher {
 	private static final Pattern PROFILE_PIC_URL =
 			Pattern.compile("\"profile_pic_url\":\"((?:\\\\.|[^\"\\\\])*)\"");
 	private static final Pattern EXTERNAL_URL = Pattern.compile("\"external_url\":\"([^\"]*)\"");
+	private static final Pattern IS_PRIVATE = Pattern.compile("\"is_private\":(true|false)");
 	private static final Pattern UNICODE_ESCAPE = Pattern.compile("\\\\u([0-9a-fA-F]{4})");
 	private static final Pattern PROFILE_PAGE_ID = Pattern.compile("profilePage_(\\d+)");
 
@@ -84,6 +99,12 @@ public class OgProfileFetcher {
 					"og 빈 셸(통계 부재): " + username);
 		}
 
+		// 통계가 실린 정상 응답으로 확정된 뒤에만 비공개 판정 — wpi와 동일 계약(폴백 대상 아님).
+		// 즉시 확정(전파)이라 오탐 가드 필요: 전 출현이 true일 때만 확정, 혼재는 보수적으로 보류.
+		if (isPrivateConfirmed(body)) {
+			throw new PrivateAccountException("비공개 계정: " + username);
+		}
+
 		Long following = number(first(FOLLOWING, body));
 		Long mediaCount = mediaCountFromOgDescription(body);
 		String fullName = unescape(first(FULL_NAME, body));
@@ -103,14 +124,36 @@ public class OgProfileFetcher {
 	private static Long mediaCountFromOgDescription(String body) {
 		String description = first(OG_DESCRIPTION, body);
 		if (description == null) {
+			// og:description 메타 자체가 없다 — 문서 셰이프 이탈(빈 셸 가드는 이미 통과한 뒤이므로 이례적).
+			log.debug("og:description 메타 부재 — media_count 관측 불가");
 			return null;
 		}
-		return number(first(POSTS_IN_DESCRIPTION, description));
+		Long count = number(first(POSTS_IN_DESCRIPTION, description));
+		if (count == null) {
+			// "N Posts" 패턴은 영어 로케일 의존이라 다른 언어 응답에서 조용히 null이 될 수 있다(S15) —
+			// 관측 가능하도록 최소 로그만 남긴다(로케일 확장은 이번 범위 밖).
+			log.debug("og:description 게시물 수 파싱 실패(로케일 불일치 의심): {}", description);
+		}
+		return count;
 	}
 
 	private static String first(Pattern p, String body) {
 		Matcher m = p.matcher(body);
 		return m.find() ? m.group(1) : null;
+	}
+
+	/** {@code "is_private"} 전 출현이 true일 때만 비공개로 확정한다 — 혼재(다른 값 섞임)는 대상 계정
+	 * 소속 보장이 안 돼 보수적으로 미확정(false) 처리한다(클래스 javadoc S15 참고). */
+	private static boolean isPrivateConfirmed(String body) {
+		Matcher m = IS_PRIVATE.matcher(body);
+		boolean found = false;
+		while (m.find()) {
+			found = true;
+			if (!Boolean.parseBoolean(m.group(1))) {
+				return false;
+			}
+		}
+		return found;
 	}
 
 	private static Long number(String s) {

@@ -43,6 +43,7 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 				    follows_count            bigint,
 				    posts_count              bigint,
 				    biography                text,
+				    email                    text,
 				    analyzed_count           bigint,
 				    views_count              bigint,
 				    metric                   text,
@@ -201,5 +202,21 @@ class V1InfluencerRepositoryTest extends IntegrationTest {
 
 		profile = repository.findProfile("alpha").orElseThrow();
 		assertThat(profile.profileImageUrl()).isEqualTo("/img/profile/alpha.jpg");
+	}
+
+	/** email은 account_summaries.email — 발굴 목록(6.21)·유사 카드(6.23)와 같은 소스(2026-09-03 FE 피드백 #1). */
+	@Test
+	void 프로필_email은_account_summaries에서_읽는다() {
+		V1InfluencerRepository.ProfileRow before = repository.findProfile("alpha").orElseThrow();
+		assertThat(before.email()).isNull(); // 요약 행 자체가 없으면(LEFT JOIN) null
+
+		jdbcTemplate.update("""
+				INSERT INTO account_summaries (handle, posts_count, follows_count, biography, email)
+				VALUES ('alpha', 120, 300, '문의는 메일로', 'alpha@example.com')
+				""");
+
+		V1InfluencerRepository.ProfileRow after = repository.findProfile("alpha").orElseThrow();
+		assertThat(after.email()).isEqualTo("alpha@example.com");
+		assertThat(after.postsCount()).isEqualTo(120L);
 	}
 }

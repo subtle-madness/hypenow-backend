@@ -834,6 +834,64 @@ class CollectServiceTest {
 		assertThat(writer.savedPosts.getLast().reposts()).isEqualTo(7L);
 	}
 
+	// ── S9(2026-09-03 감사 수정) — self 기원 미확정(sharesHidden=null)은 확정 false와 다르게 다룬다 ──
+	// self(EmbedPostFetcher 등)는 공유 숨김 여부를 구조적으로 판정할 수 없어 sharesHidden이 null
+	// (미확정)이다. 과거엔 self가 항상 primitive false를 반환해 Hiker의 확정 false와 안 구분됐고,
+	// 그 결과 공유 숨김 릴스가 self 관측 위에서 매일 재시도 상한까지 헛돌고 소진 시 공유가 0으로
+	// 잘못 기록됐다.
+
+	@Test
+	void 공유_숨김_미확정_self_게시물은_소진돼도_공유를_0으로_간주하지_않는다() {
+		// assumeZeroForOmittedKeys는 근거(DB 이력) 없는 맹목적 추정이라 확정 false일 때만 0을 쓴다 —
+		// 미확정(null)은 Boolean.FALSE.equals(null)이 거짓이라 0 간주 대상에서 빠져야 한다.
+		List<String> calls = new ArrayList<>();
+		var client = new HikerBackend(path -> {
+			calls.add(path);
+			return CLIPS_SAVE_ONLY;   // 저장만 실리는 세션 — 공유·리포스트 키가 매 시도 계속 부재
+		});
+		var writer = new RecordingWriter();
+		PostInfo selfUnconfirmed = new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
+				1_700_000_000L, 10L, 2L, 222L, null, null, null, null, null, null, null, true, false, null);
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(selfUnconfirmed));
+
+		PostInfo saved = writer.savedPosts.getLast();
+		assertThat(saved.saves()).isEqualTo(5L);
+		assertThat(saved.shares()).isNull();         // 미확정(self)이면 0으로 단정하지 않는다
+		assertThat(saved.sharesHidden()).isNull();   // 여전히 미확정 — 내일 스윕이 다시 확인
+		assertThat(saved.reposts()).isEqualTo(0L);   // 리포스트는 숨김 개념이 없어 그대로 0 간주
+	}
+
+	/**
+	 * S9 핵심 — 단건 재시도(항상 metricsRetryHiker, Hiker 직결)가 진짜 공유 숨김을 확정하면
+	 * mergedMetrics가 그 값을 되싣어야 needsMetricsRetry가 즉시 종료된다. 되싣지 않으면(과거 결함)
+	 * sharesHidden이 계속 미확정으로 남아 상한(6회)까지 헛 재콜을 반복한다.
+	 */
+	@Test
+	void 공유_숨김_미확정_self_게시물은_단건_재시도가_확정하면_그_즉시_재시도를_멈춘다() {
+		List<String> calls = new ArrayList<>();
+		var client = new HikerBackend(path -> {
+			calls.add(path);
+			if (path.startsWith("/v2/user/clips")) return CLIPS_WITHOUT_REEL_A;   // 창 밖 → 단건 전환
+			return singleReelA("\"share_count_disabled\":true,\"save_count\":5,\"media_repost_count\":7");
+		});
+		var writer = new RecordingWriter();
+		PostInfo selfUnconfirmed = new PostInfo("ReelA", "acct", null, null, "999", "REELS", "캡션", null,
+				1_700_000_000L, 10L, 2L, 222L, null, null, null, null, null, null, null, true, false, null);
+
+		retryingCollect(client, writer, 6).retryReelsMetrics("999", List.of(selfUnconfirmed));
+
+		assertThat(countByPrefix(calls, "/v2/user/clips")).isEqualTo(1);
+		// 상한 6회까지 안 가고 단건 1콜로 확정 즉시 종료 — 되싣기가 안 되면 이 값이 5(상한 소진)가 된다.
+		assertThat(countByPrefix(calls, "/v2/media/info/by/code")).isEqualTo(1);
+		assertThat(writer.savedPosts).hasSize(1);
+		PostInfo saved = writer.savedPosts.getFirst();
+		assertThat(saved.sharesHidden()).isTrue();
+		assertThat(saved.shares()).isNull();
+		assertThat(saved.saves()).isEqualTo(5L);
+		assertThat(saved.reposts()).isEqualTo(7L);
+	}
+
 	// ── 0 캐리(08-05) — 구조적 키 부재 게시물은 재시도 없이 0을 잇는다 ──────────
 	// 리포스트 0·공유 미상 게시물은 키가 영영 안 와 매일 상한까지 헛 재시도를 돌았다. 양수 관측
 	// 이력이 전무하고 전일이 0 간주로 끝난 게시물은(판정은 SnapshotRepository) 해당 지표를

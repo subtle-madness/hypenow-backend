@@ -1,5 +1,7 @@
 package com.celfit.was.v1.account;
 
+import com.celfit.was.auth.UserRepository;
+import com.celfit.was.crypto.FieldCipher;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,22 +22,33 @@ public class SignupEventRecorder {
 
 	private final JdbcClient jdbcClient;
 	private final ObjectMapper objectMapper;
+	private final FieldCipher fieldCipher;
 
-	public SignupEventRecorder(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+	public SignupEventRecorder(JdbcClient jdbcClient, ObjectMapper objectMapper, FieldCipher fieldCipher) {
 		this.jdbcClient = jdbcClient;
 		this.objectMapper = objectMapper;
+		this.fieldCipher = fieldCipher;
 	}
 
+	/**
+	 * email_enc는 email 평문 컬럼과 동일 의미론으로 원문(정규화 없이, null은 "")을 암호화한다.
+	 * email_bidx만 조회 키로 정규화(UserRepository.normalizeEmail) 적용값을 쓴다(스펙 §전환 1).
+	 */
 	public void record(String email, String outcome, String ip, Map<String, Object> detail) {
 		try {
+			String storedEmail = email == null ? "" : email;
+			String normalized = UserRepository.normalizeEmail(storedEmail);
 			jdbcClient.sql("""
-					INSERT INTO app.signup_events (email, outcome, ip, detail)
-					VALUES (:email, :outcome, :ip, CAST(:detail AS jsonb))
+					INSERT INTO app.signup_events (email, outcome, ip, detail, email_enc, email_bidx, ip_enc)
+					VALUES (:email, :outcome, :ip, CAST(:detail AS jsonb), :emailEnc, :emailBidx, :ipEnc)
 					""")
-					.param("email", email == null ? "" : email)
+					.param("email", storedEmail)
 					.param("outcome", outcome)
 					.param("ip", ip)
 					.param("detail", objectMapper.writeValueAsString(detail))
+					.param("emailEnc", fieldCipher.encrypt(storedEmail))
+					.param("emailBidx", fieldCipher.blindIndex(normalized))
+					.param("ipEnc", fieldCipher.encrypt(ip))
 					.update();
 		} catch (RuntimeException e) {
 			log.warn("가입 이벤트 기록 실패(무시) — outcome={}", outcome, e);

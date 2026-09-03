@@ -94,6 +94,24 @@ class BrandPostMetaRepositoryTest {
 		assertThat(isPaidPartnership).isTrue();
 	}
 
+	/**
+	 * S4 — self(embed·feed/user)는 콘텐츠 타입을 구조적으로 확정 못 하면 null을 넘긴다
+	 * (EmbedPostFetcher·FeedUserPostsFetcher 참조). Hiker가 이미 REELS/FEED를 확정 저장한 행을
+	 * self의 미확정 null 재수집이 강등 덮어쓰기하면 안 된다 — is_paid_partnership과 동일한
+	 * COALESCE 보호(S3 수정과 동형).
+	 */
+	@Test
+	void content_type_null_수집은_기존_content_type을_보존한다() {
+		repo.upsert("AAA", "poster1", "REELS", LocalDate.of(2026, 8, 1), "캡션", null, null, null, null);
+
+		// self 재수집 — content_type 구조적으로 확정 불가(null)
+		repo.upsert("AAA", "poster1", null, LocalDate.of(2026, 8, 1), "캡션 갱신", null, null, null, null);
+
+		String contentType = db.queryForObject(
+				"SELECT content_type FROM brand_post_meta WHERE short_code='AAA'", String.class);
+		assertThat(contentType).isEqualTo("REELS");
+	}
+
 	@Test
 	void 빈_코드_목록은_빈_맵() {
 		assertThat(repo.findAdJudgmentState(List.of())).isEmpty();
