@@ -32,11 +32,11 @@ public class PiiBackfillRunner implements ApplicationRunner {
 	}
 
 	@Override
+	@Transactional
 	public void run(ApplicationArguments args) {
 		backfillAll();
 	}
 
-	@Transactional
 	public void backfillAll() {
 		int users = backfillUsers();
 		int inquiries = backfillInquiries();

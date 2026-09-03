@@ -19,8 +19,11 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * 빈으로 뜨지 않는다. 플래그를 켜서 별도 Spring 컨텍스트를 새로 띄우는 대신, IntegrationTest가
  * 캐싱해 공유하는 컨텍스트에서 JdbcClient·FieldCipher만 받아 {@code new PiiBackfillRunner(...)}로
  * 직접 생성한다(운영 기동 경로는 ApplicationRunner#run이지만, 테스트는 backfillAll()을 직접 호출).
- * {@code @Transactional}은 프록시를 거쳐야 적용되는데 직접 new한 인스턴스엔 프록시가 없어 무의미하지만,
- * 각 UPDATE가 자체 오토커밋으로 반영되므로 이 테스트가 검증하는 백필 결과·멱등성과는 무관하다.
+ * {@code @Transactional}은 {@code run()}에 붙어 있다(트랙 A 09-03 리뷰 수정 — 원래 backfillAll()에
+ * 있었으나 run()이 this.backfillAll()로 자기호출해 프록시를 안 타는 바람에 운영 기동 경로에서도
+ * 무의미했다). 이 테스트는 직접 new한 인스턴스의 backfillAll()을 호출하므로(run()이 아니라) 어느
+ * 쪽이든 프록시가 없어 트랜잭션은 여전히 무의미하지만, 각 UPDATE가 자체 오토커밋으로 반영되므로
+ * 이 테스트가 검증하는 백필 결과·멱등성과는 무관하다.
  */
 class PiiBackfillRunnerTest extends IntegrationTest {
 
