@@ -11,6 +11,7 @@ import com.celfit.monitoring.store.BrandCallCountRepository;
 import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.BrandRow;
 import com.celfit.monitoring.store.TaggedPostRepository;
+import com.celfit.monitoring.testsupport.InMemoryBrands;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -49,117 +50,6 @@ class BrandRegistrationServiceTest {
 			"biography":"소개","follower_count":1234,"following_count":10,"media_count":5,
 			"is_private":false}}""";
 
-	private static final class InMemoryBrands extends BrandRepository {
-		final Map<String, BrandRow> rows = new HashMap<>();
-		final List<Long> touched = new CopyOnWriteArrayList<>();
-		final List<Long> served = new CopyOnWriteArrayList<>();
-		/** markServing 호출마다 그 시점의 보강 완료 코드 스냅샷 — "첫 배치 보강 뒤 ready"의 관측 지점. */
-		final List<List<String>> enrichedAtServingMark = new CopyOnWriteArrayList<>();
-		/** touchSwept 시점의 보강 완료 코드 스냅샷 — FE 폴링 종료 조건이 미완성 목록에서 걸리는지 본다. */
-		final List<List<String>> enrichedAtTouchSwept = new CopyOnWriteArrayList<>();
-		final Map<Long, String> backfillErrors = new HashMap<>();
-		final List<Long> expanded = new ArrayList<>();
-		/** raiseWindowCapped 호출 기록(스펙 §7-2) — 창·폴백 인자까지 본다. */
-		record CappedRaise(long brandId, int months, Instant coveredUntilFallback) {}
-
-		final List<CappedRaise> cappedRaises = new ArrayList<>();
-		/** 동시 확장 경합 주입 — 더 큰 창이 이미 반영돼 조건부 UPDATE가 0행을 맞는 상황(rowcount false). */
-		boolean loseExpandRace = false;
-		long nextId = 1;
-
-		private final Supplier<List<String>> enrichedCodes;
-
-		InMemoryBrands(Supplier<List<String>> enrichedCodes) {
-			super(null);
-			this.enrichedCodes = enrichedCodes;
-		}
-
-		@Override
-		public long insertOrReactivate(String username, ProfileInfo profile, int collectionMonths,
-				boolean ownRequest) {
-			BrandRow existing = rows.get(username);
-			long id = existing != null ? existing.id() : nextId++;
-			int months = existing != null ? Math.max(existing.collectionMonths(), collectionMonths) : collectionMonths;
-			rows.put(username, new BrandRow(id, username, profile.userId(), BrandStatus.ACTIVE, null, months,
-					ownRequest));
-			return id;
-		}
-
-		@Override
-		public void setHasOwnLink(String username, boolean hasOwnLink) {
-			rows.computeIfPresent(username, (u, r) -> new BrandRow(r.id(), r.username(), r.igUserId(), r.status(),
-					r.lastSweptOn(), r.collectionMonths(), hasOwnLink));
-		}
-
-		/** 실 SQL 의미와 등가 — GREATEST + "collection_months < months일 때만" 갱신하고 그 여부를 돌려준다. */
-		@Override
-		public boolean expandWindow(long brandId, int months) {
-			expanded.add(brandId);
-			BrandRow row = rows.values().stream().filter(r -> r.id() == brandId).findFirst().orElseThrow();
-			if (loseExpandRace || months <= row.collectionMonths()) {
-				return false;
-			}
-			rows.replaceAll((u, r) -> r.id() == brandId
-					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), null, months, r.hasOwnLink())
-					: r);
-			return true;
-		}
-
-		/** 실 SQL 의미와 등가 — 창만 GREATEST로 올리고 수집 상태(lastSweptOn)는 건드리지 않는다. */
-		@Override
-		public boolean raiseWindowCapped(long brandId, int months, Instant coveredUntilFallback) {
-			cappedRaises.add(new CappedRaise(brandId, months, coveredUntilFallback));
-			BrandRow row = rows.values().stream().filter(r -> r.id() == brandId).findFirst().orElseThrow();
-			if (months <= row.collectionMonths()) {
-				return false;
-			}
-			rows.replaceAll((u, r) -> r.id() == brandId
-					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), r.lastSweptOn(), months,
-							r.hasOwnLink())
-					: r);
-			return true;
-		}
-
-		@Override
-		public void markBackfillError(long brandId, String message) {
-			backfillErrors.put(brandId, message);
-		}
-
-		@Override
-		public Optional<BrandRow> findByUsername(String username) {
-			return Optional.ofNullable(rows.get(username));
-		}
-
-		@Override
-		public boolean close(String username) {
-			BrandRow row = rows.get(username);
-			if (row == null || row.status() != BrandStatus.ACTIVE) {
-				return false;
-			}
-			rows.put(username, new BrandRow(row.id(), row.username(), row.igUserId(),
-					BrandStatus.CLOSED, row.lastSweptOn(), row.collectionMonths(), row.hasOwnLink()));
-			return true;
-		}
-
-		@Override
-		public void touchSwept(long brandId, LocalDate on) {
-			touched.add(brandId);
-			enrichedAtTouchSwept.add(enrichedCodes.get());
-			// 실 UPDATE와 동일하게 행에도 반영한다 — 확장 백필이 "재조회한 행"(lastSweptOn 비워짐)으로
-			// 도는지를 스텁 행이 stale인 채로는 구분할 수 없다.
-			rows.replaceAll((u, r) -> r.id() == brandId
-					? new BrandRow(r.id(), r.username(), r.igUserId(), r.status(), on, r.collectionMonths(),
-							r.hasOwnLink())
-					: r);
-		}
-
-		@Override
-		public void markServing(long brandId) {
-			served.add(brandId);
-			enrichedAtServingMark.add(enrichedCodes.get());
-		}
-	}
-
 	private static final class StubCollect extends BrandCollectService {
 		final List<String> coreSwept = new ArrayList<>();
 		/** sweepCore가 실제로 받은 행 — 확장 백필이 stale 행이 아닌 재조회 행으로 도는지 판별용. */
@@ -174,9 +64,11 @@ class BrandRegistrationServiceTest {
 		Duration enrichDelay = Duration.ZERO;
 		final List<List<String>> enrichedPosts = new CopyOnWriteArrayList<>();
 		private List<String> callOrder = new CopyOnWriteArrayList<>();
+		/** deferred 진입점 호출 횟수(결함 2 수정 배선 검증용) — runEnrichSafely가 이제 이걸 부른다. */
+		int deferredCalls = 0;
 
 		StubCollect() {
-			super(null, null, null, null, null, null, null, null, null, null, null, null,
+			super(null, null, null, null, null, null, null, null, null, null, null, null, null,
 					2000, 10000, 3, 30, true);
 		}
 
@@ -248,6 +140,19 @@ class BrandRegistrationServiceTest {
 		 * 이유로 기존 enrich(3-인자) 오버라이드에 위임한다. */
 		@Override
 		public void enrichUserTriggered(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
+			enrich(brand, posts, onVisible);
+		}
+
+		/**
+		 * 결함 2 수정(2026-09 완주 스탬프 축소 개정)으로 {@link BrandRegistrationService#runEnrichSafely}가
+		 * 이제 이 진입점을 부른다 — 위 {@code enrichUserTriggered}와 같은 이유로 기존 3-인자 enrich
+		 * 오버라이드에 위임한다. 이 스텁은 후행(댓글·판정) 분리 자체를 모사하지 않는다 — 그건
+		 * {@code BrandCollectServiceTest}가 real 서비스로 직접 검증한다. 여기서는 등록 백필이 이
+		 * deferred 진입점으로 라우팅된다는 배선만 확인한다.
+		 */
+		@Override
+		public void enrichUserTriggeredDeferred(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
+			deferredCalls++;
 			enrich(brand, posts, onVisible);
 		}
 
@@ -333,6 +238,8 @@ class BrandRegistrationServiceTest {
 	private final StubTaggedPosts taggedPosts = new StubTaggedPosts();
 	/** 실 기본값(application.yml)과 같은 상한 — 개별 테스트가 필요하면 바꾼다. */
 	private int collectionPostLimit = 2000;
+	/** 재시도 킬 스위치(2026-09) — 실 기본값(true)과 같다. off 시나리오만 개별 테스트가 바꾼다. */
+	private boolean backfillRetryEnabled = true;
 
 	/** enrich executor에 제출된 태스크 — 개수만 본다(실행은 아래 풀이 실제로 한다). */
 	private final List<Runnable> enrichSubmissions = new CopyOnWriteArrayList<>();
@@ -418,7 +325,7 @@ class BrandRegistrationServiceTest {
 		});
 		return new BrandRegistrationService(hiker, brands, collect, callCounts,
 				hashtagCollect, taggedPosts, collectionPostLimit,
-				Runnable::run, enrich, hashtagSweep);
+				Runnable::run, enrich, hashtagSweep, backfillRetryEnabled);
 	}
 
 	@Test
@@ -433,6 +340,23 @@ class BrandRegistrationServiceTest {
 		assertThat(brands.touched).containsExactly(result.brandId());
 		// 등록 검증 프로필 1콜의 사후 계상(어드민 크롤링 비용) — 콜 시점엔 brand_id가 없어 등록 직후 +1.
 		assertThat(callCounts.byBrand).containsExactly(Map.entry(result.brandId(), 1L));
+	}
+
+	/**
+	 * 결함 2 수정(2026-09 완주 스탬프 축소 개정) 배선 검증 — runEnrichSafely는 이제 댓글·판정을
+	 * 그 자리에서 도는 {@code enrichUserTriggered}가 아니라 후행 전용 executor에 detached 제출하는
+	 * {@code enrichUserTriggeredDeferred}를 부른다. 후행 분리 자체(댓글·판정이 실제로 지연 실행되는지)는
+	 * real {@code BrandCollectService}를 쓰는 {@code BrandCollectServiceTest}가 검증하고, 여기서는
+	 * 라우팅만 확인한다.
+	 */
+	@Test
+	void 백필_페이지_보강은_deferred_진입점으로_라우팅된다() {
+		twoPages();
+
+		service().register("brandx");
+		awaitEnrich();
+
+		assertThat(collect.deferredCalls).isEqualTo(2);   // 페이지 2건 각각 deferred로
 	}
 
 	/**
@@ -879,6 +803,11 @@ class BrandRegistrationServiceTest {
 		assertThat(brands.touched).isEmpty();              // 백스톱 성립 — last_swept_on 미갱신
 	}
 
+	/**
+	 * 재시도 킬 스위치가 켜져 있으면(기본값) 즉시 실패 문구는 "재시도 예산이 남아 있다"는 뜻의
+	 * 문구다(2026-09 열거 실패 재시도 스케줄러 — {@link BrandBackfillRetryJob}이 이 문구가 찍힌
+	 * 브랜드를 후보로 줍는다).
+	 */
 	@Test
 	void 백필_실패는_backfill_error로_기록된다() {
 		collect.failing.add("brandx");
@@ -887,7 +816,22 @@ class BrandRegistrationServiceTest {
 
 		// was 폴링 계약(§5-2) — collecting에서 빠져나올 신호. 사용자에게 보일 문구라 내부 예외를 안 싣는다.
 		assertThat(brands.backfillErrors.get(result.brandId()))
-				.isEqualTo("초기 수집에 실패했어요. 자동으로 재시도 중이에요.");
+				.isEqualTo("초기 수집에 실패했어요. 잠시 후 자동으로 다시 시도해요.");
+	}
+
+	/**
+	 * 킬 스위치가 꺼져 있으면 재시도가 실제로 없으므로, 즉시 실패 문구도 곧장 상한 소진 문구(정기
+	 * 수집 안내)를 쓴다 — "잠시 후 다시 시도해요"는 재시도가 없으면 과약속이라서다.
+	 */
+	@Test
+	void 재시도_킬스위치가_꺼져있으면_즉시_실패_문구도_정기_수집_안내다() {
+		backfillRetryEnabled = false;
+		collect.failing.add("brandx");
+
+		var result = service().register("brandx");
+
+		assertThat(brands.backfillErrors.get(result.brandId()))
+				.isEqualTo("초기 수집에 실패했어요. 다음 새벽 정기 수집에서 다시 시도해요.");
 	}
 
 	@Test

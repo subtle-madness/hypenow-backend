@@ -72,7 +72,7 @@ class V1InfluencerDiscoveryControllerTest {
 	@Test
 	void 익명_200_카드와_meta() throws Exception {
 		List<InfluencerCard> cards = new V1InfluencerDiscoveryAssembler()
-				.toCards(List.of(row("glow")), List.of(), List.of(), List.of(), List.of());
+				.toCards(List.of(row("glow")), List.of(), List.of(), List.of(), List.of(), List.of());
 		given(pageService.page(any())).willReturn(new DiscoveryPage(cards, 109L));
 
 		mockMvc.perform(get("/v1/influencers?sponsored=1-2&offset=100"))
@@ -107,7 +107,7 @@ class V1InfluencerDiscoveryControllerTest {
 	void 다음_페이지가_있으면_프리페치가_다음_쿼리로_page를_호출한다() throws Exception {
 		List<InfluencerCard> cards = new V1InfluencerDiscoveryAssembler()
 				.toCards(IntStream.range(0, 50).mapToObj(i -> row("glow" + i)).toList(),
-						List.of(), List.of(), List.of(), List.of());
+						List.of(), List.of(), List.of(), List.of(), List.of());
 		given(pageService.page(any())).willReturn(new DiscoveryPage(cards, 200L));
 
 		mockMvc.perform(get("/v1/influencers").param("limit", "50").param("mainCategory", "makeup"))
@@ -132,7 +132,7 @@ class V1InfluencerDiscoveryControllerTest {
 	@Test
 	void 마지막_페이지면_프리페치하지_않는다() throws Exception {
 		List<InfluencerCard> cards = new V1InfluencerDiscoveryAssembler()
-				.toCards(List.of(row("glow")), List.of(), List.of(), List.of(), List.of());
+				.toCards(List.of(row("glow")), List.of(), List.of(), List.of(), List.of(), List.of());
 		given(pageService.page(any())).willReturn(new DiscoveryPage(cards, 1L));
 
 		mockMvc.perform(get("/v1/influencers").param("limit", "50"))
@@ -157,7 +157,7 @@ class V1InfluencerDiscoveryControllerTest {
 	@Test
 	void 익명_요청은_IP_키로_레이트리밋된다() throws Exception {
 		List<InfluencerCard> cards = new V1InfluencerDiscoveryAssembler()
-				.toCards(List.of(row("glow")), List.of(), List.of(), List.of(), List.of());
+				.toCards(List.of(row("glow")), List.of(), List.of(), List.of(), List.of(), List.of());
 		given(pageService.page(any())).willReturn(new DiscoveryPage(cards, 1L));
 
 		mockMvc.perform(get("/v1/influencers")).andExpect(status().isOk());
@@ -172,7 +172,7 @@ class V1InfluencerDiscoveryControllerTest {
 	@Test
 	void 로그인_사용자는_사용자_단위_키로_레이트리밋된다() throws Exception {
 		List<InfluencerCard> cards = new V1InfluencerDiscoveryAssembler()
-				.toCards(List.of(row("glow")), List.of(), List.of(), List.of(), List.of());
+				.toCards(List.of(row("glow")), List.of(), List.of(), List.of(), List.of(), List.of());
 		given(pageService.page(any())).willReturn(new DiscoveryPage(cards, 1L));
 
 		mockMvc.perform(get("/v1/influencers").with(user(principal()))).andExpect(status().isOk());

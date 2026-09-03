@@ -67,6 +67,9 @@ public class AnalyticsSettings {
 	 * 잡 실행 시점마다 매번 읽으므로 재기동 없이 전환된다. 롤백은 값을 unified로 되돌리는 UPDATE 한 줄.
 	 */
 	public static final String KEY_ANALYZE_MODE = "analytics.analyze-mode";
+	/** 공동구매(공구) 판정 킬 스위치 — false면 GroupPurchaseJudgeJob이 즉시 반환한다. 기본값은
+	 * crawler Flyway 마이그레이션이 시드(true). 사전·프롬프트 수정 후 재판정은 리셋 SQL로 별도. */
+	public static final String KEY_GROUP_PURCHASE_ENABLED = "analytics.group-purchase.enabled";
 
 	// app_setting 미설정 시 폴백 — 비용 가드로 최저가 티어(haiku) 고정. Opus 등 상위 모델은 app_setting으로 명시 전환.
 	static final String DEFAULT_LLM_MODEL = "claude-haiku-4-5-20251001";
@@ -87,6 +90,7 @@ public class AnalyticsSettings {
 	static final String DEFAULT_ANALYZE_TRANSPORT = "online";
 	static final String DEFAULT_ACCOUNT_ANALYZE_TRANSPORT = "online";
 	static final String DEFAULT_ANALYZE_MODE = "unified";
+	static final boolean DEFAULT_GROUP_PURCHASE_ENABLED = true;
 
 	private final JdbcTemplate raw;
 
@@ -206,6 +210,11 @@ public class AnalyticsSettings {
 	 */
 	public boolean splitAnalyzeMode() {
 		return "split".equals(analyzeMode());
+	}
+
+	/** 공동구매 판정 킬 스위치 — 잡 실행 시점마다 매번 읽는다(캐시 없음). */
+	public boolean groupPurchaseEnabled() {
+		return read(KEY_GROUP_PURCHASE_ENABLED).map(Boolean::parseBoolean).orElse(DEFAULT_GROUP_PURCHASE_ENABLED);
 	}
 
 	/** content_analyses.model 등 기록에 쓰는 활성 모델명 — 프로바이더 따라 결정. */

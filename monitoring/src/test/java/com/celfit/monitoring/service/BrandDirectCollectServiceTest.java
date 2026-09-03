@@ -302,8 +302,8 @@ class BrandDirectCollectServiceTest {
 		// brands는 무해 스텁 — direct 경로는 열거(doSweepCore·enumerationCutoff)를 타지 않아
 		// 커버리지 조회·기록 지점에 닿지 않는다(collect는 adjustLotteryMetrics 재사용 목적).
 		BrandCollectService collect = new BrandCollectService(client(), client(), client(), callContext, writer, snapshots, comments,
-				tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
-		// recheck 소스(5번째 인자, S13)도 client()로 — 같은 postResponses/notFoundCodes를 보므로
+				tagged, authors, new InertBrands(), null, Runnable::run, Runnable::run, 2000, 10000, 3, 30, false);
+		// recheck 소스(7번째 인자, S13)도 client()로 — 같은 postResponses/notFoundCodes를 보므로
 		// 재확인 콜도 원 콜과 같은 응답을 받는다(재확인이 상황을 못 바꾸는 케이스의 기본 배선).
 		return new BrandDirectCollectService(client(), client(), callContext, writer, tagged, collect, client(),
 				sweepLimit, monitoringSetSize);
@@ -585,7 +585,7 @@ class BrandDirectCollectServiceTest {
 	private BrandDirectCollectService serviceWithSeparateSources(InstagramSource hiker, InstagramSource syncHiker,
 			InstagramSource recheckHiker) {
 		BrandCollectService collect = new BrandCollectService(client(), client(), client(), callContext, writer, snapshots,
-				comments, tagged, authors, new InertBrands(), null, Runnable::run, 2000, 10000, 3, 30, false);
+				comments, tagged, authors, new InertBrands(), null, Runnable::run, Runnable::run, 2000, 10000, 3, 30, false);
 		return new BrandDirectCollectService(hiker, syncHiker, callContext, writer, tagged, collect, recheckHiker,
 				300, 2000);
 	}

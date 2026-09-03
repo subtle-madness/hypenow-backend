@@ -90,6 +90,11 @@ public class BrandCollectService {
 	private final BrandRepository brands;
 	private final AdDisclosureJudgeService adJudge;
 	private final Executor enrichWorker;
+	/** 후행 단계(댓글 수집·광고 표기 판정) 전용 executor(2026-09 완주 스탬프 축소 개정) — {@link
+	 * #enrichUserTriggeredDeferred} 전용. 다른 모든 진입점은 direct executor({@code Runnable::run})를
+	 * 넘겨 야간 스윕·해시태그·direct 동기 경로의 실행 의미를 무변으로 유지한다({@link #enrich(BrandRow,
+	 * List, Runnable, InstagramSource, Executor)} 참조). */
+	private final Executor followup;
 	private final int maxPostsPerSweep;
 	private final int collectionPostLimit;
 	private final int commentPages;
@@ -103,6 +108,7 @@ public class BrandCollectService {
 			TaggedPostRepository taggedPosts, AuthorProfileRepository authors,
 			BrandRepository brands, AdDisclosureJudgeService adJudge,
 			@Qualifier("brandEnrichWorkerPool") Executor enrichWorker,
+			@Qualifier("brandFollowupExecutor") Executor followup,
 			@Value("${monitoring.brand.max-posts-per-sweep:10000}") int maxPostsPerSweep,
 			@Value("${monitoring.brand.collection-post-limit:2000}") int collectionPostLimit,
 			@Value("${monitoring.brand.comment-pages:3}") int commentPages,
@@ -120,6 +126,7 @@ public class BrandCollectService {
 		this.brands = brands;
 		this.adJudge = adJudge;
 		this.enrichWorker = enrichWorker;
+		this.followup = followup;
 		this.maxPostsPerSweep = maxPostsPerSweep;
 		this.collectionPostLimit = collectionPostLimit;
 		this.commentPages = commentPages;
@@ -419,10 +426,23 @@ public class BrandCollectService {
 		return cutoff;
 	}
 
+	/** direct executor — 야간 스윕·해시태그·direct 동기 경로가 {@link #enrich(BrandRow, List, Runnable,
+	 * InstagramSource, Executor)}에 넘겨 그 자리에서 실행시킨다(2026-09 완주 스탬프 축소 개정에서도
+	 * 바이트 수준으로 현행과 동일한 실행·예외 의미를 유지하는 배선 — 클래스 상단 필드 {@link #followup}
+	 * 참조). */
+	private static final Executor DIRECT = Runnable::run;
+
 	/**
 	 * enrichment 단계(2026-08-17 노출 게이트 개정 — 스펙 §8) — 정산 마킹(markEnriched)을 게시자
 	 * 프로필 보강 완료 <b>직후</b>로 당긴다. 댓글 수집·광고 표기 판정은 노출 게이트 밖으로 빠져
 	 * 각자 격리된 독립 단계가 되고, 프론트 폴링으로 나중에 채워진다(프로그레시브 서빙).
+	 *
+	 * <p>2026-09 완주 스탬프 축소 개정 — 이 오버로드(및 아래 onVisible 버전·해시태그·direct 동기
+	 * 진입점)는 댓글·판정을 {@link #DIRECT}로 그 자리에서 실행한다(종전과 실행 의미 동일). 등록
+	 * 백필 전용 {@link #enrichUserTriggeredDeferred}만 후행 전용 executor({@link #followup})에
+	 * detached 제출한다 — was가 완주 표식(backfill_completed_at)을 게시물·게시자 보강 정산 완료로만
+	 * 해석하고 댓글·판정 완료를 기다리지 않게 된 것이 근거다({@link BrandRegistrationService#runBackfillSafely}·
+	 * {@link com.celfit.monitoring.store.BrandRepository#touchSwept} javadoc 참조).
 	 *
 	 * <p>정산 마킹은 여전히 <b>게시자 보강의 성패와 무관하게 무조건</b> 찍는다(finally — 근거는
 	 * 아래 finally 블록 주석, 기존 규칙 그대로). 댓글·광고 판정도 <b>게시자 보강의 성패(배치 DB
@@ -435,7 +455,7 @@ public class BrandCollectService {
 	 * @see #enrich(BrandRow, List, Runnable) onVisible 훅(계정 게이트 단축) 버전
 	 */
 	public void enrich(BrandRow brand, List<PostInfo> posts) {
-		enrich(brand, posts, null, hiker);
+		enrich(brand, posts, null, hiker, DIRECT);
 	}
 
 	/**
@@ -445,7 +465,7 @@ public class BrandCollectService {
 	 * 판정은 개정 전과 마찬가지로 이 지점 <b>밖</b>이라, 계정 게이트를 열기 전에 그 두 단계(수 초~
 	 * 수십 초, 워커 병렬화에도 브랜드당 순차 join)를 기다리지 않는다 — 이게 이 훅의 존재 이유다.
 	 * 종전 배선(등록 백필이 {@link #enrich(BrandRow, List)} 전체 반환을 기다린 뒤 markServing)은
-	 * 댓글·판정까지 다 끝나야 계정이 뜨는 회귀였다.
+	 * 댓글·판정까지 다 끝나야 계정이 뜨는 회귀였다. 이 오버로드는 야간 스윕에서 쓰지 않으므로 무관.
 	 *
 	 * <p>onVisible은 <b>markEnriched 마킹과 같은 finally 안, 그 직후</b>에 부른다 — ensureAuthors가
 	 * 하드 실패해도(배치 DB 조회 예외) markEnriched처럼 무조건 호출된다. null이면 조용히 무시한다
@@ -457,24 +477,46 @@ public class BrandCollectService {
 	 * 부르면 그 브랜드가 collecting에 영구히 갇힌다({@link #sweepCore} 콜백 계약 참조).
 	 */
 	public void enrich(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
-		enrich(brand, posts, onVisible, hiker);
+		enrich(brand, posts, onVisible, hiker, DIRECT);
 	}
 
 	/**
 	 * 등록 백필({@link BrandRegistrationService#runEnrichSafely}) 전용 진입점 — {@link #userTriggeredHiker}로
 	 * 라우팅한다(필드+진입점 분리 패턴, {@link #enrichSync} 참조). onVisible 훅 의미는
-	 * {@link #enrich(BrandRow, List, Runnable)}와 동일 — 소스만 갈린다.
+	 * {@link #enrich(BrandRow, List, Runnable)}와 동일 — 소스만 갈린다. <b>2026-09부터 등록 백필
+	 * 본선은 {@link #enrichUserTriggeredDeferred}로 옮겨갔다</b> — 이 오버로드는 댓글·판정을
+	 * {@link #DIRECT}로 그 자리에서 돌리므로(구 배선 그대로), 등록 백필의 완주 스탬프를 다시
+	 * 늦추지 않으려면 이 메서드를 등록 백필 경로에 다시 연결하지 말 것.
 	 */
 	public void enrichUserTriggered(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
-		enrich(brand, posts, onVisible, userTriggeredHiker);
+		enrich(brand, posts, onVisible, userTriggeredHiker, DIRECT);
+	}
+
+	/**
+	 * 등록 백필({@link BrandRegistrationService#runEnrichSafely}) 전용 진입점(2026-09 완주 스탬프
+	 * 축소 개정 신설) — {@link #enrichUserTriggered(BrandRow, List, Runnable)}와 소스(userTriggeredHiker)·
+	 * onVisible 의미는 동일하되, <b>댓글 수집·광고 표기 판정을 {@link #followup}에 detached 제출</b>
+	 * 한다는 것 하나만 다르다. 이 메서드가 반환하는 시점엔 게시자 보강 정산(markEnriched)·진행
+	 * 워터마크(touchProgress)·onVisible까지만 끝나 있고, 댓글·판정은 아직 시작 전이거나 진행 중일
+	 * 수 있다 — 그래서 {@link BrandRegistrationService#runBackfillSafely}의 join이 후행을 기다리지
+	 * 않고, 뒤이은 touchSwept(완주 스탬프)가 후행 완료를 전제하지 않는다(설계 §2 참조).
+	 *
+	 * <p>후행 태스크는 아무것도 join하지 않은 채 제출되는 fire-and-forget이고, 태스크 내부는 이미
+	 * 격리된 collectCommentsGatedSafely·judgeAdDisclosuresSafely라 실패해도 밖으로 새지 않는다.
+	 * 유일한 백스톱: 댓글은 180일 이내 게시물에 한해 다음 스윕 워터마크가, 광고 판정은
+	 * {@link AdDisclosureJudgeService#backfillUnjudged} 전역 백스톱이 커버한다(180일 무관).
+	 */
+	public void enrichUserTriggeredDeferred(BrandRow brand, List<PostInfo> posts, Runnable onVisible) {
+		enrich(brand, posts, onVisible, userTriggeredHiker, followup);
 	}
 
 	/**
 	 * 해시태그 수집({@link BrandHashtagCollectService#sweepUserTriggered}) 전용 진입점 — onVisible 없는
-	 * 2-인자 {@link #enrich(BrandRow, List)}의 사용자 트리거 대응판.
+	 * 2-인자 {@link #enrich(BrandRow, List)}의 사용자 트리거 대응판. 댓글·판정은 {@link #DIRECT}로
+	 * 그 자리에서 돈다(무변 — 해시태그 스윕은 완주 스탬프와 무관한 꼬리 작업이라 후행 분리 대상이 아니다).
 	 */
 	public void enrichUserTriggered(BrandRow brand, List<PostInfo> posts) {
-		enrich(brand, posts, null, userTriggeredHiker);
+		enrich(brand, posts, null, userTriggeredHiker, DIRECT);
 	}
 
 	/**
@@ -483,12 +525,20 @@ public class BrandCollectService {
 	 * 장애 시에만 self 구조)로 강제한다. 다른 두 {@code enrich} 오버로드(스윕·백필 등 배치 경로)는
 	 * 계속 {@link #hiker}(자체 1순위 + Hiker 폴백)를 쓴다 — 동기 경로만 소스가 갈린다는 것이 이
 	 * 메서드가 존재하는 유일한 이유다. onVisible 훅 없음(direct 단건 경로는 계정 게이트 개념이 없다).
+	 * 댓글·판정은 {@link #DIRECT}로 동기 반환 전에 끝낸다(무변 — direct 응답 자체가 이미 지표까지
+	 * 포함해 동기로 돌려주는 계약이라 후행 분리 대상이 아니다).
 	 */
 	public void enrichSync(BrandRow brand, List<PostInfo> posts) {
-		enrich(brand, posts, null, syncHiker);
+		enrich(brand, posts, null, syncHiker, DIRECT);
 	}
 
-	private void enrich(BrandRow brand, List<PostInfo> posts, Runnable onVisible, InstagramSource source) {
+	/**
+	 * 후행(댓글 수집·광고 표기 판정) 실행기를 인자로 받는 이유(설계 §2-4) — 분기(boolean)가 아니라
+	 * executor 주입이라, 기존 경로(direct 실행)와 신규 경로(후행 executor 제출)가 <b>같은 코드를
+	 * 타면서</b> 실행 시점만 갈린다. 분기 조건을 잘못 짤 여지 자체가 없다.
+	 */
+	private void enrich(BrandRow brand, List<PostInfo> posts, Runnable onVisible, InstagramSource source,
+			Executor followupExecutor) {
 		if (posts.isEmpty()) {
 			if (onVisible != null) {
 				onVisible.run();
@@ -515,10 +565,26 @@ public class BrandCollectService {
 				}
 			}
 		} finally {
-			// 댓글·광고 판정은 노출 게이트 밖 — ensureAuthors의 하드 실패(위 예외가 여기까지 전파되는
-			// 중이어도) 포함해 항상 시도한다(2026-08-18 수정). 각자 실패해도 위 정산에는 영향 없다.
-			collectCommentsGatedSafely(brand.id(), posts, source);
-			judgeAdDisclosuresSafely(brand, posts);
+			// 댓글·광고 판정은 노출 게이트(정산) 밖 — ensureAuthors의 하드 실패(위 예외가 여기까지
+			// 전파되는 중이어도) 포함해 항상 <b>제출</b>한다(2026-08-18 수정 승계). 각자 실패해도 위
+			// 정산에는 영향 없다. 2026-09부터는 완주 스탬프(touchSwept) 밖 후행 단계이기도 하다 —
+			// followupExecutor가 DIRECT면 여기서 그 자리에서 실행되고(기존과 바이트 수준 동일),
+			// followup(등록 백필 전용)이면 이 스레드는 기다리지 않고 반환한다(fire-and-forget —
+			// 제출 자체는 무제한 큐라 예외를 던지지 않는다).
+			followupExecutor.execute(() -> {
+				try {
+					collectCommentsGatedSafely(brand.id(), posts, source);
+					judgeAdDisclosuresSafely(brand, posts);
+				} finally {
+					// 후행 완료 시에도 last_swept_at을 한 번 더 전진(2026-09 결함 수정) — was는
+					// 댓글·광고 판정을 직접 안 읽지만, 캐시되는 PostRef가 ad_verdict를 품고 있어
+					// 후행이 갱신한 값이 위 touchProgress(정산 시점) 이후 캐시(ETag·BrandIndexCache
+					// 버전키)에 반영되지 않으면 신규 브랜드의 광고 뱃지·필터가 다음 자연 갱신 전까지
+					// 최대 하루 안 보인다. 페이지마다 호출돼도 UPDATE 1행이라 무해. 예외로 끝나도
+					// 호출되게 finally — 실패해도 이미 쓰인 부분 판정까지는 캐시 회전 대상이다.
+					brands.touchProgress(brand.id());
+				}
+			});
 		}
 		log.info("브랜드 태그 보강 — {} 게시자 수집·정산 완료({}건 대상)", brand.username(), posts.size());
 	}

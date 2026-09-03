@@ -52,7 +52,9 @@ import org.springframework.web.context.WebApplicationContext;
  * true로 남아있을 수 있다(실측: CPU 부하 하에서 1,600회 중 3회 재현). 그래서 job이 아니라 가드 해제
  * 자체를 래치로 관측한다.
  */
-@SpringBootTest(properties = "monitoring.sweep.manual-trigger-enabled=true")
+// 백필 재시도 스케줄러 틱 방지(2026-09, 결함 3) — @SpringBootTest 컨텍스트에서 5분 주기가 돌지 않게.
+@SpringBootTest(properties = {"monitoring.sweep.manual-trigger-enabled=true",
+		"monitoring.brand.backfill-retry.enabled=false"})
 class SweepControllerTest {
 
 	/**

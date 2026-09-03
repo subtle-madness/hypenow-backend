@@ -56,7 +56,8 @@ public class V2SimilarInfluencerService {
 				discoveryRepository.findShares(handles, fnbAxis),
 				discoveryRepository.findBrands(handles),
 				discoveryRepository.findThumbs(handles),
-				discoveryRepository.findEngagements(handles));
+				discoveryRepository.findEngagements(handles),
+				discoveryRepository.findGroupPurchaseCounts(handles));
 		// 카드 조회는 순서 비보장 — 유사도 순(handles) 복원
 		Map<String, InfluencerCard> byId = cards.stream()
 				.collect(Collectors.toMap(InfluencerCard::id, Function.identity()));

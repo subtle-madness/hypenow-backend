@@ -195,6 +195,108 @@ class BrandStoreTest {
 		assertThat(column(id, "backfill_error", String.class)).isNull();
 	}
 
+	// ---------- 열거 실패 재시도 스케줄러(2026-09, 결함 1) ----------
+
+	@Test
+	void touchSwept는_backfill_attempts도_0으로_되돌린다() {
+		long id = brands.insertOrReactivate("brand_retry", profile("brand_retry"), 12, true);
+		brands.markBackfillError(id, "백필 실패");
+		brands.markBackfillAttempt(id);
+		brands.markBackfillAttempt(id);
+		assertThat(column(id, "backfill_attempts", Integer.class)).isEqualTo(2);
+
+		brands.touchSwept(id, LocalDate.of(2026, 9, 3));
+
+		assertThat(column(id, "backfill_attempts", Integer.class)).isZero();
+	}
+
+	@Test
+	void markBackfillAttempt는_시도_횟수와_시각을_함께_찍는다() {
+		long id = brands.insertOrReactivate("brand_retry", profile("brand_retry"), 12, true);
+		assertThat(column(id, "backfill_attempts", Integer.class)).isZero();   // 등록 첫 시도는 0
+		assertThat(column(id, "backfill_attempted_at", Timestamp.class)).isNull();
+
+		brands.markBackfillAttempt(id);
+
+		assertThat(column(id, "backfill_attempts", Integer.class)).isEqualTo(1);
+		assertThat(column(id, "backfill_attempted_at", Timestamp.class)).isNotNull();
+	}
+
+	/** 이미 완주(ready)한 브랜드는 markBackfillError와 같은 IS NULL 가드로 attempts를 안 건드린다. */
+	@Test
+	void markBackfillAttempt는_완주된_브랜드는_덮지_않는다() {
+		long id = brands.insertOrReactivate("brand_retry", profile("brand_retry"), 12, true);
+		brands.touchSwept(id, LocalDate.of(2026, 9, 3));   // ready
+
+		brands.markBackfillAttempt(id);
+
+		assertThat(column(id, "backfill_attempts", Integer.class)).isZero();
+		assertThat(column(id, "backfill_attempted_at", Timestamp.class)).isNull();
+	}
+
+	/**
+	 * 재시도 후보 3종 제외 규칙(설계 §3-3) — ① 정상 진행 중(backfill_error null)은 제외, ② 이미
+	 * 완주(last_swept_on 有)는 제외, ③ 상한 소진(attempts &gt;= maxAttempts)은 제외. 나머지 조건을
+	 * 만족하는 브랜드만 후보로 남는다.
+	 */
+	@Test
+	void 재시도_후보는_세_조건을_모두_만족하는_브랜드만_남긴다() {
+		long inProgress = brands.insertOrReactivate("in_progress", profile("in_progress"), 12, true);
+		// backfill_error 없음 = 정상 진행 중 — 후보 아님(가장 핵심 가드)
+
+		long completed = brands.insertOrReactivate("completed", profile("completed"), 12, true);
+		brands.touchSwept(completed, LocalDate.of(2026, 9, 3));   // last_swept_on 有
+		// markBackfillError는 last_swept_on IS NULL 가드가 있어 완주 후엔 안 먹는다 — 그 가드 때문에
+		// 실제로는 도달 불가한 조합이지만, 후보 쿼리 자체의 last_swept_on IS NULL 조건도 독립적으로
+		// 확인하기 위해 원 SQL로 직접 심는다.
+		db.update("UPDATE brand_account SET backfill_error = '완주 후 직접 심음' WHERE id = ?", completed);
+
+		long exhausted = brands.insertOrReactivate("exhausted", profile("exhausted"), 12, true);
+		brands.markBackfillError(exhausted, "백필 실패");
+		brands.markBackfillAttempt(exhausted);
+		brands.markBackfillAttempt(exhausted);
+		brands.markBackfillAttempt(exhausted);   // attempts=3=maxAttempts — 후보 아님
+
+		long eligible = brands.insertOrReactivate("eligible", profile("eligible"), 12, true);
+		brands.markBackfillError(eligible, "백필 실패");
+		// attempts=1 < 3을 원 SQL로 직접 심는다 — markBackfillAttempt를 쓰면 backfill_attempted_at도
+		// now()로 찍혀 바로 다음 문단의 백오프 테스트와 같은 이유로 이 조회 자체가 백오프에 걸린다.
+		db.update("UPDATE brand_account SET backfill_attempts = 1 WHERE id = ?", eligible);
+
+		List<BrandRow> candidates = brands.findBackfillRetryCandidates(3, 360, 5, 10);
+
+		assertThat(candidates).extracting(BrandRow::id).containsExactly(eligible);
+		assertThat(candidates).extracting(BrandRow::id)
+				.doesNotContain(inProgress, completed, exhausted);
+	}
+
+	/** 나이 창 밖(collection_started_at이 오래된) 브랜드는 후보에서 빠진다 — herd 방지(설계 §3-3). */
+	@Test
+	void 나이_창_밖_브랜드는_후보에서_빠진다() {
+		long old = brands.insertOrReactivate("old_brand", profile("old_brand"), 12, true);
+		brands.markBackfillError(old, "백필 실패");
+		db.update("UPDATE brand_account SET collection_started_at = now() - interval '7 hours' WHERE id = ?", old);
+
+		List<BrandRow> candidates = brands.findBackfillRetryCandidates(3, 360, 5, 10);   // 창 6시간(360분)
+
+		assertThat(candidates).isEmpty();
+	}
+
+	/** 백오프 창 안(직전 재시도가 얼마 안 됨)이면 후보에서 빠진다 — 선형 백오프(설계 §3-3). */
+	@Test
+	void 백오프_창_안이면_후보에서_빠진다() {
+		long id = brands.insertOrReactivate("brand_backoff", profile("brand_backoff"), 12, true);
+		brands.markBackfillError(id, "백필 실패");
+		brands.markBackfillAttempt(id);   // attempts=1, backfill_attempted_at = now()
+
+		List<BrandRow> tooSoon = brands.findBackfillRetryCandidates(3, 360, 5, 10);   // 백오프 5m×(1+1)=10m 안
+		assertThat(tooSoon).isEmpty();
+
+		db.update("UPDATE brand_account SET backfill_attempted_at = now() - interval '11 minutes' WHERE id = ?", id);
+		List<BrandRow> dueNow = brands.findBackfillRetryCandidates(3, 360, 5, 10);
+		assertThat(dueNow).extracting(BrandRow::id).containsExactly(id);
+	}
+
 	@Test
 	void 재가입은_백필_상태를_초기화한다() {
 		// 재등록 = 백필을 처음부터 다시 — "수집 준비 중"으로 되돌아야 was 폴링이 collecting을 본다.
@@ -208,6 +310,26 @@ class BrandStoreTest {
 		brands.close("brand_y");
 		brands.insertOrReactivate("brand_y", profile("brand_y"), 12, true);
 		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNull();
+	}
+
+	/**
+	 * 결함 2 수정(2026-09) — 재등록 전 열거가 재시도 상한을 소진해 있었으면, 리셋 없이는 재등록
+	 * 직후 첫 실패가 재시도 없이 곧장 exhausted 문구로 떨어진다.
+	 */
+	@Test
+	void 재가입은_백필_재시도_예산도_초기화한다() {
+		long id = brands.insertOrReactivate("brand_retry2", profile("brand_retry2"), 12, true);
+		brands.markBackfillAttempt(id);
+		brands.markBackfillAttempt(id);
+		brands.markBackfillAttempt(id);   // attempts=3=maxAttempts, backfill_attempted_at도 채워짐
+		assertThat(column(id, "backfill_attempts", Integer.class)).isEqualTo(3);
+		assertThat(column(id, "backfill_attempted_at", Timestamp.class)).isNotNull();
+		brands.close("brand_retry2");
+
+		brands.insertOrReactivate("brand_retry2", profile("brand_retry2"), 12, true);
+
+		assertThat(column(id, "backfill_attempts", Integer.class)).isZero();
+		assertThat(column(id, "backfill_attempted_at", Timestamp.class)).isNull();
 	}
 
 	@Test
@@ -265,6 +387,25 @@ class BrandStoreTest {
 		assertThat(brands.expandWindow(id, 12)).isTrue();
 
 		assertThat(column(id, "backfill_completed_at", Timestamp.class)).isNull();
+	}
+
+	/**
+	 * 결함 2 수정(2026-09) — 확장 전 열거가 재시도 상한을 소진해 있었으면, 리셋 없이는 확장
+	 * 백필의 첫 실패가 재시도 없이 곧장 exhausted 문구로 떨어진다(insertOrReactivate와 같은 결함).
+	 */
+	@Test
+	void 기간_확장이_백필_재시도_예산도_초기화한다() {
+		long id = brands.insertOrReactivate("brandx", profile("brandx", "111", 1000L, "소개"), 3, true);
+		brands.markBackfillAttempt(id);
+		brands.markBackfillAttempt(id);
+		brands.markBackfillAttempt(id);   // attempts=3=maxAttempts
+		assertThat(column(id, "backfill_attempts", Integer.class)).isEqualTo(3);
+		assertThat(column(id, "backfill_attempted_at", Timestamp.class)).isNotNull();
+
+		assertThat(brands.expandWindow(id, 12)).isTrue();
+
+		assertThat(column(id, "backfill_attempts", Integer.class)).isZero();
+		assertThat(column(id, "backfill_attempted_at", Timestamp.class)).isNull();
 	}
 
 	@Test

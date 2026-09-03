@@ -60,12 +60,13 @@ public class AdminConfig {
 			ObjectProvider<ContentSynthesisRefreshJob> synthesisRefreshJob,
 			ObjectProvider<ImageArchiveJob> archiveJob,
 			ObjectProvider<com.celfit.analytics.analyze.TraitCanonJob> traitCanonJob,
+			ObjectProvider<com.celfit.analytics.grouppurchase.GroupPurchaseJudgeJob> groupPurchaseJudgeJob,
 			JobProgressRegistry jobProgressRegistry, RunHistory runHistory,
 			DerivedViewRefresher derivedViewRefresher) {
 		return new AnalyticsJobService(jobLock, jobTaskExecutor, mirrorJob, mirrorRegistry,
 				classifyJob, analyzeJob, batchCollectJob, accountBatchCollectJob, accountAnalyzeJob,
-				synthesisRefreshJob, archiveJob, traitCanonJob, jobProgressRegistry, runHistory,
-				derivedViewRefresher);
+				synthesisRefreshJob, archiveJob, traitCanonJob, groupPurchaseJudgeJob, jobProgressRegistry,
+				runHistory, derivedViewRefresher);
 	}
 
 	@Bean(initMethod = "register", destroyMethod = "unregister")

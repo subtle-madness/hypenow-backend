@@ -36,7 +36,8 @@ public class AdminUiController {
 	private static final List<JobName> DASHBOARD_JOBS =
 			List.of(JobName.MIRROR, JobName.FACT_ANALYZE, JobName.ANALYZE,
 					JobName.LATE_BACKFILL_ANALYZE, JobName.ACCOUNT_ANALYZE, JobName.ARCHIVE,
-					JobName.TRAIT_CANON_DRY, JobName.TRAIT_CANON_APPLY);
+					JobName.TRAIT_CANON_DRY, JobName.TRAIT_CANON_APPLY,
+					JobName.GROUP_PURCHASE_JUDGE);
 
 	/** 잡 카드 뷰모델 — 시각·경과는 컨트롤러에서 KST 포맷해 문자열로 넘긴다(#temporals 미탑재). */
 	public record JobCard(JobName job, String label, boolean running,
