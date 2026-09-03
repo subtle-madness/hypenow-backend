@@ -2,22 +2,22 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 브랜드 등록 시 심는 자동 해시태그를 "계정명 문자열 절삭"에서 "그 브랜드에 태그된 게시물 캡션의 해시태그 빈도(+ 임계 미만이면 brandName 기반 AI 폴백 1개)"로 바꾸고, was에 복제돼 있던 유도 규칙을 삭제해 유도 규칙을 monitoring 단일 소유로 되돌린다.
+**Goal:** 자동 해시태그의 재료를 "계정명 문자열 절삭"에서 "그 브랜드에 태그된 게시물 캡션의 해시태그 빈도(+ IG 표시명 기반 AI, + 계정명 정리 안전장치)"로 바꾸고, 계산은 monitoring 내부 조회 API 1개로, 쓰기는 was 한 곳으로 유지한다.
 
-**Architecture:** monitoring이 유일한 태그 유도 주체다. 신규 클래스 4개(`HashtagCandidateExtractor` 순수 집계 / `BrandHashtagSuggester` LLM 폴백 / `BrandHashtagSeedSettings` app_setting TTL 캐시 / `BrandHashtagSeedService` 오케스트레이션)가 각각 책임 하나를 갖고, `BrandRegistrationService`는 두 지점(신규 등록의 백필 꼬리 · replay 재등록 동기 구간)에서 `seedIfEmpty`를 부른다. LLM 전송은 광고 표기 판정과 같은 `GeminiHttp` 빈을 재사용한다(새 HTTP 클라이언트 없음). was는 유도 규칙을 잃고, 대신 조회 시 장부가 비어 있으면 기존 `ensureSeeded`(무주 태그 승계)로 monitoring 태그를 물려받는다.
+**Architecture:** **monitoring은 계산만 하고 DB에 쓰지 않는다** — `GET /api/brands/{username}/hashtag-suggestion`이 `{path, tag, topCount, candidatePosts}`를 돌려주고 `tag`는 절대 비지 않는다(FREQ → AI → FALLBACK 3단). **was가 유일한 작성자다**(08-28 결정 유지) — 브랜드당 시드 기록 1행(`app.brand_hashtag_seed`)과 링크별 반영 표식(`brand_monitorings.hashtag_seeded_at`)으로 계산을 브랜드당 1회, 장부 삽입을 사용자당 1회로 묶고, 훅(`ensureAutoSeeded`)을 초기 백필 완료 뒤 조회 표면(단건 폴링 · 태그 목록 · 해시태그 게시물 목록/개수)에 건다. 유도 규칙(계정명 절삭)은 어디에도 남지 않는다.
 
-**Tech Stack:** Java 21 · Spring Boot 4.1 · Gradle 멀티모듈(monitoring / was) · JdbcTemplate(monitoring) · JdbcClient(was) · Jackson 3(`tools.jackson.*`) · Micrometer · Flyway(UTC 타임스탬프 채번) · JUnit 5 + AssertJ + Mockito · Testcontainers(PostgreSQL)
+**Tech Stack:** Java 21 · Spring Boot 4.1 · Gradle 멀티모듈(monitoring / was) · JdbcTemplate(monitoring) · JdbcClient(was) · Jackson 3(`tools.jackson.*`) · Micrometer · Flyway(UTC 타임스탬프 채번, monitoring·was app 각자 버전 공간) · JUnit 5 + AssertJ + Mockito · Testcontainers(PostgreSQL)
 
 ---
 
 > 상태: 🟢 활성 · 구현 미착수 (2026-09-03)
 >
-> 정본 설계: [2026-09-03 브랜드 해시태그 자동 시드 재설계](../specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md)
+> 정본 설계: [2026-09-03 브랜드 해시태그 자동 시드 재설계(2차 개정)](../specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md)
 
 ## 사전 준비 (모든 Task 공통)
 
-통합 테스트(Testcontainers)를 도는 Task 3·Task 7은 셸에 아래가 **반드시** export돼 있어야 한다.
-없으면 컨테이너 초기화가 깨져 무관한 테스트가 무더기로 실패한다(테스트 결함으로 오진하기 쉬운 양상).
+Testcontainers를 도는 Task 3·Task 7은 셸에 아래가 **반드시** export돼 있어야 한다. 없으면 컨테이너
+초기화가 깨져 무관한 테스트가 무더기로 실패한다(테스트 결함으로 오진하기 쉬운 양상).
 
 ```
 export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
@@ -28,62 +28,66 @@ export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
 
 ## 코드 조사에서 확인된 사실 (계획의 전제)
 
-spec 작성 시점 이후 코드가 이미 움직여 있어, spec 본문의 일부 표현은 현재 코드와 이름이 다르다.
-**설계 결정은 그대로 따르되** 아래 사실에 맞춰 구현한다.
-
-| spec 표현 | 현재 코드 실체 |
+| 항목 | 실체 |
 |---|---|
-| monitoring `BrandHashtagTags.derive` 삭제 | 2026-08-28에 **이미 삭제됨**. 남은 건 `isValidTag`뿐이고 `BrandController:361`이 유저 입력 검증에 쓴다 — 유지. |
-| monitoring `BrandHashtagTagsTest` 제거 | **이미 없음**(파일 자체가 없다). 새로 만들지 않는다. |
-| `BrandRegistrationService.seedHashtagsSafely` 자리 | 그 메서드도 **이미 삭제됨**. replay 분기(`register` 168행 `triggerHashtagSweep(existing.get())`) 바로 **앞**이 그 자리다. |
-| `brand_hashtag` 삽입에 `insertTags` 재사용 | 실제 메서드명은 `BrandHashtagRepository.addTags(long, Collection<String>)`(tombstone 재활성 UPSERT). 시드 시점엔 `countAll == 0`이라 충돌이 불가능해 의미는 동일하다. |
-| was `BrandHashtagPostAssembler`의 장부 읽기 지점 | 그 클래스는 장부를 읽지 않는다. 실제 읽기 지점은 `BrandPostAssembler:225`·`BrandPostAssembler:504`이고 이 클래스에는 `MonitoringCommandClient`도 username도 없다 → **승계는 서비스/컨트롤러 층으로 올린다**(Task 8). |
+| monitoring `BrandHashtagTags.derive` | 2026-08-28에 **이미 삭제됨**. 남은 `isValidTag`는 `BrandController:361`이 유저 입력 검증에 쓴다 — 유지. |
+| monitoring `BrandRegistrationService` | 이 개정에서 **건드리지 않는다**(등록 경로 결선 없음). `seedHashtagsSafely`도 이미 없다. |
+| `brand_account.full_name` | `BrandRow`에 **없다**(id·username·igUserId·status·lastSweptOn·collectionMonths·hasOwnLink). 컬럼은 존재하며 `BrandRepository.insertOrReactivate`·`refreshProfile`이 쓴다 → 전용 조회 `findFullName(brandId)`를 새로 판다(BrandRow 확장은 사용처가 넓어 비용이 크다). |
+| monitoring 404 관용구 | `BrandController.activeBrand(username)` + `brandNotFound()`(`{code:"BRAND_NOT_FOUND"}` 바디). 빈 바디 404는 was가 503으로 오승격한다(08-11 실측) — 반드시 이 헬퍼를 쓴다. |
+| was `BrandAccountRow.backfillCompletedAt` | 존재(`BrandReadRepository.BrandAccountRow` 6번째 컴포넌트). |
+| was `BrandLinkRow` | record, 8 컴포넌트. 프로덕션 생성은 `BrandLinkRepository`의 `query(BrandLinkRow.class)` 매핑뿐이고, **`new BrandLinkRow(...)` 직접 호출은 전부 테스트(12파일 24곳)**다. |
+| was app 마이그레이션 | `was/src/main/resources/db/migration/app/`, 최신 `V20260902125204__ai_chat_logs_feedback.sql`. |
 
 ## 파일 구조
 
-### 생성
+### 생성 (monitoring)
 
 | 파일 | 책임 |
 |---|---|
-| `monitoring/src/main/resources/db/migration/V<UTC>__brand_hashtag_seed_settings.sql` | 설정 키 3종 시드(min-posts·stoplist·ai-enabled) |
-| `monitoring/src/main/java/com/celfit/monitoring/config/BrandHashtagSeedSettings.java` | 위 3키의 app_setting TTL(5초) 캐시 읽기 |
-| `monitoring/src/main/java/com/celfit/monitoring/service/HashtagCandidateExtractor.java` | 순수 함수 — 캡션 목록 → 정렬된 태그 후보 |
-| `monitoring/src/main/java/com/celfit/monitoring/llm/BrandHashtagSuggester.java` | AI 폴백 — brandName → 검증된 태그 1개 |
-| `monitoring/src/main/java/com/celfit/monitoring/service/BrandHashtagSeedService.java` | 오케스트레이션(실행 조건·집계·임계·AI·저장·로그·지표) |
-| `monitoring/src/main/java/com/celfit/monitoring/config/BrandHashtagSeedConfig.java` | 위 두 클래스의 빈 조립 |
-| `monitoring/src/test/java/com/celfit/monitoring/config/BrandHashtagSeedSettingsTest.java` | 설정 캐시 단위 테스트 |
-| `monitoring/src/test/java/com/celfit/monitoring/service/HashtagCandidateExtractorTest.java` | 추출·dedup·제외·정렬 단위 테스트 |
-| `monitoring/src/test/java/com/celfit/monitoring/llm/BrandHashtagSuggesterTest.java` | AI 요청·파싱·검증 단위 테스트(GeminiHttp fake) |
-| `monitoring/src/test/java/com/celfit/monitoring/service/BrandHashtagSeedServiceTest.java` | 시드 판정 전 분기 단위 테스트 |
-| `monitoring/src/test/java/com/celfit/monitoring/store/BrandHashtagSeedQueryTest.java` | `countAll`·`findCaptionsForSeed` 통합(Testcontainers) 테스트 |
+| `monitoring/src/main/resources/db/migration/V<UTC>__brand_hashtag_seed_settings.sql` | 설정 3키 시드 |
+| `monitoring/.../config/BrandHashtagSeedSettings.java` | app_setting TTL(5초) 캐시 |
+| `monitoring/.../service/HashtagCandidateExtractor.java` | 순수 함수 — 캡션 목록 → 정렬된 후보 |
+| `monitoring/.../llm/BrandHashtagSuggester.java` | AI — (표시명, 계정명) → 정리된 태그 |
+| `monitoring/.../service/BrandHashtagSuggestionService.java` | FREQ→AI→FALLBACK 3단 계산·응답 조립·로그·지표 |
+| `monitoring/.../config/BrandHashtagSuggestionConfig.java` | 위 두 클래스 빈 조립 |
+| 테스트 5개 | `config/BrandHashtagSeedSettingsTest` · `service/HashtagCandidateExtractorTest` · `llm/BrandHashtagSuggesterTest` · `service/BrandHashtagSuggestionServiceTest` · `store/BrandHashtagSeedQueryTest` |
+
+### 생성 (was)
+
+| 파일 | 책임 |
+|---|---|
+| `was/src/main/resources/db/migration/app/V<UTC>__brand_hashtag_seed.sql` | 시드 기록 테이블 + 링크 표식 컬럼 |
+| `was/.../monitoring/BrandHashtagSeedRepository.java` | `app.brand_hashtag_seed` 접점(find/insertIgnore) |
+| `was/src/test/.../monitoring/BrandHashtagSeedRepositoryTest.java` | 위 통합 테스트 |
+| `was/src/test/.../v1/brandmonitoring/V1BrandAccountServiceAutoSeedTest.java` | `ensureAutoSeeded` 분기 전량 |
 
 ### 수정
 
 | 파일 | 변경 |
 |---|---|
-| `monitoring/.../store/BrandHashtagRepository.java` | `countAll(long)` 추가(tombstone 포함) |
-| `monitoring/.../store/TaggedPostRepository.java` | `TaggedCaption` record + `findCaptionsForSeed(long)` 추가 |
-| `monitoring/.../service/BrandRegistrationService.java` | 생성자에 `BrandHashtagSeedService` 추가, `runBackfillSafely(BrandRow, String)`·`expandIfRequested(BrandRow, int, String)` 시그니처 변경, replay 분기 동기 시드 |
-| `monitoring/src/test/.../service/BrandRegistrationServiceTest.java` | `StubHashtagSeed` 추가 + 신규 검증 5건 + 기존 2건 javadoc 갱신 |
-| `was/.../v1/brandmonitoring/V1BrandAccountService.java` | `seedLedgerTagsSafely` 및 호출 삭제, `ensureLedgerSeededSafely` 신설, `getHashtagTags` 승계 |
-| `was/.../v1/brandmonitoring/BrandCaptionHashtags.java` | 삭제되는 `BrandHashtagTags`로의 javadoc 링크 정리 |
-| `was/.../v1/brandmonitoring/V1BrandPostsController.java` | 생성자에 `V1BrandAccountService` 추가, `hashtagPosts`·`hashtagPostCount`에서 승계 호출 |
-| `was/src/test/.../v1/brandmonitoring/V1BrandAccountServiceHashtagTagsTest.java` | 등록 시딩 기대 3건 삭제, 조회 승계 기대 3건 추가 |
-| `was/src/test/.../v1/brandmonitoring/V1BrandAccountsControllerTest.java` | 등록 시딩 push 기대 갱신 |
-| `was/src/test/.../v1/brandmonitoring/V1BrandPostsControllerTest.java` | `V1BrandAccountService` @MockitoBean 추가 |
-| `DECISIONS.md` | 맨 위에 결정 1행 |
-| `docs/tracks/MON-BT-브랜드-태그-모니터링.md` | 트랙 상태 + 운영 정리·재시드 절차(SQL 포함) |
+| `monitoring/.../store/TaggedPostRepository.java` | `TaggedCaption` record + `findCaptionsForSeed(long)` |
+| `monitoring/.../store/BrandRepository.java` | `findFullName(long)` |
+| `monitoring/.../web/BrandController.java` | 생성자에 `BrandHashtagSuggestionService` 추가 + `GET /{username}/hashtag-suggestion` |
+| `monitoring/src/test/.../web/BrandControllerTest.java` | 스텁 추가 + 404·200 검증 |
+| `was/.../monitoring/BrandLinkRow.java` | `hashtagSeededAt` 컴포넌트 추가 |
+| `was/.../monitoring/BrandLinkRepository.java` | `SELECT_COLUMNS`에 `hashtag_seeded_at` + `markHashtagSeeded(long)` |
+| `was/.../monitoring/MonitoringCommandClient.java` | `getHashtagSuggestion(String)` + `HashtagSuggestionBody` record |
+| `was/.../v1/brandmonitoring/V1BrandAccountService.java` | `seedLedgerTagsSafely` 삭제, `ensureAutoSeeded` 신설, `get`·`getHashtagTags` 훅 |
+| `was/.../v1/brandmonitoring/V1BrandPostsController.java` | 생성자에 `V1BrandAccountService` + 해시태그 목록·개수에 훅 |
+| `was/.../v1/brandmonitoring/BrandCaptionHashtags.java` | 삭제되는 `BrandHashtagTags` javadoc 링크 정리 |
+| was 테스트 12파일 | `new BrandLinkRow(...)` 24곳에 인자 1개 추가 |
+| `DECISIONS.md` · `docs/tracks/MON-BT-브랜드-태그-모니터링.md` | 결정 기록 + 트랙 갱신 |
 
 ### 삭제
 
 | 파일 | 사유 |
 |---|---|
-| `was/src/main/java/com/celfit/was/v1/brandmonitoring/BrandHashtagTags.java` | monitoring 규칙의 복제본 — 유도 규칙 was 소멸 |
-| `was/src/test/java/com/celfit/was/v1/brandmonitoring/BrandHashtagTagsTest.java` | 위 클래스 전용 테스트 |
+| `was/.../v1/brandmonitoring/BrandHashtagTags.java` | 계정명 절삭 유도 규칙 |
+| `was/src/test/.../v1/brandmonitoring/BrandHashtagTagsTest.java` | 위 클래스 전용 테스트 |
 
 ---
 
-## Task 1 — 설정 키 시드와 TTL 캐시 (`BrandHashtagSeedSettings`)
+## Task 1 — monitoring 설정 키 시드와 TTL 캐시
 
 **Files:**
 - Create: `monitoring/src/main/resources/db/migration/V<UTC>__brand_hashtag_seed_settings.sql`
@@ -92,7 +96,7 @@ spec 작성 시점 이후 코드가 이미 움직여 있어, spec 본문의 일�
 
 ### Steps
 
-- [ ] **실패 테스트 작성** — `monitoring/src/test/java/com/celfit/monitoring/config/BrandHashtagSeedSettingsTest.java`를 만든다.
+- [ ] **실패 테스트 작성** — `monitoring/src/test/java/com/celfit/monitoring/config/BrandHashtagSeedSettingsTest.java`
 
 ```java
 package com.celfit.monitoring.config;
@@ -110,8 +114,8 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /**
- * 자동 시드 설정 TTL 캐시 — {@code IgSourceSettings}와 같은 관용구(짧은 TTL·이상값 안전측·조회
- * 실패 시 직전 캐시 유지)를 세 키(min-posts·stoplist·ai-enabled)에 대해 고정한다.
+ * 해시태그 제안 설정 TTL 캐시 — {@code IgSourceSettings}와 같은 관용구(짧은 TTL·이상값 안전측·
+ * 조회 실패 시 직전 캐시 유지)를 세 키(min-posts·stoplist·ai-enabled)에 대해 고정한다.
  */
 class BrandHashtagSeedSettingsTest {
 
@@ -262,7 +266,7 @@ class BrandHashtagSeedSettingsTest {
 
 - [ ] **실패 확인** — `./gradlew :monitoring:test --tests "com.celfit.monitoring.config.BrandHashtagSeedSettingsTest"` 가 컴파일 실패(클래스 없음)로 끝나는 것을 확인한다.
 
-- [ ] **최소 구현** — `monitoring/src/main/java/com/celfit/monitoring/config/BrandHashtagSeedSettings.java`를 만든다.
+- [ ] **최소 구현** — `monitoring/src/main/java/com/celfit/monitoring/config/BrandHashtagSeedSettings.java`
 
 ```java
 package com.celfit.monitoring.config;
@@ -281,10 +285,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
- * 브랜드 해시태그 자동 시드 런타임 설정(2026-09-03 자동 시드 재설계 §3-5) — app_setting을 짧은
- * TTL(기본 5초)로 캐시한다. {@code IgSourceSettings}와 같은 관용구다: 키 부재·이상값은 기본값으로
- * 접고, 조회가 실패하면(DB 장애) 직전 캐시를 유지하며 캐시가 아예 없으면 기본값으로 fail-safe한다 —
- * 설정 조회 예외가 등록·백필 흐름을 깨뜨리지 않게 한다.
+ * 브랜드 해시태그 제안 런타임 설정(2026-09-03 자동 시드 재설계 §3-5) — app_setting을 짧은 TTL
+ * (기본 5초)로 캐시한다. {@code IgSourceSettings}와 같은 관용구다: 키 부재·이상값은 기본값으로 접고,
+ * 조회가 실패하면(DB 장애) 직전 캐시를 유지하며 캐시가 아예 없으면 기본값으로 fail-safe한다 —
+ * 설정 조회 예외가 제안 API를 500으로 떨구지 않게 한다.
  *
  * <p>세 키의 기본값은 Flyway 시드({@code V…__brand_hashtag_seed_settings.sql})와 같은 값이다.
  * 여기 상수는 "마이그레이션 이전·행 삭제" 같은 예외 상태의 안전망이지 정본이 아니다 — 기준값
@@ -322,17 +326,17 @@ public class BrandHashtagSeedSettings {
 		this.ttl = ttl;
 	}
 
-	/** 최다 태그 시드 임계(등장 게시물 수, 이 값 이상이면 시드). */
+	/** FREQ 임계(등장 게시물 수, 이 값 이상이면 그 태그를 쓴다). */
 	public int minPosts() {
 		return snapshot().minPosts();
 	}
 
-	/** 후보·AI 결과에서 제외할 태그(전부 소문자). */
+	/** FREQ 후보·AI 결과에서 제외할 태그(전부 소문자). */
 	public Set<String> stoplist() {
 		return snapshot().stoplist();
 	}
 
-	/** AI 폴백 킬 스위치 — false면 임계 미만일 때 0개로 끝낸다. */
+	/** AI 경로 킬 스위치 — false면 FREQ 실패 시 곧장 FALLBACK이다. */
 	public boolean aiEnabled() {
 		return snapshot().aiEnabled();
 	}
@@ -348,7 +352,7 @@ public class BrandHashtagSeedSettings {
 			cache = fresh;
 			return fresh;
 		} catch (RuntimeException e) {
-			log.warn("자동 시드 설정 조회 실패 — 안전측 기본값으로 fail-safe: {}", e.toString());
+			log.warn("해시태그 제안 설정 조회 실패 — 안전측 기본값으로 fail-safe: {}", e.toString());
 			Snapshot fallback = current != null ? current.withExpiry(now.plus(ttl))
 					: new Snapshot(DEFAULT_MIN_POSTS, parseStoplist(DEFAULT_STOPLIST), true, now.plus(ttl));
 			cache = fallback;
@@ -365,7 +369,7 @@ public class BrandHashtagSeedSettings {
 		return new Snapshot(minPosts, stoplist, aiEnabled, now.plus(ttl));
 	}
 
-	/** 숫자 아님·0 이하는 기본값 — 0 이하를 허용하면 후보 0건에도 시드가 나가 규칙이 무너진다. */
+	/** 숫자 아님·0 이하는 기본값 — 0 이하를 허용하면 후보 0건에도 FREQ가 나가 규칙이 무너진다. */
 	private static int parseMinPosts(String raw) {
 		try {
 			int parsed = Integer.parseInt(raw.trim());
@@ -403,15 +407,15 @@ public class BrandHashtagSeedSettings {
 
 - [ ] **통과 확인** — `./gradlew :monitoring:test --tests "com.celfit.monitoring.config.BrandHashtagSeedSettingsTest"` 가 전부 통과하는 것을 확인한다.
 
-- [ ] **마이그레이션 채번** — `date -u +%Y%m%d%H%M%S` 를 실행해 UTC 타임스탬프를 얻고(예: `20260903085356`), 그 값을 파일명에 쓴다. **반드시 UTC** — KST 채번은 미래 번호 선점으로 뒤따르는 정상 채번을 Flyway out-of-order 거부에 빠뜨린다.
+- [ ] **마이그레이션 채번** — `date -u +%Y%m%d%H%M%S` 를 실행해 UTC 타임스탬프를 얻고(예: `20260903091500`) 그 값을 파일명에 쓴다. **반드시 UTC** — KST 채번은 미래 번호 선점으로 뒤따르는 정상 채번을 Flyway out-of-order 거부에 빠뜨린다.
 
 - [ ] **마이그레이션 작성** — `monitoring/src/main/resources/db/migration/V<위에서 얻은 값>__brand_hashtag_seed_settings.sql`
 
 ```sql
--- 브랜드 해시태그 자동 시드 런타임 설정(2026-09-03 자동 시드 재설계 §3-5).
--- min-posts  : 태그된 게시물 캡션 집계에서 최다 태그의 "등장 게시물 수"가 이 값 이상이면 그 태그 1개를 시드.
--- stoplist   : 후보·AI 결과 양쪽에서 제외할 태그(쉼표 구분, 소문자 비교).
--- ai-enabled : 임계 미만일 때의 brandName 기반 AI 폴백 킬 스위치. 끄려면 SQL 한 줄:
+-- 브랜드 해시태그 제안 런타임 설정(2026-09-03 자동 시드 재설계 §3-5).
+-- min-posts  : 태그된 게시물 캡션 집계에서 최다 태그의 "등장 게시물 수"가 이 값 이상이면 path=FREQ.
+-- stoplist   : FREQ 후보·AI 결과 양쪽에서 제외할 태그(쉼표 구분, 소문자 비교).
+-- ai-enabled : 2순위 AI 경로 킬 스위치. 끄면 FREQ 미달이 곧장 FALLBACK(계정명 정리)으로 간다:
 --   UPDATE app_setting SET value = 'false' WHERE key = 'brand.hashtag-seed.ai-enabled';
 -- (재배포 불필요 — BrandHashtagSeedSettings TTL 5초 이내 반영)
 INSERT INTO app_setting (key, value) VALUES
@@ -426,7 +430,7 @@ ON CONFLICT (key) DO NOTHING;
 - [ ] **커밋**
 
 ```
-feat(monitoring): 브랜드 해시태그 자동 시드 설정 키와 TTL 캐시
+feat(monitoring): 해시태그 제안 설정 키와 TTL 캐시
 
 app_setting 3키(min-posts·stoplist·ai-enabled)를 Flyway로 시드하고,
 IgSourceSettings와 같은 5초 TTL 캐시로 읽는 BrandHashtagSeedSettings를 추가한다.
@@ -440,9 +444,9 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ## Task 2 — 캡션 해시태그 후보 집계 (`HashtagCandidateExtractor`)
 
 **Files:**
+- Modify: `monitoring/src/main/java/com/celfit/monitoring/store/TaggedPostRepository.java` (`nthNewestHashtagTakenAt` 뒤, 81행 다음에 record만 — 쿼리는 Task 3)
 - Create: `monitoring/src/main/java/com/celfit/monitoring/service/HashtagCandidateExtractor.java`
 - Create: `monitoring/src/test/java/com/celfit/monitoring/service/HashtagCandidateExtractorTest.java`
-- Modify: `monitoring/src/main/java/com/celfit/monitoring/store/TaggedPostRepository.java` (record `TaggedCaption`만 — 쿼리는 Task 3)
 
 > 순수 함수의 입력 타입을 저장소 record로 두는 이유: 같은 모양의 record를 service·store에 두 벌
 > 만들면 매핑 보일러플레이트와 드리프트가 생긴다. monitoring의 service→store 의존은 기존 관용구다
@@ -450,12 +454,12 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 
 ### Steps
 
-- [ ] **입력 record 추가** — `TaggedPostRepository`의 `nthNewestHashtagTakenAt` 메서드 **바로 뒤**(현재 81행 다음)에 record를 넣는다. import에 `java.time.Instant`는 이미 있다.
+- [ ] **입력 record 추가** — `TaggedPostRepository`의 `nthNewestHashtagTakenAt` 바로 뒤에 넣는다. `java.time.Instant` import는 이미 있다.
 
 ```java
 	/**
-	 * 자동 시드 후보 집계 입력(2026-09-03 자동 시드 재설계 §3-2) — 태그된 게시물 1건의 캡션과 게시일.
-	 * takenAt은 동률 태그의 tie-break(최근 우선)에만 쓰이므로 null이어도 집계는 성립한다.
+	 * 해시태그 제안 후보 집계 입력(2026-09-03 자동 시드 재설계 §3-2) — 태그된 게시물 1건의 캡션과
+	 * 게시일. takenAt은 동률 태그의 tie-break(최근 우선)에만 쓰이므로 null이어도 집계는 성립한다.
 	 */
 	public record TaggedCaption(String caption, Instant takenAt) {
 	}
@@ -496,8 +500,7 @@ class HashtagCandidateExtractorTest {
 
 	@Test
 	void 한_게시물_안의_같은_태그_반복은_한_번만_센다() {
-		var out = HashtagCandidateExtractor.extract(
-				List.of(post("#끌리메 #끌리메 #끌리메", T1)), Set.of());
+		var out = HashtagCandidateExtractor.extract(List.of(post("#끌리메 #끌리메 #끌리메", T1)), Set.of());
 
 		assertThat(out).singleElement()
 				.extracting(HashtagCandidateExtractor.Candidate::postCount).isEqualTo(1);
@@ -513,8 +516,7 @@ class HashtagCandidateExtractorTest {
 
 	@Test
 	void stoplist_태그는_후보에서_빠진다() {
-		var out = HashtagCandidateExtractor.extract(
-				List.of(post("#광고 #끌리메", T1)), Set.of("광고"));
+		var out = HashtagCandidateExtractor.extract(List.of(post("#광고 #끌리메", T1)), Set.of("광고"));
 
 		assertThat(out).extracting(HashtagCandidateExtractor.Candidate::tag).containsExactly("끌리메");
 	}
@@ -574,9 +576,7 @@ class HashtagCandidateExtractorTest {
 
 	@Test
 	void 해시태그가_하나도_없으면_빈_목록이다() {
-		var out = HashtagCandidateExtractor.extract(List.of(post("태그 없는 캡션", T1)), Set.of());
-
-		assertThat(out).isEmpty();
+		assertThat(HashtagCandidateExtractor.extract(List.of(post("태그 없는 캡션", T1)), Set.of())).isEmpty();
 	}
 
 	@Test
@@ -626,7 +626,7 @@ import java.util.regex.Pattern;
  *
  * <p>추출 규칙은 was {@code BrandCaptionHashtags}와 같다 — ASCII {@code #} + {@code [\p{L}\p{N}_]+}
  * 로 인스타 링크화와 일치시킨다(전각 ＃ 제외·점에서 끊김). 두 규칙이 갈리면 "화면에서 필터되는
- * 해시태그"와 "시드 후보"가 어긋난다.
+ * 해시태그"와 "제안 후보"가 어긋난다.
  *
  * <p>집계 단위는 <b>등장 게시물 수</b>다 — 한 캡션에 같은 태그를 세 번 달아도 1로 센다(태그 도배가
  * 순위를 만들지 못하게 한다).
@@ -709,19 +709,16 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 
 ---
 
-## Task 3 — 시드 판정에 필요한 조회 2종 (`countAll` · `findCaptionsForSeed`)
+## Task 3 — 제안 계산에 필요한 조회 2종
 
 **Files:**
-- Modify: `monitoring/src/main/java/com/celfit/monitoring/store/BrandHashtagRepository.java` (`findTags` 뒤, 35행 다음에 `countAll` 추가)
-- Modify: `monitoring/src/main/java/com/celfit/monitoring/store/TaggedPostRepository.java` (Task 2에서 넣은 `TaggedCaption` record 뒤에 쿼리 추가)
+- Modify: `monitoring/src/main/java/com/celfit/monitoring/store/TaggedPostRepository.java` (Task 2에서 넣은 `TaggedCaption` record 뒤)
+- Modify: `monitoring/src/main/java/com/celfit/monitoring/store/BrandRepository.java` (`findById` 뒤, 168행 근처)
 - Create: `monitoring/src/test/java/com/celfit/monitoring/store/BrandHashtagSeedQueryTest.java`
 
-> **모수 결정(spec §3-2에서 한 걸음 좁힘)** — spec은 모수를 "`brand_tagged_post`(brand_id) ⋈
-> `brand_post_meta`"로만 적었지만, 쿼리에 `t.tag_detected_at IS NOT NULL` 가드를 **반드시 건다**.
-> 이유는 §5 재시드 절차다: 운영 정리는 절삭 태그를 hard DELETE만 하고 그 태그로 이미 수집된
-> `brand_tagged_post` 행(hashtag 성분)은 남긴다. 가드가 없으면 `#dr` 같은 무관 태그로 긁혀 온
-> 게시물의 캡션이 재시드 집계에 그대로 들어가 새 규칙이 그 오염을 물려받는다. 가드는 spec §3-2의
-> 정의문("태그된 게시물 = 다른 사용자가 이 브랜드 계정을 태그한 게시물")과도 일치한다.
+> **`tag_detected_at IS NOT NULL` 가드가 핵심이다**(spec §3-2에 채택됨). §5 운영 정리는 절삭 태그를
+> hard DELETE만 하고 그 태그로 이미 수집된 `brand_tagged_post` 행(hashtag 성분)은 남긴다. 가드가
+> 없으면 `#dr` 같은 무관 태그로 긁혀 온 게시물의 캡션이 집계에 섞여 새 규칙이 오염을 물려받는다.
 
 ### Steps
 
@@ -742,18 +739,17 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
- * 자동 시드 판정 입력 2종(2026-09-03 자동 시드 재설계 §3-1·§3-2) — BrandHashtagRepositoryTest와
- * 같은 Testcontainers 관용구. tombstone 포함 카운트와 "tag 성분 게시물의 캡션"만 실 컨테이너
- * 왕복으로 고정한다.
+ * 해시태그 제안 계산 입력 2종(2026-09-03 자동 시드 재설계 §3-2·§3-3) — BrandHashtagRepositoryTest와
+ * 같은 Testcontainers 관용구. "tag 성분 게시물의 캡션"과 IG 표시명 조회를 실 컨테이너 왕복으로 고정한다.
  */
 class BrandHashtagSeedQueryTest {
 
 	private static final Instant NOW = Instant.parse("2026-09-03T00:00:00Z");
 
 	JdbcTemplate db;
-	BrandHashtagRepository tags;
 	TaggedPostRepository taggedPosts;
 	BrandPostMetaRepository meta;
+	BrandRepository brands;
 	long brandId;
 
 	@BeforeEach
@@ -761,9 +757,9 @@ class BrandHashtagSeedQueryTest {
 		var ds = TestDb.dataSource(TestDb.container());
 		db = new JdbcTemplate(ds);
 		TestDb.resetAndMigrate(db, ds);
-		tags = new BrandHashtagRepository(db);
 		taggedPosts = new TaggedPostRepository(db);
 		meta = new BrandPostMetaRepository(db);
+		brands = new BrandRepository(db);
 		brandId = db.queryForObject(
 				"INSERT INTO brand_account (username, ig_user_id) VALUES ('cclime_official', '99') RETURNING id",
 				Long.class);
@@ -780,41 +776,7 @@ class BrandHashtagSeedQueryTest {
 				"https://thumb", null, null, null);
 	}
 
-	// ---------- countAll (실행 조건) ----------
-
-	@Test
-	void 태그가_없으면_countAll은_0이다() {
-		assertThat(tags.countAll(brandId)).isZero();
-	}
-
-	@Test
-	void countAll은_활성_태그를_센다() {
-		tags.addTags(brandId, List.of("cclime", "끌리메"));
-
-		assertThat(tags.countAll(brandId)).isEqualTo(2);
-	}
-
-	/** tombstone도 센다 — 유저가 지운 태그가 자동 시드로 되살아나면 안 된다(08-17 계약). */
-	@Test
-	void countAll은_tombstone_행도_센다() {
-		tags.addTags(brandId, List.of("cclime"));
-		tags.deleteTag(brandId, "cclime");
-
-		assertThat(tags.findTags(brandId)).isEmpty();
-		assertThat(tags.countAll(brandId)).isEqualTo(1);
-	}
-
-	@Test
-	void countAll은_다른_브랜드_태그를_세지_않는다() {
-		long otherId = db.queryForObject(
-				"INSERT INTO brand_account (username, ig_user_id) VALUES ('other', '98') RETURNING id",
-				Long.class);
-		tags.addTags(otherId, List.of("남의태그"));
-
-		assertThat(tags.countAll(brandId)).isZero();
-	}
-
-	// ---------- findCaptionsForSeed (후보 모수) ----------
+	// ---------- findCaptionsForSeed (FREQ 모수) ----------
 
 	@Test
 	void tag_성분_게시물의_캡션과_게시일을_돌려준다() {
@@ -829,7 +791,7 @@ class BrandHashtagSeedQueryTest {
 		});
 	}
 
-	/** hashtag-only 행은 모수에서 빠진다 — 재시드 시 구 절삭 태그로 긁힌 무관 게시물 오염 차단. */
+	/** hashtag-only 행은 모수에서 빠진다 — 구 절삭 태그로 긁힌 무관 게시물 오염 차단(§3-2). */
 	@Test
 	void hashtag_성분만_있는_게시물은_제외된다() {
 		taggedPosts.upsertHashtag(brandId, post("HHH", NOW.minusSeconds(86400)), NOW);
@@ -875,41 +837,49 @@ class BrandHashtagSeedQueryTest {
 
 		assertThat(taggedPosts.findCaptionsForSeed(brandId)).isEmpty();
 	}
+
+	// ---------- findFullName (AI 입력) ----------
+
+	@Test
+	void 표시명이_있으면_돌려준다() {
+		db.update("UPDATE brand_account SET full_name = ? WHERE id = ?", "닥터피엘 Dr.PIEL", brandId);
+
+		assertThat(brands.findFullName(brandId)).contains("닥터피엘 Dr.PIEL");
+	}
+
+	@Test
+	void 표시명이_null이면_empty다() {
+		assertThat(brands.findFullName(brandId)).isEmpty();
+	}
+
+	@Test
+	void 표시명이_공백뿐이면_empty다() {
+		db.update("UPDATE brand_account SET full_name = ? WHERE id = ?", "   ", brandId);
+
+		assertThat(brands.findFullName(brandId)).isEmpty();
+	}
+
+	@Test
+	void 없는_브랜드는_empty다() {
+		assertThat(brands.findFullName(-1L)).isEmpty();
+	}
 }
 ```
 
-- [ ] **실패 확인** — `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock` 후
-  `./gradlew :monitoring:test --tests "com.celfit.monitoring.store.BrandHashtagSeedQueryTest"` 가
-  컴파일 실패로 끝나는 것을 확인한다.
+- [ ] **실패 확인** — `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock` 후 `./gradlew :monitoring:test --tests "com.celfit.monitoring.store.BrandHashtagSeedQueryTest"` 가 컴파일 실패로 끝나는 것을 확인한다.
 
-- [ ] **최소 구현 1/2** — `BrandHashtagRepository`의 `findTags`(31~35행) 바로 뒤에 추가한다.
+- [ ] **최소 구현 1/2** — `TaggedPostRepository`의 `TaggedCaption` record 바로 뒤에 쿼리를 추가한다.
 
 ```java
 	/**
-	 * 이 브랜드의 태그 행 전체 수 — <b>tombstone(deleted_at IS NOT NULL) 포함</b>. 자동 시드 실행
-	 * 조건(2026-09-03 자동 시드 재설계 §3-1)의 판정 입력이라 {@link #findTags}와 의도적으로 필터가
-	 * 다르다: 유저가 지운 태그가 자동 시드로 되살아나면 안 되고(08-17 tombstone 계약), 이 조건이
-	 * AI 콜을 브랜드 생애 최대 1회로 묶는 게이트이기도 하다.
-	 */
-	public int countAll(long brandId) {
-		Integer count = db.queryForObject("SELECT count(*) FROM brand_hashtag WHERE brand_id = ?",
-				Integer.class, brandId);
-		return count == null ? 0 : count;
-	}
-```
-
-- [ ] **최소 구현 2/2** — `TaggedPostRepository`의 `TaggedCaption` record(Task 2에서 추가) 바로 뒤에 쿼리를 추가한다.
-
-```java
-	/**
-	 * 자동 시드 후보 모수(2026-09-03 자동 시드 재설계 §3-2) — 이 브랜드에 <b>태그된</b> 게시물의
+	 * 해시태그 제안 FREQ 모수(2026-09-03 자동 시드 재설계 §3-2) — 이 브랜드에 <b>태그된</b> 게시물의
 	 * 캡션·게시일. 캡션은 게시물 전역 1행인 {@code brand_post_meta}에 있어 short_code로 조인한다.
 	 *
 	 * <p><b>{@code tag_detected_at IS NOT NULL} 가드가 핵심이다</b>: 이 모수는 "다른 사용자가 이
 	 * 브랜드 계정을 태그한 게시물"이고, hashtag 성분만 있는 행(해시태그 스윕이 긁어 온 게시물)은
-	 * 여기 들어오면 안 된다. 특히 구 절삭 태그(예: {@code #dr}) 정리 후 재시드할 때, 그 태그로 이미
-	 * 수집돼 남아 있는 무관 게시물의 캡션이 새 규칙의 집계를 그대로 오염시킨다. 겹침 행(tag +
-	 * hashtag)은 tag 성분이 있으므로 포함된다.
+	 * 여기 들어오면 안 된다. 특히 구 절삭 태그(예: {@code #dr}) 정리 뒤에도 그 태그로 수집된 무관
+	 * 게시물 행은 남는데, 그 캡션이 집계에 섞이면 새 규칙이 오염을 그대로 물려받는다. 겹침 행
+	 * (tag + hashtag)은 tag 성분이 있으므로 포함된다.
 	 *
 	 * <p>캡션 3-상태 계약(트랙 HH) 중 null(미수집)·""(확인된 무캡션)은 후보를 만들지 못하므로
 	 * SQL에서 거른다 — 전송량과 집계 루프를 함께 줄인다.
@@ -929,6 +899,29 @@ class BrandHashtagSeedQueryTest {
 	}
 ```
 
+- [ ] **최소 구현 2/2** — `BrandRepository`의 `findById`(162행 근처) 바로 뒤에 추가한다.
+
+```java
+	/**
+	 * IG 표시명(full_name) — 해시태그 제안 AI 입력(2026-09-03 자동 시드 재설계 §3-3). 등록 시
+	 * 프로필 1콜로 저장되고 매일 스윕이 {@link #refreshProfile}로 갱신한다.
+	 *
+	 * <p>{@link BrandRow}에 싣지 않고 전용 조회로 두는 이유: BrandRow는 스윕·등록의 뜨거운 경로가
+	 * 전부 물고 다니는 단면이라 이 한 필드를 위해 넓히면 비용이 크고, 표시명은 제안 계산에서만
+	 * 쓰인다(브랜드당 생애 1회).
+	 *
+	 * <p>미수집(null)·공백은 empty — 호출측이 "표시명 없음"으로 다루고 계정명만으로 진행한다.
+	 */
+	public Optional<String> findFullName(long brandId) {
+		List<String> rows = db.query("SELECT full_name FROM brand_account WHERE id = ?",
+				(rs, rowNum) -> rs.getString("full_name"), brandId);
+		if (rows.isEmpty()) {
+			return Optional.empty();
+		}
+		return Optional.ofNullable(rows.getFirst()).filter(value -> !value.isBlank());
+	}
+```
+
 - [ ] **통과 확인** — `./gradlew :monitoring:test --tests "com.celfit.monitoring.store.BrandHashtagSeedQueryTest"` 가 전부 통과하는 것을 확인한다.
 
 - [ ] **회귀 확인** — `./gradlew :monitoring:test --tests "com.celfit.monitoring.store.*"` 로 기존 store 테스트가 깨지지 않았는지 확인한다.
@@ -936,23 +929,30 @@ class BrandHashtagSeedQueryTest {
 - [ ] **커밋**
 
 ```
-feat(monitoring): 자동 시드 판정 입력 조회 2종
+feat(monitoring): 해시태그 제안 계산 입력 조회 2종
 
-BrandHashtagRepository.countAll — tombstone 포함 태그 행 수(시드 실행 조건).
 TaggedPostRepository.findCaptionsForSeed — tag 성분 게시물의 캡션·게시일.
-후자는 tag_detected_at IS NOT NULL 가드로 hashtag-only 행을 배제한다.
-구 절삭 태그 정리 후 재시드에서 무관 게시물 캡션이 집계를 오염시키는 경로다.
+tag_detected_at IS NOT NULL 가드로 hashtag-only 행을 배제한다(구 절삭 태그로
+긁힌 무관 게시물이 집계를 오염시키는 경로).
+BrandRepository.findFullName — AI 입력용 IG 표시명(BrandRow는 넓히지 않는다).
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ```
 
 ---
 
-## Task 4 — AI 폴백 (`BrandHashtagSuggester`)
+## Task 4 — AI 제안 (`BrandHashtagSuggester`)
 
 **Files:**
 - Create: `monitoring/src/main/java/com/celfit/monitoring/llm/BrandHashtagSuggester.java`
 - Create: `monitoring/src/test/java/com/celfit/monitoring/llm/BrandHashtagSuggesterTest.java`
+
+> **입력은 IG 표시명(`full_name`) + 계정명뿐이다.** 회사명(`app.users.company_name`)·바이오는 쓰지
+> 않는다(spec §3-3). 출력은 **버리지 않고 정리한다** — 허용 외 문자를 제거하고 30자로 자른 뒤에도
+> 남는 값이 있으면 그대로 쓴다. stoplist·순수 숫자만 "빈 값"으로 접어 상위가 FALLBACK으로 내린다.
+>
+> 서명은 spec의 두 입력에 `stoplist`를 더한 3-arg다 — §3-3 정리 규칙 전체(stoplist 판정 포함)를 한
+> 클래스에 두기 위해서다. 쪼개면 "AI 출력 정리"가 두 파일에 흩어져 테스트가 갈린다.
 
 ### Steps
 
@@ -969,9 +969,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 /**
- * brandName → 해시태그 1개(2026-09-03 자동 시드 재설계 §3-4) — AdDisclosureExtractorGeminiTest와
- * 같은 fake GeminiHttp 관용구. 저장 전 검증(무효 문자·길이·순수 숫자·stoplist)은 전부 폐기(empty)로
- * 접히고, 전송·파싱 실패만 예외로 나간다(호출측 BrandHashtagSeedService가 격리한다).
+ * (IG 표시명, 계정명) → 해시태그 1개(2026-09-03 자동 시드 재설계 §3-3) — AdDisclosureExtractorGeminiTest와
+ * 같은 fake GeminiHttp 관용구. 출력은 <b>버리지 않고 정리</b>한다(허용 외 문자 제거·30자 절단).
+ * stoplist·순수 숫자만 빈 값으로 접히고, 전송·파싱 실패는 예외로 나간다(상위가 FALLBACK으로 내린다).
  */
 class BrandHashtagSuggesterTest {
 
@@ -987,96 +987,98 @@ class BrandHashtagSuggesterTest {
 
 	@Test
 	void 정상_응답의_해시태그를_돌려준다() {
-		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"끌리메\"}"));
+		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"닥터피엘\"}"));
 
-		assertThat(s.suggest("끌리메", Set.of())).contains("끌리메");
+		assertThat(s.suggest("닥터피엘 Dr.PIEL", "dr.piel_official", Set.of())).contains("닥터피엘");
 	}
 
 	@Test
 	void 선행_샵과_공백을_제거하고_소문자로_정규화한다() {
 		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"  #CClime  \"}"));
 
-		assertThat(s.suggest("씨씨라임", Set.of())).contains("cclime");
+		assertThat(s.suggest("씨씨라임", "cclime_official", Set.of())).contains("cclime");
+	}
+
+	/** 허용 외 문자는 제거한다(버리지 않는다) — "닥터 피엘!" → "닥터피엘". */
+	@Test
+	void 허용_외_문자는_제거하고_남은_값을_쓴다() {
+		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"닥터 피엘!\"}"));
+
+		assertThat(s.suggest("닥터피엘", "dr.piel_official", Set.of())).contains("닥터피엘");
 	}
 
 	@Test
-	void 요청_경로와_바디에_모델과_브랜드명이_실린다() {
+	void 점과_언더스코어_중_언더스코어만_남는다() {
+		// 점은 허용 문자가 아니라 제거되고, 언더스코어는 유효 태그 문자라 남는다.
+		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"dr.piel_official\"}"));
+
+		assertThat(s.suggest("", "dr.piel_official", Set.of())).contains("drpiel_official");
+	}
+
+	@Test
+	void 삼십자를_넘으면_절단한다() {
+		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"" + "a".repeat(40) + "\"}"));
+
+		assertThat(s.suggest("브랜드", "brand", Set.of())).contains("a".repeat(30));
+	}
+
+	@Test
+	void 정리_결과가_비면_빈_값이다() {
+		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"!!! ???\"}"));
+
+		assertThat(s.suggest("브랜드", "brand", Set.of())).isEmpty();
+	}
+
+	@Test
+	void 순수_숫자_결과는_빈_값이다() {
+		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"2026\"}"));
+
+		assertThat(s.suggest("브랜드", "brand", Set.of())).isEmpty();
+	}
+
+	@Test
+	void stoplist_결과는_빈_값이다() {
+		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"AD\"}"));
+
+		assertThat(s.suggest("브랜드", "brand", Set.of("ad"))).isEmpty();
+	}
+
+	@Test
+	void 요청에_모델_표시명_계정명이_실린다() {
 		AtomicReference<String> sent = new AtomicReference<>();
 		var s = new BrandHashtagSuggester((path, body) -> {
 			sent.set(path + "\n" + body);
-			return geminiBody("{\"hashtag\": \"끌리메\"}");
+			return geminiBody("{\"hashtag\": \"닥터피엘\"}");
 		}, true, "model-x");
 
-		s.suggest("끌리메", Set.of());
+		s.suggest("닥터피엘 Dr.PIEL", "dr.piel_official", Set.of());
 
-		assertThat(sent.get()).contains("model-x:generateContent").contains("끌리메")
+		assertThat(sent.get()).contains("model-x:generateContent")
+				.contains("닥터피엘 Dr.PIEL").contains("dr.piel_official")
 				.contains("responseSchema").contains("\"temperature\":0");
 	}
 
+	/** 표시명이 비어도 계정명만으로 호출한다 — 프롬프트가 "표시명 없음" 분기를 담당한다. */
 	@Test
-	void 공백_문자가_들어간_결과는_폐기한다() {
-		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"끌리 메\"}"));
+	void 표시명이_null이어도_계정명으로_호출한다() {
+		AtomicReference<String> sent = new AtomicReference<>();
+		var s = new BrandHashtagSuggester((path, body) -> {
+			sent.set(body);
+			return geminiBody("{\"hashtag\": \"drpiel\"}");
+		}, true, "model-x");
 
-		assertThat(s.suggest("끌리메", Set.of())).isEmpty();
+		assertThat(s.suggest(null, "dr.piel_official", Set.of())).contains("drpiel");
+		assertThat(sent.get()).contains("dr.piel_official");
 	}
 
 	@Test
-	void 특수문자가_들어간_결과는_폐기한다() {
-		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"cclime!\"}"));
-
-		assertThat(s.suggest("끌리메", Set.of())).isEmpty();
-	}
-
-	@Test
-	void 한_글자_결과는_폐기한다() {
-		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"끌\"}"));
-
-		assertThat(s.suggest("끌리메", Set.of())).isEmpty();
-	}
-
-	@Test
-	void 삼십자를_넘는_결과는_폐기한다() {
-		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"" + "a".repeat(31) + "\"}"));
-
-		assertThat(s.suggest("끌리메", Set.of())).isEmpty();
-	}
-
-	@Test
-	void 삼십자_결과는_통과한다() {
-		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"" + "a".repeat(30) + "\"}"));
-
-		assertThat(s.suggest("끌리메", Set.of())).contains("a".repeat(30));
-	}
-
-	@Test
-	void 순수_숫자_결과는_폐기한다() {
-		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"2026\"}"));
-
-		assertThat(s.suggest("끌리메", Set.of())).isEmpty();
-	}
-
-	@Test
-	void stoplist_결과는_폐기한다() {
-		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"AD\"}"));
-
-		assertThat(s.suggest("끌리메", Set.of("ad"))).isEmpty();
-	}
-
-	@Test
-	void 빈_문자열_결과는_폐기한다() {
-		var s = suggester((path, body) -> geminiBody("{\"hashtag\": \"\"}"));
-
-		assertThat(s.suggest("끌리메", Set.of())).isEmpty();
-	}
-
-	@Test
-	void brandName이_null이거나_공백이면_호출하지_않는다() {
+	void 계정명이_없으면_호출하지_않는다() {
 		var s = suggester((path, body) -> {
-			throw new AssertionError("brandName 없이는 호출하면 안 된다");
+			throw new AssertionError("계정명 없이는 호출하면 안 된다");
 		});
 
-		assertThat(s.suggest(null, Set.of())).isEmpty();
-		assertThat(s.suggest("   ", Set.of())).isEmpty();
+		assertThat(s.suggest("표시명", null, Set.of())).isEmpty();
+		assertThat(s.suggest("표시명", "  ", Set.of())).isEmpty();
 	}
 
 	@Test
@@ -1085,28 +1087,31 @@ class BrandHashtagSuggesterTest {
 			throw new AssertionError("미설정 상태로 호출하면 안 된다");
 		}, false, "model-x");
 
-		assertThat(s.suggest("끌리메", Set.of())).isEmpty();
+		assertThat(s.suggest("표시명", "brand", Set.of())).isEmpty();
 	}
 
 	@Test
 	void 응답_본문이_없으면_예외다() {
 		var s = suggester((path, body) -> "{\"candidates\":[]}");
 
-		assertThatThrownBy(() -> s.suggest("끌리메", Set.of())).isInstanceOf(IllegalStateException.class);
+		assertThatThrownBy(() -> s.suggest("표시명", "brand", Set.of()))
+				.isInstanceOf(IllegalStateException.class);
 	}
 
 	@Test
 	void 본문이_JSON이_아니면_예외다() {
 		var s = suggester((path, body) -> geminiBody("이건 JSON이 아니다"));
 
-		assertThatThrownBy(() -> s.suggest("끌리메", Set.of())).isInstanceOf(IllegalStateException.class);
+		assertThatThrownBy(() -> s.suggest("표시명", "brand", Set.of()))
+				.isInstanceOf(IllegalStateException.class);
 	}
 
 	@Test
 	void hashtag_필드가_없으면_예외다() {
-		var s = suggester((path, body) -> geminiBody("{\"tag\": \"끌리메\"}"));
+		var s = suggester((path, body) -> geminiBody("{\"tag\": \"닥터피엘\"}"));
 
-		assertThatThrownBy(() -> s.suggest("끌리메", Set.of())).isInstanceOf(IllegalStateException.class);
+		assertThatThrownBy(() -> s.suggest("표시명", "brand", Set.of()))
+				.isInstanceOf(IllegalStateException.class);
 	}
 
 	@Test
@@ -1115,7 +1120,8 @@ class BrandHashtagSuggesterTest {
 			throw new IllegalStateException("전송 실패");
 		});
 
-		assertThatThrownBy(() -> s.suggest("끌리메", Set.of())).isInstanceOf(IllegalStateException.class);
+		assertThatThrownBy(() -> s.suggest("표시명", "brand", Set.of()))
+				.isInstanceOf(IllegalStateException.class);
 	}
 }
 ```
@@ -1139,41 +1145,50 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
- * 브랜드명 → 해시태그 1개 제안(2026-09-03 자동 시드 재설계 §3-4) — 태그된 게시물 캡션 집계가
- * 임계에 못 미칠 때만 쓰는 폴백이다. 입력은 <b>brandName 하나</b>다(사용자 결정 — 계정명·표시명·
- * 바이오는 넣지 않는다).
+ * IG 표시명 → 브랜드 상호 해시태그 1개(2026-09-03 자동 시드 재설계 §3-3) — 태그된 게시물 캡션
+ * 집계(FREQ)가 임계에 못 미칠 때 쓰는 2순위다.
+ *
+ * <p>입력은 <b>표시명(full_name)과 계정명뿐</b>이다. 회사명(was {@code users.company_name})·
+ * 바이오는 넣지 않는다 — 회사명은 등록자가 자기 소속을 적은 값이라 경쟁사 브랜드에 남의 이름을
+ * 붙일 수 있고, 바이오는 잡음이 많다.
  *
  * <p>전송은 광고 표기 판정과 같은 {@link GeminiHttp} 빈·같은 모델 설정을 재사용한다(새 HTTP
  * 클라이언트를 만들지 않는다, {@code AdDisclosureExtractorGemini}와 동형).
  *
+ * <p><b>출력은 버리지 않고 정리한다</b> — 선행 {@code #} 제거 → strip → 소문자 → 허용 외 문자
+ * ({@code [\p{L}\p{N}_]} 밖) <b>제거</b> → 30자 초과 절단. 그 결과가 비었거나 순수 숫자거나
+ * stoplist면 빈 값을 돌려주고, 상위({@code BrandHashtagSuggestionService})가 FALLBACK으로 내린다.
+ * "AI가 조금 틀린 형태로 답했다"는 이유로 브랜드를 계정명 안전장치까지 떨어뜨리지 않기 위함이다.
+ *
  * <p>{@code AdDisclosureExtractorGemini}와 갈리는 지점: 미설정(enabled=false)일 때 예외를 던지지
  * 않고 조용히 빈 값을 돌려준다. 광고 판정은 결과가 컬럼에 영속화되므로 잘못된 값을 남기느니
- * 실패해야 하지만, 자동 시드는 실패해도 "태그 0개"가 정상 상태이고 로컬·미설정 환경의 매 등록마다
- * 오류 로그를 남기는 게 해롭기 때문이다.
- *
- * <p><b>검증을 통과한 값만 돌려준다</b> — 선행 {@code #} 제거 → strip → 소문자 → 글자·숫자·밑줄
- * 전체 일치 → 길이 2~30 → 순수 숫자 아님 → stoplist 아님. 하나라도 어긋나면 warn 로그 + 빈 값이다
- * (LLM 출력이 그대로 스윕 대상 태그가 되는 경로라 검증이 유일한 방어선이다).
+ * 실패해야 하지만, 여기는 빈 값이 곧 FALLBACK이라 정상 경로다.
  */
 public class BrandHashtagSuggester {
 
 	private static final Logger log = LoggerFactory.getLogger(BrandHashtagSuggester.class);
 
 	private static final String SYSTEM_INSTRUCTION = """
-			너는 한국 브랜드명 하나를 받아, 소비자가 그 브랜드에 관한 인스타그램 게시물에 가장 흔히
-			다는 해시태그를 정확히 1개 고르는 도구다.
+			너는 인스타그램 브랜드 계정의 표시명과 계정명을 받아, 소비자가 그 브랜드를 게시물에
+			언급할 때 가장 흔히 쓸 해시태그를 정확히 1개 고르는 도구다.
 
 			규칙:
+			- 표시명에 브랜드 상호가 있으면 그 상호를 쓴다. 상호가 한글이면 한글로 쓴다.
+			- 표시명이 비어 있거나 상호가 없으면(영문 약자·수식어뿐), 계정명에서 '_official',
+			  '.official', '_kr', '_korea' 같은 접미사와 장식을 떼고 남는 브랜드 핵심을 쓴다.
+			  점·언더스코어를 살릴지 뺄지는 해시태그로 자연스러운 쪽으로 네가 판단한다.
 			- 답은 JSON {"hashtag": "..."} 형태만 낸다. 설명·부연·다른 필드를 넣지 않는다.
-			- '#'을 붙이지 않는다.
-			- 공백·마침표·이모지·특수문자를 넣지 않는다(글자·숫자·밑줄만 허용).
-			- 브랜드를 특정하지 못하는 일반어(예: 광고, 협찬, 이벤트, 뷰티)를 고르지 않는다.
+			- '#'을 붙이지 않는다. 공백·특수문자·이모지를 넣지 않는다.
+
+			예시:
+			- 표시명 "닥터피엘 Dr.PIEL", 계정명 "dr.piel_official" → {"hashtag": "닥터피엘"}
+			- 표시명 "", 계정명 "dr.piel_official" → {"hashtag": "drpiel"}
+			- 표시명 "", 계정명 "cclime_official" → {"hashtag": "cclime"}
 			""";
 
-	/** 허용 문자 — 글자(한글 포함)·숫자·언더스코어. BrandHashtagTags.VALID_TAG와 같은 정의. */
-	private static final Pattern VALID_TAG = Pattern.compile("[\\p{L}\\p{N}_]+");
+	/** 허용 문자 — 글자(한글 포함)·숫자·언더스코어. 이 밖은 제거 대상이다. */
+	private static final Pattern NOT_ALLOWED = Pattern.compile("[^\\p{L}\\p{N}_]");
 	private static final Pattern DIGITS_ONLY = Pattern.compile("\\p{N}+");
-	private static final int MIN_LENGTH = 2;
 	private static final int MAX_LENGTH = 30;
 
 	private final GeminiHttp http;
@@ -1189,28 +1204,30 @@ public class BrandHashtagSuggester {
 	}
 
 	/**
-	 * @param brandName own 연결의 회사명. null·공백이면 호출 없이 빈 값(경쟁사 연결).
-	 * @param stoplist  제외 태그(전부 소문자).
-	 * @return 검증을 통과한 태그(소문자). 미설정·검증 실패는 빈 값. 전송·파싱 실패는 예외.
+	 * @param fullName IG 표시명(`brand_account.full_name`). null·공백이면 계정명만으로 진행한다.
+	 * @param username IG 계정명. null·공백이면 호출 없이 빈 값(도달 불가 — 방어).
+	 * @param stoplist 제외 태그(전부 소문자).
+	 * @return 정리된 태그(소문자). 미설정·정리 결과 무효는 빈 값. 전송·파싱 실패는 예외.
 	 */
-	public Optional<String> suggest(String brandName, Set<String> stoplist) {
+	public Optional<String> suggest(String fullName, String username, Set<String> stoplist) {
 		if (!enabled) {
-			log.debug("Gemini 미설정 — 브랜드명 해시태그 제안 건너뜀");
+			log.debug("Gemini 미설정 — 표시명 해시태그 제안 건너뜀");
 			return Optional.empty();
 		}
-		if (brandName == null || brandName.isBlank()) {
+		if (username == null || username.isBlank()) {
 			return Optional.empty();
 		}
 		String responseBody = http.post("/v1beta/models/" + model + ":generateContent",
-				requestBody(brandName));
-		return validate(parse(responseBody), stoplist);
+				requestBody(fullName, username));
+		return clean(parse(responseBody), stoplist);
 	}
 
-	private String requestBody(String brandName) {
+	private String requestBody(String fullName, String username) {
 		ObjectNode root = om.createObjectNode();
 		root.putObject("systemInstruction").putArray("parts").addObject().put("text", SYSTEM_INSTRUCTION);
 		root.putArray("contents").addObject().put("role", "user").putArray("parts")
-				.addObject().put("text", "브랜드명: " + brandName);
+				.addObject().put("text",
+						"표시명: " + (fullName == null ? "" : fullName) + "\n계정명: " + username);
 		ObjectNode gen = root.putObject("generationConfig");
 		gen.put("temperature", 0);
 		gen.put("responseMimeType", "application/json");
@@ -1248,18 +1265,18 @@ public class BrandHashtagSuggester {
 		return hashtag.asString();
 	}
 
-	private Optional<String> validate(String raw, Set<String> stoplist) {
+	/** §3-3 출력 정리 — 제거·절단으로 살려내고, 살릴 수 없을 때만 빈 값이다. */
+	private Optional<String> clean(String raw, Set<String> stoplist) {
 		String tag = raw == null ? "" : raw.strip();
 		if (tag.startsWith("#")) {
 			tag = tag.substring(1);
 		}
-		tag = tag.strip().toLowerCase(Locale.ROOT);
-		if (!VALID_TAG.matcher(tag).matches()) {
-			log.warn("AI 제안 해시태그 폐기(무효 문자) — value={}", abbreviate(raw));
-			return Optional.empty();
+		tag = NOT_ALLOWED.matcher(tag.strip().toLowerCase(Locale.ROOT)).replaceAll("");
+		if (tag.length() > MAX_LENGTH) {
+			tag = tag.substring(0, MAX_LENGTH);
 		}
-		if (tag.length() < MIN_LENGTH || tag.length() > MAX_LENGTH) {
-			log.warn("AI 제안 해시태그 폐기(길이 {}) — value={}", tag.length(), abbreviate(raw));
+		if (tag.isEmpty()) {
+			log.warn("AI 제안 해시태그 정리 결과 없음 — value={}", abbreviate(raw));
 			return Optional.empty();
 		}
 		if (DIGITS_ONLY.matcher(tag).matches()) {
@@ -1284,32 +1301,34 @@ public class BrandHashtagSuggester {
 - [ ] **커밋**
 
 ```
-feat(monitoring): brandName 기반 해시태그 AI 폴백
+feat(monitoring): IG 표시명 기반 해시태그 AI 제안
 
-태그된 게시물 캡션 집계가 임계에 못 미칠 때 쓰는 폴백. 광고 표기 판정과
-같은 GeminiHttp seam·모델 설정을 재사용하고 temperature 0으로 JSON 1필드만
-받는다. 저장 전 검증(# 제거·소문자·허용 문자 전체 일치·길이 2~30·순수 숫자
-아님·stoplist 아님)을 통과한 값만 돌려준다.
+표시명(full_name)과 계정명만으로 브랜드 상호 해시태그 1개를 받는다. 회사명·
+바이오는 입력하지 않는다. 광고 표기 판정과 같은 GeminiHttp seam·모델 설정을
+재사용하고 temperature 0으로 JSON 1필드만 받는다.
+출력은 버리지 않고 정리한다(# 제거·소문자·허용 외 문자 제거·30자 절단) —
+결과가 비거나 순수 숫자거나 stoplist일 때만 빈 값으로 접어 상위가 FALLBACK한다.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ```
 
 ---
 
-## Task 5 — 시드 오케스트레이션 (`BrandHashtagSeedService`) + 빈 배선
+## Task 5 — 3단 계산 (`BrandHashtagSuggestionService`) + 빈 배선
 
 **Files:**
-- Create: `monitoring/src/main/java/com/celfit/monitoring/service/BrandHashtagSeedService.java`
-- Create: `monitoring/src/main/java/com/celfit/monitoring/config/BrandHashtagSeedConfig.java`
-- Create: `monitoring/src/test/java/com/celfit/monitoring/service/BrandHashtagSeedServiceTest.java`
+- Create: `monitoring/src/main/java/com/celfit/monitoring/service/BrandHashtagSuggestionService.java`
+- Create: `monitoring/src/main/java/com/celfit/monitoring/config/BrandHashtagSuggestionConfig.java`
+- Create: `monitoring/src/test/java/com/celfit/monitoring/service/BrandHashtagSuggestionServiceTest.java`
 
-> **지표 태그 하나 추가(spec §3-6에서 확장)** — spec은 `path`를 freq|ai|none|skip으로만 열거했다.
-> DB 예외처럼 어느 경로에서 터졌는지 알 수 없는 실패를 위해 `path=unknown`을 추가한다. 없으면
-> 실패를 정상 경로 중 하나로 오계상해야 하고, 그러면 지표가 거짓말을 한다.
+> **DB에 쓰지 않는다.** `brand_hashtag`를 읽지도 쓰지도 않는다 — "이미 태그가 있는 브랜드인가"는
+> was가 `commandClient.getHashtagTags`로 판정한다(§4-2). 여기는 순수 계산 + 응답 조립뿐이다.
+>
+> **`tag`는 절대 비지 않는다**가 계약이다. FREQ 실패든 AI 실패든 마지막엔 계정명 정리값이 남는다.
 
 ### Steps
 
-- [ ] **실패 테스트 작성** — `monitoring/src/test/java/com/celfit/monitoring/service/BrandHashtagSeedServiceTest.java`
+- [ ] **실패 테스트 작성** — `monitoring/src/test/java/com/celfit/monitoring/service/BrandHashtagSuggestionServiceTest.java`
 
 ```java
 package com.celfit.monitoring.service;
@@ -1319,13 +1338,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.celfit.monitoring.config.BrandHashtagSeedSettings;
 import com.celfit.monitoring.llm.BrandHashtagSuggester;
 import com.celfit.monitoring.store.AppSettingRepository;
-import com.celfit.monitoring.store.BrandHashtagRepository;
+import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.TaggedPostRepository;
 import com.celfit.monitoring.store.TaggedPostRepository.TaggedCaption;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -1333,40 +1351,19 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /**
- * 자동 시드 판정(2026-09-03 자동 시드 재설계 §3) — 실행 조건(태그 행 0)·임계 경계(6→AI, 7→FREQ)·
- * AI 게이트(brandName null·ai-enabled=false)·격리(모든 실패가 흐름을 막지 않는다)를 고정한다.
+ * 해시태그 제안 3단 계산(2026-09-03 자동 시드 재설계 §3) — FREQ → AI → FALLBACK. 임계 경계·
+ * ai-enabled 킬 스위치·각 단계 실패의 하향 수렴을 고정하고, 무엇보다 <b>응답 tag가 절대 비지
+ * 않는다</b>는 계약을 봉인한다.
  */
-class BrandHashtagSeedServiceTest {
+class BrandHashtagSuggestionServiceTest {
 
 	private static final long BRAND_ID = 1L;
-	private static final String USERNAME = "cclime_official";
+	private static final String USERNAME = "dr.piel_official";
 	private static final Instant T = Instant.parse("2026-09-01T00:00:00Z");
-
-	private static final class StubTags extends BrandHashtagRepository {
-		int existingCount;
-		boolean countFailing;
-		final List<String> added = new ArrayList<>();
-
-		StubTags() {
-			super(null);
-		}
-
-		@Override
-		public int countAll(long brandId) {
-			if (countFailing) {
-				throw new IllegalStateException("DB 장애 주입");
-			}
-			return existingCount;
-		}
-
-		@Override
-		public void addTags(long brandId, Collection<String> tags) {
-			added.addAll(tags);
-		}
-	}
 
 	private static final class StubTaggedPosts extends TaggedPostRepository {
 		List<TaggedCaption> captions = List.of();
+		boolean failing;
 
 		StubTaggedPosts() {
 			super(null);
@@ -1374,7 +1371,23 @@ class BrandHashtagSeedServiceTest {
 
 		@Override
 		public List<TaggedCaption> findCaptionsForSeed(long brandId) {
+			if (failing) {
+				throw new IllegalStateException("DB 장애 주입");
+			}
 			return captions;
+		}
+	}
+
+	private static final class StubBrands extends BrandRepository {
+		String fullName;
+
+		StubBrands() {
+			super(null);
+		}
+
+		@Override
+		public Optional<String> findFullName(long brandId) {
+			return Optional.ofNullable(fullName);
 		}
 	}
 
@@ -1391,14 +1404,13 @@ class BrandHashtagSeedServiceTest {
 		}
 	}
 
-	private final StubTags tags = new StubTags();
 	private final StubTaggedPosts taggedPosts = new StubTaggedPosts();
+	private final StubBrands brands = new StubBrands();
 	private final StubAppSettings appSettings = new StubAppSettings();
 	private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
 	private final List<String> llmCalls = new ArrayList<>();
 
-	/** 기본은 "정상 응답 1개" — 개별 테스트가 필요하면 응답 본문을 바꾼다. */
-	private String llmResponse = geminiBody("{\"hashtag\": \"에이아이태그\"}");
+	private String llmResponse = geminiBody("{\"hashtag\": \"닥터피엘\"}");
 	private RuntimeException llmFailure;
 
 	private static String geminiBody(String innerJson) {
@@ -1407,7 +1419,7 @@ class BrandHashtagSeedServiceTest {
 				{"candidates":[{"content":{"parts":[{"text":"%s"}]}}]}""".formatted(escaped);
 	}
 
-	private BrandHashtagSeedService service() {
+	private BrandHashtagSuggestionService service() {
 		var suggester = new BrandHashtagSuggester((path, body) -> {
 			llmCalls.add(body);
 			if (llmFailure != null) {
@@ -1415,7 +1427,7 @@ class BrandHashtagSeedServiceTest {
 			}
 			return llmResponse;
 		}, true, "model-x");
-		return new BrandHashtagSeedService(tags, taggedPosts, suggester,
+		return new BrandHashtagSuggestionService(taggedPosts, brands, suggester,
 				new BrandHashtagSeedSettings(appSettings), registry);
 	}
 
@@ -1432,257 +1444,292 @@ class BrandHashtagSeedServiceTest {
 	}
 
 	private double counted(String path, String result) {
-		var counter = registry.find("brand.hashtag.seed").tag("path", path).tag("result", result).counter();
+		var counter = registry.find("brand.hashtag.suggest")
+				.tag("path", path).tag("result", result).counter();
 		return counter == null ? 0 : counter.count();
 	}
 
-	// ---------- 실행 조건 ----------
+	// ---------- FREQ ----------
 
 	@Test
-	void 태그_행이_있으면_아무것도_하지_않는다() {
-		tags.existingCount = 1;
-		taggedPosts.captions = repeated("#끌리메", 10);
+	void 최다_태그가_임계_이상이면_FREQ다() {
+		taggedPosts.captions = repeated("#닥피 #뷰티", 7);
 
-		service().seedIfEmpty(BRAND_ID, USERNAME, "끌리메");
+		var out = service().suggest(BRAND_ID, USERNAME);
 
-		assertThat(tags.added).isEmpty();
-		assertThat(llmCalls).isEmpty();
-		assertThat(counted("skip", "ok")).isEqualTo(1);
-	}
-
-	// ---------- 빈도 경로 ----------
-
-	@Test
-	void 최다_태그가_임계_이상이면_그_태그_하나를_시드한다() {
-		taggedPosts.captions = repeated("#끌리메 #뷰티", 7);
-
-		service().seedIfEmpty(BRAND_ID, USERNAME, "끌리메");
-
-		assertThat(tags.added).containsExactly("끌리메");
+		assertThat(out.path()).isEqualTo("FREQ");
+		assertThat(out.tag()).isEqualTo("닥피");
+		assertThat(out.topCount()).isEqualTo(7);
+		assertThat(out.candidatePosts()).isEqualTo(7);
 		assertThat(llmCalls).isEmpty();
 		assertThat(counted("freq", "ok")).isEqualTo(1);
 	}
 
 	@Test
-	void 임계_미만이면_AI로_넘어간다() {
-		taggedPosts.captions = repeated("#끌리메", 6);
+	void 임계_미만이면_AI로_내려간다() {
+		taggedPosts.captions = repeated("#닥피", 6);
+		brands.fullName = "닥터피엘 Dr.PIEL";
 
-		service().seedIfEmpty(BRAND_ID, USERNAME, "끌리메");
+		var out = service().suggest(BRAND_ID, USERNAME);
 
-		assertThat(tags.added).containsExactly("에이아이태그");
-		assertThat(llmCalls).hasSize(1);
+		assertThat(out.path()).isEqualTo("AI");
+		assertThat(out.tag()).isEqualTo("닥터피엘");
+		// topCount·candidatePosts는 AI로 내려가도 관측값을 그대로 싣는다(운영 판단 재료).
+		assertThat(out.topCount()).isEqualTo(6);
+		assertThat(out.candidatePosts()).isEqualTo(6);
 		assertThat(counted("ai", "ok")).isEqualTo(1);
 	}
 
 	@Test
 	void 임계는_설정으로_바뀐다() {
 		appSettings.values.put("brand.hashtag-seed.min-posts", "3");
-		taggedPosts.captions = repeated("#끌리메", 3);
+		taggedPosts.captions = repeated("#닥피", 3);
 
-		service().seedIfEmpty(BRAND_ID, USERNAME, "끌리메");
-
-		assertThat(tags.added).containsExactly("끌리메");
+		assertThat(service().suggest(BRAND_ID, USERNAME).path()).isEqualTo("FREQ");
 	}
 
 	@Test
-	void stoplist_태그는_최다여도_시드되지_않는다() {
+	void stoplist_태그는_최다여도_FREQ가_되지_않는다() {
 		appSettings.values.put("brand.hashtag-seed.stoplist", "협찬");
 		taggedPosts.captions = repeated("#협찬", 20);
+		brands.fullName = "닥터피엘";
 
-		service().seedIfEmpty(BRAND_ID, USERNAME, null);
+		var out = service().suggest(BRAND_ID, USERNAME);
 
-		assertThat(tags.added).isEmpty();
-		assertThat(counted("none", "ok")).isEqualTo(1);
+		assertThat(out.path()).isEqualTo("AI");
+		assertThat(out.topCount()).isZero();
 	}
 
 	@Test
 	void 태그된_게시물이_없으면_AI_경로다() {
 		taggedPosts.captions = List.of();
+		brands.fullName = "닥터피엘";
 
-		service().seedIfEmpty(BRAND_ID, USERNAME, "끌리메");
+		var out = service().suggest(BRAND_ID, USERNAME);
 
-		assertThat(tags.added).containsExactly("에이아이태그");
+		assertThat(out.path()).isEqualTo("AI");
+		assertThat(out.candidatePosts()).isZero();
 	}
 
-	// ---------- AI 게이트 ----------
+	// ---------- FALLBACK ----------
 
 	@Test
-	void brandName이_없으면_AI를_부르지_않고_0개다() {
-		taggedPosts.captions = repeated("#끌리메", 2);
-
-		service().seedIfEmpty(BRAND_ID, USERNAME, null);
-
-		assertThat(tags.added).isEmpty();
-		assertThat(llmCalls).isEmpty();
-		assertThat(counted("none", "ok")).isEqualTo(1);
-	}
-
-	@Test
-	void ai_enabled가_false면_AI를_부르지_않고_0개다() {
+	void ai_enabled가_false면_AI를_부르지_않고_FALLBACK이다() {
 		appSettings.values.put("brand.hashtag-seed.ai-enabled", "false");
-		taggedPosts.captions = repeated("#끌리메", 2);
+		taggedPosts.captions = repeated("#닥피", 2);
 
-		service().seedIfEmpty(BRAND_ID, USERNAME, "끌리메");
+		var out = service().suggest(BRAND_ID, USERNAME);
 
-		assertThat(tags.added).isEmpty();
+		assertThat(out.path()).isEqualTo("FALLBACK");
+		assertThat(out.tag()).isEqualTo("drpielofficial");
 		assertThat(llmCalls).isEmpty();
-		assertThat(counted("none", "ok")).isEqualTo(1);
+		assertThat(counted("fallback", "ok")).isEqualTo(1);
 	}
 
 	@Test
-	void AI_결과가_검증에_걸리면_0개다() {
-		llmResponse = geminiBody("{\"hashtag\": \"끌리 메\"}");
+	void AI_정리_결과가_비면_FALLBACK이다() {
+		llmResponse = geminiBody("{\"hashtag\": \"!!!\"}");
+		brands.fullName = "닥터피엘";
 
-		service().seedIfEmpty(BRAND_ID, USERNAME, "끌리메");
+		var out = service().suggest(BRAND_ID, USERNAME);
 
-		assertThat(tags.added).isEmpty();
-		assertThat(counted("ai", "invalid")).isEqualTo(1);
+		assertThat(out.path()).isEqualTo("FALLBACK");
+		assertThat(out.tag()).isEqualTo("drpielofficial");
+		assertThat(counted("fallback", "ok")).isEqualTo(1);
 	}
 
-	// ---------- 격리 ----------
-
 	@Test
-	void AI_전송_실패는_격리되고_지표에_error로_남는다() {
+	void AI_전송_실패는_FALLBACK으로_수렴하고_지표에_error로_남는다() {
 		llmFailure = new IllegalStateException("전송 실패");
 
-		service().seedIfEmpty(BRAND_ID, USERNAME, "끌리메");
+		var out = service().suggest(BRAND_ID, USERNAME);
 
-		assertThat(tags.added).isEmpty();
+		assertThat(out.path()).isEqualTo("FALLBACK");
+		assertThat(out.tag()).isEqualTo("drpielofficial");
+		assertThat(counted("fallback", "error")).isEqualTo(1);
+	}
+
+	@Test
+	void 빈도_집계_DB_실패도_응답을_막지_않는다() {
+		taggedPosts.failing = true;
+		brands.fullName = "닥터피엘";
+
+		var out = service().suggest(BRAND_ID, USERNAME);
+
+		assertThat(out.path()).isEqualTo("AI");
+		assertThat(out.tag()).isEqualTo("닥터피엘");
+		assertThat(out.topCount()).isZero();
 		assertThat(counted("ai", "error")).isEqualTo(1);
 	}
 
 	@Test
-	void DB_실패도_예외를_밖으로_내지_않는다() {
-		tags.countFailing = true;
+	void 계정명_정리는_점과_언더스코어를_뺀_소문자다() {
+		assertThat(BrandHashtagSuggestionService.fallbackTag("dr.piel_official")).isEqualTo("drpielofficial");
+		assertThat(BrandHashtagSuggestionService.fallbackTag("CClime_Official")).isEqualTo("cclimeofficial");
+		assertThat(BrandHashtagSuggestionService.fallbackTag("끌리메")).isEqualTo("끌리메");
+	}
 
-		service().seedIfEmpty(BRAND_ID, USERNAME, "끌리메");
+	/** 계정명이 언더스코어뿐인 극단 케이스 — 언더스코어는 유효 태그 문자라 그것만 남긴다. */
+	@Test
+	void 계정명이_언더스코어뿐이면_언더스코어를_남긴다() {
+		assertThat(BrandHashtagSuggestionService.fallbackTag("___")).isEqualTo("___");
+	}
 
-		assertThat(tags.added).isEmpty();
-		assertThat(counted("unknown", "error")).isEqualTo(1);
+	/** 어떤 입력에서도 응답 tag는 비지 않는다(§3-1 계약). */
+	@Test
+	void 모든_경로에서_tag는_비지_않는다() {
+		llmFailure = new IllegalStateException("전송 실패");
+		taggedPosts.failing = true;
+
+		var out = service().suggest(BRAND_ID, "a");
+
+		assertThat(out.tag()).isNotBlank();
 	}
 }
 ```
 
-- [ ] **실패 확인** — `./gradlew :monitoring:test --tests "com.celfit.monitoring.service.BrandHashtagSeedServiceTest"` 가 컴파일 실패로 끝나는 것을 확인한다.
+- [ ] **실패 확인** — `./gradlew :monitoring:test --tests "com.celfit.monitoring.service.BrandHashtagSuggestionServiceTest"` 가 컴파일 실패로 끝나는 것을 확인한다.
 
-- [ ] **최소 구현 1/2** — `monitoring/src/main/java/com/celfit/monitoring/service/BrandHashtagSeedService.java`
+- [ ] **최소 구현 1/2** — `monitoring/src/main/java/com/celfit/monitoring/service/BrandHashtagSuggestionService.java`
 
 ```java
 package com.celfit.monitoring.service;
 
 import com.celfit.monitoring.config.BrandHashtagSeedSettings;
 import com.celfit.monitoring.llm.BrandHashtagSuggester;
-import com.celfit.monitoring.store.BrandHashtagRepository;
+import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.TaggedPostRepository;
 import com.celfit.monitoring.store.TaggedPostRepository.TaggedCaption;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 브랜드 해시태그 자동 시드(2026-09-03 자동 시드 재설계) — 계정명 문자열 절삭(2026-08-17~08-28)을
- * 대체한다. 재료는 <b>그 브랜드에 태그된 게시물의 캡션 해시태그 빈도</b>이고, 임계에 못 미치면
- * brandName 기반 AI 제안 1개로 폴백한다.
+ * 브랜드 해시태그 제안 계산(2026-09-03 자동 시드 재설계 §3) — 계정명 문자열 절삭(2026-08-17~)을
+ * 대체한다. <b>DB에 쓰지 않는다</b>: 저장은 was가 전담한다(08-28 "태그 생성 권한 was 일원화" 유지).
+ * {@code brand_hashtag}를 읽지도 않는다 — "이미 태그가 있는 브랜드인가"는 was가 태그 GET으로
+ * 판정한다(§4-2).
  *
- * <p><b>실행 조건은 "그 브랜드에 brand_hashtag 행이 하나도 없을 때"뿐이다</b>(tombstone 포함) —
- * 유저가 지운 태그가 되살아나지 않게 하고, AI 콜을 브랜드 생애 최대 1회로 묶는다.
+ * <p>3단으로 내려간다:
+ * <ol>
+ *   <li><b>FREQ</b> — 그 브랜드에 태그된 게시물 캡션의 해시태그 빈도. 최다 태그의 등장 게시물 수가
+ *       {@code min-posts}(기본 7) 이상일 때.</li>
+ *   <li><b>AI</b> — IG 표시명 + 계정명으로 상호 해시태그 1개({@link BrandHashtagSuggester}).</li>
+ *   <li><b>FALLBACK</b> — 계정명에서 점·언더스코어를 뺀 소문자({@link #fallbackTag}).</li>
+ * </ol>
  *
- * <p>호출 지점은 {@link BrandRegistrationService} 두 곳이다: 신규 등록의 백필 완주 직후(해시태그
- * 스윕 트리거 직전)와 replay 재등록의 동기 구간. 백필이 실패하면 시드하지 않는다 — 모수(캡션)가
- * 아직 없는 상태에서 판정하면 근거 없는 AI 폴백으로 새기 때문이고, 다음 replay 재등록이 백스톱이다.
- *
- * <p><b>모든 실패는 warn 격리한다</b>({@link #seedIfEmpty}가 유일한 진입점이고 예외를 밖으로 내지
- * 않는다) — 태그 0개는 정상 상태이므로 등록·백필·스윕 흐름을 막을 이유가 없다.
+ * <p><b>{@code tag}는 절대 비지 않는다</b>(§3-1 계약). 각 단계의 예외는 격리하고 아래 단계로
+ * 내려가며, 마지막 FALLBACK은 계정명만 있으면 항상 값을 만든다. 상태를 저장하지 않고 AI가
+ * temperature 0이라 같은 입력엔 같은 답을 낸다.
  */
-public class BrandHashtagSeedService {
+public class BrandHashtagSuggestionService {
 
-	private static final Logger log = LoggerFactory.getLogger(BrandHashtagSeedService.class);
+	private static final Logger log = LoggerFactory.getLogger(BrandHashtagSuggestionService.class);
 
-	/** 태그: path(freq|ai|none|skip|unknown) · result(ok|invalid|error). */
-	static final String METRIC = "brand.hashtag.seed";
+	/** 태그: path(freq|ai|fallback) · result(ok|error). */
+	static final String METRIC = "brand.hashtag.suggest";
 
-	private final BrandHashtagRepository tags;
+	/** 글자·숫자만 남긴다 — 점과 언더스코어가 함께 사라진다(§3-4의 "점·언더스코어 제거"). */
+	private static final Pattern NOT_LETTER_OR_DIGIT = Pattern.compile("[^\\p{L}\\p{N}]");
+	/** 위 결과가 비었을 때의 2차 정리 — 언더스코어는 유효 태그 문자라 살린다. */
+	private static final Pattern NOT_TAG_CHAR = Pattern.compile("[^\\p{L}\\p{N}_]");
+
+	/** 제안 1건(§3-1 응답 본문). tag는 항상 비어 있지 않다. */
+	public record Suggestion(String path, String tag, int topCount, int candidatePosts) {
+	}
+
 	private final TaggedPostRepository taggedPosts;
+	private final BrandRepository brands;
 	private final BrandHashtagSuggester suggester;
 	private final BrandHashtagSeedSettings settings;
 	private final MeterRegistry registry;
 
-	public BrandHashtagSeedService(BrandHashtagRepository tags, TaggedPostRepository taggedPosts,
+	public BrandHashtagSuggestionService(TaggedPostRepository taggedPosts, BrandRepository brands,
 			BrandHashtagSuggester suggester, BrandHashtagSeedSettings settings, MeterRegistry registry) {
-		this.tags = tags;
 		this.taggedPosts = taggedPosts;
+		this.brands = brands;
 		this.suggester = suggester;
 		this.settings = settings;
 		this.registry = registry;
 	}
 
 	/**
-	 * 태그 행이 하나도 없을 때만 자동 태그 1개를 심는다. 예외를 던지지 않는다.
+	 * 이 브랜드에 심을 해시태그 1개를 계산한다. 예외를 던지지 않는다.
 	 *
-	 * @param brandName own 연결의 회사명(등록 API 파라미터). 경쟁사 연결은 null이고, 그러면 AI
-	 *                  폴백 없이 0개로 끝난다(#406 게이트).
+	 * @param brandId  monitoring {@code brand_account.id}
+	 * @param username IG 계정명 — FALLBACK의 재료라 반드시 있어야 한다.
 	 */
-	public void seedIfEmpty(long brandId, String username, String brandName) {
-		try {
-			doSeed(brandId, username, brandName);
-		} catch (RuntimeException e) {
-			log.warn("브랜드 해시태그 자동 시드 실패(격리) — brandId={}, username={}: {}",
-					brandId, username, e.toString());
-			count("unknown", "error");
-		}
-	}
-
-	private void doSeed(long brandId, String username, String brandName) {
-		if (tags.countAll(brandId) != 0) {
-			log.debug("브랜드 해시태그 자동 시드 스킵(기존 태그 행 존재) — brandId={}, username={}",
-					brandId, username);
-			count("skip", "ok");
-			return;
-		}
+	public Suggestion suggest(long brandId, String username) {
 		Set<String> stoplist = settings.stoplist();
-		List<TaggedCaption> captions = taggedPosts.findCaptionsForSeed(brandId);
-		List<HashtagCandidateExtractor.Candidate> candidates =
-				HashtagCandidateExtractor.extract(captions, stoplist);
-		int topCount = candidates.isEmpty() ? 0 : candidates.getFirst().postCount();
-		if (topCount >= settings.minPosts()) {
-			String tag = candidates.getFirst().tag();
-			tags.addTags(brandId, List.of(tag));
-			logSeed(brandId, username, "FREQ", tag, topCount, captions.size());
-			count("freq", "ok");
-			return;
-		}
-		if (brandName == null || brandName.isBlank() || !settings.aiEnabled()) {
-			logSeed(brandId, username, "NONE", "-", topCount, captions.size());
-			count("none", "ok");
-			return;
-		}
-		Optional<String> suggested;
+		int topCount = 0;
+		int candidatePosts = 0;
+		String freqTag = null;
+		boolean degraded = false;
 		try {
-			suggested = suggester.suggest(brandName, stoplist);
+			List<TaggedCaption> captions = taggedPosts.findCaptionsForSeed(brandId);
+			candidatePosts = captions.size();
+			List<HashtagCandidateExtractor.Candidate> candidates =
+					HashtagCandidateExtractor.extract(captions, stoplist);
+			if (!candidates.isEmpty()) {
+				topCount = candidates.getFirst().postCount();
+				if (topCount >= settings.minPosts()) {
+					freqTag = candidates.getFirst().tag();
+				}
+			}
 		} catch (RuntimeException e) {
-			log.warn("브랜드 해시태그 AI 제안 실패(격리) — brandId={}, username={}: {}",
-					brandId, username, e.toString());
-			count("ai", "error");
-			return;
+			log.warn("해시태그 제안 빈도 집계 실패(격리, AI로 내려간다) — username={}: {}", username, e.toString());
+			degraded = true;
 		}
-		if (suggested.isEmpty()) {
-			logSeed(brandId, username, "AI", "-", topCount, captions.size());
-			count("ai", "invalid");
-			return;
+		if (freqTag != null) {
+			return respond("FREQ", freqTag, topCount, candidatePosts, username, degraded);
 		}
-		tags.addTags(brandId, List.of(suggested.get()));
-		logSeed(brandId, username, "AI", suggested.get(), topCount, captions.size());
-		count("ai", "ok");
+		if (settings.aiEnabled()) {
+			try {
+				String fullName = brands.findFullName(brandId).orElse(null);
+				Optional<String> aiTag = suggester.suggest(fullName, username, stoplist);
+				if (aiTag.isPresent()) {
+					return respond("AI", aiTag.get(), topCount, candidatePosts, username, degraded);
+				}
+			} catch (RuntimeException e) {
+				log.warn("해시태그 제안 AI 실패(격리, FALLBACK으로 내려간다) — username={}: {}",
+						username, e.toString());
+				degraded = true;
+			}
+		}
+		return respond("FALLBACK", fallbackTag(username), topCount, candidatePosts, username, degraded);
 	}
 
-	/** 시드 결과 1건당 info 1줄(스펙 §3-6) — 경로·태그·최다 수·후보 게시물 수를 한 줄에 담는다. */
-	private void logSeed(long brandId, String username, String path, String tag, int topCount, int posts) {
-		log.info("브랜드 해시태그 자동 시드 — brandId={}, username={}, path={}, tag={}, topCount={}, posts={}",
-				brandId, username, path, tag, topCount, posts);
+	/**
+	 * 최종 안전장치(§3-4) — 계정명에서 점·언더스코어를 빼고 소문자화한다
+	 * ({@code dr.piel_official} → {@code drpielofficial}).
+	 *
+	 * <p>계정명이 점·언더스코어뿐인 극단 케이스에서는 언더스코어를 살려 값을 만들고(언더스코어는
+	 * 유효 태그 문자다), 그래도 비면 브랜드 식별자로 만든다 — IG 계정명 규칙상 도달 불가지만
+	 * "tag는 절대 비지 않는다"는 계약을 코드에서 닫아 둔다.
+	 */
+	static String fallbackTag(String username) {
+		String lower = username.toLowerCase(Locale.ROOT);
+		String stripped = NOT_LETTER_OR_DIGIT.matcher(lower).replaceAll("");
+		if (!stripped.isEmpty()) {
+			return stripped;
+		}
+		String withUnderscore = NOT_TAG_CHAR.matcher(lower).replaceAll("");
+		return withUnderscore.isEmpty() ? "brand" : withUnderscore;
+	}
+
+	/** 응답 1건 = 로그 1줄 + 카운터 1증가(§3-6). degraded는 "일부 계산이 예외로 실패했다"는 표식이다. */
+	private Suggestion respond(String path, String tag, int topCount, int candidatePosts,
+			String username, boolean degraded) {
+		log.info("브랜드 해시태그 제안 — username={}, path={}, tag={}, topCount={}, candidatePosts={}",
+				username, path, tag, topCount, candidatePosts);
+		count(path.toLowerCase(Locale.ROOT), degraded ? "error" : "ok");
+		return new Suggestion(path, tag, topCount, candidatePosts);
 	}
 
 	/** 지표 기록 실패는 삼킨다(MicrometerInstagramSourceMetrics 관용구) — 관측이 본류를 깨지 않는다. */
@@ -1690,21 +1737,21 @@ public class BrandHashtagSeedService {
 		try {
 			Counter.builder(METRIC).tag("path", path).tag("result", result).register(registry).increment();
 		} catch (RuntimeException e) {
-			log.warn("브랜드 해시태그 자동 시드 지표 기록 실패(무시) — {} {}: {}", path, result, e.toString());
+			log.warn("브랜드 해시태그 제안 지표 기록 실패(무시) — {} {}: {}", path, result, e.toString());
 		}
 	}
 }
 ```
 
-- [ ] **최소 구현 2/2** — `monitoring/src/main/java/com/celfit/monitoring/config/BrandHashtagSeedConfig.java`
+- [ ] **최소 구현 2/2** — `monitoring/src/main/java/com/celfit/monitoring/config/BrandHashtagSuggestionConfig.java`
 
 ```java
 package com.celfit.monitoring.config;
 
 import com.celfit.monitoring.llm.BrandHashtagSuggester;
 import com.celfit.monitoring.llm.GeminiHttp;
-import com.celfit.monitoring.service.BrandHashtagSeedService;
-import com.celfit.monitoring.store.BrandHashtagRepository;
+import com.celfit.monitoring.service.BrandHashtagSuggestionService;
+import com.celfit.monitoring.store.BrandRepository;
 import com.celfit.monitoring.store.TaggedPostRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
@@ -1712,15 +1759,15 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * 브랜드 해시태그 자동 시드 배선(2026-09-03 자동 시드 재설계) — {@link AdDisclosureConfig}와 같은
- * 조립 패턴이다. 전송({@link GeminiHttp})·활성 여부는 {@link LlmTransportConfig}가 조립한 공유 빈을
+ * 브랜드 해시태그 제안 배선(2026-09-03 자동 시드 재설계) — {@link AdDisclosureConfig}와 같은 조립
+ * 패턴이다. 전송({@link GeminiHttp})·활성 여부는 {@link LlmTransportConfig}가 조립한 공유 빈을
  * 그대로 쓴다(새 HTTP 클라이언트를 만들지 않는다).
  *
- * <p>전용 executor는 두지 않는다 — 시드는 브랜드 생애 1회의 LLM 콜 1개라, 등록 백필 꼬리(backfill
- * executor)와 replay 동기 구간에서 그대로 도는 편이 풀 하나 더 만드는 것보다 단순하다.
+ * <p>전용 executor는 두지 않는다 — 제안은 was의 내부 GET 1건 안에서 동기로 끝나는 브랜드 생애
+ * 1회짜리 계산이고, 그 호출부(was 훅)가 이미 best-effort로 격리돼 있다.
  */
 @Configuration
-public class BrandHashtagSeedConfig {
+public class BrandHashtagSuggestionConfig {
 
 	@Bean
 	public BrandHashtagSuggester brandHashtagSuggester(GeminiHttp geminiHttp,
@@ -1730,345 +1777,568 @@ public class BrandHashtagSeedConfig {
 	}
 
 	@Bean
-	public BrandHashtagSeedService brandHashtagSeedService(BrandHashtagRepository tags,
-			TaggedPostRepository taggedPosts, BrandHashtagSuggester suggester,
+	public BrandHashtagSuggestionService brandHashtagSuggestionService(TaggedPostRepository taggedPosts,
+			BrandRepository brands, BrandHashtagSuggester suggester,
 			BrandHashtagSeedSettings settings, MeterRegistry meterRegistry) {
-		return new BrandHashtagSeedService(tags, taggedPosts, suggester, settings, meterRegistry);
+		return new BrandHashtagSuggestionService(taggedPosts, brands, suggester, settings, meterRegistry);
 	}
 }
 ```
 
-- [ ] **통과 확인** — `./gradlew :monitoring:test --tests "com.celfit.monitoring.service.BrandHashtagSeedServiceTest"` 가 전부 통과하는 것을 확인한다.
+- [ ] **통과 확인** — `./gradlew :monitoring:test --tests "com.celfit.monitoring.service.BrandHashtagSuggestionServiceTest"` 가 전부 통과하는 것을 확인한다.
 
 - [ ] **커밋**
 
 ```
-feat(monitoring): 브랜드 해시태그 자동 시드 오케스트레이션
+feat(monitoring): 해시태그 제안 3단 계산
 
-실행 조건(태그 행 0, tombstone 포함) → 캡션 빈도 집계 → 임계(기본 7) 이상이면
-그 태그 1개 시드 → 미만이면 brandName AI 폴백 → 그래도 없으면 0개. 모든 실패는
-warn 격리하고 Micrometer 카운터 brand.hashtag.seed(path·result)로 남긴다.
-아직 호출부는 없다(다음 커밋에서 BrandRegistrationService에 결선).
+FREQ(태그된 게시물 캡션 빈도, 임계 기본 7) → AI(IG 표시명+계정명) →
+FALLBACK(계정명에서 점·언더스코어 제거)으로 내려가며, 어느 단계가 예외로
+죽어도 응답 tag는 절대 비지 않는다. DB 쓰기는 없고 brand_hashtag를 읽지도
+않는다(태그 존재 판정은 was 몫). 관측은 info 로그 1줄 + Micrometer
+brand.hashtag.suggest(path·result).
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ```
 
 ---
 
-## Task 6 — 등록 경로 결선 (`BrandRegistrationService`)
+## Task 6 — monitoring 제안 엔드포인트
 
 **Files:**
-- Modify: `monitoring/src/main/java/com/celfit/monitoring/service/BrandRegistrationService.java` (78~109행 필드·생성자 / 154~185행 `register` / 211~235행 `expandIfRequested` / 271~296행 `runBackfillSafely`)
-- Modify: `monitoring/src/test/java/com/celfit/monitoring/service/BrandRegistrationServiceTest.java` (스텁 추가 + 419~421행 `service()` + 신규 테스트 + 748~779행 javadoc)
+- Modify: `monitoring/src/main/java/com/celfit/monitoring/web/BrandController.java` (106~121행 필드·생성자, `hashtagTags` GET 뒤에 엔드포인트 추가)
+- Modify: `monitoring/src/test/java/com/celfit/monitoring/web/BrandControllerTest.java` (스텁 + 생성자 + 검증)
 
 ### Steps
 
-- [ ] **실패 테스트 작성 1/2 (스텁)** — `BrandRegistrationServiceTest`의 `StubTaggedPosts` 클래스 **바로 뒤**(326행 근처)에 시드 스텁을 넣는다.
+- [ ] **실패 테스트 작성** — `BrandControllerTest`의 `StubLegacyHistoryCopier` 선언 뒤에 스텁을 넣고,
 
 ```java
-	/** 자동 시드 호출 관측(2026-09-03 자동 시드 재설계) — 판정 자체는 BrandHashtagSeedServiceTest가 본다. */
-	private static final class StubHashtagSeed extends BrandHashtagSeedService {
-		record SeedCall(long brandId, String username, String brandName) {}
+	/** 제안 계산 스텁(2026-09-03 자동 시드 재설계) — 판정은 BrandHashtagSuggestionServiceTest가 본다. */
+	private static final class StubSuggestion extends BrandHashtagSuggestionService {
+		Suggestion result = new Suggestion("FREQ", "닥피", 12, 40);
+		Long receivedBrandId;
+		String receivedUsername;
 
-		final List<SeedCall> calls = new CopyOnWriteArrayList<>();
-		private List<String> callOrder = new CopyOnWriteArrayList<>();
-
-		StubHashtagSeed() {
+		StubSuggestion() {
 			super(null, null, null, null, null);
 		}
 
-		/** 호출 순서 검증용 — 다른 스텁과 같은 리스트를 공유시켜 인터리빙을 관찰한다. */
-		void useSharedCallOrder(List<String> shared) {
-			this.callOrder = shared;
-		}
-
 		@Override
-		public void seedIfEmpty(long brandId, String username, String brandName) {
-			calls.add(new SeedCall(brandId, username, brandName));
-			callOrder.add("seed");
+		public Suggestion suggest(long brandId, String username) {
+			receivedBrandId = brandId;
+			receivedUsername = username;
+			return result;
 		}
 	}
 ```
 
-- [ ] **실패 테스트 작성 2/2 (필드·생성 + 검증)** — 필드 선언부(`private final StubTaggedPosts taggedPosts = new StubTaggedPosts();` 뒤)에 아래를 추가하고,
+  필드 선언부(`legacyHistoryCopier` 뒤)에 `private final StubSuggestion suggestion = new StubSuggestion();`
+  를 추가하고, `setUp()`의 생성자 호출을 다음으로 바꾼다.
 
 ```java
-	private final StubHashtagSeed hashtagSeed = new StubHashtagSeed();
+		mvc = MockMvcBuilders.standaloneSetup(new BrandController(service, brands, hashtags, taggedPosts,
+						directCollect, legacyHistoryCopier, suggestion))
+				.setControllerAdvice(new ApiExceptionHandler())
+				.build();
 ```
 
-  `service()`(419~421행)의 생성자 호출을 다음으로 바꾼다.
+  그리고 검증을 추가한다(import에 `com.celfit.monitoring.service.BrandHashtagSuggestionService` 필요).
 
 ```java
-		return new BrandRegistrationService(hiker, brands, collect, callCounts,
-				hashtagCollect, taggedPosts, hashtagSeed, collectionPostLimit,
-				Runnable::run, enrich, hashtagSweep);
-```
+	// ---------- 해시태그 제안(2026-09-03 자동 시드 재설계 §3-1) ----------
 
-  그리고 파일 끝의 `username_공백은_ValidationException` 테스트 **앞**에 신규 검증을 넣는다.
-
-```java
-	// ---------- 해시태그 자동 시드(2026-09-03 자동 시드 재설계 §3-1) ----------
-
-	/**
-	 * 신규 등록: 시드는 <b>전 페이지 보강 완주 뒤·해시태그 스윕 트리거 앞</b>이다. 이 순서라야
-	 * 등록 직후 스윕이 갓 심은 태그를 바로 집는다(순서가 뒤집히면 새 태그의 첫 수집이 다음 야간
-	 * 스윕까지 밀린다).
-	 */
 	@Test
-	void 백필_완주_후_해시태그_스윕_직전에_자동_시드를_1회_호출한다() {
-		twoPages();
-		List<String> order = new CopyOnWriteArrayList<>();
-		collect.useSharedCallOrder(order);
-		hashtagSeed.useSharedCallOrder(order);
-		hashtagCollect.useSharedCallOrder(order);
+	void 해시태그_제안은_계산_결과를_그대로_돌려준다() throws Exception {
+		brands.rows.put("brandx", new BrandRow(7L, "brandx", "1", BrandStatus.ACTIVE, null, 12, true));
+		suggestion.result = new BrandHashtagSuggestionService.Suggestion("AI", "닥터피엘", 3, 40);
 
-		var result = service().register("cclime_official", "끌리메");
-		awaitEnrich();
-		awaitHashtagSweep();
+		mvc.perform(get("/api/brands/brandx/hashtag-suggestion"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.path").value("AI"))
+				.andExpect(jsonPath("$.tag").value("닥터피엘"))
+				.andExpect(jsonPath("$.topCount").value(3))
+				.andExpect(jsonPath("$.candidatePosts").value(40));
 
-		assertThat(hashtagSeed.calls).containsExactly(
-				new StubHashtagSeed.SeedCall(result.brandId(), "cclime_official", "끌리메"));
-		assertThat(order).containsSubsequence("enrich", "seed", "hashtag");
+		assertThat(suggestion.receivedBrandId).isEqualTo(7L);
+		assertThat(suggestion.receivedUsername).isEqualTo("brandx");
 	}
 
-	/** 백필이 예외로 끝나면 시드하지 않는다 — 모수(캡션)가 없는 상태의 판정은 근거 없는 AI 폴백이 된다. */
 	@Test
-	void 백필_실패면_자동_시드를_호출하지_않는다() {
-		collect.failing.add("cclime_official");
-
-		service().register("cclime_official", "끌리메");
-		awaitEnrich();
-		awaitHashtagSweep();
-
-		assertThat(hashtagSeed.calls).isEmpty();
+	void 미등록_브랜드의_제안은_404다() throws Exception {
+		mvc.perform(get("/api/brands/nobody/hashtag-suggestion"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 	}
 
-	/** replay 재등록은 이미 수집된 게시물이 있으므로 백필을 기다리지 않고 동기로 시드한다. */
 	@Test
-	void replay_재등록은_스윕_트리거_앞에서_동기로_시드한다() {
-		var service = service();
-		var first = service.register("cclime_official", "끌리메");
-		awaitEnrich();
-		awaitHashtagSweep();
-		hashtagSeed.calls.clear();
-		hashtagCollect.swept.clear();
+	void 비ACTIVE_브랜드의_제안은_404다() throws Exception {
+		brands.rows.put("closed", new BrandRow(8L, "closed", "1", BrandStatus.CLOSED, null, 12, true));
 
-		var replayed = service.register("cclime_official", "끌리메");
-
-		// 동기 실행 — awaitHashtagSweep 전에 이미 기록돼 있어야 한다.
-		assertThat(hashtagSeed.calls).containsExactly(
-				new StubHashtagSeed.SeedCall(first.brandId(), "cclime_official", "끌리메"));
-		assertThat(replayed.replayed()).isTrue();
-		awaitHashtagSweep();
-	}
-
-	/** 경쟁사 연결은 was가 brandName에 null을 보낸다(#406 게이트) — 그대로 시드 서비스까지 내려간다. */
-	@Test
-	void brandName_null은_그대로_시드에_전달된다() {
-		service().register("cclime_official", null, null, "competitor");
-		awaitEnrich();
-		awaitHashtagSweep();
-
-		assertThat(hashtagSeed.calls).singleElement()
-				.extracting(StubHashtagSeed.SeedCall::brandName).isNull();
-	}
-
-	/** 기간 확장 재백필도 등록과 같은 꼬리를 타므로 brandName이 유실되면 안 된다. */
-	@Test
-	void 기간_확장_재백필도_brandName을_들고_시드한다() {
-		var service = service();
-		service.register("cclime_official", "끌리메", 3);
-		awaitEnrich();
-		awaitHashtagSweep();
-		hashtagSeed.calls.clear();
-
-		service.register("cclime_official", "끌리메", 12);
-		awaitEnrich();
-		awaitHashtagSweep();
-
-		// replay 분기 동기 1회 + 확장 재백필 꼬리 1회 — 둘 다 brandName을 들고 간다.
-		assertThat(hashtagSeed.calls).isNotEmpty();
-		assertThat(hashtagSeed.calls).allSatisfy(call ->
-				assertThat(call.brandName()).isEqualTo("끌리메"));
+		mvc.perform(get("/api/brands/closed/hashtag-suggestion"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("BRAND_NOT_FOUND"));
 	}
 ```
 
-- [ ] **실패 확인** — `./gradlew :monitoring:test --tests "com.celfit.monitoring.service.BrandRegistrationServiceTest"` 가 컴파일 실패(생성자 인자 수 불일치)로 끝나는 것을 확인한다.
+  > `brands`는 이 테스트 클래스의 기존 `BrandRepository` 스텁이다. 브랜드 행을 심는 실제 헬퍼
+  > 이름·형태(위 예시의 `brands.rows.put(...)`)는 파일을 열어 확인하고 그 관용구에 맞춘다 —
+  > 다른 404 테스트(`탈퇴는_미등록이면_404다` 등)가 쓰는 방식을 그대로 재사용하면 된다.
 
-- [ ] **최소 구현 1/4 (필드·생성자)** — `BrandRegistrationService`의 `taggedPosts` 필드(83행) 바로 뒤에 필드를 넣고,
+- [ ] **실패 확인** — `./gradlew :monitoring:test --tests "com.celfit.monitoring.web.BrandControllerTest"` 가 컴파일 실패(생성자 인자 수 불일치)로 끝나는 것을 확인한다.
 
-```java
-	/** 해시태그 자동 시드(2026-09-03 자동 시드 재설계) — 실패를 스스로 격리하므로 호출부에 try가 없다. */
-	private final BrandHashtagSeedService hashtagSeed;
-```
-
-  생성자 시그니처·대입을 다음으로 바꾼다(90~109행).
+- [ ] **최소 구현** — `BrandController`의 필드·생성자에 서비스를 추가하고,
 
 ```java
-	public BrandRegistrationService(@Qualifier("syncInstagramSource") InstagramSource hiker,
-			BrandRepository brands,
-			BrandCollectService collect, BrandCallCountRepository callCounts,
-			BrandHashtagCollectService hashtagCollect,
-			TaggedPostRepository taggedPosts,
-			BrandHashtagSeedService hashtagSeed,
-			@Value("${monitoring.brand.collection-post-limit:2000}") int collectionPostLimit,
-			@Qualifier("brandBackfillExecutor") Executor backfill,
-			@Qualifier("brandEnrichExecutor") Executor enrich,
-			@Qualifier("brandHashtagSweepExecutor") Executor hashtagSweep) {
-		this.hiker = hiker;
+	private final BrandLegacyHistoryCopier legacyHistoryCopier;
+	/** 해시태그 제안 계산(2026-09-03 자동 시드 재설계 §3) — 쓰기 없음, 순수 계산. */
+	private final BrandHashtagSuggestionService suggestions;
+
+	public BrandController(BrandRegistrationService service, BrandRepository brands,
+			BrandHashtagRepository hashtags, TaggedPostRepository taggedPosts,
+			BrandDirectCollectService directCollect, BrandLegacyHistoryCopier legacyHistoryCopier,
+			BrandHashtagSuggestionService suggestions) {
+		this.service = service;
 		this.brands = brands;
-		this.collect = collect;
-		this.callCounts = callCounts;
-		this.hashtagCollect = hashtagCollect;
+		this.hashtags = hashtags;
 		this.taggedPosts = taggedPosts;
-		this.hashtagSeed = hashtagSeed;
-		this.collectionPostLimit = collectionPostLimit;
-		this.backfill = backfill;
-		this.enrich = enrich;
-		this.hashtagSweep = hashtagSweep;
+		this.directCollect = directCollect;
+		this.legacyHistoryCopier = legacyHistoryCopier;
+		this.suggestions = suggestions;
 	}
 ```
 
-- [ ] **최소 구현 2/4 (register)** — `register(String, String, Integer, String)`(154~185행)의 replay 분기와 신규 등록 제출을 바꾼다.
-
-```java
-		var existing = brands.findByUsername(normalized);
-		if (existing.isPresent() && existing.get().status() == BrandStatus.ACTIVE) {
-			// 시드는 스윕 트리거 앞이다 — 갓 심은 태그를 이번 스윕이 바로 집게 한다. replay는 백필이
-			// 돌지 않아(hiker 콜 0) 이미 수집된 게시물이 모수이므로 동기로 끝난다.
-			hashtagSeed.seedIfEmpty(existing.get().id(), normalized, brandName);
-			triggerHashtagSweep(existing.get());
-			expandIfRequested(existing.get(), months, brandName);
-			if (ownRequest && !existing.get().hasOwnLink()) {
-				brands.setHasOwnLink(normalized, true);
-			}
-			logRegistered(normalized, startNanos, true);
-			return new Result(existing.get().id(), normalized, null, true);
-		}
-		ProfileInfo profile = hiker.fetchProfile(normalized);
-		long id = brands.insertOrReactivate(normalized, profile, months, ownRequest);
-		// 등록 검증 프로필 1콜의 사후 계상 — 콜 시점엔 brand_id가 없어 컨텍스트 스코프를 못 쓴다.
-		// 등록 실패(계정 부재·비공개) 콜은 귀속할 브랜드가 없어 미집계다(어드민 크롤링 비용 설계).
-		callCounts.add(id, LocalDate.now(KST), 1);
-		BrandRow row = brands.findByUsername(normalized).orElseThrow();
-		// brandName은 DB에 없고 등록 API 파라미터로만 온다 — 비동기 백필 태스크에 클로저로 넘긴다.
-		backfill.execute(() -> runBackfillSafely(row, brandName));
-		logRegistered(normalized, startNanos, false);
-		return new Result(id, normalized, profile.followers(), false);
-```
-
-  아울러 클래스 javadoc(134~153행 `register`의 javadoc) 중 "태그 시드 자체는 2026-08-28부터
-  monitoring이 하지 않는다" 문단을 다음으로 교체한다.
-
-```java
-	 * <p><b>태그 자동 시드는 2026-09-03부터 다시 monitoring 책임이다</b>(자동 시드 재설계) — 단
-	 * 재료가 계정명 문자열이 아니라 태그된 게시물 캡션의 해시태그 빈도(+ brandName AI 폴백)이고,
-	 * 그 브랜드에 태그 행이 하나도 없을 때만 1개를 심는다({@link BrandHashtagSeedService}).
-	 * was 쪽 유도 규칙 복제본은 같은 개정에서 삭제됐다.
-```
-
-- [ ] **최소 구현 3/4 (expandIfRequested)** — 시그니처와 재제출을 바꾼다(211행·234행).
-
-```java
-	private void expandIfRequested(BrandRow existing, int months, String brandName) {
-```
-
-```java
-		BrandRow row = brands.findByUsername(existing.username()).orElseThrow();
-		backfill.execute(() -> runBackfillSafely(row, brandName));
-```
-
-- [ ] **최소 구현 4/4 (runBackfillSafely)** — 시그니처와 꼬리를 바꾼다(271행·287~289행).
-
-```java
-	private void runBackfillSafely(BrandRow row, String brandName) {
-```
-
-```java
-			CompletableFuture.allOf(pages.toArray(CompletableFuture[]::new)).join();
-			brands.touchSwept(row.id(), LocalDate.now(KST));
-			// 자동 시드는 완주 표식 뒤·스윕 트리거 앞이다: 앞에 두면 시드의 LLM 콜(초 단위)만큼
-			// FE 폴링 종료가 밀리고, 뒤에 두면 갓 심은 태그를 이번 스윕이 놓친다.
-			hashtagSeed.seedIfEmpty(row.id(), row.username(), brandName);
-			triggerHashtagSweep(row);
-```
-
-  그리고 `runBackfillSafely`의 javadoc 끝에 한 문단을 더한다.
-
-```java
-	 * <p>완주 뒤 꼬리는 두 단계다(2026-09-03 자동 시드 재설계 §3-1): 자동 시드 → 해시태그 스윕.
-	 * <b>백필이 예외로 끝나면 시드하지 않는다</b> — 캡션 모수가 없는 상태의 판정은 근거 없는 AI
-	 * 폴백으로 새기 때문이고, 다음 replay 재등록이 백스톱이다(기존 격리 계약과 같은 규율).
-```
-
-- [ ] **기존 테스트 javadoc 갱신** — `등록은_태그를_시드하지_않는다`·`활성_replay_재등록도_태그를_시드하지_않는다`
-  두 테스트의 이름과 javadoc이 이제 사실과 어긋난다. 두 테스트를 각각
-  `등록은_태그_없이도_스윕_꼬리를_돈다`·`활성_replay_재등록도_스윕만_트리거한다`로 이름을 바꾸고,
-  앞 테스트의 javadoc(748~753행)을 다음으로 교체한다(뒤 테스트에는 javadoc이 없다).
+  `hashtagTags` GET(활성 태그 조회) 바로 뒤에 엔드포인트를 넣는다.
+  import에 `com.celfit.monitoring.service.BrandHashtagSuggestionService`를 추가한다.
 
 ```java
 	/**
-	 * 스윕 자체는 태그 시드 결과에 의존하지 않는다 — 태그가 0건이어도 백필 꼬리의
-	 * {@code triggerHashtagSweep}은 그대로 돈다(시드 판정은 BrandHashtagSeedServiceTest가 본다).
+	 * 해시태그 자동 시드 제안(2026-09-03 자동 시드 재설계 §3-1) — 이 브랜드에 심을 태그 1개를
+	 * <b>계산해서 돌려주기만</b> 한다. monitoring은 {@code brand_hashtag}에 아무것도 쓰지 않는다
+	 * (08-28 "태그 생성 권한 was 일원화" 유지) — 저장·중복 방지·사용자 장부 반영은 전부 was 몫이다.
+	 *
+	 * <p>{@code tag}는 항상 비어 있지 않다(FREQ → AI → FALLBACK 3단). 상태를 저장하지 않고 AI가
+	 * temperature 0이라 같은 입력엔 같은 답이 나온다. <b>백필 완료 여부는 검사하지 않는다</b> —
+	 * 호출 시점 게이트는 was 책임이다(§4-2). 브랜드 미존재·비ACTIVE는 404(태그 GET과 동형).
 	 */
+	@GetMapping("/{username}/hashtag-suggestion")
+	public ResponseEntity<?> hashtagSuggestion(@PathVariable String username) {
+		Optional<BrandRow> row = activeBrand(username);
+		if (row.isEmpty()) {
+			return brandNotFound();
+		}
+		return ResponseEntity.ok(suggestions.suggest(row.get().id(), row.get().username()));
+	}
 ```
 
-- [ ] **통과 확인** — `./gradlew :monitoring:test --tests "com.celfit.monitoring.service.BrandRegistrationServiceTest"` 가 전부 통과하는 것을 확인한다.
+- [ ] **통과 확인** — `./gradlew :monitoring:test --tests "com.celfit.monitoring.web.BrandControllerTest"` 가 전부 통과하는 것을 확인한다.
 
 - [ ] **모듈 회귀 확인** — `./gradlew :monitoring:test` 가 통과하는 것을 확인한다.
 
 - [ ] **커밋**
 
 ```
-feat(monitoring): 등록 경로에 해시태그 자동 시드 결선
+feat(monitoring): 해시태그 제안 조회 API
 
-신규 등록은 백필 완주 표식 뒤·해시태그 스윕 트리거 앞에서, replay 재등록은
-등록 동기 구간에서 seedIfEmpty를 부른다. brandName은 DB에 없고 등록 파라미터로만
-오므로 비동기 백필 태스크에 클로저로 넘긴다(runBackfillSafely 시그니처 변경).
-백필 실패 경로에서는 호출하지 않는다.
+GET /api/brands/{username}/hashtag-suggestion — {path, tag, topCount,
+candidatePosts}를 돌려준다. 계산만 하고 DB에는 쓰지 않는다(태그 생성 권한
+was 일원화 유지). 브랜드 미존재·비ACTIVE는 태그 GET과 동형 404(코드 바디
+포함 — 빈 바디 404는 was가 503으로 오승격한다).
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ```
 
 ---
 
-## Task 7 — was 유도 규칙 복제본 삭제
+## Task 7 — was 저장 계층 (시드 기록 + 링크 표식)
+
+**Files:**
+- Create: `was/src/main/resources/db/migration/app/V<UTC>__brand_hashtag_seed.sql`
+- Create: `was/src/main/java/com/celfit/was/monitoring/BrandHashtagSeedRepository.java`
+- Modify: `was/src/main/java/com/celfit/was/monitoring/BrandLinkRow.java` (record 컴포넌트 추가)
+- Modify: `was/src/main/java/com/celfit/was/monitoring/BrandLinkRepository.java` (`SELECT_COLUMNS` 20~21행, `markHashtagSeeded` 추가)
+- Create: `was/src/test/java/com/celfit/was/monitoring/BrandHashtagSeedRepositoryTest.java`
+- Modify: was 테스트 12파일의 `new BrandLinkRow(...)` 24곳
+
+> **record 확장은 한 커밋에 끝낸다.** 프로덕션 생성은 `BrandLinkRepository`의 `query(BrandLinkRow.class)`
+> 매핑뿐이라 `SELECT_COLUMNS`에 컬럼 하나만 더하면 되고, 나머지는 전부 테스트 픽스처다.
+> 컴파일러가 24곳을 전부 짚어 준다 — 놓칠 수 없다.
+
+### Steps
+
+- [ ] **마이그레이션 채번** — `date -u +%Y%m%d%H%M%S` 로 UTC 타임스탬프를 얻는다. **monitoring과 별개 버전 공간이므로 Task 1과 같은 값이어도 무방하지만, 지금 시각으로 새로 뽑는다.**
+
+- [ ] **마이그레이션 작성** — `was/src/main/resources/db/migration/app/V<위 값>__brand_hashtag_seed.sql`
+
+```sql
+-- 브랜드 해시태그 자동 시드 기록(2026-09-03 자동 시드 재설계 §4-1).
+-- 계산은 브랜드당 1회(이 테이블), 사용자 장부 삽입은 사용자당 1회(brand_monitorings.hashtag_seeded_at).
+-- path = FREQ|AI|FALLBACK|SKIP. SKIP은 "이미 사용자 관리 태그가 있어 자동 태그를 얹지 않았다"이고
+-- 그때만 tag가 NULL이다. brand_id는 monitoring brand_account.id 논리 참조(크로스 DB FK 없음).
+-- 전부 additive — 롤링 중 구 코드는 이 테이블·컬럼을 모른 채 그대로 돈다.
+CREATE TABLE app.brand_hashtag_seed (
+    brand_id  bigint PRIMARY KEY,
+    path      text NOT NULL,
+    tag       text,
+    seeded_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE app.brand_monitorings ADD COLUMN hashtag_seeded_at timestamptz;
+```
+
+- [ ] **실패 테스트 작성** — `was/src/test/java/com/celfit/was/monitoring/BrandHashtagSeedRepositoryTest.java`
+
+```java
+package com.celfit.was.monitoring;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.celfit.was.IntegrationTest;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.simple.JdbcClient;
+
+/**
+ * app.brand_hashtag_seed 접점(2026-09-03 자동 시드 재설계 §4-1) — BrandHashtagTagRepositoryTest와
+ * 같은 통합 관용구. 브랜드당 1행 계약(동시 호출도 1행)과 SKIP(tag NULL) 저장을 실 왕복으로 고정한다.
+ */
+class BrandHashtagSeedRepositoryTest extends IntegrationTest {
+
+	@Autowired
+	BrandHashtagSeedRepository repository;
+	@Autowired
+	JdbcClient jdbcClient;
+
+	// brand_id는 테스트마다 고유해야 한다 — 통합 테스트가 컨테이너를 공유하고 롤백이 없다.
+	long brandId;
+
+	@BeforeEach
+	void 브랜드_식별자() {
+		brandId = System.nanoTime();
+	}
+
+	@Test
+	void 없으면_empty다() {
+		assertThat(repository.find(brandId)).isEmpty();
+	}
+
+	@Test
+	void 삽입_후_조회된다() {
+		repository.insertIgnore(brandId, "FREQ", "닥피");
+
+		assertThat(repository.find(brandId)).hasValueSatisfying(row -> {
+			assertThat(row.brandId()).isEqualTo(brandId);
+			assertThat(row.path()).isEqualTo("FREQ");
+			assertThat(row.tag()).isEqualTo("닥피");
+			assertThat(row.seededAt()).isNotNull();
+		});
+	}
+
+	@Test
+	void SKIP은_tag가_null이다() {
+		repository.insertIgnore(brandId, "SKIP", null);
+
+		assertThat(repository.find(brandId)).hasValueSatisfying(row -> {
+			assertThat(row.path()).isEqualTo("SKIP");
+			assertThat(row.tag()).isNull();
+		});
+	}
+
+	/** 동시 호출 경합 — 두 번째 삽입은 조용히 무시되고 첫 값이 남는다(브랜드당 1회 계약). */
+	@Test
+	void 재삽입은_무시되고_첫_값이_남는다() {
+		repository.insertIgnore(brandId, "FREQ", "첫값");
+		repository.insertIgnore(brandId, "AI", "둘째값");
+
+		assertThat(repository.find(brandId)).hasValueSatisfying(row -> {
+			assertThat(row.path()).isEqualTo("FREQ");
+			assertThat(row.tag()).isEqualTo("첫값");
+		});
+	}
+
+	@Test
+	void 다른_브랜드는_영향이_없다() {
+		repository.insertIgnore(brandId, "FREQ", "내태그");
+
+		assertThat(repository.find(brandId + 1)).isEmpty();
+	}
+
+	// ---------- 링크 표식(brand_monitorings.hashtag_seeded_at) ----------
+
+	@Autowired
+	BrandLinkRepository linkRepository;
+
+	@Test
+	void markHashtagSeeded는_링크_행에_시각을_찍는다() {
+		long userId = jdbcClient
+				.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
+				.param("email", "seed-" + UUID.randomUUID() + "@test.io")
+				.query(Long.class).single();
+		long linkId = linkRepository.insertLink(userId, brandId, "brandx", "own", 12);
+		assertThat(linkRepository.findActiveByUserAndBrand(userId, brandId))
+				.hasValueSatisfying(link -> assertThat(link.hashtagSeededAt()).isNull());
+
+		linkRepository.markHashtagSeeded(linkId);
+
+		assertThat(linkRepository.findActiveByUserAndBrand(userId, brandId))
+				.hasValueSatisfying(link -> assertThat(link.hashtagSeededAt()).isNotNull());
+	}
+}
+```
+
+- [ ] **실패 확인** — `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock` 후 `./gradlew :was:test --tests "com.celfit.was.monitoring.BrandHashtagSeedRepositoryTest"` 가 컴파일 실패로 끝나는 것을 확인한다.
+
+- [ ] **최소 구현 1/4 (`BrandHashtagSeedRepository`)** — `was/src/main/java/com/celfit/was/monitoring/BrandHashtagSeedRepository.java`
+
+```java
+package com.celfit.was.monitoring;
+
+import java.time.OffsetDateTime;
+import java.util.Optional;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Repository;
+
+/**
+ * 브랜드 해시태그 자동 시드 기록(2026-09-03 자동 시드 재설계 §4-1) — app.brand_hashtag_seed.
+ * <b>브랜드당 1행</b>이 계약이다: monitoring 제안 계산(AI 콜 포함)을 브랜드 생애 1회로 묶고,
+ * 두 번째 사용자가 같은 브랜드에 링크하면 계산 없이 이 행의 태그를 자기 장부에 복사한다.
+ *
+ * <p>{@code brand_id}는 monitoring {@code brand_account.id} 논리 참조다(크로스 DB FK 없음 —
+ * {@code BrandLinkRepository}와 같은 관용구).
+ */
+@Repository
+public class BrandHashtagSeedRepository {
+
+	/** 시드 1행. path가 SKIP이면 tag는 null이다(이미 사용자 태그가 있어 아무것도 심지 않은 브랜드). */
+	public record SeedRow(long brandId, String path, String tag, OffsetDateTime seededAt) {
+	}
+
+	private final JdbcClient jdbcClient;
+
+	public BrandHashtagSeedRepository(JdbcClient jdbcClient) {
+		this.jdbcClient = jdbcClient;
+	}
+
+	public Optional<SeedRow> find(long brandId) {
+		return jdbcClient.sql("""
+				SELECT brand_id, path, tag, seeded_at FROM app.brand_hashtag_seed WHERE brand_id = :brandId
+				""")
+				.param("brandId", brandId)
+				.query(SeedRow.class)
+				.optional();
+	}
+
+	/**
+	 * 시드 기록 — 이미 있으면 조용히 무시한다(ON CONFLICT DO NOTHING). 두 조회가 동시에 같은
+	 * 브랜드를 계산해도 먼저 커밋한 쪽이 이기고, 진 쪽은 호출부가 재조회해 그 값을 쓴다
+	 * (호출부 {@code V1BrandAccountService.ensureAutoSeeded}의 "INSERT 후 재조회" 관용구).
+	 *
+	 * @param tag SKIP이면 null.
+	 */
+	public void insertIgnore(long brandId, String path, String tag) {
+		jdbcClient.sql("""
+				INSERT INTO app.brand_hashtag_seed (brand_id, path, tag)
+				VALUES (:brandId, :path, :tag)
+				ON CONFLICT (brand_id) DO NOTHING
+				""")
+				.param("brandId", brandId)
+				.param("path", path)
+				.param("tag", tag)
+				.update();
+	}
+}
+```
+
+- [ ] **최소 구현 2/4 (`BrandLinkRow`)** — record에 컴포넌트를 추가하고 javadoc에 문단을 더한다.
+
+```java
+/**
+ * ... (기존 javadoc 유지) ...
+ *
+ * <p>{@code hashtagSeededAt}(2026-09-03 자동 시드 재설계 §4-1) — 이 <b>링크</b>에 자동 태그가
+ * 반영된 시각. NULL이면 아직 미반영이라 다음 조회에서 훅({@code ensureAutoSeeded})이 돈다.
+ * 브랜드 단위 계산 기록({@code app.brand_hashtag_seed})과 짝이다 — 계산은 브랜드당 1회,
+ * 장부 삽입은 사용자당 1회. 이 값이 찍혀 있으면 사용자가 자동 태그를 지운 뒤 다시 조회해도
+ * 되살아나지 않는다.
+ */
+public record BrandLinkRow(long id, long userId, long brandId, String username, String accountType,
+		int collectionMonths, OffsetDateTime createdAt, OffsetDateTime deletedAt,
+		OffsetDateTime hashtagSeededAt) {
+}
+```
+
+- [ ] **최소 구현 3/4 (`BrandLinkRepository`)** — `SELECT_COLUMNS`(20~21행)에 컬럼을 더하고,
+
+```java
+	private static final String SELECT_COLUMNS =
+			"id, user_id, brand_id, username, account_type, collection_months, created_at, deleted_at, "
+					+ "hashtag_seeded_at";
+```
+
+  `insertLink`(99행) 뒤에 표식 갱신을 추가한다.
+
+```java
+	/**
+	 * 자동 태그 반영 표식(2026-09-03 자동 시드 재설계 §4-2) — 이 링크에 자동 태그를 장부에 넣었거나
+	 * 넣을 것이 없다고 판정한 시점을 찍는다. 이미 찍혀 있으면 갱신하지 않는다(IS NULL 가드) —
+	 * 최초 반영 시각이 밀리면 "언제부터 사용자에게 보였나"를 잃는다.
+	 */
+	public void markHashtagSeeded(long linkId) {
+		jdbcClient.sql("""
+				UPDATE app.brand_monitorings SET hashtag_seeded_at = now()
+				WHERE id = :id AND hashtag_seeded_at IS NULL
+				""")
+				.param("id", linkId)
+				.update();
+	}
+```
+
+- [ ] **최소 구현 4/4 (테스트 픽스처 24곳)** — `./gradlew :was:compileTestJava` 를 돌려 나오는
+  `new BrandLinkRow(...)` 호출마다 **마지막 인자 뒤에 `, null`을 덧붙인다**(= 아직 시드 안 됨).
+  대상 파일 체크리스트(조사 시점 24곳):
+
+```
+was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountServiceHashtagTagsTest.java   (1곳)
+was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountsControllerTest.java          (1곳)
+was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandInfluencersControllerTest.java       (1곳)
+was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountServiceWithdrawalTest.java    (1곳)
+was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandPostsControllerTest.java             (2곳)
+was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandDirectPostServiceTest.java           (1곳)
+was/src/test/java/com/celfit/was/v1/brandmonitoring/ai/V1BrandAiMessagesControllerTest.java     (1곳)
+was/src/test/java/com/celfit/was/v1/admin/AdminCrawlingUsageServiceTest.java                    (2곳)
+was/src/test/java/com/celfit/was/v1/perfdashboard/PerformanceComparisonAssemblerTest.java       (1곳)
+was/src/test/java/com/celfit/was/v1/perfdashboard/PerformanceContentAssemblerTest.java         (11곳)
+was/src/test/java/com/celfit/was/v1/perfdashboard/DashboardVersionTest.java                     (1곳)
+was/src/test/java/com/celfit/was/v2/monitoring/V2CampaignContentServiceTest.java                (1곳)
+```
+
+  > 여러 줄에 걸친 호출이 있어 일괄 sed는 안전하지 않다 — 컴파일 오류가 가리키는 위치마다 손으로
+  > 고치고, 마지막에 `grep -rn "new BrandLinkRow(" was/src/test | wc -l` 로 24를 확인한다.
+
+- [ ] **통과 확인** — `./gradlew :was:test --tests "com.celfit.was.monitoring.BrandHashtagSeedRepositoryTest"` 가 전부 통과하는 것을 확인한다.
+
+- [ ] **회귀 확인** — `./gradlew :was:test --tests "com.celfit.was.v1.perfdashboard.*"` 와 `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.*"` 가 통과하는 것을 확인한다(픽스처 24곳의 여파 확인).
+
+- [ ] **커밋**
+
+```
+feat(was): 브랜드 해시태그 자동 시드 저장 계층
+
+app.brand_hashtag_seed(브랜드당 1행: path·tag·seeded_at)와
+brand_monitorings.hashtag_seeded_at(링크별 반영 표식)을 additive로 추가한다.
+계산은 브랜드당 1회, 장부 삽입은 사용자당 1회로 묶는 짝이다.
+BrandLinkRow에 hashtagSeededAt이 붙어 테스트 픽스처 24곳이 함께 갱신됐다.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+```
+
+---
+
+## Task 8 — was → monitoring 제안 조회 클라이언트
+
+**Files:**
+- Modify: `was/src/main/java/com/celfit/was/monitoring/MonitoringCommandClient.java` (`getHashtagRunStates` 뒤에 메서드 + 하단 record 블록에 body record)
+- Test: 기존 `was/src/test/java/com/celfit/was/monitoring/MonitoringCommandClientTest.java`(있으면) 또는 Task 10의 서비스 테스트가 mock으로 덮는다.
+
+### Steps
+
+- [ ] **클라이언트 테스트 존재 확인** — 아래로 `MonitoringCommandClient`의 기존 테스트가 있는지 본다.
+
+```
+ls was/src/test/java/com/celfit/was/monitoring/ | grep -i commandclient
+```
+
+  있으면 `getHashtagRunStates`를 검증하는 테스트와 같은 관용구로 `getHashtagSuggestion` 테스트를
+  하나 추가한다(MockRestServiceServer 또는 그 파일이 쓰는 방식 그대로). 없으면 이 Task는 구현만
+  하고, 계약 검증은 Task 10의 서비스 테스트(mock 반환값)가 담당한다.
+
+- [ ] **구현** — `getHashtagRunStates` 바로 뒤에 메서드를 추가한다.
+
+```java
+	/**
+	 * 해시태그 자동 시드 제안 조회(2026-09-03 자동 시드 재설계 §3-1, monitoring BrandController
+	 * hashtag-suggestion) — monitoring이 계산만 해서 돌려주는 값이다(그쪽은 아무것도 쓰지 않는다).
+	 * {@code tag}는 항상 비어 있지 않다(FREQ → AI → FALLBACK 3단).
+	 *
+	 * <p>404(BRAND_NOT_FOUND)는 다른 브랜드 조회 경로와 동형으로 MonitoringApiException으로 승격된다 —
+	 * 호출부({@code V1BrandAccountService.ensureAutoSeeded})가 best-effort로 격리한다.
+	 */
+	public HashtagSuggestionBody getHashtagSuggestion(String username) {
+		return exchange(() -> restClient.get()
+				.uri("/api/brands/{username}/hashtag-suggestion", username)
+				.retrieve().body(HashtagSuggestionBody.class));
+	}
+```
+
+- [ ] **응답 record 추가** — 이 파일 하단의 record 블록(`HashtagTagsBody`·`TagRunState` 등이 모인 곳)에 넣는다.
+
+```java
+	/**
+	 * 제안 응답(§3-1) — path는 FREQ|AI|FALLBACK, tag는 항상 비어 있지 않다.
+	 * topCount·candidatePosts는 운영 판단 재료(FALLBACK 비율이 높으면 AI 경로가 죽은 것이다)라
+	 * 저장하지 않고 로그·검토용으로만 쓴다. Integer인 이유는 필드 누락 응답에서 NPE가 아니라
+	 * null로 들어오게 하기 위함이다.
+	 */
+	public record HashtagSuggestionBody(String path, String tag, Integer topCount, Integer candidatePosts) {
+	}
+```
+
+- [ ] **컴파일 확인** — `./gradlew :was:compileJava` 가 통과하는 것을 확인한다.
+
+- [ ] **커밋**
+
+```
+feat(was): monitoring 해시태그 제안 조회 클라이언트
+
+GET /api/brands/{username}/hashtag-suggestion를 부르는
+MonitoringCommandClient.getHashtagSuggestion 추가. 응답 record는
+{path, tag, topCount, candidatePosts}이고 404는 기존 브랜드 조회 경로와
+동형으로 MonitoringApiException으로 승격된다.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+```
+
+---
+
+## Task 9 — was 계정명 절삭 유도 규칙 삭제
 
 **Files:**
 - Delete: `was/src/main/java/com/celfit/was/v1/brandmonitoring/BrandHashtagTags.java`
 - Delete: `was/src/test/java/com/celfit/was/v1/brandmonitoring/BrandHashtagTagsTest.java`
-- Modify: `was/src/main/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountService.java` (142행 호출·149~186행 `seedLedgerTagsSafely` 삭제, 130~141행 javadoc 정리)
-- Modify: `was/src/main/java/com/celfit/was/v1/brandmonitoring/BrandCaptionHashtags.java` (12행 javadoc 링크)
-- Modify: `was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountServiceHashtagTagsTest.java` (등록 시딩 기대 4건)
-- Modify: `was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountsControllerTest.java` (등록 push 기대가 있으면)
+- Modify: `was/src/main/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountService.java` (142행 호출 + 149~186행 `seedLedgerTagsSafely` 삭제)
+- Modify: `was/src/main/java/com/celfit/was/v1/brandmonitoring/BrandCaptionHashtags.java` (9~13행 javadoc)
+- Modify: `was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountServiceHashtagTagsTest.java` (링크 생성 시딩 기대 3건)
+- Modify: `was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountsControllerTest.java` (등록 경로에 시딩 기대가 있으면)
 
 > 삭제와 참조 제거를 **한 커밋에** 넣는다(중간 커밋이 컴파일을 깨면 안 된다).
 
 ### Steps
 
-- [ ] **참조 전수 확인** — 아래를 돌려 `BrandHashtagTags` 참조가 어디에 남는지 확정한다(`docs/` 제외).
+- [ ] **참조 전수 확인** — `docs/`를 제외하고 돌린다.
 
 ```
-grep -rn "BrandHashtagTags" was/src crawler/src analytics/src monitoring/src instagram-source/src common-llm/src
+grep -rn "BrandHashtagTags" was/src monitoring/src crawler/src analytics/src instagram-source/src common-llm/src
 ```
 
-  조사 시점 기준 was 쪽 참조는 5곳이다: 삭제할 본체·테스트, `BrandCaptionHashtags:12`(javadoc),
-  `V1BrandAccountService:150`(javadoc)·`:172`(호출). `V1BrandAccountsControllerTest`·
-  `BrandHashtagTagsBackfillMigrationTest`·`V20260827092444__brand_hashtag_tags_backfill.sql`은
-  **주석 문자열로만** 언급하므로 컴파일에 영향이 없다(마이그레이션은 이미 적용돼 있어 절대 수정 금지).
-  monitoring `service.BrandHashtagTags`는 동명이인이고 유지 대상이니 건드리지 않는다.
+  조사 시점 기준 was 쪽 컴파일 대상 참조는 4곳이다: 삭제할 본체·테스트,
+  `BrandCaptionHashtags:12`(javadoc `{@link}`), `V1BrandAccountService:150`(javadoc)·`:172`(호출).
+  `V1BrandAccountsControllerTest`·`BrandHashtagTagsBackfillMigrationTest`·
+  `V20260827092444__brand_hashtag_tags_backfill.sql`은 **주석 문자열로만** 언급하므로 컴파일에
+  영향이 없다(마이그레이션은 이미 적용돼 있어 **절대 수정 금지**).
+  monitoring `service.BrandHashtagTags`는 동명이인이고 `isValidTag`가 살아 있어 건드리지 않는다.
 
-- [ ] **실패 테스트 작성** — `V1BrandAccountServiceHashtagTagsTest`에서 등록 시딩을 검증하는 3건을 삭제하고, 대신 "등록은 시딩하지 않는다"를 고정한다. 삭제 대상은
-  `신규_링크_생성은_유도_태그를_monitoring에_push하고_장부에도_시딩한다`,
-  `유도_태그가_없으면_push도_시딩도_건너뛴다`,
-  `장부_시딩_실패는_등록_응답에_영향이_없다` 세 개다(`멱등_재_POST는_장부를_시딩하지_않는다`는 유지).
-  그 자리에 아래를 넣는다.
+- [ ] **실패 테스트 작성** — `V1BrandAccountServiceHashtagTagsTest`에서 링크 생성 시딩을 검증하는
+  3건(`신규_링크_생성은_유도_태그를_monitoring에_push하고_장부에도_시딩한다`,
+  `유도_태그가_없으면_push도_시딩도_건너뛴다`, `장부_시딩_실패는_등록_응답에_영향이_없다`)을 삭제하고
+  — `멱등_재_POST는_장부를_시딩하지_않는다`는 유지 — 그 자리에 아래를 넣는다.
 
 ```java
 	/**
-	 * 태그 유도 규칙은 2026-09-03부터 monitoring 단일 소유다(자동 시드 재설계 §4) — was는 링크
-	 * 생성 시 아무 태그도 심지 않는다. 자동 태그는 monitoring이 수집 완료 뒤에 심고, 사용자 장부는
-	 * 조회 시 승계로 채워진다({@code ensureLedgerSeededSafely}).
+	 * 링크 생성은 더 이상 태그를 심지 않는다(2026-09-03 자동 시드 재설계 §4-3) — 계정명 절삭 유도
+	 * 규칙이 삭제됐다. 자동 태그는 초기 백필 완료 뒤 첫 조회에서 훅({@code ensureAutoSeeded})이
+	 * monitoring 제안을 받아 심는다.
 	 */
 	@Test
 	void 신규_링크_생성은_태그를_시딩하지_않는다() {
@@ -2084,7 +2354,7 @@ grep -rn "BrandHashtagTags" was/src crawler/src analytics/src monitoring/src ins
 
 - [ ] **실패 확인** — `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.V1BrandAccountServiceHashtagTagsTest"` 가 실패하는 것을 확인한다(등록이 여전히 시딩하므로 `never()` 단언이 깨진다).
 
-- [ ] **최소 구현 1/4 (삭제)** —
+- [ ] **최소 구현 1/4 (삭제)**
 
 ```
 git -C /Users/woomin/Project/hypenow-backend/.worktrees/hashtag-auto-seed rm \
@@ -2092,38 +2362,34 @@ git -C /Users/woomin/Project/hypenow-backend/.worktrees/hashtag-auto-seed rm \
   was/src/test/java/com/celfit/was/v1/brandmonitoring/BrandHashtagTagsTest.java
 ```
 
-- [ ] **최소 구현 2/4 (`V1BrandAccountService`)** — 142행 `seedLedgerTagsSafely(userId, registered.brandId(), username);` 한 줄과 그 앞 주석 블록(134~141행)을 아래로 교체하고, 149~186행의 `seedLedgerTagsSafely` 메서드와 그 javadoc을 통째로 삭제한다.
+- [ ] **최소 구현 2/4 (`V1BrandAccountService`)** — 134~142행의 주석 블록과 `seedLedgerTagsSafely(userId, registered.brandId(), username);` 호출을 아래로 교체하고, 이어지는 `seedLedgerTagsSafely` 메서드(javadoc 포함, 149~186행)를 통째로 삭제한다.
 
 ```java
-		// 태그 시딩은 하지 않는다(2026-09-03 자동 시드 재설계 §4) — 유도 규칙이 monitoring 단일
-		// 소유로 돌아갔다. monitoring이 수집 완료 뒤에 캡션 빈도(+brandName AI 폴백)로 태그를 심고,
-		// 이 사용자의 장부는 조회 시 승계({@link #ensureLedgerSeededSafely})로 채워진다.
+		// 태그 시딩은 링크 생성 시점에 하지 않는다(2026-09-03 자동 시드 재설계 §4-3) — 계정명 절삭
+		// 유도 규칙이 삭제됐고, 이 시점엔 판단 재료(태그된 게시물 캡션)가 아직 하나도 없다. 자동
+		// 태그는 초기 백필 완료 뒤 첫 조회에서 ensureAutoSeeded가 monitoring 제안을 받아 심는다.
 		// 등록 응답의 status는 monitoring이 "ACTIVE"로 하드코딩해 보내므로 준비 상태 판정에 쓸 수 없다 —
 		// 상태는 항상 brand_account 조회가 정본이다(§5-2).
 		return get(userId, registered.brandId());
 ```
 
-  삭제 후 `List` import가 여전히 다른 곳에서 쓰이는지 확인하고(쓰인다 — `getHashtagTags` 등), 안
-  쓰이는 import가 생기면 지운다.
+  삭제 후 쓰이지 않게 된 import가 생기면 지운다(`List`는 `getHashtagTags` 등에서 계속 쓰이므로 남는다).
 
-- [ ] **최소 구현 3/4 (`BrandCaptionHashtags` javadoc)** — 9~13행 javadoc의 마지막 문장을 바꾼다.
+- [ ] **최소 구현 3/4 (`BrandCaptionHashtags` javadoc)** — 9~13행을 바꾼다.
 
 ```java
 /**
  * 캡션 해시태그 추출(스펙 2026-08-31 §3). 규칙은 ASCII # + [\p{L}\p{N}_]+ — 인스타 링크화와
  * 일치가 계약이다(전각 ＃ 제외·이모지 갭 수용, 검증 근거는 스펙). 문자 집합은 monitoring
- * {@code HashtagCandidateExtractor.HASHTAG}·{@code BrandHashtagTags.VALID_TAG}와 같은 정의를
- * 유지할 것 — 갈리면 "화면에서 필터되는 태그"와 "monitoring이 시드·스윕하는 태그"가 어긋난다.
+ * {@code HashtagCandidateExtractor}·{@code BrandHashtagTags.isValidTag}와 같은 정의를 유지할 것 —
+ * 갈리면 "화면에서 필터되는 태그"와 "monitoring이 제안·스윕하는 태그"가 어긋난다.
  */
 ```
 
-- [ ] **최소 구현 4/4 (컨트롤러 테스트)** — `V1BrandAccountsControllerTest`에서 등록 응답을 검증하며
-  `addHashtagTags`·`addTags` 호출을 기대하는 단언이 있으면 제거한다(조사 시점 기준 1312행 부근
-  `then(hashtagTagRepository).should().addTags(7L, 100L, List.of("리즈다"));`는 **태그 추가 API**의
-  단언이라 그대로 둔다 — 등록 경로 단언만 대상이다). 아래로 대상을 특정한다.
+- [ ] **최소 구현 4/4 (컨트롤러 테스트)** — `V1BrandAccountsControllerTest`의 **등록(POST) 경로** 테스트에 `addHashtagTags`·`addTags` 기대가 있으면 제거한다. 태그 추가 API 테스트의 단언(1312행 부근 `then(hashtagTagRepository).should().addTags(7L, 100L, List.of("리즈다"));`)은 **그대로 둔다**. 대상 특정:
 
 ```
-grep -n "register" -A 20 was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountsControllerTest.java | grep -n "addHashtagTags\|addTags"
+grep -n "registerBrand\|addHashtagTags\|addTags" was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountsControllerTest.java
 ```
 
 - [ ] **통과 확인** — `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.*"` 가 전부 통과하는 것을 확인한다.
@@ -2131,194 +2397,472 @@ grep -n "register" -A 20 was/src/test/java/com/celfit/was/v1/brandmonitoring/V1B
 - [ ] **커밋**
 
 ```
-feat(was): 해시태그 유도 규칙 복제본 삭제
+feat(was): 계정명 절삭 유도 규칙 삭제
 
-was BrandHashtagTags(계정명 접두사 절삭)와 그 테스트, 링크 생성 시
-seedLedgerTagsSafely 호출을 삭제한다. 유도 규칙은 2026-09-03부터 monitoring
-단일 소유이고, was는 조회 시 승계로 장부를 채운다. 규칙이 두 벌이라 "바꾸면
-두 곳을 같이 고쳐야 한다"던 상태가 사라진다.
+was BrandHashtagTags(계정명 첫 점 앞까지 절삭)와 그 테스트, 링크 생성 시
+seedLedgerTagsSafely 호출을 삭제한다. 점이 든 계정명에서 계정과 무관한
+일반어(dr.piel_official → dr)를 만들어 해시태그 스윕이 무관 게시물을 대량
+수집하던 규칙이다. 자동 태그는 초기 백필 완료 뒤 훅이 심는다(다음 커밋).
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ```
 
 ---
 
-## Task 8 — was 조회 시 장부 승계
+## Task 10 — was 자동 시드 훅 (`ensureAutoSeeded`) + 호출 지점 3곳
 
 **Files:**
-- Modify: `was/src/main/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountService.java` (`getHashtagTags` 270~289행, `ensureSeeded` 402~412행 뒤에 공개 래퍼 신설)
+- Modify: `was/src/main/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountService.java` (필드·생성자, `get` 228~231행, `getHashtagTags` 270~278행, 새 메서드)
 - Modify: `was/src/main/java/com/celfit/was/v1/brandmonitoring/V1BrandPostsController.java` (90~109행 생성자, 212~239행 두 엔드포인트)
-- Modify: `was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountServiceHashtagTagsTest.java`
-- Modify: `was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandPostsControllerTest.java`
+- Create: `was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountServiceAutoSeedTest.java`
+- Modify: `was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountServiceHashtagTagsTest.java` (생성자 인자 추가)
+- Modify: `was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountServiceWithdrawalTest.java` (생성자 인자 추가)
+- Modify: `was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountsControllerTest.java` (@MockitoBean 추가)
+- Modify: `was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandPostsControllerTest.java` (@MockitoBean 추가 + 훅 검증)
 
-> **설계 판단(spec §4의 지목 클래스 정정)** — spec은 승계 지점으로 `BrandHashtagPostAssembler`를
-> 지목했지만, 그 클래스는 장부를 읽지 않는다. 실제 읽기는 `BrandPostAssembler:225`·`:504`이고
-> 거기엔 `MonitoringCommandClient`도 username도 없다(게시물 목록 조립 전용 컴포넌트라 monitoring
-> HTTP 클라이언트를 주입하는 건 층 위반이자 성능 위험이다). 그래서 **승계를 컨트롤러 층으로 올려**
-> `V1BrandPostsController`가 조립 직전에 `V1BrandAccountService.ensureLedgerSeededSafely`를
-> 부른다. 소유권 검증은 컨트롤러가 이미 `requireOwnership`으로 마쳤다.
+> **호출 지점을 컨트롤러 층에 두는 이유** — spec §4-2의 3번은 "해시태그 게시물 목록 조회"인데,
+> 그 조립(`BrandHashtagPostAssembler` → `BrandPostAssembler`)에는 `MonitoringCommandClient`도
+> username도 없다(조립 전용 컴포넌트라 HTTP 의존을 넣는 건 층 위반이자 성능 위험이다).
+> `V1BrandPostsController`가 조립 직전에 서비스의 훅을 부른다. **메인 목록
+> `GET /accounts/{id}/posts`에는 걸지 않는다**(수집 중 초 단위 폴링 경로 — spec §4-2·§7).
 >
-> **적용 범위** — 해시태그 게시물 엔드포인트 2개(`hashtagPosts`·`hashtagPostCount`)와
-> `getHashtagTags`에만 건다. 메인 목록 `GET /accounts/{id}/posts`에는 걸지 **않는다**: 그 목록은
-> 수집 중 FE가 초 단위로 폴링하는 경로라, 태그가 영영 0개인 경쟁사 브랜드에서 폴링마다 monitoring
-> GET 1콜이 나간다. 브랜드 상세 화면은 태그 칩(`getHashtagTags`)을 함께 부르므로 실사용에서는 그
-> 호출이 장부를 채운다 — 남는 갭은 트랙 문서의 후속 항목으로 적는다.
+> 개수 엔드포인트(`hashtag-posts/count`)에도 함께 건다 — 탭 뱃지가 목록 없이 먼저 렌더될 수 있고,
+> 그때 장부가 비면 0으로 보여 사용자가 목록을 열지 않는다. 훅은 링크 표식이 찍힌 뒤 첫 분기에서
+> 곧장 반환하므로 반복 비용이 없다.
 
 ### Steps
 
-- [ ] **실패 테스트 작성 1/2 (서비스)** — `V1BrandAccountServiceHashtagTagsTest`에 승계 검증을 추가한다.
+- [ ] **실패 테스트 작성** — `was/src/test/java/com/celfit/was/v1/brandmonitoring/V1BrandAccountServiceAutoSeedTest.java`
 
 ```java
-	// ---------- 조회 시 장부 승계(2026-09-03 자동 시드 재설계 §4) ----------
+package com.celfit.was.v1.brandmonitoring;
 
-	/** 장부가 비었고 monitoring에 무주 태그가 있으면 승계해서 그 태그로 응답한다. */
-	@Test
-	void 장부가_비면_monitoring_태그를_승계해_돌려준다() {
-		// 승계 전(빈 장부) → 승계 후(끌리메) 순으로 두 번 조회된다 — 다이아몬드는 varargs 추론이
-		// 흔들리므로 타입 인자를 명시한다.
-		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID))
-				.willReturn(new LinkedHashSet<String>(), new LinkedHashSet<>(List.of("끌리메")));
-		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of("끌리메"));
-		given(hashtagTagRepository.unionByBrand(BRAND_ID)).willReturn(Set.of());
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.never;
 
-		List<BrandHashtagTagsResponse.TagStatus> tags = service.getHashtagTags(USER_ID, BRAND_ID);
+import com.celfit.was.auth.UserRepository;
+import com.celfit.was.monitoring.BrandHashtagSeedRepository;
+import com.celfit.was.monitoring.BrandHashtagSeedRepository.SeedRow;
+import com.celfit.was.monitoring.BrandHashtagTagRepository;
+import com.celfit.was.monitoring.BrandLinkRepository;
+import com.celfit.was.monitoring.BrandLinkRow;
+import com.celfit.was.monitoring.BrandReadRepository;
+import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
+import com.celfit.was.monitoring.MonitoringCommandClient;
+import com.celfit.was.monitoring.MonitoringCommandClient.HashtagSuggestionBody;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of("끌리메"));
-		assertThat(tags).extracting(BrandHashtagTagsResponse.TagStatus::tag).containsExactly("끌리메");
+/**
+ * 자동 시드 훅(2026-09-03 자동 시드 재설계 §4-2) — was가 유일한 작성자다. 분기 전부를 고정한다:
+ * 링크 이미 반영됨 / 백필 미완 / 이미 사용자 태그 있음(SKIP) / 신규 계산 / 기존 시드 복사 /
+ * push 실패 격리 / 동시 호출 경합. 훅은 어떤 실패에서도 예외를 밖으로 내지 않는다.
+ */
+@ExtendWith(MockitoExtension.class)
+class V1BrandAccountServiceAutoSeedTest {
+
+	private static final long USER_ID = 7L;
+	private static final long BRAND_ID = 100L;
+	private static final long LINK_ID = 1L;
+	private static final String USERNAME = "dr.piel_official";
+	private static final OffsetDateTime NOW = OffsetDateTime.parse("2026-09-03T00:00:00Z");
+
+	@Mock
+	BrandLinkRepository linkRepository;
+	@Mock
+	MonitoringCommandClient commandClient;
+	@Mock
+	BrandReadRepository brandReadRepository;
+	@Mock
+	UserRepository userRepository;
+	@Mock
+	BrandHashtagTagRepository hashtagTagRepository;
+	@Mock
+	BrandHashtagSeedRepository seedRepository;
+
+	V1BrandAccountService service;
+
+	@BeforeEach
+	void setUp() {
+		service = new V1BrandAccountService(linkRepository, new BrandLinkTransaction(linkRepository),
+				commandClient, brandReadRepository, new BrandAccountAssembler(3), userRepository,
+				hashtagTagRepository, seedRepository);
 	}
 
-	/** 장부가 차 있으면 monitoring 태그 목록 조회 자체를 하지 않는다(기존 08-19 계약 유지). */
-	@Test
-	void 장부가_차_있으면_monitoring_태그를_조회하지_않는다() {
-		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID))
-				.willReturn(new LinkedHashSet<>(List.of("리즈다")));
-
-		service.getHashtagTags(USER_ID, BRAND_ID);
-
-		then(commandClient).should(never()).getHashtagTags(anyString());
+	private static BrandLinkRow link(OffsetDateTime hashtagSeededAt) {
+		return new BrandLinkRow(LINK_ID, USER_ID, BRAND_ID, USERNAME, BrandAccountType.OWN, 12,
+				NOW, null, hashtagSeededAt);
 	}
 
-	/** 남이 소유한 태그는 승계하지 않는다 — ensureSeeded의 기존 무주 판정 그대로다. */
+	/** 이 테스트가 실제로 읽는 필드만 의미 있게 채운다(username·backfillCompletedAt). */
+	private static BrandAccountRow account(OffsetDateTime backfillCompletedAt) {
+		return new BrandAccountRow(BRAND_ID, USERNAME, LocalDate.of(2026, 9, 2), NOW, NOW,
+				backfillCompletedAt, null, 100L, 10L, 5L, "소개", "닥터피엘 Dr.PIEL",
+				"https://p", false, null, "ACTIVE", null, 12, NOW, false, null);
+	}
+
+	private void stubLink(OffsetDateTime hashtagSeededAt) {
+		given(linkRepository.findActiveByUserAndBrand(USER_ID, BRAND_ID))
+				.willReturn(Optional.of(link(hashtagSeededAt)));
+	}
+
+	private void stubAccount(OffsetDateTime backfillCompletedAt) {
+		given(brandReadRepository.findAccount(BRAND_ID)).willReturn(Optional.of(account(backfillCompletedAt)));
+	}
+
+	// ---------- 게이트 ----------
+
 	@Test
-	void 남이_소유한_태그는_승계하지_않는다() {
-		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID)).willReturn(new LinkedHashSet<>());
-		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of("남의태그"));
-		given(hashtagTagRepository.unionByBrand(BRAND_ID)).willReturn(Set.of("남의태그"));
+	void 링크가_이미_반영됐으면_아무것도_하지_않는다() {
+		stubLink(NOW);
 
-		List<BrandHashtagTagsResponse.TagStatus> tags = service.getHashtagTags(USER_ID, BRAND_ID);
+		service.ensureAutoSeeded(USER_ID, BRAND_ID);
 
+		then(seedRepository).should(never()).find(anyLong());
+		then(commandClient).should(never()).getHashtagSuggestion(anyString());
 		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
-		assertThat(tags).isEmpty();
 	}
 
-	/** monitoring 순단이 조회를 500으로 떨구지 않는다 — 승계는 best-effort다. */
 	@Test
-	void 승계_실패는_조회를_깨지_않는다() {
-		given(hashtagTagRepository.findByUserAndBrand(USER_ID, BRAND_ID)).willReturn(new LinkedHashSet<>());
-		given(commandClient.getHashtagTags(USERNAME)).willThrow(new RuntimeException("monitoring 순단"));
+	void 미소유_브랜드는_아무것도_하지_않는다() {
+		given(linkRepository.findActiveByUserAndBrand(USER_ID, BRAND_ID)).willReturn(Optional.empty());
 
-		assertThat(service.getHashtagTags(USER_ID, BRAND_ID)).isEmpty();
+		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+
+		then(seedRepository).should(never()).find(anyLong());
+	}
+
+	@Test
+	void 초기_백필이_미완이면_계산하지_않는다() {
+		stubLink(null);
+		given(seedRepository.find(BRAND_ID)).willReturn(Optional.empty());
+		stubAccount(null);
+
+		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+
+		then(commandClient).should(never()).getHashtagSuggestion(anyString());
+		then(linkRepository).should(never()).markHashtagSeeded(anyLong());
+	}
+
+	// ---------- 신규 계산 ----------
+
+	@Test
+	void 태그가_없으면_제안을_받아_기록하고_push하고_장부에_넣고_표식을_찍는다() {
+		stubLink(null);
+		given(seedRepository.find(BRAND_ID)).willReturn(Optional.empty(),
+				Optional.of(new SeedRow(BRAND_ID, "AI", "닥터피엘", NOW)));
+		stubAccount(NOW);
+		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of());
+		given(commandClient.getHashtagSuggestion(USERNAME))
+				.willReturn(new HashtagSuggestionBody("AI", "닥터피엘", 3, 40));
+
+		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+
+		then(seedRepository).should().insertIgnore(BRAND_ID, "AI", "닥터피엘");
+		then(commandClient).should().addHashtagTags(USERNAME, List.of("닥터피엘"));
+		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of("닥터피엘"));
+		then(linkRepository).should().markHashtagSeeded(LINK_ID);
+	}
+
+	/** 이미 사용자 관리 태그가 있는 브랜드 — 자동 태그를 얹지 않고 SKIP만 기록한다. */
+	@Test
+	void monitoring에_태그가_있으면_SKIP을_기록하고_장부는_건드리지_않는다() {
+		stubLink(null);
+		given(seedRepository.find(BRAND_ID)).willReturn(Optional.empty(),
+				Optional.of(new SeedRow(BRAND_ID, "SKIP", null, NOW)));
+		stubAccount(NOW);
+		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of("사용자태그"));
+
+		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+
+		then(seedRepository).should().insertIgnore(BRAND_ID, "SKIP", null);
+		then(commandClient).should(never()).getHashtagSuggestion(anyString());
+		then(commandClient).should(never()).addHashtagTags(anyString(), any());
+		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
+		// 이 링크에 대한 판정은 끝났다 — 다음 조회가 같은 결론을 다시 계산하면 안 된다.
+		then(linkRepository).should().markHashtagSeeded(LINK_ID);
+	}
+
+	// ---------- 기존 시드 재사용 ----------
+
+	@Test
+	void 시드가_이미_있으면_계산_없이_복사한다() {
+		stubLink(null);
+		given(seedRepository.find(BRAND_ID))
+				.willReturn(Optional.of(new SeedRow(BRAND_ID, "FREQ", "닥피", NOW)));
+
+		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+
+		then(commandClient).should(never()).getHashtagSuggestion(anyString());
+		then(commandClient).should(never()).getHashtagTags(anyString());
+		then(brandReadRepository).should(never()).findAccount(anyLong());
+		then(commandClient).should().addHashtagTags(USERNAME, List.of("닥피"));
+		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of("닥피"));
+		then(linkRepository).should().markHashtagSeeded(LINK_ID);
+	}
+
+	@Test
+	void SKIP_시드는_장부_삽입_없이_표식만_찍는다() {
+		stubLink(null);
+		given(seedRepository.find(BRAND_ID))
+				.willReturn(Optional.of(new SeedRow(BRAND_ID, "SKIP", null, NOW)));
+
+		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+
+		then(commandClient).should(never()).addHashtagTags(anyString(), any());
+		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
+		then(linkRepository).should().markHashtagSeeded(LINK_ID);
+	}
+
+	/** 동시 호출 경합 — 내 INSERT가 지면 재조회로 이긴 쪽의 값을 쓴다(계산 결과가 아니라). */
+	@Test
+	void 동시_호출은_먼저_커밋된_시드를_따른다() {
+		stubLink(null);
+		given(seedRepository.find(BRAND_ID)).willReturn(Optional.empty(),
+				Optional.of(new SeedRow(BRAND_ID, "FREQ", "먼저값", NOW)));
+		stubAccount(NOW);
+		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of());
+		given(commandClient.getHashtagSuggestion(USERNAME))
+				.willReturn(new HashtagSuggestionBody("AI", "내값", 1, 5));
+
+		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+
+		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of("먼저값"));
+	}
+
+	// ---------- 격리 ----------
+
+	/** monitoring push가 실패해도 장부는 진행한다 — 여기서 멈추면 그 사용자 장부가 영구히 빈다. */
+	@Test
+	void push_실패는_장부_삽입과_표식을_막지_않는다() {
+		stubLink(null);
+		given(seedRepository.find(BRAND_ID))
+				.willReturn(Optional.of(new SeedRow(BRAND_ID, "FREQ", "닥피", NOW)));
+		willThrow(new RuntimeException("monitoring 순단"))
+				.given(commandClient).addHashtagTags(USERNAME, List.of("닥피"));
+
+		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+
+		then(hashtagTagRepository).should().addTags(USER_ID, BRAND_ID, List.of("닥피"));
+		then(linkRepository).should().markHashtagSeeded(LINK_ID);
+	}
+
+	@Test
+	void 제안_조회_실패는_예외를_밖으로_내지_않는다() {
+		stubLink(null);
+		given(seedRepository.find(BRAND_ID)).willReturn(Optional.empty());
+		stubAccount(NOW);
+		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of());
+		given(commandClient.getHashtagSuggestion(USERNAME)).willThrow(new RuntimeException("monitoring 순단"));
+
+		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+
+		then(seedRepository).should(never()).insertIgnore(anyLong(), anyString(), anyString());
+		then(linkRepository).should(never()).markHashtagSeeded(anyLong());
+	}
+
+	@Test
+	void 링크_조회_실패도_예외를_밖으로_내지_않는다() {
+		given(linkRepository.findActiveByUserAndBrand(USER_ID, BRAND_ID))
+				.willThrow(new RuntimeException("DB 장애"));
+
+		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+
+		then(linkRepository).should(never()).markHashtagSeeded(anyLong());
+	}
+
+	/** 제안 tag가 비어 오는 건 monitoring 계약 위반이지만, 방어적으로 심지 않는다. */
+	@Test
+	void 제안_tag가_비면_아무것도_심지_않는다() {
+		stubLink(null);
+		given(seedRepository.find(BRAND_ID)).willReturn(Optional.empty());
+		stubAccount(NOW);
+		given(commandClient.getHashtagTags(USERNAME)).willReturn(List.of());
+		given(commandClient.getHashtagSuggestion(USERNAME))
+				.willReturn(new HashtagSuggestionBody("FALLBACK", "  ", 0, 0));
+
+		service.ensureAutoSeeded(USER_ID, BRAND_ID);
+
+		then(seedRepository).should(never()).insertIgnore(anyLong(), anyString(), anyString());
+		then(hashtagTagRepository).should(never()).addTags(anyLong(), anyLong(), any());
+		then(linkRepository).should(never()).markHashtagSeeded(anyLong());
+	}
+}
+```
+
+- [ ] **실패 확인** — `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.V1BrandAccountServiceAutoSeedTest"` 가 컴파일 실패로 끝나는 것을 확인한다.
+
+- [ ] **최소 구현 1/4 (필드·생성자)** — `V1BrandAccountService`의 `hashtagTagRepository` 필드 뒤에 추가하고 생성자를 넓힌다.
+
+```java
+	private final BrandHashtagTagRepository hashtagTagRepository;
+	/** 브랜드 단위 자동 시드 기록(2026-09-03 §4-1) — 계산을 브랜드당 1회로 묶는다. */
+	private final BrandHashtagSeedRepository seedRepository;
+
+	public V1BrandAccountService(BrandLinkRepository linkRepository, BrandLinkTransaction linkTransaction,
+			MonitoringCommandClient commandClient, BrandReadRepository brandReadRepository,
+			BrandAccountAssembler assembler, UserRepository userRepository,
+			BrandHashtagTagRepository hashtagTagRepository, BrandHashtagSeedRepository seedRepository) {
+		this.linkRepository = linkRepository;
+		this.linkTransaction = linkTransaction;
+		this.commandClient = commandClient;
+		this.brandReadRepository = brandReadRepository;
+		this.assembler = assembler;
+		this.userRepository = userRepository;
+		this.hashtagTagRepository = hashtagTagRepository;
+		this.seedRepository = seedRepository;
 	}
 ```
 
-- [ ] **실패 확인** — `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.V1BrandAccountServiceHashtagTagsTest"` 가 실패하는 것을 확인한다.
+  import에 `com.celfit.was.monitoring.BrandHashtagSeedRepository`를 추가한다.
 
-- [ ] **최소 구현 1/3 (`ensureLedgerSeededSafely`)** — `V1BrandAccountService`의 private `ensureSeeded`(402~412행) **바로 뒤**에 공개 래퍼를 넣는다.
+- [ ] **최소 구현 2/4 (`ensureAutoSeeded`)** — `getHashtagTags` 뒤(또는 파일의 private 헬퍼 구역 앞)에 넣는다.
 
 ```java
 	/**
-	 * 조회 경로 장부 승계(2026-09-03 자동 시드 재설계 §4) — <b>이 사용자의 장부가 비어 있을 때만</b>
-	 * {@link #ensureSeeded}로 monitoring의 무주 태그를 물려받는다. 자동 태그를 monitoring이 심게
-	 * 되면서(등록 시 was 시딩 폐지) 장부를 채울 유일한 경로가 됐다.
+	 * 브랜드 해시태그 자동 시드 훅(2026-09-03 자동 시드 재설계 §4-2) — <b>was가 유일한 작성자다</b>
+	 * (08-28 "태그 생성 권한 was 일원화" 유지). monitoring은 계산만 해 주고 아무것도 쓰지 않는다.
 	 *
-	 * <p>비용은 장부가 비어 있는 동안만 monitoring GET 1회/조회다. 태그가 영원히 0개인 브랜드
-	 * (경쟁사)는 화면을 열 때마다 1콜이 나가는데, 내부 HTTP 1콜이라 수용한다 — 그래서 초 단위로
-	 * 폴링되는 게시물 목록({@code GET /accounts/{id}/posts})에는 걸지 않는다.
+	 * <p>두 단계 멱등: 계산은 브랜드당 1회({@code app.brand_hashtag_seed} 1행), 장부 삽입은
+	 * 사용자당 1회({@code brand_monitorings.hashtag_seeded_at}). 두 번째 사용자가 같은 브랜드에
+	 * 링크하면 계산 없이 시드 행의 태그를 자기 장부에 복사한다. 사용자가 자동 태그를 지운 뒤 다시
+	 * 조회해도 표식이 찍혀 있어 되살아나지 않는다.
 	 *
-	 * <p>부활 방지: 사용자가 지운 태그는 was가 monitoring에서도 지우거나(단독 소유), 남이 소유
-	 * 중이면 무주가 아니라 걸러진다 — 조회 승계로 되살아나지 않는다.
+	 * <p>호출은 초기 백필이 끝난 뒤여야 의미가 있다 — 캡션이 하나도 없으면 FREQ가 성립하지 못하고
+	 * 곧장 AI·FALLBACK으로 떨어져 그 결과가 브랜드 생애 유일한 시드로 굳는다. {@code
+	 * backfill_completed_at}이 null이면 아무것도 하지 않고 다음 조회로 미룬다.
 	 *
-	 * <p><b>소유권 검증은 하지 않는다</b> — 호출측(이미 {@code requireOwnership}을 통과한
-	 * 컨트롤러·서비스)의 책임이다. 실패는 warn 격리한다: monitoring 순단 하나로 조회 화면이 깨지면
-	 * 안 된다(다른 best-effort 관용구와 동형).
+	 * <p>monitoring push는 <b>먼저</b> 시도하되 실패해도 장부는 진행한다(구 {@code
+	 * seedLedgerTagsSafely}와 같은 순서·격리) — 여기서 멈추면 표식이 안 찍혀 매 조회마다 재시도하는
+	 * 것 같지만, 실제로는 그 사용자에게 태그가 영영 안 보이는 상태가 길어진다. 장부만 채워진
+	 * 상태는 다음 사용자의 push나 수동 추가로 자연 복구된다.
+	 *
+	 * <p><b>전체가 best-effort다</b> — 어떤 예외도 밖으로 내지 않는다. 호출 지점 3곳이 전부 사용자
+	 * 대면 조회라, 자동 시드 실패가 화면을 깨뜨리면 안 된다. 소유권 검증은 이 메서드 안의 활성
+	 * 링크 조회가 겸한다(남의 brandId면 링크가 없어 조용히 반환).
 	 */
-	public void ensureLedgerSeededSafely(long userId, long brandId, String username) {
+	public void ensureAutoSeeded(long userId, long brandId) {
 		try {
-			if (!hashtagTagRepository.findByUserAndBrand(userId, brandId).isEmpty()) {
-				return;
-			}
-			ensureSeeded(userId, brandId, username);
+			doEnsureAutoSeeded(userId, brandId);
 		} catch (RuntimeException e) {
-			log.warn("해시태그 장부 조회 승계 실패(격리) — userId={}, brandId={}, username={}",
-					userId, brandId, username, e);
+			log.warn("해시태그 자동 시드 실패(격리) — userId={}, brandId={}", userId, brandId, e);
 		}
+	}
+
+	private void doEnsureAutoSeeded(long userId, long brandId) {
+		Optional<BrandLinkRow> link = linkRepository.findActiveByUserAndBrand(userId, brandId);
+		if (link.isEmpty() || link.get().hashtagSeededAt() != null) {
+			return;
+		}
+		String username = link.get().username();
+		Optional<BrandHashtagSeedRepository.SeedRow> seed = seedRepository.find(brandId);
+		if (seed.isEmpty()) {
+			seed = computeSeed(brandId, username);
+			if (seed.isEmpty()) {
+				return;   // 백필 미완·계산 실패 — 표식을 찍지 않고 다음 조회로 미룬다.
+			}
+		}
+		String tag = seed.get().tag();
+		if (tag != null && !tag.isBlank()) {
+			try {
+				commandClient.addHashtagTags(username, List.of(tag));
+			} catch (RuntimeException e) {
+				log.warn("해시태그 자동 시드 monitoring push 실패(격리, 장부는 진행) — userId={}, brandId={}",
+						userId, brandId, e);
+			}
+			hashtagTagRepository.addTags(userId, brandId, List.of(tag));
+		}
+		linkRepository.markHashtagSeeded(link.get().id());
+	}
+
+	/**
+	 * 브랜드 단위 계산 1회 — 백필 미완이면 empty(다음 조회로 미룸). 이미 사용자 관리 태그가 있는
+	 * 브랜드는 자동 태그를 얹지 않고 SKIP만 기록한다(그 브랜드는 사용자가 이미 태그를 관리 중이다).
+	 *
+	 * <p>INSERT는 {@code ON CONFLICT DO NOTHING} 뒤 <b>재조회</b>한다 — 동시 호출 둘이 각자 계산해도
+	 * 먼저 커밋한 값이 정본이 되고, 진 쪽은 자기 계산 결과가 아니라 그 값을 심는다(두 사용자의
+	 * 장부가 갈리지 않는다).
+	 */
+	private Optional<BrandHashtagSeedRepository.SeedRow> computeSeed(long brandId, String username) {
+		BrandAccountRow account = findAccountOrThrow(brandId);
+		if (account.backfillCompletedAt() == null) {
+			return Optional.empty();
+		}
+		if (!commandClient.getHashtagTags(username).isEmpty()) {
+			seedRepository.insertIgnore(brandId, "SKIP", null);
+			return seedRepository.find(brandId);
+		}
+		MonitoringCommandClient.HashtagSuggestionBody suggestion =
+				commandClient.getHashtagSuggestion(username);
+		if (suggestion == null || suggestion.tag() == null || suggestion.tag().isBlank()) {
+			// monitoring 계약(tag는 비지 않는다) 위반 — 심지 않고 다음 조회로 미룬다.
+			log.warn("해시태그 제안 응답에 태그가 없다(계약 위반) — brandId={}, username={}", brandId, username);
+			return Optional.empty();
+		}
+		log.info("해시태그 자동 시드 계산 — brandId={}, username={}, path={}, tag={}, topCount={}, candidatePosts={}",
+				brandId, username, suggestion.path(), suggestion.tag(),
+				suggestion.topCount(), suggestion.candidatePosts());
+		seedRepository.insertIgnore(brandId, suggestion.path(), suggestion.tag());
+		return seedRepository.find(brandId);
 	}
 ```
 
-- [ ] **최소 구현 2/3 (`getHashtagTags`)** — 270~278행을 다음으로 바꾼다.
+  import에 `com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow`가 없으면 추가한다
+  (`findAccountOrThrow`의 반환 타입 — 이미 쓰이고 있으면 그대로).
+
+- [ ] **최소 구현 3/4 (호출 지점 2곳 — 서비스)** — `get`(228~231행)과 `getHashtagTags`(270~278행)를 바꾼다.
+
+```java
+	/** 단건 폴링(§5-2) — 소유권은 활성 연결로 검증(남의 brandId는 403). 타입도 그 연결에서 읽는다.
+	 *
+	 * <p>수집이 끝난 브랜드면 자동 시드 훅을 태운다(2026-09-03 자동 시드 재설계 §4-2 호출 지점 1) —
+	 * FE가 등록 직후 이 API를 폴링하므로, 백필 완료 폴링이 그대로 시드 시점이 된다. 미완일 때
+	 * 부르지 않는 이유는 훅 안에서도 같은 판정을 하지만 폴링 왕복마다 링크·시드 조회를 태울
+	 * 이유가 없어서다. */
+	public BrandAccountResponse get(long userId, long brandId) {
+		BrandLinkRow link = requireOwnership(userId, brandId);
+		BrandAccountRow account = findAccountOrThrow(brandId);
+		if (account.backfillCompletedAt() != null) {
+			ensureAutoSeeded(userId, brandId);
+		}
+		return assembler.toResponse(account, link.accountType(), link.collectionMonths());
+	}
+```
 
 ```java
 	public List<BrandHashtagTagsResponse.TagStatus> getHashtagTags(long userId, long brandId) {
 		requireOwnership(userId, brandId);
-		// 장부가 비어 있으면 monitoring 자동 태그를 먼저 승계한다(2026-09-03 자동 시드 재설계 §4) —
-		// 소유권 통과 후에도 브랜드 자체는 존재해야 한다(기존 계약 유지).
-		String username = findAccountOrThrow(brandId).username();
-		ensureLedgerSeededSafely(userId, brandId, username);
+		// 자동 시드 훅(2026-09-03 §4-2 호출 지점 2) — 장부를 읽기 전에 태운다.
+		ensureAutoSeeded(userId, brandId);
 		List<String> ledgerTags = List.copyOf(hashtagTagRepository.findByUserAndBrand(userId, brandId));
 		if (ledgerTags.isEmpty()) {
+			findAccountOrThrow(brandId);   // 소유권 통과 후에도 브랜드 자체는 존재해야 한다(기존 계약 유지)
 			return List.of();
 		}
+		String username = findAccountOrThrow(brandId).username();
 		Map<String, MonitoringCommandClient.TagRunState> runStates = fetchRunStatesSafely(username);
 ```
 
-  (`String username = findAccountOrThrow(brandId).username();` 이 위로 올라갔으므로 279행의 중복
-  선언을 지운다.)
+  (이하 기존 본문 유지.)
 
-- [ ] **통과 확인 (서비스)** — `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.V1BrandAccountServiceHashtagTagsTest"` 가 전부 통과하는 것을 확인한다.
-
-- [ ] **실패 테스트 작성 2/2 (컨트롤러)** — `V1BrandPostsControllerTest`의 `@MockitoBean` 선언부에 아래를 추가하고,
-
-```java
-	/** 해시태그 목록 조회 시 장부 승계(2026-09-03 자동 시드 재설계 §4) — 판정은 서비스 테스트가 본다. */
-	@MockitoBean
-	V1BrandAccountService brandAccountService;
-```
-
-  해시태그 엔드포인트 검증을 추가한다(파일의 hashtag-posts 관련 테스트 근처).
-
-```java
-	@Test
-	void 해시태그_목록_조회는_장부_승계를_먼저_시도한다() throws Exception {
-		stubOwnedBrand(7L, 100L);
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
-				.andExpect(status().isOk());
-
-		then(brandAccountService).should().ensureLedgerSeededSafely(7L, 100L, "lizda_official");
-	}
-
-	@Test
-	void 해시태그_개수_조회도_장부_승계를_먼저_시도한다() throws Exception {
-		stubOwnedBrand(7L, 100L);
-
-		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts/count").with(user(principal())))
-				.andExpect(status().isOk());
-
-		then(brandAccountService).should().ensureLedgerSeededSafely(7L, 100L, "lizda_official");
-	}
-```
-
-  > `stubOwnedBrand`와 `principal()`은 이 테스트 클래스의 기존 헬퍼다. 세 번째 인자로 넘길
-  > username은 그 헬퍼가 심는 `BrandAccountRow`의 username과 정확히 같아야 한다 — 헬퍼 정의를 열어
-  > 실제 값을 확인하고 리터럴을 맞춘다. `then`/`should`는 `org.mockito.BDDMockito` 정적 import다.
-
-- [ ] **실패 확인 (컨트롤러)** — `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.V1BrandPostsControllerTest"` 가 컴파일 실패로 끝나는 것을 확인한다.
-
-- [ ] **최소 구현 3/3 (`V1BrandPostsController`)** — 필드·생성자에 서비스를 추가하고,
+- [ ] **최소 구현 4/4 (호출 지점 3 — 컨트롤러)** — `V1BrandPostsController`의 필드·생성자에 서비스를 추가하고,
 
 ```java
 	private final BrandHashtagPostAssembler hashtagPostAssembler;
-	/** 해시태그 장부 승계 전용(2026-09-03 자동 시드 재설계 §4) — 조립 직전 1회. */
+	/** 해시태그 자동 시드 훅 전용(2026-09-03 §4-2 호출 지점 3) — 조립 직전 1회. */
 	private final V1BrandAccountService brandAccountService;
 	private final Clock clock;
 
@@ -2338,7 +2882,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 	}
 ```
 
-  두 엔드포인트에서 조립 직전에 승계를 부른다.
+  두 해시태그 엔드포인트에서 조립 직전에 훅을 부른다.
 
 ```java
 	@GetMapping("/accounts/{accountId}/hashtag-posts")
@@ -2347,9 +2891,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 		long brandId = parseAccountId(accountId);
 		BrandLinkRow link = requireOwnership(principal.getUserId(), brandId);
 		BrandAccountRow account = findAccountOrThrow(brandId);
-		// 장부가 비어 있으면 monitoring 자동 태그를 승계한다 — 격리 필터(내 태그 ∩ 매칭 태그)가
-		// 빈 장부에서는 아무것도 통과시키지 못해 자동 태그로 발견된 게시물이 통째로 안 보인다.
-		brandAccountService.ensureLedgerSeededSafely(principal.getUserId(), brandId, account.username());
+		// 자동 시드 훅(2026-09-03 §4-2 호출 지점 3) — 격리 필터(내 장부 태그 ∩ 게시물 매칭 태그)가
+		// 빈 장부에서는 아무것도 통과시키지 못해, 자동 태그로 발견된 게시물이 통째로 안 보인다.
+		// 조립 층(BrandPostAssembler)에는 monitoring 클라이언트도 username도 없어 여기서 부른다.
+		brandAccountService.ensureAutoSeeded(principal.getUserId(), brandId);
 		LocalDate windowStart = BrandPostWindows.linkWindowStart(today(), link.collectionMonths());
 		return ApiResponse.ok(hashtagPostAssembler.assembleForBrand(principal.getUserId(), account,
 				link.accountType(), windowStart));
@@ -2363,12 +2908,57 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 		long brandId = parseAccountId(accountId);
 		BrandLinkRow link = requireOwnership(principal.getUserId(), brandId);
 		BrandAccountRow account = findAccountOrThrow(brandId);
-		brandAccountService.ensureLedgerSeededSafely(principal.getUserId(), brandId, account.username());
+		// 탭 뱃지가 목록보다 먼저 렌더될 수 있다 — 여기서 0이 나오면 사용자가 목록을 열지 않는다.
+		brandAccountService.ensureAutoSeeded(principal.getUserId(), brandId);
 		LocalDate windowStart = BrandPostWindows.linkWindowStart(today(), link.collectionMonths());
 		return ApiResponse.ok(Map.of("count",
 				hashtagPostAssembler.countForBrand(principal.getUserId(), account, windowStart)));
 	}
 ```
+
+- [ ] **기존 테스트 배선 갱신** —
+  1. `V1BrandAccountServiceHashtagTagsTest`: `@Mock BrandHashtagSeedRepository seedRepository;`를 더하고 `setUp()`의 생성자에 마지막 인자로 넘긴다. `getHashtagTags` 테스트들은 훅이 링크 조회에서 곧장 반환하도록 `link()` 픽스처의 `hashtagSeededAt`을 **non-null**로 채운다(그 테스트들의 관심사는 훅이 아니다).
+  2. `V1BrandAccountServiceWithdrawalTest`: 생성자에 `Mockito.mock(BrandHashtagSeedRepository.class)` 또는 기존 mock 관용구대로 인자를 더한다.
+  3. `V1BrandAccountsControllerTest`: `@MockitoBean BrandHashtagSeedRepository seedRepository;`를 더한다(`@Import`에 실 서비스가 붙어 있어 빈이 필요하다). 태그 조회 테스트는 `link(...)` 헬퍼의 `hashtagSeededAt`을 non-null로 채워 훅을 무력화한다.
+  4. `V1BrandPostsControllerTest`: `@MockitoBean V1BrandAccountService brandAccountService;`를 더한다.
+
+- [ ] **컨트롤러 훅 검증 추가** — `V1BrandPostsControllerTest`에 아래를 넣는다(`then`/`should`는 `org.mockito.BDDMockito` 정적 import).
+
+```java
+	@Test
+	void 해시태그_목록_조회는_자동_시드_훅을_먼저_태운다() throws Exception {
+		stubOwnedBrand(7L, 100L);
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts").with(user(principal())))
+				.andExpect(status().isOk());
+
+		then(brandAccountService).should().ensureAutoSeeded(7L, 100L);
+	}
+
+	@Test
+	void 해시태그_개수_조회도_자동_시드_훅을_태운다() throws Exception {
+		stubOwnedBrand(7L, 100L);
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/hashtag-posts/count").with(user(principal())))
+				.andExpect(status().isOk());
+
+		then(brandAccountService).should().ensureAutoSeeded(7L, 100L);
+	}
+
+	/** 메인 목록은 수집 중 초 단위 폴링 경로라 훅을 걸지 않는다(§4-2·§7). */
+	@Test
+	void 메인_게시물_목록은_자동_시드_훅을_태우지_않는다() throws Exception {
+		stubOwnedBrand(7L, 100L);
+
+		mockMvc.perform(get("/v1/brand-monitoring/accounts/100/posts").with(user(principal())))
+				.andExpect(status().isOk());
+
+		then(brandAccountService).should(never()).ensureAutoSeeded(anyLong(), anyLong());
+	}
+```
+
+  > `stubOwnedBrand`·`principal()`은 이 테스트 클래스의 기존 헬퍼다. 헬퍼가 심는 brandId·userId가
+  > 위 리터럴과 같은지 파일을 열어 확인하고 맞춘다.
 
 - [ ] **통과 확인** — `./gradlew :was:test --tests "com.celfit.was.v1.brandmonitoring.*"` 가 전부 통과하는 것을 확인한다.
 
@@ -2377,22 +2967,23 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 - [ ] **커밋**
 
 ```
-feat(was): 해시태그 장부가 비면 조회 시 monitoring 태그를 승계
+feat(was): 초기 백필 완료 뒤 해시태그 자동 시드 훅
 
-등록 시 시딩이 사라지면서 장부를 채울 유일한 경로가 됐다. 태그 목록 조회와
-해시태그 게시물 목록·개수 조회에서, 이 사용자의 장부가 비어 있을 때만 기존
-ensureSeeded(무주 태그 승계)를 부른다. 실패는 warn 격리한다.
+ensureAutoSeeded — 링크 표식이 없고 백필이 끝난 브랜드에서, monitoring 제안을
+받아 brand_hashtag_seed에 브랜드당 1행 기록하고 그 태그를 monitoring에 push한
+뒤 사용자 장부에 넣고 링크에 표식을 찍는다. 이미 사용자 태그가 있는 브랜드는
+SKIP만 기록한다. 두 번째 사용자는 계산 없이 시드 행을 복사한다.
 
-승계 호출은 컨트롤러 층에 둔다 - BrandPostAssembler는 monitoring 클라이언트도
-username도 갖지 않는 조립 전용 컴포넌트라 여기에 HTTP 의존을 넣을 수 없다.
-초 단위로 폴링되는 메인 게시물 목록에는 걸지 않는다(콜 낭비).
+호출 지점은 단건 폴링(수집 완료일 때만)·태그 목록 조회·해시태그 게시물 목록과
+개수 3곳이다. 메인 게시물 목록에는 걸지 않는다(초 단위 폴링 경로).
+전체 best-effort — 어떤 실패도 응답을 막지 않는다.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ```
 
 ---
 
-## Task 9 — 결정 기록과 트랙 문서
+## Task 11 — 결정 기록과 트랙 문서
 
 **Files:**
 - Modify: `DECISIONS.md` (표 헤더 바로 아래, 맨 위 행)
@@ -2400,10 +2991,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 
 ### Steps
 
-- [ ] **DECISIONS.md 갱신** — `| 날짜 | 결정 | 근거/상세 |` 표의 **첫 데이터 행 앞**에 아래 한 행을 넣는다(기존 행과 같은 3열 관용구).
+- [ ] **DECISIONS.md 갱신** — `| 날짜 | 결정 | 근거/상세 |` 표의 **첫 데이터 행 앞**에 아래 한 행을 넣는다(기존 행과 같은 3열·같은 " - " 구분 관용구).
 
 ```
-| 2026-09-03 | **브랜드 해시태그 자동 시드 재설계 - 계정명 절삭 폐기, 태그된 게시물 빈도 + brandName AI 폴백, 유도 규칙 monitoring 단일화** - 자동 태그 재료를 "계정명 소문자화 후 첫 무효 문자 앞까지 절삭"(2026-08-17 be39cbd7)에서 **그 브랜드에 태그된 게시물 캡션의 해시태그 빈도**로 바꾼다. 절삭은 점이 든 계정명에서 계정과 무관한 일반어를 만든다(`dr.piel_official` → `#dr` 전량 스윕 = 무관 게시물 대량 유입 + Hiker 콜 낭비). 점 든 계정명은 애초에 그 자체로 해시태그가 될 수 없어 문자열을 어떻게 잘라도 결과가 추측이고, 실제 소비자가 쓰는 태그는 브랜드명이다. **규칙**: 최다 태그의 등장 게시물 수 ≥ 7이면 그 태그 1개 시드(비율 조건 없음), 미만이면 brandName 하나만 보고 AI가 태그 1개 생성(brandName 없는 경쟁사는 0개), 실행은 `brand_hashtag` 행이 tombstone 포함 0일 때만(생애 1회 - 지운 태그 부활 방지 + AI 콜 상한). 시점은 신규 등록=백필 완주 직후·스윕 트리거 직전, replay 재등록=동기. 임계·stoplist·AI 킬스위치는 app_setting 런타임 토글. **동시에 2026-08-27 해시태그 직접 수집 설계 §4의 "was에 유도 규칙 복제" 결정을 폐기한다** - 같은 규칙이 monitoring·was 두 벌로 존재해 "바꾸면 두 곳을 같이 고쳐야 한다"는 상태 자체가 지시("한 곳에서만") 위반이었고, was는 이미 monitoring 태그를 GET해 장부로 옮기는 `ensureSeeded` 경로를 갖고 있어 복제가 불필요했다. was `BrandHashtagTags`·등록 시 장부 시딩을 삭제하고, 조회 시 장부가 비면 승계하는 경로로 대체. FE 계약 변화 없음(자동 태그가 "등록 즉시"가 아니라 "수집 완료 뒤" 나타나는 타이밍만 바뀜 - FE 통지 1건). 운영 정리는 이미 심긴 절삭 태그 hard DELETE + 영향 브랜드 replay 재등록 재시드(트랙 MON-BT). | [spec 2026-09-03](docs/superpowers/specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md), [plan](docs/superpowers/plans/2026-09-03-brand-hashtag-auto-seed-redesign.md) |
+| 2026-09-03 | **브랜드 해시태그 자동 시드 재설계 - 계정명 절삭 폐기, monitoring은 계산만 / was가 유일한 작성자** - 자동 태그 재료를 "계정명 소문자화 후 첫 무효 문자 앞까지 절삭"(2026-08-17 be39cbd7, 08-27 §4로 was에 이식)에서 **3단 계산**으로 바꾼다: ① 그 브랜드에 태그된 게시물 캡션의 해시태그 빈도(최다 태그의 등장 게시물 수 ≥ 7) ② 미달이면 AI가 **IG 표시명(brand_account.full_name)** + 계정명에서 브랜드 상호를 뽑아 1개 ③ 그래도 없으면 계정명에서 점·언더스코어를 뺀 값. **결과는 브랜드당 항상 1개**이고 경쟁사도 같다. 절삭은 점이 든 계정명에서 계정과 무관한 일반어를 만들었다(`dr.piel_official` → `#dr` 전량 스윕 = 무관 게시물 대량 유입 + Hiker 콜 낭비) - 점 든 계정명은 그 자체로 해시태그가 될 수 없어 문자열을 어떻게 잘라도 결과가 추측이고, 실제 소비자가 쓰는 태그는 `#닥터피엘` 같은 상호다. AI 입력에서 **회사명(app.users.company_name)·바이오는 제외** - 회사명은 등록자 소속이라 경쟁사 브랜드에 남의 이름을 붙인다. **역할 분담: monitoring은 계산만 하고 DB에 쓰지 않는다**(내부 조회 API `GET /api/brands/{username}/hashtag-suggestion` 1개, 응답 `{path, tag, topCount, candidatePosts}`) - **08-28 "태그 생성 권한 was 일원화" 결정을 그대로 유지**한다. 1차 초안이던 A안(monitoring이 직접 `brand_hashtag`에 심고 was도 자기 장부에 쓰는 구조)은 **같은 태그를 두 모듈이 각자 쓰게 만들어** 폐기했다(사용자 지적) - 쓰기 주체가 갈리면 "누가 심었나"가 불명확해지고 08-28에 정리한 권한 경계가 도로 무너진다. **시점은 링크 생성이 아니라 초기 백필 완료 뒤**(그때야 캡션 모수가 존재한다) - was 단건 폴링(수집 완료 시)·태그 목록 조회·해시태그 게시물 목록/개수 조회에 같은 훅(`ensureAutoSeeded`). 중복·부활 방지는 브랜드당 시드 기록 1행(`app.brand_hashtag_seed`, 계산 1회) + 링크별 `hashtag_seeded_at`(장부 삽입 사용자당 1회) - 사용자가 지운 자동 태그는 되살아나지 않고, 이미 사용자 관리 태그가 있는 브랜드는 SKIP만 기록한다. 임계·stoplist·AI 킬스위치는 monitoring app_setting 런타임 토글. FE 계약 변화 없음(자동 태그가 "등록 즉시"가 아니라 "수집 완료 뒤 첫 조회"에 나타나는 타이밍만 바뀜 - FE 통지 1건). 운영 정리는 이미 심긴 절삭 태그를 monitoring·was 양쪽에서 삭제하는 것뿐이고, **재시드는 훅이 자동으로 한다**(스크립트·replay 호출 불요). | [spec 2026-09-03](docs/superpowers/specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md), [plan](docs/superpowers/plans/2026-09-03-brand-hashtag-auto-seed-redesign.md) |
 ```
 
 - [ ] **트랙 문서 갱신** — `docs/tracks/MON-BT-브랜드-태그-모니터링.md` **파일 끝**에 아래 절을 덧붙인다.
@@ -2412,34 +3003,35 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ## 해시태그 자동 시드 재설계(2026-09-03) — 계정명 절삭 폐기
 
 - 상태: 구현 완료·**운영 정리 미실행**. 설계 정본은 [spec 2026-09-03](../superpowers/specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md), 실행 계획은 [plan](../superpowers/plans/2026-09-03-brand-hashtag-auto-seed-redesign.md).
-- 자동 태그 재료가 계정명 문자열 절삭 → **태그된 게시물 캡션의 해시태그 빈도**로 바뀌었다. 최다 태그의 등장 게시물 수가 `brand.hashtag-seed.min-posts`(기본 7) 이상이면 그 태그 1개, 미만이면 brandName 기반 AI 폴백 1개, brandName이 없으면(경쟁사) 0개. 실행은 `brand_hashtag` 행이 **tombstone 포함 0일 때만**이다.
-- 유도 규칙은 **monitoring 단일 소유**로 돌아갔다. was `BrandHashtagTags`(복제본)와 등록 시 장부 시딩은 삭제됐고, 장부는 조회 시 승계(`V1BrandAccountService.ensureLedgerSeededSafely`)로 채워진다.
-- 런타임 토글(app_setting, TTL 5초): `brand.hashtag-seed.min-posts` / `brand.hashtag-seed.stoplist` / `brand.hashtag-seed.ai-enabled`. AI 폴백 킬 스위치는 SQL 한 줄이다.
+- 자동 태그가 계정명 절삭 → **3단 계산**으로 바뀌었다. ① FREQ: 태그된 게시물 캡션의 해시태그 빈도(최다 태그의 등장 게시물 수 ≥ `brand.hashtag-seed.min-posts`, 기본 7) ② AI: IG 표시명(`brand_account.full_name`) + 계정명으로 상호 해시태그 1개 ③ FALLBACK: 계정명에서 점·언더스코어를 뺀 소문자. **결과는 브랜드당 항상 1개**(경쟁사 포함).
+- **역할 분담**: monitoring은 `GET /api/brands/{username}/hashtag-suggestion`으로 **계산만** 하고 DB에 쓰지 않는다. 저장·push·장부 반영은 was `V1BrandAccountService.ensureAutoSeeded`가 전담한다(08-28 태그 생성 권한 was 일원화 유지).
+- **시점**: 링크 생성이 아니라 **초기 백필 완료 뒤 첫 조회**. 훅은 단건 폴링 `GET /accounts/{id}`(수집 완료일 때만)·`GET /accounts/{id}/hashtag-tags`·`GET /accounts/{id}/hashtag-posts`·`.../hashtag-posts/count` 4개 표면에 걸려 있다. 메인 목록 `GET /accounts/{id}/posts`에는 없다(수집 중 초 단위 폴링 경로).
+- **멱등 장치 두 겹**: `app.brand_hashtag_seed`(brand_id PK — 계산·AI 콜은 브랜드 생애 1회) + `app.brand_monitorings.hashtag_seeded_at`(장부 삽입은 사용자당 1회). 사용자가 지운 자동 태그는 표식 때문에 되살아나지 않는다. 이미 사용자 관리 태그가 있는 브랜드는 `path='SKIP'`(tag NULL)만 기록하고 아무것도 심지 않는다.
+- 런타임 토글(monitoring app_setting, TTL 5초): `brand.hashtag-seed.min-posts` / `brand.hashtag-seed.stoplist` / `brand.hashtag-seed.ai-enabled`. AI 킬 스위치는 SQL 한 줄이고 끄면 FREQ 미달이 곧장 FALLBACK으로 간다.
   ```sql
   UPDATE app_setting SET value = 'false' WHERE key = 'brand.hashtag-seed.ai-enabled';
   ```
-- 관측: 시드 1건당 info 로그 1줄(`브랜드 해시태그 자동 시드 — brandId=… path=FREQ|AI|NONE tag=… topCount=… posts=…`) + Micrometer 카운터 `brand.hashtag.seed`(태그 `path`=freq|ai|none|skip|unknown, `result`=ok|invalid|error).
+- 관측: monitoring 응답 1건당 info 로그 1줄(`브랜드 해시태그 제안 — username=… path=FREQ|AI|FALLBACK tag=… topCount=… candidatePosts=…`) + Micrometer 카운터 `brand.hashtag.suggest`(태그 `path`=freq|ai|fallback, `result`=ok|error). was는 계산 시점에 `해시태그 자동 시드 계산` info 1줄을 남긴다. **FALLBACK 비율이 높으면 AI 경로가 죽은 것**이다.
 
-### 운영 데이터 정리와 재시드 (배포 후 1회 — 미실행)
+### 운영 데이터 정리 (배포 후 1회 — 미실행)
 
 실행 전 대상 목록을 먼저 뽑아 **눈으로 확인한다**. IG 계정명은 ASCII·점·언더스코어만 허용되므로
 절삭 접두사 = 첫 점 앞 구간이다.
 
 ```sql
 -- 1) 대상 확인(monitoring DB)
-SELECT h.brand_id, a.username, a.has_own_link, h.tag, h.created_at, h.deleted_at
+SELECT h.brand_id, a.username, h.tag, h.created_at, h.deleted_at
 FROM brand_hashtag h JOIN brand_account a ON a.id = h.brand_id
 WHERE position('.' in a.username) > 0
   AND h.tag = lower(split_part(a.username, '.', 1))
 ORDER BY h.brand_id;
 ```
 
-- `created_at`이 그 브랜드의 등록 시각과 **다른** 행은 사용자가 직접 넣은 태그일 수 있다 — 그런
-  행은 대상에서 뺀다(아래 DELETE 실행 전에 `brand_id`를 손으로 제외할 것).
+- `created_at`이 그 브랜드의 링크 생성 시각과 **다른** 행은 사용자가 직접 넣은 태그일 수 있다 —
+  그런 행은 대상에서 뺀다(아래 DELETE 실행 전에 손으로 제외할 것).
 
 ```sql
--- 2) monitoring: hard DELETE (tombstone이 아니다)
--- tombstone으로 남기면 "행 0일 때만" 조건에 걸려 재시드가 영영 막힌다.
+-- 2) monitoring: hard DELETE (tombstone이 아니다 — 사용자가 의도한 태그가 아니다)
 DELETE FROM brand_hashtag h
 USING brand_account a
 WHERE a.id = h.brand_id
@@ -2455,40 +3047,43 @@ WHERE (brand_id, tag) IN ( (:brandId1, :tag1), (:brandId2, :tag2) /* … 1)의 �
 ```
 
 - 그 태그로 이미 수집된 `brand_hashtag_post`·매칭 태그 행은 **남긴다** — 격리 필터가 장부 기준이라
-  화면에서 사라지고, 스윕은 태그가 없으니 더 긁지 않는다. 물리 정리는 비범위.
-- 시드 집계 쿼리(`findCaptionsForSeed`)는 `tag_detected_at IS NOT NULL` 가드가 있어, 남겨 둔
-  hashtag-only 게시물의 캡션이 재시드 집계를 오염시키지 않는다.
+  화면에서 사라지고, 스윕은 태그가 없으니 더 긁지 않는다. 물리 정리는 비범위. FREQ 집계 쿼리
+  (`findCaptionsForSeed`)에 `tag_detected_at IS NOT NULL` 가드가 있어 남겨 둔 게시물의 캡션이
+  집계를 오염시키지 않는다.
+- **재시드 스크립트는 없다.** 정리로 태그가 0개가 된 브랜드는 사용자의 다음 조회에서 훅이 계산·시드한다.
+  기존 링크는 전부 `hashtag_seeded_at IS NULL`로 시작하므로 배포 직후부터 자연히 돈다.
 
-```
-# 4) 재시드 — 대상 브랜드마다 monitoring 내부 register를 replay로 호출한다
-#    (ACTIVE 브랜드 재등록 분기 → 동기 시드 → 스윕)
-curl -X POST http://<monitoring>/api/brands \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"<계정명>","brandName":"<회사명>","accountType":"own"}'
+### 배포 다음 날 검토 (필수)
+
+AI 결과 품질의 자동 검증은 없다(spec §7) — 사람이 한 번 본다.
+
+```sql
+-- path 분포(was app DB)
+SELECT path, count(*) FROM app.brand_hashtag_seed GROUP BY path ORDER BY count(*) DESC;
+
+-- AI·FALLBACK 태그 전수(계정명과 나란히 보려면 brand_id로 monitoring brand_account를 대조한다)
+SELECT brand_id, path, tag, seeded_at FROM app.brand_hashtag_seed
+WHERE path IN ('AI', 'FALLBACK') ORDER BY seeded_at DESC;
 ```
 
-- **⚠️ 경쟁사 전용 브랜드(`has_own_link = false`)는 반드시 `"accountType":"competitor"`로 호출한다.**
-  기본값(own)으로 부르면 `has_own_link`가 true로 뒤집혀 광고 표기 판정 모수가 오염된다
-  (`BrandRepository.insertOrReactivate`의 승격 규칙 — own 요청은 승격시키고 내리지는 않는다).
-  1)의 `a.has_own_link` 컬럼으로 브랜드마다 판정할 것.
-- own 브랜드의 `brandName`은 was `app.users.company_name`에서 조회해 넘긴다. 넘기지 않으면
-  임계 미만일 때 AI 폴백이 돌지 않아 0개로 끝난다.
-- 재시드 결과(FREQ / AI / NONE 분포)는 로그 `브랜드 해시태그 자동 시드` 줄 또는 카운터
-  `brand.hashtag.seed`로 집계해 이 문서에 기록한다.
+- **FALLBACK 비율이 높으면 AI 경로가 죽은 것**이다(Gemini 자격증명·쿼터·`ai-enabled` 확인).
+- 명백히 잘못된 태그는 monitoring 태그 관리 API로 지운다 — `brand_hashtag_seed` 행이 남아 있어
+  자동으로 되살아나지 않는다.
+- 검토 결과(분포 수치·수정한 브랜드)를 이 절에 기록한다.
 
 ### 잔여·후속
 
-- **FE 통지 1건** — 응답 계약은 그대로이고, 자동 태그가 "등록 즉시"가 아니라 "초기 수집 완료 뒤"에
-  나타나도록 타이밍만 바뀌었다.
-- **메인 게시물 목록(`GET /accounts/{id}/posts`)의 승계 미적용** — 장부 승계는 태그 목록·해시태그
-  게시물 목록·개수 3개 표면에만 걸었다. 메인 목록은 수집 중 초 단위로 폴링돼, 태그가 영영 0개인
-  경쟁사 브랜드에서 폴링마다 monitoring GET이 나가기 때문이다. 브랜드 상세 화면이 태그 칩
-  (`getHashtagTags`)을 함께 부르므로 실사용에서는 그 호출이 장부를 채우지만, 그 가정이 깨지면
-  (FE가 태그 칩 호출을 없애는 등) 자동 태그로 발견된 게시물이 메인 목록에서만 안 보일 수 있다.
-- **다중 태그 시드·주기적 재시드는 비범위**(spec §7). 재시드 입구는 replay 재등록 경로뿐이다.
+- **FE 통지 1건** — 응답 계약은 그대로이고, 자동 태그가 "등록 즉시"가 아니라 "초기 수집 완료 뒤 첫
+  조회"에 나타나도록 타이밍만 바뀌었다.
+- **메인 게시물 목록(`GET /accounts/{id}/posts`)에는 훅이 없다**(spec §7) — FE가 태그 목록·해시태그
+  탭 호출을 없애면 자동 태그 반영이 늦어질 수 있다. 그 경우 폴링 비용을 감수하고 훅을 추가할지
+  재검토한다.
+- **다중 태그 시드(국문·영문 병행)·주기적 재시드는 비범위**. 브랜드당 1개·1회 고정이고, 추가는
+  사용자가 태그 관리 UI로 한다.
+- 수집된 `#dr` 게시물의 물리 정리.
 ```
 
-- [ ] **링크 확인** — 두 문서에서 새로 건 상대 경로가 실제 파일을 가리키는지 확인한다.
+- [ ] **링크 확인**
 
 ```
 ls docs/superpowers/specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md \
@@ -2500,10 +3095,11 @@ ls docs/superpowers/specs/2026-09-03-brand-hashtag-auto-seed-redesign-design.md 
 ```
 docs: 해시태그 자동 시드 재설계 결정 기록과 트랙 갱신
 
-DECISIONS.md에 계정명 절삭 폐기·08-27 §4 복제 결정 폐기 사유를 기록하고,
-MON-BT 트랙에 새 시드 규칙·런타임 토글·관측과 운영 정리/재시드 절차(SQL 포함)를
-적는다. 재시드 시 경쟁사 전용 브랜드는 accountType=competitor 필수라는 경고를
-절차 안에 넣었다(기본값 own은 has_own_link를 뒤집어 광고 판정 모수를 오염시킨다).
+DECISIONS.md에 계정명 절삭 폐기 사유와 1차 A안(monitoring 직접 쓰기) 폐기
+사유를 기록한다. 08-28 태그 생성 권한 was 일원화는 유지되는 결정이라 그렇게
+명시했다. MON-BT 트랙에는 3단 계산·역할 분담·멱등 두 겹·런타임 토글·관측과
+운영 정리 SQL, 배포 다음 날 path 분포 검토 절차를 적는다. 재시드 스크립트는
+없다(훅이 자동으로 한다).
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ```
@@ -2514,6 +3110,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 
 - [ ] `./gradlew :monitoring:test` 전량 통과
 - [ ] `./gradlew :was:test` 전량 통과
-- [ ] `grep -rn "BrandHashtagTags" was/src` 결과에 `was/.../v1/brandmonitoring/BrandHashtagTags`(클래스) 참조가 남지 않는다(주석 문자열 언급은 무해)
+- [ ] `grep -rn "BrandHashtagTags" was/src` 결과에 `was/.../v1/brandmonitoring/BrandHashtagTags` **클래스** 참조가 남지 않는다(주석 문자열 언급·monitoring 동명 클래스는 무해)
+- [ ] `grep -rn "new BrandLinkRow(" was/src/test | wc -l` 이 24이고 전부 9개 인자다
+- [ ] monitoring에 `brand_hashtag` **쓰기**가 새로 생기지 않았다 — `grep -rn "addTags\|replaceTags\|insertPost" monitoring/src/main/java/com/celfit/monitoring/service/BrandHashtagSuggestionService.java` 가 0건
 - [ ] `git -C <worktree> status` 에 의도하지 않은 변경이 없다
 - [ ] PR·push는 하지 않는다 — 사용자 승인 사항이다.
