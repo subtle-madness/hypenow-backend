@@ -3,6 +3,7 @@ package com.celfit.instagram.source.self;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.celfit.instagram.source.PrivateAccountException;
 import com.celfit.instagram.source.ProfileInfo;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -71,6 +72,17 @@ class OgProfileFetcherTest {
 				.isInstanceOf(SelfCrawlException.class)
 				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
 						.isEqualTo(SelfErrorClass.LOGIN_WALL));
+	}
+
+	@Test
+	void 비공개_계정은_PrivateAccountException() {
+		// og 문서 JSON 블롭도 wpi(web_profile_info)와 동일하게 is_private 마커를 싣는다(og_profile.html
+		// 실측 픽스처에 "is_private":false가 실제로 있다) — S15: wpi와 동일 계약으로 승격해야
+		// 표면 토글(og↔wpi)이 비공개 판정 예외 계약을 바꾸지 않는다.
+		String html = "<!DOCTYPE html><html><body>"
+				+ "{\"follower_count\":500,\"username\":\"secret\",\"is_private\":true}</body></html>";
+		assertThatThrownBy(() -> fetcher(html, 200).fetchProfile("secret"))
+				.isInstanceOf(PrivateAccountException.class);
 	}
 
 	@Test
