@@ -85,6 +85,26 @@ class AnalyticsJobServiceTest {
 	}
 
 	@Test
+	void fact_analyze_잡을_트리거하면_runFacts가_호출된다() {
+		when(analyzeJob.runFacts()).thenReturn(new JobResult(1, 0, false));
+		var result = service().trigger(JobName.FACT_ANALYZE, TriggerType.MANUAL);
+
+		assertThat(result).isEqualTo(AnalyticsJobService.TriggerResult.ACCEPTED);
+		var run = history.recent(1).getFirst();
+		assertThat(run.job()).isEqualTo(JobName.FACT_ANALYZE);
+	}
+
+	@Test
+	void fact_analyze도_파생_matview_갱신_대상이다() {
+		// 파트 A가 채우는 사실 컬럼(is_beauty·main_category·ad_type)이 발굴 사전집계 MV의 입력이다 -
+		// 온라인 폴백 경로에서 수거 잡을 안 타므로 이 잡 자체가 갱신 후크를 가져야 한다.
+		when(analyzeJob.runFacts()).thenReturn(new JobResult(1, 0, false));
+		service().trigger(JobName.FACT_ANALYZE, TriggerType.MANUAL);
+
+		org.mockito.Mockito.verify(derivedViewRefresher).refresh();
+	}
+
+	@Test
 	void late_backfill_잡을_트리거하면_runLateBackfill이_호출된다() {
 		when(analyzeJob.runLateBackfill()).thenReturn(new JobResult(2, 0, false));
 		var result = service().trigger(JobName.LATE_BACKFILL_ANALYZE, TriggerType.MANUAL);

@@ -21,11 +21,13 @@ public class ScheduleInfo {
 			@Value("${analytics.schedule.classify-cron:-}") String classifyCron,
 			@Value("${analytics.schedule.analyze-cron:-}") String analyzeCron,
 			@Value("${analytics.schedule.account-analyze-cron:-}") String accountCron,
-			@Value("${analytics.schedule.archive-cron:-}") String archiveCron) {
+			@Value("${analytics.schedule.archive-cron:-}") String archiveCron,
+			@Value("${analytics.schedule.fact-analyze-cron:-}") String factAnalyzeCron) {
 		this.enabled = enabled;
 		put(JobName.MIRROR, mirrorCron);
 		put(JobName.CLASSIFY, classifyCron);
 		put(JobName.ANALYZE, analyzeCron);
+		put(JobName.FACT_ANALYZE, factAnalyzeCron);
 		put(JobName.ACCOUNT_ANALYZE, accountCron);
 		put(JobName.ARCHIVE, archiveCron);
 	}

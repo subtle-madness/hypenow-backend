@@ -88,12 +88,12 @@ public class JobConfig {
 		ProgressReporter reporter = registry != null ? registry.reporter(JobName.ANALYZE) : ProgressReporter.NOOP;
 		ProgressReporter backfillReporter = registry != null
 				? registry.reporter(JobName.LATE_BACKFILL_ANALYZE) : ProgressReporter.NOOP;
-		// factsReporter는 ProgressReporter.NOOP 고정 - JobName.FACT_ANALYZE(어드민 진행률 표기)는
-		// 스케줄·어드민 배선(Task 9) 몫이라 이번 태스크에서는 상수로 둔다(2026-09-03 계획 §Task 7 조정).
+		ProgressReporter factsReporter = registry != null
+				? registry.reporter(JobName.FACT_ANALYZE) : ProgressReporter.NOOP;
 		return new ContentAnalysisJob(rawJdbcTemplate, analysisDataSource, insight,
 				settings, thumbnailEnabled, headPrecheck(), reporter, backfillReporter,
 				batchApiOrNull(settings, gemini), taxonomyLoader,
-				ProgressReporter.NOOP, splitPortOrNull(settings, factsPort), splitPortOrNull(settings, synthesisPort));
+				factsReporter, splitPortOrNull(settings, factsPort), splitPortOrNull(settings, synthesisPort));
 	}
 
 	/**
