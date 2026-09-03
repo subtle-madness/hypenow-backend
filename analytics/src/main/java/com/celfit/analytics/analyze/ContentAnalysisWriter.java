@@ -120,7 +120,7 @@ final class ContentAnalysisWriter {
 	/**
 	 * {@link ContentAttributes} → SQL 파라미터 11개 매핑 - {@link #insert}·{@link #insertFacts}가
 	 * 공유한다(2026-09-03 리뷰). attrs가 null(캡션도 썸네일도 없어 속성 근거가 전무한 콘텐츠)이면
-	 * 전부 null — 신규 사실 컬럼을 추가할 때 고칠 곳이 이 한 메서드로 좁혀진다.
+	 * 전부 null - 신규 사실 컬럼을 추가할 때 고칠 곳이 이 한 메서드로 좁혀진다.
 	 */
 	private record FactParams(String detectedBrands, String sponsoredSignalLevel, String sponsoredSignalReasons,
 			String adDisclosure, String detectedProductCategories, String detectedProducts, String vlmAttributes,

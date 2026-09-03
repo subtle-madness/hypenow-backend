@@ -45,7 +45,7 @@ public class AnalyticsJobService {
 	private final RunHistory history;
 	private final DerivedViewRefresher derivedViewRefresher;
 
-	/** 파생 matview 입력(account_content_series·content_analyses)을 쓰는 잡 — 완료 후 사전집계를 갱신한다.
+	/** 파생 matview 입력(account_content_series·content_analyses)을 쓰는 잡 - 완료 후 사전집계를 갱신한다.
 	 *  FACT_ANALYZE(2026-09-03)는 사실 컬럼(is_beauty·main_category·ad_type)을 채우므로 같은 대상이다 -
 	 *  배치 경로에서는 BATCH_COLLECT가 갱신하지만 온라인 폴백 경로에는 이 후크뿐이다. */
 	private static final Set<JobName> DERIVED_INPUT_JOBS = EnumSet.of(
