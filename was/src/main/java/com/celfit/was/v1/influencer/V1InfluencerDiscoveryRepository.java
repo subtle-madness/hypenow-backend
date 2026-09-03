@@ -315,7 +315,10 @@ public class V1InfluencerDiscoveryRepository {
 						""").param("handles", handles).query(ThumbRow.class).list();
 	}
 
-	/** 유효 팔로워 재료 — 페이지 핸들의 창 내 시계열(순서 무관, 산식이 평균이라). 계산은 Java(EffectiveFollowers). */
+	/** 유효 팔로워 재료 — 페이지 핸들의 창 내 시계열(순서 무관, 산식이 평균이라). 계산은 Java(EffectiveFollowers).
+	 * minComments·maxComments(6.21 확장)도 이 결과에서 그대로 파생한다 — account_content_series는
+	 * win CTE(v_account_summaries)와 같은 최근창 행 집합이라 avgComments와 동일 모수가 보장된다
+	 * (comments NULL은 min/max에서도 SQL 표준 동작으로 자연 제외 — avg()의 NULL 무시와 동치). */
 	public List<EngagementRow> findEngagements(List<String> handles) {
 		if (handles.isEmpty()) {
 			return List.of();
@@ -325,6 +328,28 @@ public class V1InfluencerDiscoveryRepository {
 						FROM account_content_series
 						WHERE account_handle IN (:handles)
 						""").param("handles", handles).query(EngagementRow.class).list();
+	}
+
+	/**
+	 * groupPurchaseCount·hasGroupPurchase(6.21 확장) 재료 — 캡션 12개, postedAt 내림차순.
+	 * 창은 avgComments(account_content_series)가 아니라 {@link V1InfluencerRepository#findRecentCards}
+	 * (상세 6.4 recentContents)와 같은 모수를 쓴다 — contents 테이블을 posted_at DESC로 직접 잘라,
+	 * FE가 상세 화면에서 뱃지를 그릴 때 보는 캡션 12개와 발굴 카드의 카운트가 반드시 일치하게 한다
+	 * (account_content_series는 뷰티/F&B 축·QUALIFIED·ENUMERATION·지표 스냅샷 보유로 모수가 더 좁다).
+	 */
+	public List<CaptionRow> findCaptions(List<String> handles) {
+		if (handles.isEmpty()) {
+			return List.of();
+		}
+		return jdbcClient.sql("""
+						SELECT account_handle, caption
+						FROM (SELECT account_handle, caption,
+						             row_number() OVER (PARTITION BY account_handle
+						                                ORDER BY posted_at DESC, short_code) AS rn
+						      FROM contents
+						      WHERE account_handle IN (:handles)) x
+						WHERE rn <= 12
+						""").param("handles", handles).query(CaptionRow.class).list();
 	}
 
 	public record CardRow(String handle, String displayName, String profileImageUrl, Long followers,
@@ -351,5 +376,8 @@ public class V1InfluencerDiscoveryRepository {
 	}
 
 	public record EngagementRow(String accountHandle, Long views, Long likes, Long comments) {
+	}
+
+	public record CaptionRow(String accountHandle, String caption) {
 	}
 }

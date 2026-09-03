@@ -16,9 +16,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 /**
- * 조립 배선 가드 — page()가 본 쿼리 핸들을 보강 쿼리 4개(findShares/findBrands/findThumbs/
- * findEngagements)에 동일하게 전달하는지, total이 countCards를 그대로 싣는지. 컨트롤러 테스트에서
- * 삭제된 findThumbs 캡처 단언의 대체(배선이 컨트롤러 → 서비스로 이동했으니 가드도 따라온다).
+ * 조립 배선 가드 — page()가 본 쿼리 핸들을 보강 쿼리 5개(findShares/findBrands/findThumbs/
+ * findEngagements/findCaptions)에 동일하게 전달하는지, total이 countCards를 그대로 싣는지. 컨트롤러
+ * 테스트에서 삭제된 findThumbs 캡처 단언의 대체(배선이 컨트롤러 → 서비스로 이동했으니 가드도 따라온다).
  */
 class V1InfluencerDiscoveryPageServiceTest {
 
@@ -39,6 +39,7 @@ class V1InfluencerDiscoveryPageServiceTest {
 		given(repository.findBrands(anyList())).willReturn(List.of());
 		given(repository.findThumbs(anyList())).willReturn(List.of());
 		given(repository.findEngagements(anyList())).willReturn(List.of());
+		given(repository.findCaptions(anyList())).willReturn(List.of());
 
 		V1InfluencerDiscoveryPageService service =
 				new V1InfluencerDiscoveryPageService(repository, new V1InfluencerDiscoveryAssembler());
@@ -53,16 +54,19 @@ class V1InfluencerDiscoveryPageServiceTest {
 		ArgumentCaptor<List<String>> brands = ArgumentCaptor.captor();
 		ArgumentCaptor<List<String>> thumbs = ArgumentCaptor.captor();
 		ArgumentCaptor<List<String>> engagements = ArgumentCaptor.captor();
+		ArgumentCaptor<List<String>> captions = ArgumentCaptor.captor();
 		verify(repository).findShares(shares.capture(), eq(false)); // 무필터 = 뷰티 축
 		verify(repository).findBrands(brands.capture());
 		verify(repository).findThumbs(thumbs.capture());
 		verify(repository).findEngagements(engagements.capture());
+		verify(repository).findCaptions(captions.capture());
 
 		List<String> expected = List.of("a", "b");
 		assertThat(shares.getValue()).isEqualTo(expected);
 		assertThat(brands.getValue()).isEqualTo(expected);
 		assertThat(thumbs.getValue()).isEqualTo(expected);
 		assertThat(engagements.getValue()).isEqualTo(expected);
+		assertThat(captions.getValue()).isEqualTo(expected);
 	}
 
 	@Test
@@ -78,6 +82,7 @@ class V1InfluencerDiscoveryPageServiceTest {
 		given(repository.findBrands(anyList())).willReturn(List.of());
 		given(repository.findThumbs(anyList())).willReturn(List.of());
 		given(repository.findEngagements(anyList())).willReturn(List.of());
+		given(repository.findCaptions(anyList())).willReturn(List.of());
 
 		new V1InfluencerDiscoveryPageService(repository, new V1InfluencerDiscoveryAssembler())
 				.page(query);

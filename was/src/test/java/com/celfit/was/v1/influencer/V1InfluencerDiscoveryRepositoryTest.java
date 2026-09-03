@@ -19,7 +19,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * calm  — 3만·ER 2.0·배율 5.0, 스킨케어 100%, 협찬 0, 10일 전
  * mute  — 4만·ER 1.0·릴스 없음(avg_views NULL), 피드만, 스킨케어 100%, 40일 전
  * tiny  — 1천·ER 3.0, 5일 전
+ * gp    — findCaptions 전용(계정·창 픽스처 없이 contents 14행만) — posted_at DESC 상위 12개 컷·
+ *         공동구매 매칭 검증 재료(gp2·gp4 창 안 매칭, gp13 창 밖 매칭 제외 확인)
  * 유효 팔로워는 Java(EffectiveFollowers)가 계산 — 여기선 SQL 조회 자체(findEngagements)만 검증한다.
+ * minComments·maxComments 계산 자체는 어셈블러 단위 테스트(V1InfluencerDiscoveryAssemblerTest)가 맡는다.
  */
 class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 
@@ -108,11 +111,15 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				    ad_type         text,
 				    detected_brands jsonb
 				)""");
+		// account_handle·posted_at은 findCaptions(공동구매 재료, contents 테이블 posted_at DESC 컷)가
+		// findRecentCards(6.4)와 같은 모수를 쓰기 위해 필요 — 운영 DDL(V1__serving_tables.sql)과 동일 컬럼.
 		jdbcTemplate.execute("""
 				CREATE TABLE contents (
-				    short_code    text PRIMARY KEY,
-				    caption       text,
-				    thumbnail_url text
+				    short_code     text PRIMARY KEY,
+				    account_handle text,
+				    posted_at      timestamptz,
+				    caption        text,
+				    thumbnail_url  text
 				)""");
 		jdbcTemplate.execute("""
 				CREATE TABLE beauty_taxonomy (
@@ -239,13 +246,29 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 				  ('m2', true, 'skincare', NULL, 'organic', NULL),
 				  ('t1', true, 'skincare', NULL, 'organic', NULL)""");
 		jdbcTemplate.update("""
-				INSERT INTO contents (short_code, caption, thumbnail_url) VALUES
-				  ('g1', '수분크림 일주일 후기', 'https://cdn/g1.jpg'),
-				  ('g2', '롬앤 신상', 'https://cdn/g2.jpg'),
-				  ('g3', '루틴 공유', 'https://cdn/g3.jpg'),
-				  ('g4', '립 리뷰', 'https://cdn/g4.jpg'),
-				  ('g5', '일상', 'https://cdn/g5.jpg'),
-				  ('m1', '피드 글', 'https://cdn/m1.jpg')""");
+				INSERT INTO contents (short_code, account_handle, posted_at, caption, thumbnail_url) VALUES
+				  ('g1', 'glow', now() - interval '1 day',  '수분크림 일주일 후기', 'https://cdn/g1.jpg'),
+				  ('g2', 'glow', now() - interval '2 days', '롬앤 신상', 'https://cdn/g2.jpg'),
+				  ('g3', 'glow', now() - interval '3 days', '루틴 공유', 'https://cdn/g3.jpg'),
+				  ('g4', 'glow', now() - interval '4 days', '립 리뷰', 'https://cdn/g4.jpg'),
+				  ('g5', 'glow', now() - interval '5 days', '일상', 'https://cdn/g5.jpg'),
+				  ('m1', 'mute', now() - interval '40 days', '피드 글', 'https://cdn/m1.jpg')""");
+		// findCaptions 전용 픽스처 — account_content_series와 무관하게 contents.posted_at DESC로
+		// 직접 12개를 자른다(findRecentCards와 같은 모수). gp2·gp4는 창 안(2·4일 전), gp13은 13일
+		// 전이라 rn=13으로 컷 밖 — 공동구매 문구가 있어도 카운트되면 안 된다(윈도우 경계 검증).
+		for (int i = 1; i <= 14; i++) {
+			String caption = switch (i) {
+				case 2 -> "공동구매 오픈합니다";
+				case 4 -> "#공구오픈 확인해주세요";
+				case 13 -> "공동구매 특가"; // 창 밖(13일 전) — 미카운트 기대
+				case 14 -> "메이크업 공구 정리했어요"; // 창 밖 + 애초에 비매칭(맨몸 공구)
+				default -> "일상 기록 " + i;
+			};
+			jdbcTemplate.update("""
+					INSERT INTO contents (short_code, account_handle, posted_at, caption, thumbnail_url)
+					VALUES (?, 'gp', now() - (? || ' days')::interval, ?, NULL)""",
+					"gp" + i, i, caption);
+		}
 		// 태그라인 이력 — 최신 행이 이겨야 한다
 		jdbcTemplate.update("""
 				INSERT INTO account_analyses (handle, analyzed_at, tagline) VALUES
@@ -579,6 +602,25 @@ class V1InfluencerDiscoveryRepositoryTest extends IntegrationTest {
 		var calm = engagements.stream()
 				.filter(e -> e.accountHandle().equals("calm")).toList();
 		assertThat(calm).hasSize(3);
+	}
+
+	@Test
+	void 보강_캡션_재료는_contents_posted_at_기준_최근_12개로_컷한다() {
+		// gp는 contents에 14행이 있지만(gp1~gp14), findCaptions는 posted_at DESC 상위 12개만
+		// 반환한다(findRecentCards·6.4 recentContents와 같은 모수) — 13·14일 전(gp13·gp14)은 제외.
+		var captions = repository.findCaptions(List.of("gp"));
+		assertThat(captions).hasSize(12);
+		assertThat(captions).extracting(V1InfluencerDiscoveryRepository.CaptionRow::caption)
+				.doesNotContain("공동구매 특가") // gp13 — 창 밖
+				.contains("공동구매 오픈합니다", "#공구오픈 확인해주세요"); // gp2·gp4 — 창 안
+	}
+
+	@Test
+	void 보강_캡션_재료의_공동구매_매칭_수는_창_안에서만_2건() {
+		var captions = repository.findCaptions(List.of("gp"));
+		long groupPurchaseCount = captions.stream()
+				.filter(c -> GroupPurchaseSignal.matches(c.caption())).count();
+		assertThat(groupPurchaseCount).isEqualTo(2); // gp2·gp4만 — gp13(창 밖)·gp14(비매칭)는 제외
 	}
 
 	@Test

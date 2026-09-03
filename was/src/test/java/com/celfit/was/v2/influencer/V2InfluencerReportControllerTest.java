@@ -132,6 +132,7 @@ class V2InfluencerReportControllerTest {
 		given(discoveryRepository.findBrands(List.of("b", "a"))).willReturn(List.of());
 		given(discoveryRepository.findThumbs(List.of("b", "a"))).willReturn(List.of());
 		given(discoveryRepository.findEngagements(List.of("b", "a"))).willReturn(List.of());
+		given(discoveryRepository.findCaptions(List.of("b", "a"))).willReturn(List.of());
 
 		mockMvc.perform(get("/v2/influencers/haeun.log/similar"))
 				.andExpect(status().isOk())
@@ -151,6 +152,7 @@ class V2InfluencerReportControllerTest {
 		given(discoveryRepository.findBrands(List.of("fpeer"))).willReturn(List.of());
 		given(discoveryRepository.findThumbs(List.of("fpeer"))).willReturn(List.of());
 		given(discoveryRepository.findEngagements(List.of("fpeer"))).willReturn(List.of());
+		given(discoveryRepository.findCaptions(List.of("fpeer"))).willReturn(List.of());
 
 		mockMvc.perform(get("/v2/influencers/fnbstar/similar"))
 				.andExpect(status().isOk());

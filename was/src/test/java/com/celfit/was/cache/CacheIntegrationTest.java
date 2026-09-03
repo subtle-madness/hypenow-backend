@@ -41,6 +41,7 @@ import com.celfit.was.v1.influencer.InfluencerCard;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryAssembler;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryPageService.DiscoveryPage;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.BrandRow;
+import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.CaptionRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.CardRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.ShareRow;
 import com.celfit.was.v1.influencer.V1InfluencerDiscoveryRepository.ThumbRow;
@@ -213,7 +214,10 @@ class CacheIntegrationTest extends IntegrationTest {
 				List.of(new BrandRow("glow", "롬앤")),
 				List.of(new ThumbRow("glow", "c1", null, "reels", "skincare", "organic",
 						OffsetDateTime.now(ZoneOffset.UTC), 1000L, 100L, 10L)),
-				List.of())
+				List.of(),
+				// minComments·maxComments·groupPurchaseCount·hasGroupPurchase(2026-09-03 확장) 캐시
+				// 왕복 확인 재료 — 캡션 1건이 공동구매 규칙에 매칭돼야 count·boolean 둘 다 검증된다.
+				List.of(new CaptionRow("glow", "공동구매 오픈했어요")))
 				.get(0);
 		// 협업 브랜드는 어셈블러가 이미 불변 List(toList())로 넘기지만, categoryShares 재료 자체를
 		// List.of()로 명시해 불변 입력이 캐시 왕복 후에도 record equals(List 인터페이스 계약, 구현체
@@ -222,6 +226,10 @@ class CacheIntegrationTest extends IntegrationTest {
 		assertThat(card.recentThumbs()).isNotEmpty();
 		assertThat(card.reachMultiplier().scale()).isEqualTo(1);
 		assertThat(card.email()).isEqualTo("glow@example.com"); // biography 정규식 파싱(V46) 캐시 왕복 확인
+		assertThat(card.minComments()).isNull(); // engagements 미제공(이 테스트는 캐시 왕복이 관심사)
+		assertThat(card.maxComments()).isNull();
+		assertThat(card.groupPurchaseCount()).isEqualTo(1);
+		assertThat(card.hasGroupPurchase()).isTrue();
 
 		DiscoveryPage page = new DiscoveryPage(List.of(card), 1L);
 
