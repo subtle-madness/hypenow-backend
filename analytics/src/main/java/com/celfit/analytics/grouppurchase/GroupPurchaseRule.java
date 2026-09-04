@@ -13,6 +13,7 @@ import java.util.regex.Pattern;
  * 1) '공동구매' 포함              → CONFIRMED_TRUE
  * 2) '#공구' 포함                 → CONFIRMED_TRUE
  * 3) '공구' 포함 + 도구 어휘 동반  → AMBIGUOUS (LLM으로)
+ * 3') '공구' 포함 + 부정·회의 문맥  → AMBIGUOUS (LLM으로, 2026-09-04)
  * 4) '공구' 포함, 도구 어휘 없음   → CONFIRMED_TRUE
  * 5) 둘 다 없음                    → CONFIRMED_FALSE
  * </pre>
@@ -43,6 +44,14 @@ public final class GroupPurchaseRule {
 	/** "공구를 들고", "공구가 필요", "공구 사용" 류 — 스펙 §3 정규식 그대로. */
 	private static final Pattern TOOL_PHRASE = Pattern.compile("공구 ?(를|가) (들|필요|사용|이용|챙)");
 
+	/**
+	 * 부정·회의 문맥(2026-09-04 운영 검수) — "공구❌", "공구 아님", "공구 안 해요", "공구템 리뷰"는 맨몸 '공구'
+	 * 규칙이 확정 참으로 잘못 잡았다(운영 true 4,788건 중 38건, 그중 "일반공구 아님, 톡딜" 같은 진짜 공구도
+	 * 섞여 있어 확정 거짓으로 박지 않고 LLM에 보낸다).
+	 */
+	private static final Pattern NEGATION_PHRASE = Pattern.compile(
+			"공구 ?[❌✖✕✗Xx×]|공구 ?(아님|아닙니다|아니에요|아니예요|는 아니|가 아니)|공구 ?(안 ?해요|안 ?합니다|안 ?함|하지 ?않)|공구템");
+
 	private static final String KEYWORD_CONFIRMED = "공동구매";
 	private static final String KEYWORD_HASHTAG = "#공구";
 	private static final String KEYWORD_AMBIGUOUS_TRIGGER = "공구";
@@ -65,6 +74,9 @@ public final class GroupPurchaseRule {
 		if (c.contains(KEYWORD_AMBIGUOUS_TRIGGER)) {
 			if (hasToolWord(c)) {
 				return new Result(Verdict.AMBIGUOUS, "'공구' 포함 + 도구 어휘 동반 — LLM 판정 필요");
+			}
+			if (NEGATION_PHRASE.matcher(c).find()) {
+				return new Result(Verdict.AMBIGUOUS, "'공구' 포함 + 부정·회의 문맥(공구❌·아님·안 해요·공구템) — LLM 판정 필요");
 			}
 			return new Result(Verdict.CONFIRMED_TRUE, "'공구' 포함, 도구 어휘 없음");
 		}
