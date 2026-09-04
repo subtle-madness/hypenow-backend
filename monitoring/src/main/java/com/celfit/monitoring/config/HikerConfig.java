@@ -22,6 +22,7 @@ import com.celfit.monitoring.hiker.IgSourceSettings;
 import com.celfit.monitoring.hiker.InstagramProxyProperties;
 import com.celfit.monitoring.hiker.MicrometerInstagramSourceMetrics;
 import com.celfit.monitoring.hiker.RecordingHikerHttp;
+import com.celfit.monitoring.hiker.SurfaceCircuitGauges;
 import com.celfit.monitoring.hiker.TargetCallContext;
 import com.celfit.monitoring.hiker.TimedHikerHttp;
 import com.celfit.monitoring.store.BrandCallCountRepository;
@@ -74,15 +75,17 @@ public class HikerConfig {
 		ProxyConfig proxyConfig = new ProxyConfig(proxyProps.residentialUrl(), proxyProps.mobileUrl(),
 				proxyProps.requestTimeout(), proxyProps.geoKr());
 		SelfHttpClient httpClient = new SelfHttpClient(proxyConfig);
+		SurfaceCircuitBreaker circuit = new SurfaceCircuitBreaker(5);
 		SelfCrawlBackend self = new SelfCrawlBackend(
 				new EmbedPostFetcher(httpClient::get),
 				new WpiProfileFetcher(httpClient::get),
 				new OgProfileFetcher(httpClient::get),
 				new FeedUserPostsFetcher(httpClient::get),
 				new DirectCommentFetcher(httpClient, igSettings::commentDocId, igSettings::commentFriendlyName),
-				new SurfaceCircuitBreaker(5),
+				circuit,
 				new SelfRetry(3, selfRetryBudget),
 				igSettings::profileSurface);
+		SurfaceCircuitGauges.register(meterRegistry, circuit, "batch");
 
 		return new FailoverInstagramSource(self, hikerBackend, igSettings::selfEnabledForPath,
 				new MicrometerInstagramSourceMetrics(meterRegistry));
@@ -119,15 +122,17 @@ public class HikerConfig {
 		ProxyConfig proxyConfig = new ProxyConfig(proxyProps.residentialUrl(), proxyProps.mobileUrl(),
 				proxyProps.requestTimeout(), proxyProps.geoKr());
 		SelfHttpClient httpClient = new SelfHttpClient(proxyConfig);
+		SurfaceCircuitBreaker rescueCircuit = new SurfaceCircuitBreaker(5);
 		SelfCrawlBackend rescueSelf = new SelfCrawlBackend(
 				new EmbedPostFetcher(httpClient::get),
 				new WpiProfileFetcher(httpClient::get),
 				new OgProfileFetcher(httpClient::get),
 				new FeedUserPostsFetcher(httpClient::get),
 				new DirectCommentFetcher(httpClient, igSettings::commentDocId, igSettings::commentFriendlyName),
-				new SurfaceCircuitBreaker(5),
+				rescueCircuit,
 				new SelfRetry(1, rescueBudget),
 				igSettings::profileSurface);
+		SurfaceCircuitGauges.register(meterRegistry, rescueCircuit, "sync");
 
 		return new HikerFirstInstagramSource(hikerBackend, rescueSelf, igSettings::selfEnabledForPath,
 				new MicrometerInstagramSourceMetrics(meterRegistry));
