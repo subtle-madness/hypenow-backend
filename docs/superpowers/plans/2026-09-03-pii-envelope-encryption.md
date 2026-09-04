@@ -693,6 +693,140 @@ CREATE INDEX signup_events_bidx_ix ON app.signup_events (email_bidx, created_at)
 
 ---
 
+### Task 8-0: [PR 2 선행] bidx UNIQUE 마이그레이션 + PiiVerifyRunner (검증 모드)
+
+**Files:**
+- Create: `was/src/main/resources/db/migration/app/V<STAMP2>__pii_bidx_unique.sql` (STAMP2는 `date -u +%Y%m%d%H%M%S` — 백필 완료(운영·스테이징 09-04) 후라 안전)
+- Create: `was/src/main/java/com/celfit/was/crypto/PiiVerifyRunner.java`
+- Test: `was/src/test/java/com/celfit/was/PiiVerifyRunnerTest.java`
+
+**Interfaces:**
+- Consumes: `FieldCipher.decrypt/blindIndex`, `UserRepository.normalizeEmail`
+- Produces: `--crypto.verify=true` 기동 시 4테이블의 (평문 vs decrypt(enc)) 불일치와 (bidx vs blindIndex(normalize(평문))) 불일치 건수를 테이블별로 로그(불일치 행은 **id만** 로그 — 평문·암호문 금지). 아무것도 변경하지 않는다. 읽기 전환 배포 직전 스테이징·운영에서 1회 실행해 0건을 확인하는 게이트. `PiiVerifyRunner.verifyAll() → VerifyReport(Map<String,Integer> encMismatch, Map<String,Integer> bidxMismatch)`.
+
+- [ ] **Step 1: 마이그레이션 작성** (Task 6에 적어둔 SQL 그대로):
+
+```sql
+-- 블라인드 인덱스 UNIQUE(트랙 A 스펙 §전환 — 백필 완료 후 적용, 운영·스테이징 09-04 완료 확인).
+-- NULL 다중은 UNIQUE가 허용하므로 미백필 행이 있어도 실패하지 않지만, 읽기 전환은 백필 0 NULL이 전제.
+CREATE UNIQUE INDEX users_email_bidx_key ON app.users (email_bidx);
+CREATE UNIQUE INDEX password_resets_email_bidx_key ON app.password_resets (email_bidx);
+CREATE INDEX signup_events_bidx_ix ON app.signup_events (email_bidx, created_at);
+```
+
+- [ ] **Step 2: 실패하는 테스트 작성** — raw SQL로 정합 행 1개(평문+올바른 enc/bidx — `FieldCipher`로 직접 생성) + 불일치 행 2개(① `name_enc`를 다른 평문의 암호문으로 ② `email_bidx`를 엉뚱한 값으로) 시드 → `verifyAll()` → users encMismatch=1, bidxMismatch=1, 다른 테이블 0. 시드 행은 테스트 끝에 삭제.
+
+- [ ] **Step 3: 구현**
+
+```java
+package com.celfit.was.crypto;
+
+import com.celfit.was.auth.UserRepository;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Component;
+
+/**
+ * PII 정합 검증(트랙 A PR 2 게이트) — 평문 vs decrypt(enc), bidx vs HMAC(normalize(평문))를 전 행 대조.
+ * 아무것도 바꾸지 않는다. 불일치 행은 id만 로그(평문·암호문 금지). --crypto.verify=true 기동 시 1회.
+ * 읽기 전환 배포 직전 0건 확인용 — 불일치 행은 읽기 전환 후 로그인 불가·오표시가 되므로 백필 재실행
+ * (해당 행 enc를 NULL로 되돌린 뒤 --crypto.backfill=true)으로 먼저 고친다.
+ */
+@Component
+@ConditionalOnProperty(name = "crypto.verify", havingValue = "true")
+public class PiiVerifyRunner implements ApplicationRunner {
+
+	private static final Logger log = LoggerFactory.getLogger(PiiVerifyRunner.class);
+
+	public record VerifyReport(Map<String, Integer> encMismatch, Map<String, Integer> bidxMismatch) {
+		public int total() {
+			return encMismatch.values().stream().mapToInt(Integer::intValue).sum()
+					+ bidxMismatch.values().stream().mapToInt(Integer::intValue).sum();
+		}
+	}
+
+	private final JdbcClient jdbc;
+	private final FieldCipher cipher;
+
+	public PiiVerifyRunner(JdbcClient jdbc, FieldCipher cipher) {
+		this.jdbc = jdbc;
+		this.cipher = cipher;
+	}
+
+	@Override
+	public void run(ApplicationArguments args) {
+		VerifyReport r = verifyAll();
+		log.info("PII 정합 검증 — enc 불일치={}, bidx 불일치={}, 합계={}", r.encMismatch(), r.bidxMismatch(), r.total());
+	}
+
+	public VerifyReport verifyAll() {
+		Map<String, Integer> enc = new LinkedHashMap<>();
+		Map<String, Integer> bidx = new LinkedHashMap<>();
+		verifyTable("users", "SELECT id, email, name, nickname, phone_number, email_enc, name_enc, nickname_enc, phone_number_enc, email_bidx FROM app.users",
+				List.of("email", "name", "nickname", "phone_number"), true, true, enc, bidx);
+		verifyTable("inquiries", "SELECT id, name, email, organization, message, name_enc, email_enc, organization_enc, message_enc FROM app.inquiries",
+				List.of("name", "email", "organization", "message"), false, false, enc, bidx);
+		verifyTable("password_resets", "SELECT email AS id, email, email_enc, email_bidx FROM app.password_resets",
+				List.of("email"), true, true, enc, bidx);
+		verifyTable("signup_events", "SELECT id, email, ip, email_enc, ip_enc, email_bidx FROM app.signup_events",
+				List.of("email", "ip"), true, true, enc, bidx);
+		return new VerifyReport(enc, bidx);
+	}
+
+	/** columns의 각 c에 대해 decrypt(c_enc)==c 검사; hasBidx면 email_bidx==blindIndex(normalize(email)) 검사. */
+	private void verifyTable(String table, String sql, List<String> columns, boolean hasBidx, boolean normalizeEmail,
+			Map<String, Integer> enc, Map<String, Integer> bidx) {
+		int encBad = 0;
+		int bidxBad = 0;
+		for (Map<String, Object> row : jdbc.sql(sql).query().listOfRows()) {
+			boolean rowEncBad = false;
+			for (String c : columns) {
+				String plain = (String) row.get(c);
+				String token = (String) row.get(c + "_enc");
+				String dec;
+				try {
+					dec = cipher.decrypt(token);
+				} catch (IllegalStateException e) {
+					dec = null;
+				}
+				if (!Objects.equals(plain, dec)) {
+					rowEncBad = true;
+				}
+			}
+			if (rowEncBad) {
+				encBad++;
+				log.warn("PII enc 불일치 — table={}, id={}", table, row.get("id"));
+			}
+			if (hasBidx) {
+				String email = (String) row.get("email");
+				String expected = cipher.blindIndex(normalizeEmail ? UserRepository.normalizeEmail(email) : email);
+				if (!Objects.equals(expected, row.get("email_bidx"))) {
+					bidxBad++;
+					log.warn("PII bidx 불일치 — table={}, id={}", table, row.get("id"));
+				}
+			}
+		}
+		enc.put(table, encBad);
+		bidx.put(table, bidxBad);
+	}
+}
+```
+
+주의: signup_events의 `email_enc`는 원문(정규화 없이) 암호화, `email_bidx`는 normalize 값 — 위 코드가 그 규칙(`normalizeEmail=true`)을 따른다. password_resets는 평문 자체가 정규화돼 있어 동일.
+
+- [ ] **Step 4: 통과 확인** — `./gradlew :was:test --tests "com.celfit.was.PiiVerifyRunnerTest"` + 마이그레이션 적용 확인(통합 테스트 1개) → PASS
+- [ ] **Step 5: 커밋** — `feat(was): bidx UNIQUE 마이그레이션 + PII 정합 검증 러너(--crypto.verify)`
+
+---
+
 ### Task 8: 읽기 전환 — 조회를 암호문·bidx 기준으로
 
 **Files:**
