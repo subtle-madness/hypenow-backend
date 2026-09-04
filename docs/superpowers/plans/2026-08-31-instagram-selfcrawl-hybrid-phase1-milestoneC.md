@@ -1,4 +1,4 @@
-> 상태: 🟡 개요 · 상세 계획 미작성 (2026-08-31)
+> 상태: 🟢 활성 (2026-09-04 갱신 - 1단계 개통 완료: fetchPost·fetchComments self 1순위(09-03). 관측 공백 수정은 `feat/selfcrawl-phase1-wrapup`. 프로필·피드 self 확장은 인스타 로그아웃 표면 차단(wpi·feed/user 401)으로 보류, 2단계(사용자 트리거) 토글은 승인 대기. 현황·체크리스트는 [트랙 RR](../../tracks/RR-인스타-수집-하이브리드.md))
 > 범위: Phase 1 마일스톤 C(점진 개통·검증). **선행: 마일스톤 A·B 완료 필수.**
 > 설계 정본: `docs/superpowers/specs/2026-08-31-instagram-hiker-selfcrawl-hybrid-design.md`(§5·§8-5·§10). 선행 실측: 메모리 `hiker-self-scraping-breakeven.md`.
 
