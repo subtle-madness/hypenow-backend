@@ -189,10 +189,12 @@ services:
       # 미루지 않기 위해 배선(2026-08-11 최종 리뷰 I-4). 크론은 K 원칙대로 off라 콜 폭주 없음.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       # Vertex SA 키(2026-08-18 전환) — test-analytics와 같은 파일·같은 경로 재사용. 프로젝트는
-      # 운영과 같은 hypenow-llm-prod를 기본값으로 둔다(test 전용 GCP 프로젝트가 없다는 전제 —
-      # analytics도 test/운영이 같은 SA 파일을 쓴다, PR 보고 참조).
+      # 운영과 같은 신규 프로젝트를 기본값으로 둔다(test 전용 GCP 프로젝트가 없다는 전제 —
+      # analytics도 test/운영이 같은 SA 파일을 쓴다, PR 보고 참조). 구 프로젝트 hypenow-llm-prod는
+      # 2026-08-31 billing 중단(전 호출 403 BILLING_DISABLED) — 운영 compose.yaml은 50ceba36에서
+      # 전환됐으나 이 파일이 빠져 test 스택 광고 표기 판정이 09-03까지 전건 실패했다(ad_verdict NULL 고정).
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
-      MONITORING_LLM_VERTEX_PROJECT: ${MONITORING_LLM_VERTEX_PROJECT:-hypenow-llm-prod}
+      MONITORING_LLM_VERTEX_PROJECT: ${MONITORING_LLM_VERTEX_PROJECT:-project-00d0f3bd-bdef-4b0a-9eb}
       MONITORING_LLM_VERTEX_LOCATION: ${MONITORING_LLM_VERTEX_LOCATION:-global}
       # 이미지 아카이브는 test 대상 아님(운영 버킷 오염 방지) — analytics와 동일하게 빈 값이면 잡이 no-op
       MONITORING_IMAGE_PAR_URL: ""
