@@ -1,6 +1,7 @@
 package com.celfit.was.crypto;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 
 import com.celfit.was.IntegrationTest;
 import com.celfit.was.auth.UserRepository;
@@ -8,6 +9,7 @@ import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 /**
@@ -31,12 +33,31 @@ class PiiVerifyRunnerTest extends IntegrationTest {
 	@Autowired FieldCipher fieldCipher;
 
 	private PiiVerifyRunner runner() {
-		return new PiiVerifyRunner(jdbcClient, fieldCipher);
+		// failFast=false 고정 — exitAbnormally는 이 경로를 타지 않으므로 context=null이 안전하다.
+		return new PiiVerifyRunner(jdbcClient, fieldCipher, false, null);
 	}
 
 	@Test
 	void password_resets_sql은_email을_id로_노출하지_않는다() {
 		assertThat(PiiVerifyRunner.PASSWORD_RESETS_SQL).doesNotContain("email AS id");
+	}
+
+	@Test
+	void shouldExitAbnormally는_failFast_true이고_합계가_0보다_클_때만_true다() {
+		assertThat(PiiVerifyRunner.shouldExitAbnormally(true, 1)).isTrue();
+		assertThat(PiiVerifyRunner.shouldExitAbnormally(true, 0)).isFalse();
+		assertThat(PiiVerifyRunner.shouldExitAbnormally(false, 1)).isFalse();
+		assertThat(PiiVerifyRunner.shouldExitAbnormally(false, 0)).isFalse();
+	}
+
+	@Test
+	void run은_failFast가_false면_불일치가_있어도_컨텍스트를_건드리지_않고_정상_반환한다() {
+		// context=null인 runner()로 run()을 직접 호출 — shouldExitAbnormally가 false를 반환해야만
+		// exitAbnormally(null 컨텍스트 역참조)를 안 타므로, 예외 없이 끝나는 것 자체가 분기 증거다.
+		PiiVerifyRunner runner = runner();
+
+		assertThatCode(() -> runner.run(new DefaultApplicationArguments()))
+				.doesNotThrowAnyException();
 	}
 
 	@Test

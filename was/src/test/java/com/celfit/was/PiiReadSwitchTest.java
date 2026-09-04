@@ -13,8 +13,10 @@ import com.celfit.was.v1.account.PasswordResetRepository;
 import com.celfit.was.v1.admin.AdminUserRepository;
 import com.celfit.was.v1.admin.AdminUserRow;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
@@ -36,9 +38,27 @@ class PiiReadSwitchTest extends IntegrationTest {
 	@Autowired JdbcClient jdbcClient;
 	@Autowired FieldCipher fieldCipher;
 
+	/** 이 테스트가 생성한 users 행 id — 평문 오염 포함이라 @AfterEach에서 정리한다(자식 FK 없음). */
+	private final List<Long> createdUserIds = new ArrayList<>();
+
+	@AfterEach
+	void 오염된_행을_정리한다() {
+		if (!createdUserIds.isEmpty()) {
+			jdbcClient.sql("DELETE FROM app.users WHERE id IN (:ids)")
+					.param("ids", createdUserIds)
+					.update();
+		}
+	}
+
 	private static NewUser newUser(String email, String name) {
 		return new NewUser(email, name, "닉", "brand", "portal_search", "+82", "010-1234-5678",
 				"하이프나우", "2-10", "beauty", "staff", null, true, true, true, false);
+	}
+
+	private UserProfile insertTrackedProfile(NewUser newUser, String passwordHash) {
+		UserProfile created = userRepository.insertProfile(newUser, passwordHash);
+		createdUserIds.add(created.id());
+		return created;
 	}
 
 	/** 평문 PII 4종을 전부 구식 값으로 덮는다 — 읽기가 평문을 본다면 여기서 티가 난다. */
@@ -54,7 +74,7 @@ class PiiReadSwitchTest extends IntegrationTest {
 	@Test
 	void 평문이_오염돼도_findByEmail은_bidx로_찾고_복호화_값을_돌려준다() {
 		String email = "read-switch-1@example.com";
-		UserProfile created = userRepository.insertProfile(newUser(email, "박읽기전환"), "hash");
+		UserProfile created = insertTrackedProfile(newUser(email, "박읽기전환"), "hash");
 		평문을_오염시킨다(created.id());
 
 		Optional<AppUser> found = userRepository.findByEmail(email);
@@ -67,7 +87,7 @@ class PiiReadSwitchTest extends IntegrationTest {
 	@Test
 	void 평문이_오염돼도_프로필_조회는_복호화_값을_돌려준다() {
 		String email = "read-switch-2@example.com";
-		UserProfile created = userRepository.insertProfile(newUser(email, "박읽기전환"), "hash");
+		UserProfile created = insertTrackedProfile(newUser(email, "박읽기전환"), "hash");
 		평문을_오염시킨다(created.id());
 
 		UserProfile byEmail = userRepository.findProfileByEmail(email).orElseThrow();
@@ -87,7 +107,7 @@ class PiiReadSwitchTest extends IntegrationTest {
 	@Test
 	void 평문이_오염돼도_로그인_조회는_왕복한다() {
 		String email = "read-switch-3@example.com";
-		UserProfile created = userRepository.insertProfile(newUser(email, "박읽기전환"), "hash");
+		UserProfile created = insertTrackedProfile(newUser(email, "박읽기전환"), "hash");
 		평문을_오염시킨다(created.id());
 
 		UserDetails details = appUserDetailsService.loadUserByUsername(email.toUpperCase());
@@ -99,7 +119,7 @@ class PiiReadSwitchTest extends IntegrationTest {
 	@Test
 	void 어드민_검색은_암호화된_이름을_메모리에서_부분일치시킨다() {
 		String email = "read-switch-4@example.com";
-		UserProfile created = userRepository.insertProfile(newUser(email, "김검색대상철수"), "hash");
+		UserProfile created = insertTrackedProfile(newUser(email, "김검색대상철수"), "hash");
 		평문을_오염시킨다(created.id());
 
 		AdminUserRepository.Page page = adminUserRepository.findPage("검색대상철수", 20, 0);
@@ -116,7 +136,7 @@ class PiiReadSwitchTest extends IntegrationTest {
 	@Test
 	void 어드민_검색은_이메일_부분일치도_대소문자를_무시한다() {
 		String email = "read-switch-5-UniQue@example.com";
-		UserProfile created = userRepository.insertProfile(newUser(email, "박읽기전환"), "hash");
+		UserProfile created = insertTrackedProfile(newUser(email, "박읽기전환"), "hash");
 		평문을_오염시킨다(created.id());
 
 		AdminUserRepository.Page page = adminUserRepository.findPage("READ-SWITCH-5-unique", 20, 0);
@@ -130,7 +150,7 @@ class PiiReadSwitchTest extends IntegrationTest {
 	@Test
 	void 검색어_없는_어드민_목록도_복호화_값을_돌려준다() {
 		String email = "read-switch-6@example.com";
-		UserProfile created = userRepository.insertProfile(newUser(email, "박목록"), "hash");
+		UserProfile created = insertTrackedProfile(newUser(email, "박목록"), "hash");
 		평문을_오염시킨다(created.id());
 
 		AdminUserRepository.Page page = adminUserRepository.findPage(null, 5, 0);
@@ -180,13 +200,28 @@ class PiiReadSwitchTest extends IntegrationTest {
 	@Test
 	void 평문_이메일이_달라도_같은_이메일_재가입은_bidx_UNIQUE로_막힌다() {
 		String email = "read-switch-8@example.com";
-		UserProfile created = userRepository.insertProfile(newUser(email, "박중복"), "hash");
+		UserProfile created = insertTrackedProfile(newUser(email, "박중복"), "hash");
 		// 평문 UNIQUE는 비켜 가게 만든다 — 남는 방어선은 email_bidx UNIQUE뿐
 		평문을_오염시킨다(created.id());
 
-		assertThatThrownBy(() -> userRepository.insertProfile(newUser(email, "박중복2"), "hash"))
+		assertThatThrownBy(() -> insertTrackedProfile(newUser(email, "박중복2"), "hash"))
 				.isInstanceOf(DuplicateKeyException.class);
 		assertThatThrownBy(() -> userRepository.insert(email, "hash"))
 				.isInstanceOf(DuplicateKeyException.class);
+	}
+
+	@Test
+	void email_enc가_손상되면_findById가_조용히_null을_돌려주지_않고_예외를_전파한다() {
+		String email = "read-switch-9@example.com";
+		UserProfile created = insertTrackedProfile(newUser(email, "박손상"), "hash");
+		jdbcClient.sql("UPDATE app.users SET email_enc = :bad WHERE id = :id")
+				.param("bad", "v1:1:garbage:garbage")
+				.param("id", created.id())
+				.update();
+
+		// FieldCipher.decrypt가 던지는 IllegalStateException을 UserRepository가 삼키지 않는다 —
+		// 조용한 null은 "이름이 사라진 유저"가 되어 더 오래 숨는다(UserRepository 클래스 주석 §실패 모드).
+		assertThatThrownBy(() -> userRepository.findById(created.id()))
+				.isInstanceOf(IllegalStateException.class);
 	}
 }
