@@ -8,6 +8,7 @@ import com.celfit.was.auth.AppUserDetailsService;
 import com.celfit.was.auth.NewUser;
 import com.celfit.was.auth.UserProfile;
 import com.celfit.was.auth.UserRepository;
+import com.celfit.was.crypto.FieldCipher;
 import com.celfit.was.v1.account.PasswordResetRepository;
 import com.celfit.was.v1.admin.AdminUserRepository;
 import com.celfit.was.v1.admin.AdminUserRow;
@@ -33,15 +34,18 @@ class PiiReadSwitchTest extends IntegrationTest {
 	@Autowired PasswordResetRepository passwordResetRepository;
 	@Autowired AppUserDetailsService appUserDetailsService;
 	@Autowired JdbcClient jdbcClient;
+	@Autowired FieldCipher fieldCipher;
 
 	private static NewUser newUser(String email, String name) {
 		return new NewUser(email, name, "닉", "brand", "portal_search", "+82", "010-1234-5678",
 				"하이프나우", "2-10", "beauty", "staff", null, true, true, true, false);
 	}
 
-	/** 평문 email·name을 구식 값으로 덮는다 — 읽기가 평문을 본다면 여기서 티가 난다. */
+	/** 평문 PII 4종을 전부 구식 값으로 덮는다 — 읽기가 평문을 본다면 여기서 티가 난다. */
 	private void 평문을_오염시킨다(long id) {
-		jdbcClient.sql("UPDATE app.users SET email = :stale, name = '오염된이름' WHERE id = :id")
+		jdbcClient.sql("""
+				UPDATE app.users SET email = :stale, name = '오염된이름', nickname = '오염된닉',
+				       phone_number = '000-0000-0000' WHERE id = :id""")
 				.param("stale", "stale-" + id + "@x.com")
 				.param("id", id)
 				.update();
@@ -72,8 +76,11 @@ class PiiReadSwitchTest extends IntegrationTest {
 		assertThat(byEmail.id()).isEqualTo(created.id());
 		assertThat(byEmail.email()).isEqualTo(email);
 		assertThat(byEmail.name()).isEqualTo("박읽기전환");
+		assertThat(byEmail.nickname()).isEqualTo("닉");
+		assertThat(byEmail.phoneNumber()).isEqualTo("010-1234-5678");
 		assertThat(byId.email()).isEqualTo(email);
 		assertThat(byId.name()).isEqualTo("박읽기전환");
+		assertThat(byId.nickname()).isEqualTo("닉");
 		assertThat(byId.phoneNumber()).isEqualTo("010-1234-5678");
 	}
 
@@ -145,9 +152,14 @@ class PiiReadSwitchTest extends IntegrationTest {
 	@Test
 	void 비번_재설정_흐름은_평문이_오염돼도_bidx로_완주한다() {
 		String email = "read-switch-7@example.com";
-		jdbcClient.sql("DELETE FROM app.password_resets WHERE email_bidx IS NOT NULL").update();
+		// 대상 행만 스코프한다 — WHERE 없는 DELETE·UPDATE는 다른 테스트 클래스가 남긴 행과
+		// 평문 PK 충돌을 일으켜 실행 순서에 의존하게 된다
+		String bidx = fieldCipher.blindIndex(UserRepository.normalizeEmail(email));
+		jdbcClient.sql("DELETE FROM app.password_resets WHERE email_bidx = :bidx").param("bidx", bidx).update();
 		passwordResetRepository.upsert(email, "code-hash", Instant.now().plusSeconds(300));
-		jdbcClient.sql("UPDATE app.password_resets SET email = 'stale-reset@x.com'").update();
+		jdbcClient.sql("UPDATE app.password_resets SET email = 'stale-reset@x.com' WHERE email_bidx = :bidx")
+				.param("bidx", bidx)
+				.update();
 
 		PasswordResetRepository.ResetChallenge challenge = passwordResetRepository.find(email).orElseThrow();
 		assertThat(challenge.email()).isEqualTo(email);
