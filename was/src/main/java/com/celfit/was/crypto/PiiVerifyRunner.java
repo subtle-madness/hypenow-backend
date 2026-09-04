@@ -7,9 +7,12 @@ import java.util.Map;
 import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 
@@ -19,6 +22,14 @@ import org.springframework.stereotype.Component;
  * md5(email) 앞 8자를 대체 식별자로 로그한다). --crypto.verify=true 기동 시 1회.
  * 읽기 전환 배포 직전 0건 확인용 — 불일치 행은 읽기 전환 후 로그인 불가·오표시가 되므로 백필 재실행
  * (해당 행 enc를 NULL로 되돌린 뒤 --crypto.backfill=true)으로 먼저 고친다.
+ *
+ * <p>합계>0이면 로그 등급을 ERROR로 올린다(기본 INFO). {@code crypto.verify.fail-fast=true}
+ * (기본 false, 운영·스테이징 배포 게이트 스크립트 전용 — deploy/README.md §6-3)를 함께 주면
+ * 합계>0일 때 {@link SpringApplication#exit}로 비정상 종료(코드 1)해 사람이 로그를 읽지 않아도
+ * 스크립트가 종료코드만으로 게이트 통과 여부를 판별할 수 있게 한다. 종료 여부 판정
+ * ({@link #shouldExitAbnormally})은 순수 함수로 분리해 ApplicationContext 없이 단위 테스트한다 —
+ * 실제 종료 동작({@link #exitAbnormally})은 통합 테스트에서 호출하면 테스트 JVM이 죽으므로
+ * failFast=false 경로만 통합 테스트로 검증한다.
  */
 @Component
 @ConditionalOnProperty(name = "crypto.verify", havingValue = "true")
@@ -43,16 +54,45 @@ public class PiiVerifyRunner implements ApplicationRunner {
 
 	private final JdbcClient jdbc;
 	private final FieldCipher cipher;
+	private final boolean failFast;
+	private final ConfigurableApplicationContext context;
 
-	public PiiVerifyRunner(JdbcClient jdbc, FieldCipher cipher) {
+	public PiiVerifyRunner(JdbcClient jdbc, FieldCipher cipher,
+			@Value("${crypto.verify.fail-fast:false}") boolean failFast,
+			ConfigurableApplicationContext context) {
 		this.jdbc = jdbc;
 		this.cipher = cipher;
+		this.failFast = failFast;
+		this.context = context;
 	}
 
 	@Override
 	public void run(ApplicationArguments args) {
 		VerifyReport r = verifyAll();
-		log.info("PII 정합 검증 — enc 불일치={}, bidx 불일치={}, 합계={}", r.encMismatch(), r.bidxMismatch(), r.total());
+		int total = r.total();
+		if (total > 0) {
+			log.error("PII 정합 검증 실패 — enc 불일치={}, bidx 불일치={}, 합계={}", r.encMismatch(), r.bidxMismatch(), total);
+		} else {
+			log.info("PII 정합 검증 — enc 불일치={}, bidx 불일치={}, 합계={}", r.encMismatch(), r.bidxMismatch(), total);
+		}
+		if (shouldExitAbnormally(failFast, total)) {
+			exitAbnormally();
+		}
+	}
+
+	/**
+	 * fail-fast 종료 여부 결정만 담당하는 순수 함수 — ApplicationContext 없이 단위 테스트 대상.
+	 * {@link #run}이 이 함수와 {@link #exitAbnormally}를 분리 호출하므로, failFast=false 경로는
+	 * 통합 테스트에서 {@code context}에 null을 넣고 {@link #run}을 그대로 호출해도 안전하다.
+	 */
+	static boolean shouldExitAbnormally(boolean failFast, int total) {
+		return failFast && total > 0;
+	}
+
+	/** 종료 액션 자체 — 배포 게이트 스크립트가 종료코드로 합계>0을 판별할 수 있게 코드 1로 종료한다. */
+	private void exitAbnormally() {
+		int code = SpringApplication.exit(context, () -> 1);
+		System.exit(code);
 	}
 
 	public VerifyReport verifyAll() {
