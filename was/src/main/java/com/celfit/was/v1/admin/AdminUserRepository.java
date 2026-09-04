@@ -21,6 +21,9 @@ import org.springframework.stereotype.Repository;
  * 명) 전제의 의도된 한계</b>다: 검색 1회가 users 전 행을 읽는다. 유저가 수만 명대로 커지면
  * 이 방식을 유지할 수 없고, 정규화 토큰의 블라인드 인덱스(부분일치 불가)나 별도 검색 인덱스
  * 같은 다른 설계가 필요하다. 검색어가 없는 경로는 그대로 SQL 페이지네이션을 쓴다.
+ *
+ * <p>부수 효과 하나 — 검색어의 {@code %}·{@code _}가 <b>리터럴 문자</b>가 됐다. ILIKE 시절에는
+ * 와일드카드로 해석됐다(어드민만 쓰는 표면이라 의도적으로 노출된 기능은 아니었다).
  */
 @Repository
 public class AdminUserRepository {
@@ -83,7 +86,9 @@ public class AdminUserRepository {
 		if (offset >= matched.size()) {
 			return new Page(List.of(), matched.size());
 		}
-		return new Page(matched.subList(offset, Math.min(offset + limit, matched.size())), matched.size());
+		// copyOf로 잘라낸다 — subList는 뷰라서 전 유저의 복호화된 PII 리스트를 응답 수명 내내 붙잡는다
+		return new Page(List.copyOf(matched.subList(offset, Math.min(offset + limit, matched.size()))),
+				matched.size());
 	}
 
 	private static boolean contains(String value, String lowerNeedle) {
