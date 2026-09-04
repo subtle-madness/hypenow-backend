@@ -953,7 +953,7 @@ public class SignupEventRetentionScheduler {
 
 - [ ] **Step 1: compose·README·트랙 문서 작성** (서버 `.env`에 실값 추가는 배포 시 수동 — README에 명시)
 - [ ] **Step 2: 전체 테스트** — `./gradlew :was:test` → PASS 확인 후
-- [ ] **Step 3: 커밋 + PR 1 오픈** — base develop, 본문에 스펙 링크·롤아웃 게이트(Task 7이 PR 2의 선행 조건임을 명시). plan 문서는 **PR 2 머지 시** `plans/archive/`로 이동(세션 위생 규칙 — 실행 완료 시점 기준).
+- [ ] **Step 3: 커밋 + PR 1 오픈** — base develop, 본문에 스펙 링크·롤아웃 게이트(Task 7이 PR 2의 선행 조건임을 명시). plan 문서는 **PR 3 머지 시** `plans/archive/`로 이동(세션 위생 규칙 — 실행 완료 시점 기준. 09-04 정정: Task 12가 이 계획에 남아 있는 한 PR 2 머지 시점엔 아직 활성 — contract까지 활성 위치에 둔다).
 
 ---
 
@@ -978,6 +978,13 @@ ALTER TABLE app.password_resets DROP CONSTRAINT password_resets_pkey;
 ALTER TABLE app.password_resets ALTER COLUMN email_bidx SET NOT NULL;
 ALTER TABLE app.password_resets ADD PRIMARY KEY (email_bidx);
 ALTER TABLE app.password_resets DROP COLUMN email;
+
+-- enc NULL 행이 평문 DROP 후 조용한 401(로그인 불가·조회 누락)이 되지 않도록 구조로 고정
+-- (09-04 리뷰 후속 — 위 방어적 UPDATE·백필 게이트가 이미 0을 보장하지만, NOT NULL 제약이
+-- 없으면 향후 회귀(백필 누락 경로 재발)를 DB가 못 잡는다). password_resets.email_bidx는
+-- 위에서 이미 PK로 승격하며 NOT NULL이 걸렸으므로 email_enc만 추가.
+ALTER TABLE app.users ALTER COLUMN email_enc SET NOT NULL, ALTER COLUMN email_bidx SET NOT NULL;
+ALTER TABLE app.password_resets ALTER COLUMN email_enc SET NOT NULL;
 ```
 
 주의: users.email에 걸린 기존 UNIQUE 제약·인덱스는 컬럼 DROP과 함께 소멸. **가드 v2 짝 검사**(DROP 파일의 보정 UPDATE 동봉) 형식을 지키되, 실제 백필 불요 사유를 위 주석으로 명시 — 가드 통과 형식은 [deploy/README.md §5-1] 기준으로 작성 시점 재확인. 이 마이그레이션 후 이중 쓰기 코드 제거(평문 컬럼 참조 삭제) 커밋을 같은 PR에 동승.
