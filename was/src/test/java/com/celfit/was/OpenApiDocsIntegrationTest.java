@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.was.crypto.FieldCipher;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,6 +45,9 @@ class OpenApiDocsIntegrationTest extends IntegrationTest {
 	@Autowired
 	PasswordEncoder passwordEncoder;
 
+	@Autowired
+	FieldCipher fieldCipher;
+
 	@BeforeEach
 	void seedUsers() {
 		insertUser(ADMIN_EMAIL, "ADMIN");
@@ -60,6 +64,7 @@ class OpenApiDocsIntegrationTest extends IntegrationTest {
 				.param("hash", passwordEncoder.encode(PASSWORD))
 				.param("role", role)
 				.update();
+		PiiTestSeed.backfill(jdbcClient, fieldCipher);
 	}
 
 	@Test

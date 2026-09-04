@@ -11,7 +11,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.nullValue;
 
 import com.celfit.was.IntegrationTest;
+import com.celfit.was.PiiTestSeed;
 import com.celfit.was.V1AuthTestSteps;
+import com.celfit.was.crypto.FieldCipher;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,6 +48,9 @@ class AdminNoticesIntegrationTest extends IntegrationTest {
 
 	@Autowired
 	PasswordEncoder passwordEncoder;
+
+	@Autowired
+	FieldCipher fieldCipher;
 
 	private Cookie adminSession;
 
@@ -241,6 +246,7 @@ class AdminNoticesIntegrationTest extends IntegrationTest {
 				.param("email", email)
 				.param("hash", passwordEncoder.encode(PASSWORD))
 				.update();
+		PiiTestSeed.backfill(jdbcClient, fieldCipher);
 		return jdbcClient.sql("SELECT id FROM app.users WHERE email = :email")
 				.param("email", email)
 				.query(Long.class)

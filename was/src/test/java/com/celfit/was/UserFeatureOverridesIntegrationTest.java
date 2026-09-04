@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.was.crypto.FieldCipher;
 import jakarta.servlet.http.Cookie;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -44,6 +45,9 @@ class UserFeatureOverridesIntegrationTest extends IntegrationTest {
 	@Autowired
 	PasswordEncoder passwordEncoder;
 
+	@Autowired
+	FieldCipher fieldCipher;
+
 	private long adminId;
 	private long targetId;
 
@@ -71,6 +75,7 @@ class UserFeatureOverridesIntegrationTest extends IntegrationTest {
 				.param("hash", passwordEncoder.encode(PASSWORD))
 				.param("role", role)
 				.update();
+		PiiTestSeed.backfill(jdbcClient, fieldCipher);
 		return jdbcClient.sql("SELECT id FROM app.users WHERE email = :email")
 				.param("email", email)
 				.query(Long.class)

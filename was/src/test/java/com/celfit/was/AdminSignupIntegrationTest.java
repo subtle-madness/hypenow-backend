@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.was.crypto.FieldCipher;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -43,6 +44,9 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 	PasswordEncoder passwordEncoder;
 
 	@Autowired
+	FieldCipher fieldCipher;
+
+	@Autowired
 	AdminSignupRepository repository;
 
 	/** 재실행 대비 유니크 이메일 — seedUser는 INSERT ... RETURNING id라 ON CONFLICT로는 못 우회한다. */
@@ -56,7 +60,7 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 	}
 
 	private long seedUser(String email, String role) {
-		return jdbcClient.sql("""
+		long id = jdbcClient.sql("""
 				INSERT INTO app.users (email, password_hash, role) VALUES (:email, :hash, :role)
 				RETURNING id""")
 				.param("email", email)
@@ -64,6 +68,8 @@ class AdminSignupIntegrationTest extends IntegrationTest {
 				.param("role", role)
 				.query(Long.class)
 				.single();
+		PiiTestSeed.backfill(jdbcClient, fieldCipher);
+		return id;
 	}
 
 	private void deleteUser(long userId) {

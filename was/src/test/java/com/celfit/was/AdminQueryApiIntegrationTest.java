@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.was.crypto.FieldCipher;
 import com.celfit.was.monitoring.CampaignRepository;
 import com.celfit.was.monitoring.CampaignRow;
 import com.celfit.was.monitoring.MonitoringItemRepository;
@@ -69,6 +70,8 @@ class AdminQueryApiIntegrationTest extends IntegrationTest {
 	DataSource dataSource;
 	@Autowired
 	PasswordEncoder passwordEncoder;
+	@Autowired
+	FieldCipher fieldCipher;
 	@Autowired
 	MonitoringItemRepository itemRepository;
 	@Autowired
@@ -468,6 +471,7 @@ class AdminQueryApiIntegrationTest extends IntegrationTest {
 				.param("name", name)
 				.param("signupRoute", signupRoute)
 				.update();
+		PiiTestSeed.backfill(jdbcClient, fieldCipher);
 		return jdbcClient.sql("SELECT id FROM app.users WHERE email = :email")
 				.param("email", email)
 				.query(Long.class)

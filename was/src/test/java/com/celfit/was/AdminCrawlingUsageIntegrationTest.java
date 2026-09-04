@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.was.crypto.FieldCipher;
 import jakarta.servlet.http.Cookie;
 import java.sql.Connection;
 import java.time.Clock;
@@ -76,6 +77,8 @@ class AdminCrawlingUsageIntegrationTest extends IntegrationTest {
 	DataSource dataSource;
 	@Autowired
 	PasswordEncoder passwordEncoder;
+	@Autowired
+	FieldCipher fieldCipher;
 
 	private Cookie adminSession;
 	private long targetUserId;
@@ -235,7 +238,7 @@ class AdminCrawlingUsageIntegrationTest extends IntegrationTest {
 	// --- 헬퍼 ---
 
 	private long insertUser(String email, String role) {
-		return jdbcClient.sql("""
+		long id = jdbcClient.sql("""
 				INSERT INTO app.users (email, password_hash, role, name, user_type,
 				                       agreed_terms, agreed_privacy, agreed_age14)
 				VALUES (:email, :hash, :role, '테스터', 'brand', true, true, true)
@@ -246,6 +249,8 @@ class AdminCrawlingUsageIntegrationTest extends IntegrationTest {
 				.param("role", role)
 				.query(Long.class)
 				.single();
+		PiiTestSeed.backfill(jdbcClient, fieldCipher);
+		return id;
 	}
 
 	private Cookie login(String email) throws Exception {
