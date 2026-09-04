@@ -403,6 +403,211 @@
           "expr": "topk(15, sum by (logger) (count_over_time({service=~\"crawler|monitoring\", level=~\"WARN|ERROR\"} | regexp `\\] (?P<logger>[\\w.]+)\\s+: ` [$__range])))"
         }
       ]
+    },
+    {
+      "id": 400,
+      "type": "row",
+      "title": "③ 자체크롤(self) 건전성",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "panels": []
+    },
+    {
+      "id": 401,
+      "type": "timeseries",
+      "title": "self 라우팅 결과 (5m rate)",
+      "description": "self 건전성은 self 시리즈 유무가 아니라 hiker fallback:* 비율로 본다(self 워크로드가 없으면 self 시리즈도 없다). backend·outcome 조합별로 나뉜다 — self|ok가 정상, hiker|fallback:<에러클래스>가 self 실패 후 폴백.",
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 0,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{backend}} {{outcome}}",
+          "expr": "sum by (backend, outcome) (rate(instagram_source_route_total{job=\"monitoring\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 402,
+      "type": "stat",
+      "title": "self 폴백 비율 (hiker fallback:* / self 시도 전체, 1h)",
+      "description": "self 건전성은 self 시리즈 유무가 아니라 이 비율로 본다(self 워크로드가 없으면 self 시리즈도 없다). 분모=self 시도 전체(backend=self 전체 outcome + hiker로 넘어간 fallback:*), 분자=그중 폴백. 09-04 self 사망 오진(실제론 워크로드 소진)처럼 self 라인이 안 보이는 것과 실제 장애를 이 숫자로 구분한다.",
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 8,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 2,
+          "noValue": "데이터 없음 (self 시도 없음)",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.2
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "editorMode": "code",
+          "range": true,
+          "expr": "sum(increase(instagram_source_route_total{job=\"monitoring\", outcome=~\"fallback:.*\"}[1h])) / (sum(increase(instagram_source_route_total{job=\"monitoring\", backend=\"self\"}[1h])) + sum(increase(instagram_source_route_total{job=\"monitoring\", outcome=~\"fallback:.*\"}[1h])))"
+        }
+      ]
+    },
+    {
+      "id": 403,
+      "type": "timeseries",
+      "title": "self 서킷 트립 상태",
+      "description": "표면별(embed/comment/wpi/og/feed) · 인스턴스별(source=batch|sync) 서킷 트립 여부 — 1=트립(자체 스킵 중, 곧장 폴백), 0=닫힘(정상). SurfaceCircuitBreaker 카운터 기준이라 쿨다운·half-open 경과 여부와 무관하게 켜져 있다.",
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stepMode": true,
+            "lineInterpolation": "stepAfter"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{surface}} {{source}}",
+          "expr": "max by (surface, source) (instagram_source_self_circuit_open{job=\"monitoring\"})"
+        }
+      ]
     }
   ]
 }
