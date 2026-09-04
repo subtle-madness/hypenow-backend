@@ -54,6 +54,26 @@ class PasswordResetRepositoryTest extends IntegrationTest {
 		assertThat(row.tokenExpiresAt()).isNull();
 	}
 
+	/**
+	 * 리뷰 R1 Important — 쓰기 키(평문 PK)와 읽기 키(정규화 bidx)가 갈리지 않는지. 평문을 원문
+	 * 그대로 쓰면 대소문자가 다른 재발송이 ON CONFLICT (email)을 비껴가 새 INSERT가 되고,
+	 * bidx는 같아서 password_resets_email_bidx_key UNIQUE 위반(발송 500)이 난다.
+	 */
+	@Test
+	void 대소문자가_섞인_이메일로_두_번_upsert해도_행은_하나이고_갱신된다() {
+		repository.upsert("Reset-Repo-Mixed@Example.com", "code-hash-1", Instant.now().plusSeconds(300));
+
+		repository.upsert("reset-repo-mixed@example.com", "code-hash-2", Instant.now().plusSeconds(300));
+
+		long rows = jdbcClient.sql("SELECT count(*) FROM app.password_resets").query(Long.class).single();
+		assertThat(rows).isEqualTo(1);
+		// 어떤 표기로 조회해도 같은 행이고, 마지막 발송 코드로 교체돼 있다
+		assertThat(repository.find("RESET-REPO-MIXED@example.com").orElseThrow().codeHash())
+				.isEqualTo("code-hash-2");
+		assertThat(jdbcClient.sql("SELECT email FROM app.password_resets").query(String.class).single())
+				.isEqualTo("reset-repo-mixed@example.com");
+	}
+
 	@Test
 	void 코드_일치_소모는_성공하고_불일치는_거부된다() {
 		repository.upsert(EMAIL, "code-hash-1", Instant.now().plusSeconds(300));

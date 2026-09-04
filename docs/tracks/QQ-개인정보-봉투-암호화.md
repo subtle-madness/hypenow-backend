@@ -1,7 +1,6 @@
 # QQ — 개인정보 봉투 암호화
 
-- **상태**: 🟢 활성 — PR 1(Task 1~6, 9~11) 준비 완료, PR 2(읽기 전환 + bidx UNIQUE 마이그레이션)·
-  PR 3(contract — 평문 컬럼 DROP)는 후속 PR로 분리
+- **상태**: 🟢 활성 — PR 1 운영 반영(09-03) · PR 2(읽기 전환) 진행 중 · PR 3 후속
 - **설계 문서**: [specs/2026-09-03-pii-envelope-encryption-design.md](../superpowers/specs/2026-09-03-pii-envelope-encryption-design.md)
 - **구현 계획**: [plans/2026-09-03-pii-envelope-encryption.md](../superpowers/plans/2026-09-03-pii-envelope-encryption.md)
 - **배포·키 운영**: [deploy/README.md §6-3](../../deploy/README.md)
@@ -27,8 +26,9 @@ HMAC 블라인드 인덱스(`*_bidx`)로 대체해 암호화 후에도 UNIQUE·�
   signup_events 90일 보존 스케줄러, compose env·운영 문서.
 - **PR 2**(Task 7 롤아웃 게이트 통과 후): 스테이징·운영에서 백필 완료 확인 →
   `bidx` UNIQUE 마이그레이션 적용 → 조회 경로를 `email_bidx`/복호화 기준으로 전환
-  (`UserRepository`·`PasswordResetRepository`·`AdminUserRepository`·`InquiryRepository`).
-  레코드·컨트롤러 시그니처는 불변.
+  (`UserRepository`·`PasswordResetRepository`·`AdminUserRepository`·`AdminSignupRepository`).
+  `InquiryRepository`는 제외 — 애초에 읽기 경로가 없다(INSERT뿐, 운영자는 psql로 평문을
+  읽어왔다 — §미해결 참고). 레코드·컨트롤러 시그니처는 불변.
 - **PR 3**(다음 릴리스, contract): 평문 컬럼 DROP(`users.email/name/nickname/phone_number` 등).
   expand-contract 규율상 PR 2 배포 후 최소 한 릴리스 간격을 두고서만 진행.
 
@@ -53,6 +53,20 @@ HMAC 블라인드 인덱스(`*_bidx`)로 대체해 암호화 후에도 UNIQUE·�
    principal_name LIKE '%@%'` = 0) — 0이 아니면 마이그레이션이 아직 안 돈 것이거나
    email 형태의 principal_name을 만드는 다른 경로가 남아있다는 뜻.
 8. 위 전부 통과하면 PR 2(읽기 전환 + bidx UNIQUE 마이그레이션) 진행 승인.
+
+## PR 2 게이트 체크리스트 (운영 배포 전 순서 — [deploy/README.md §6-3](../../deploy/README.md) 상세)
+
+1. **사전 확인 쿼리** — 대소문자만 다른 중복 이메일 없음
+   (`SELECT count(*) FROM (SELECT lower(email) FROM app.password_resets GROUP BY 1 HAVING
+   count(*)>1) d` = 0)과 4테이블 각 `*_enc IS NULL` = 0. **09-04 운영·스테이징 사전 점검
+   결과: 중복 0·NULL 0 — 통과.**
+2. **스테이징 정합 검증** — develop→staging 배포 후 `-Dcrypto.verify=true` 1회 기동 →
+   로그 합계=0 확인.
+3. **스테이징 수기 검증** — 기존 계정 로그인(대문자 이메일 포함, 정규화 확인) · 어드민
+   목록/검색 · 비밀번호 재설정 1회 완주 · 중복 이메일 가입 거부(bidx UNIQUE) 확인.
+4. **운영 정합 검증** — staging→main 승격 **전에** 운영에서 `-Dcrypto.verify=true` 1회
+   기동 → 로그 합계=0 확인.
+5. 위 전부 통과하면 운영 승격(staging→main).
 
 ## 미해결로 남긴 것
 
@@ -95,6 +109,22 @@ HMAC 블라인드 인덱스(`*_bidx`)로 대체해 암호화 후에도 UNIQUE·�
    임시로 `crypto.mode=local` + `crypto.local-key-base64=<에스크로 값>`으로 기동하면 기존
    암호문이 그대로 풀린다(암호문 형식이 KEK와 무관 — `v1:<key_id>:…`는 DEK만 가리킨다).
    DEK 로테이션 시 에스크로도 갱신한다. 스테이징 DEK는 에스크로 대상 아님(재생성 가능).
+5. **inquiries 읽기 경로 부재 — PR 3 전에 반드시 해결**. `InquiryRepository`는 INSERT뿐이고
+   운영자는 지금까지 psql로 평문 `email`/`name`/`organization`/`message`를 직접 읽어왔다
+   (`InquiryRepository.java:8` 주석). PR 3(contract)에서 평문 컬럼을 DROP하기 **전에**
+   어드민 조회 API 또는 복호화 덤프 러너 중 하나를 먼저 만들어야 한다 — 안 그러면 문의
+   내용을 영영 못 읽게 된다.
+6. **`ArchiveTables.USER_PII` omit 목록에 `*_enc` 컬럼 누락**(`ArchiveTables.java:25-27`) —
+   현재 목록은 평문 컬럼(`email`/`name`/`nickname`/`phone_number` 등)만 마스킹 대상으로
+   잡고 있어, 탈퇴 아카이브(`archive.archived_rows`)에 `email_enc`/`name_enc`/
+   `nickname_enc`/`phone_number_enc` 등 암호문이 그대로 남는다. PR 3에서 `USER_PII`와
+   `ArchiveWriterTest.EXPECTED_USER_PII`(교차 검증용 하드코드 기대값)를 함께 갱신해야 한다.
+7. **스펙 이탈 기록 — password_resets PK 교체는 PR 3(contract)로 이연**. 스펙 §전환 3은
+   "`password_resets` PK를 `email`에서 `email_bidx`로 교체"를 전제했으나, PR 2에서는
+   `ON CONFLICT (email)`이 여전히 평문 PK를 겨냥한다(`PasswordResetRepository.java:15-19`
+   근거 — PK 교체는 평문 컬럼을 걷어내는 PR 3 몫으로 명시적으로 미뤘다). 두 UNIQUE
+   키(평문·`email_bidx`)가 같은 1행을 가리키는 동안은 "이메일당 1행" 불변식이 깨지지
+   않으므로 PR 2 기능엔 영향 없다.
 
 ## 검증
 

@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.was.crypto.FieldCipher;
 import jakarta.servlet.http.Cookie;
 import java.sql.Connection;
 import java.time.Clock;
@@ -75,6 +76,8 @@ class AdminCrawlingCostSummaryIntegrationTest extends IntegrationTest {
 	DataSource dataSource;
 	@Autowired
 	PasswordEncoder passwordEncoder;
+	@Autowired
+	FieldCipher fieldCipher;
 
 	private Cookie adminSession;
 
@@ -180,7 +183,7 @@ class AdminCrawlingCostSummaryIntegrationTest extends IntegrationTest {
 	// --- 헬퍼 (AdminCrawlingUsageIntegrationTest와 동일 구현) ---
 
 	private long insertUser(String email, String role) {
-		return jdbcClient.sql("""
+		long id = jdbcClient.sql("""
 				INSERT INTO app.users (email, password_hash, role, name, user_type,
 				                       agreed_terms, agreed_privacy, agreed_age14)
 				VALUES (:email, :hash, :role, '테스터', 'brand', true, true, true)
@@ -191,6 +194,8 @@ class AdminCrawlingCostSummaryIntegrationTest extends IntegrationTest {
 				.param("role", role)
 				.query(Long.class)
 				.single();
+		PiiTestSeed.backfill(jdbcClient, fieldCipher);
+		return id;
 	}
 
 	/** 세션 쿠키 이름은 hypenow-session이다(SESSION 아님 — 커스텀 쿠키 설정). */

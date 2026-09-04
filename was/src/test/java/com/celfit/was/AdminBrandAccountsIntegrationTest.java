@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.celfit.was.crypto.FieldCipher;
 import com.celfit.was.v1.admin.AdminBrandAccountService;
 import jakarta.servlet.http.Cookie;
 import java.sql.Connection;
@@ -76,6 +77,8 @@ class AdminBrandAccountsIntegrationTest extends IntegrationTest {
 	DataSource dataSource;
 	@Autowired
 	PasswordEncoder passwordEncoder;
+	@Autowired
+	FieldCipher fieldCipher;
 	@Autowired
 	AdminBrandAccountService adminBrandAccountService;
 
@@ -243,7 +246,7 @@ class AdminBrandAccountsIntegrationTest extends IntegrationTest {
 	// --- 헬퍼 ---
 
 	private long insertUser(String email, String role, String name, String companyName) {
-		return jdbcClient.sql("""
+		long id = jdbcClient.sql("""
 				INSERT INTO app.users (email, password_hash, role, name, user_type, company_name,
 				                       agreed_terms, agreed_privacy, agreed_age14)
 				VALUES (:email, :hash, :role, :name, 'brand', :companyName, true, true, true)
@@ -256,6 +259,8 @@ class AdminBrandAccountsIntegrationTest extends IntegrationTest {
 				.param("companyName", companyName)
 				.query(Long.class)
 				.single();
+		PiiTestSeed.backfill(jdbcClient, fieldCipher);
+		return id;
 	}
 
 	private Cookie login(String email) throws Exception {

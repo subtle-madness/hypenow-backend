@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Optional;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -13,6 +14,12 @@ import org.springframework.stereotype.Repository;
  * app.password_resets 접근 — 이메일당 1행. 재발송 upsert → confirm에서 코드 소모·토큰 기록 →
  * reset에서 claim(DELETE..RETURNING)으로 토큰 1회 소비. 코드·토큰은 SHA-256 해시로만 저장(원문 무저장).
  * confirm·reset 모두 조건부 쿼리로 원자성을 보장한다(동시 요청 중 하나만 통과 — SignupCodeRepository.claim 관용구).
+ *
+ * <p>읽기 전환(스펙 §전환 2, 09-04) — 행 지목은 전부 {@code email_bidx}, 이메일 값은
+ * {@code decrypt(email_enc)}다. upsert의 {@code ON CONFLICT (email)}만 평문을 남겨 둔다:
+ * PK가 아직 email이라 그 자리를 email_bidx로 바꾸려면 제약 교체가 필요하고, 그건 평문 컬럼을
+ * 걷어내는 PR 3(contract)의 일이다. 평문 UNIQUE와 email_bidx UNIQUE가 같은 1행을 가리키므로
+ * 두 키가 공존하는 동안에도 "이메일당 1행" 불변식은 그대로다.
  */
 @Repository
 public class PasswordResetRepository {
@@ -26,15 +33,34 @@ public class PasswordResetRepository {
 
 	private final JdbcClient jdbcClient;
 	private final FieldCipher fieldCipher;
+	private final RowMapper<ResetChallenge> challengeMapper;
+	private final RowMapper<ClaimedToken> claimMapper;
 
 	public PasswordResetRepository(JdbcClient jdbcClient, FieldCipher fieldCipher) {
 		this.jdbcClient = jdbcClient;
 		this.fieldCipher = fieldCipher;
+		// 조회는 email_bidx로, 이메일 값은 email_enc 복호화로 — 평문 email 컬럼은 쓰기 전용이다.
+		this.challengeMapper = (rs, rowNum) -> new ResetChallenge(
+				fieldCipher.decrypt(rs.getString("email_enc")),
+				rs.getString("code_hash"),
+				rs.getObject("code_expires_at", OffsetDateTime.class),
+				rs.getInt("attempts"),
+				rs.getString("token_hash"),
+				rs.getObject("token_expires_at", OffsetDateTime.class));
+		this.claimMapper = (rs, rowNum) -> new ClaimedToken(
+				fieldCipher.decrypt(rs.getString("email_enc")),
+				rs.getObject("token_expires_at", OffsetDateTime.class));
 	}
 
 	/**
 	 * 발송 성공 후에만 호출 — 기존 행이 있으면 코드 교체 + attempts·토큰 리셋(마지막 발송만 유효).
 	 * email_enc/email_bidx도 INSERT·재발송 UPDATE 양쪽에서 함께 채운다(스펙 §전환 1 이중 쓰기).
+	 *
+	 * <p><b>평문 email도 반드시 정규화 값으로 쓴다</b>(리뷰 R1 Important). 쓰기 충돌 키는 아직
+	 * 평문 PK({@code ON CONFLICT (email)})이고 읽기 키는 정규화 bidx라, 평문만 원문으로 쓰면 두 키가
+	 * 갈린다 — 대소문자가 다른 재발송이 ON CONFLICT를 비껴가 새 INSERT가 되고, 그 행의 bidx는
+	 * 기존 행과 같아 {@code password_resets_email_bidx_key} UNIQUE 위반(발송 500)이 된다.
+	 * 호출부(V1PasswordResetController)가 이미 정규화해 넘기지만, 불변식은 리포지토리가 보장한다.
 	 */
 	public void upsert(String email, String codeHash, Instant codeExpiresAt) {
 		String normalized = UserRepository.normalizeEmail(email);
@@ -45,7 +71,7 @@ public class PasswordResetRepository {
 				SET code_hash = EXCLUDED.code_hash, code_expires_at = EXCLUDED.code_expires_at,
 				    attempts = 0, token_hash = NULL, token_expires_at = NULL, created_at = now(),
 				    email_enc = EXCLUDED.email_enc, email_bidx = EXCLUDED.email_bidx""")
-				.param("email", email)
+				.param("email", normalized)
 				.param("codeHash", codeHash)
 				.param("codeExpiresAt", OffsetDateTime.ofInstant(codeExpiresAt, ZoneOffset.UTC))
 				.param("emailEnc", fieldCipher.encrypt(normalized))
@@ -55,17 +81,17 @@ public class PasswordResetRepository {
 
 	public Optional<ResetChallenge> find(String email) {
 		return jdbcClient.sql("""
-				SELECT email, code_hash, code_expires_at, attempts, token_hash, token_expires_at
-				FROM app.password_resets WHERE email = :email""")
-				.param("email", email)
-				.query(ResetChallenge.class)
+				SELECT email_enc, code_hash, code_expires_at, attempts, token_hash, token_expires_at
+				FROM app.password_resets WHERE email_bidx = :emailBidx""")
+				.param("emailBidx", blindIndex(email))
+				.query(challengeMapper)
 				.optional();
 	}
 
 	/** 해시 불일치 오입력 카운트 — 만료·부재는 세지 않는다(서비스 판정 순서 참조). */
 	public void incrementAttempts(String email) {
-		jdbcClient.sql("UPDATE app.password_resets SET attempts = attempts + 1 WHERE email = :email")
-				.param("email", email)
+		jdbcClient.sql("UPDATE app.password_resets SET attempts = attempts + 1 WHERE email_bidx = :emailBidx")
+				.param("emailBidx", blindIndex(email))
 				.update();
 	}
 
@@ -79,10 +105,10 @@ public class PasswordResetRepository {
 		return jdbcClient.sql("""
 				UPDATE app.password_resets
 				SET code_hash = NULL, token_hash = :tokenHash, token_expires_at = :tokenExpiresAt
-				WHERE email = :email AND code_hash = :codeHash""")
+				WHERE email_bidx = :emailBidx AND code_hash = :codeHash""")
 				.param("tokenHash", tokenHash)
 				.param("tokenExpiresAt", OffsetDateTime.ofInstant(tokenExpiresAt, ZoneOffset.UTC))
-				.param("email", email)
+				.param("emailBidx", blindIndex(email))
 				.param("codeHash", codeHash)
 				.update() > 0;
 	}
@@ -95,9 +121,14 @@ public class PasswordResetRepository {
 	public Optional<ClaimedToken> claimByTokenHash(String tokenHash) {
 		return jdbcClient.sql("""
 				DELETE FROM app.password_resets WHERE token_hash = :tokenHash
-				RETURNING email, token_expires_at""")
+				RETURNING email_enc, token_expires_at""")
 				.param("tokenHash", tokenHash)
-				.query(ClaimedToken.class)
+				.query(claimMapper)
 				.optional();
+	}
+
+	/** 조회 키 — 저장 시와 같은 정규화 규칙(UserRepository 정본)을 통과한 값의 블라인드 인덱스. */
+	private String blindIndex(String email) {
+		return fieldCipher.blindIndex(UserRepository.normalizeEmail(email));
 	}
 }

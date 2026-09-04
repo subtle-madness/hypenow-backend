@@ -3,7 +3,9 @@ package com.celfit.was.monitoring;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.was.IntegrationTest;
+import com.celfit.was.PiiTestSeed;
 import com.celfit.was.auth.UserRepository;
+import com.celfit.was.crypto.FieldCipher;
 import com.celfit.was.mail.MailSendException;
 import com.celfit.was.mail.MailSender;
 import java.time.Duration;
@@ -45,6 +47,8 @@ class WeeklyDigestMailerTest extends IntegrationTest {
 	UserRepository userRepository;
 	@Autowired
 	JdbcClient jdbcClient;
+	@Autowired
+	FieldCipher fieldCipher;
 
 	RecordingMailSender mailSender;
 	WeeklyDigestMailer mailer;
@@ -59,6 +63,7 @@ class WeeklyDigestMailerTest extends IntegrationTest {
 		userId = jdbcClient.sql("INSERT INTO app.users (email, password_hash) VALUES (:email, 'x') RETURNING id")
 				.param("email", "weekly-mail-" + UUID.randomUUID() + "@test.io")
 				.query(Long.class).single();
+		PiiTestSeed.backfill(jdbcClient, fieldCipher);
 		digestId = digestRepository.upsert(userId, WEEK.startDate(), "[]");
 	}
 
@@ -131,7 +136,11 @@ class WeeklyDigestMailerTest extends IntegrationTest {
 
 	@Test
 	void 수신_이메일이_없으면_헛돌지_않게_종결한다() {
-		jdbcClient.sql("UPDATE app.users SET email = '' WHERE id = :id").param("id", userId).update();
+		// 읽기 전환(09-04) 이후 수신 주소는 email_enc에서 복호화한다 — 평문만 비우면 아무 일도 안 일어난다
+		jdbcClient.sql("UPDATE app.users SET email = '', email_enc = :enc WHERE id = :id")
+				.param("enc", fieldCipher.encrypt(""))
+				.param("id", userId)
+				.update();
 
 		mailer.send(userId, digestId, WEEK, ITEMS);
 

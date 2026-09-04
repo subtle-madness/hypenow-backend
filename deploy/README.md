@@ -485,6 +485,48 @@ ssh ubuntu@<IP> 'rclone mkdir b2:hypenow-backups && rclone lsd b2:'  # 서버에
   ```
   완료 확인: `SELECT count(*) FROM app.users WHERE email_enc IS NULL;`(0이어야 정상 — 나머지
   3테이블도 `<table>_enc IS NULL` 패턴으로 동일 확인).
+- **정합 검증(--crypto.verify) — 읽기 전환 배포 게이트**(PR 2 — bidx UNIQUE 마이그레이션·
+  조회 경로 전환 배포 게이트): 백필 완료 확인 후, 읽기 전환을 배포하기 **전에** 평문 vs
+  decrypt(`*_enc`)·`*_bidx` vs HMAC(normalize(평문)) 불일치를 전 행 대조하는 검증 전용
+  러너(`PiiVerifyRunner`)를 1회 기동한다 — 아무것도 바꾸지 않는다. 위 백필과 같은
+  명령에서 `-Dcrypto.backfill=true`만 `-Dcrypto.verify=true`로 바꾼 것뿐이다(크론 무력화
+  6개 동봉은 동일 — 이 컨테이너도 정상 was 인스턴스 전체라 §6-3 백필 블록의 위험이
+  그대로 적용된다):
+  ```bash
+  docker compose run --rm --no-deps \
+    -e JAVA_OPTS="-Dcrypto.verify=true" \
+    -e MONITORING_DIGEST_WEEKLY_CRON="-" -e MONITORING_DIGEST_WEEKLY_CATCHUP_CRON="-" \
+    -e MONITORING_RECOVER_CRON="-" -e MONITORING_BRAND_REGISTRATION_RECOVER_CRON="-" \
+    -e ADMIN_AUDIT_LOG_RETENTION_CRON="-" -e SIGNUP_EVENTS_RETENTION_CRON="-" \
+    was
+  ```
+  기대 로그: `PII 정합 검증 — enc 불일치={...}, bidx 불일치={...}, 합계=0`(합계 0은 INFO,
+  1 이상이면 ERROR 등급으로 찍힌다). `-Dcrypto.verify.fail-fast=true`를 함께 주면 합계가
+  0을 넘을 때 `PiiVerifyRunner`가 애플리케이션을 비정상 종료(코드 1)한다 — 사람이 로그를
+  읽지 않아도 스크립트가 종료코드로 게이트 통과 여부를 판별할 수 있다. 기대 로그가
+  뜨면(혹은 fail-fast로 컨테이너가 스스로 죽으면) **그 즉시** Ctrl-C(`--rm`이 컨테이너를
+  정리).
+
+  **합계가 0을 넘으면**: WARN 로그의 `table`·`id`(password_resets는 email 대신
+  md5(email) 앞 8자 대체 식별자 — 위 PiiVerifyRunner 클래스 주석 참고)로 실제 행을 찾아
+  해당 행의 `*_enc`/`*_bidx` 컬럼을 전부 NULL로 되돌린 뒤 위 백필 블록
+  (`-Dcrypto.backfill=true`)을 재실행해 그 행만 다시 채우고, 다시 `-Dcrypto.verify=true`로
+  재검증한다(합계가 0이 될 때까지 반복).
+
+  **실행 순서**(둘 다 새 이미지로 위와 동일한 1회성 컨테이너):
+  1. develop→staging 배포(새 이미지) 직후 스테이징에서 1회.
+  2. staging→main 승격 **전에** 운영에서 1회.
+
+  **사전 확인 쿼리**(위 검증 실행 전에 먼저 0임을 확인 — bidx UNIQUE 마이그레이션이
+  "이메일당 1행" 전제에 의존한다):
+  ```sql
+  -- 대소문자만 다른 중복 이메일 없음(있으면 bidx UNIQUE 위반으로 마이그레이션 자체가 실패한다)
+  SELECT count(*) FROM (
+    SELECT lower(email) FROM app.password_resets GROUP BY 1 HAVING count(*) > 1
+  ) d;  -- 0이어야 정상
+  -- 백필 누락 없음(4테이블 각각 — users 예시, inquiries/password_resets/signup_events도 동일 패턴)
+  SELECT count(*) FROM app.users WHERE email_enc IS NULL;  -- 0이어야 정상
+  ```
 - **KEK 로테이션 개요**: KEK를 바꿔도 DEK 자체(따라서 암호화된 데이터)는 그대로다 — 새 KEK로
   기존 DEK를 다시 래핑해 `app.encryption_keys.wrapped_dek`만 갱신하면 된다. 데이터 재암호화는
   불필요(암호문의 `v1:<key_id>:...` 접두사는 DEK 버전 식별용이지 KEK 버전과 무관).
