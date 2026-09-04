@@ -13,6 +13,10 @@
 - **함대 서킷브레이커**: 짧은 창(기본 15분)에 2개 이상 계정이 하드 신호면 전체 정지.
 - **사람 킬 스위치**: `KILL` 파일을 만들면 함대 즉시 정지.
 - **드라이런 기본**: 실발송 없이 스케줄·기록만. 실계정 투입 전 필수 검증.
+- **콜드 1건/더미 상한 + 관찰 단계**: 더미를 다 돌면 같은 더미에 재발송하지 않고 `post_send_observe_days` 동안
+  비DM 활동(`non_dm_ratio` 확률)만 하며 지연 밴을 관찰한다. 발송 계정이 전부 死·관찰 종료면 런 완료.
+- **비DM도 지터·일시 신호는 실제 백오프**: 대조군·관찰 단계의 비DM 액션에도 1~5분 지터, 429/PleaseWait는
+  `transient_backoff_seconds`(기본 10분) 대기.
 
 ## 설치
 ```bash
@@ -21,6 +25,8 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 instagrapi는 `pyproject.toml`에 버전 핀 고정(밴 측정 재현성). 실제 설치 버전은 실행 시 원장에 기록된다.
+**Python 3.11~3.12 필요**(3.14에선 instagrapi 의존성이 안 깔린다). 로컬에 없으면 `uv venv --python 3.12 .venv`
+로 만든 뒤 `uv pip install --python .venv/bin/python -e ".[dev]"`.
 
 ## 테스트
 ```bash

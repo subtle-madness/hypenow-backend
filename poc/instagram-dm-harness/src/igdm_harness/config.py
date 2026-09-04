@@ -28,6 +28,7 @@ class Params:
     circuit_threshold: int = 2
     login_required_death_streak: int = 2
     post_send_observe_days: int = 3
+    transient_backoff_seconds: int = 600   # 일시 신호(429/PleaseWait) 뒤 실제 대기
 
 
 @dataclass

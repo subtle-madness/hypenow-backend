@@ -40,3 +40,14 @@ def test_cli_builds_dryrun_runner(tmp_path, monkeypatch):
     assert isinstance(runner.client, DryRunClient)
     runner.run()  # 예외 없이 완주
     assert runner.ledger.cumulative_sends("s1") >= 0
+
+
+def test_instagrapi_version_from_metadata():
+    # instagrapi 모듈엔 __version__이 없다 — 패키지 메타데이터로 핀 버전을 원장에 남겨야 재현성이 선다
+    import importlib.util
+    import pytest
+    if importlib.util.find_spec("instagrapi") is None:
+        pytest.skip("instagrapi 미설치")
+    from igdm_harness.cli import instagrapi_version
+    v = instagrapi_version()
+    assert v != "unknown" and v[0].isdigit(), v

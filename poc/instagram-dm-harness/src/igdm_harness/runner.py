@@ -30,6 +30,11 @@ class _AccountState:
         self.last_send_ts: Optional[float] = None
         self.login_required_streak = 0
         self.rate = RateLimiter(max_sends_per_hour)
+        self.finished = False   # 발송 상한 도달 + 관찰 기간 만료(死 아님)
+
+    @property
+    def active(self) -> bool:
+        return self.alive and not self.finished
 
 
 class Runner:
@@ -61,6 +66,7 @@ class Runner:
             threshold=config.params.circuit_threshold,
         )
         self.fleet_stopped = False
+        self.completed = False   # 발송 계정 전부 死 또는 관찰 종료로 정상 완료
         self._states: List[_AccountState] = [
             _AccountState(s, config.params.max_sends_per_hour) for s in config.senders
         ]
@@ -93,10 +99,14 @@ class Runner:
                 return
             if all(not st.alive for st in self._states):
                 return  # 전 계정 死
+            if self._send_accounts_done():
+                # 발송 계정이 전부 死·관찰 종료 — 대조군 관찰도 함께 끝낸다(비교 기간 정합)
+                self.completed = True
+                return
 
             progressed = False
             for st in self._states:
-                if not st.alive:
+                if not st.active:
                     continue
                 # 사람 킬 스위치를 계정 단위로도 확인(자동 브레이커와 동일 빈도) — 즉시 정지
                 if kill_requested(self.config.kill_switch_path):
@@ -130,10 +140,27 @@ class Runner:
                 # (live에서 밤새 대기·재개를 흉내. 테스트는 no-op sleep을 주입해 즉시 통과)
                 self.sleep(self.idle_sleep_seconds)
 
+    def _send_accounts_done(self) -> bool:
+        senders = [st for st in self._states if st.sender.arm == "send"]
+        return bool(senders) and all(not st.active for st in senders)
+
+    def _in_observe_phase(self, st: _AccountState) -> bool:
+        """콜드 DM은 사람당 1건 — 더미를 다 돌면 발송 없이 관찰(비DM만). 설계 §5 '死 후 관찰'."""
+        return st.sender.arm == "send" and st.dm_count >= len(self.config.dummies)
+
     def _step_account(self, st: _AccountState, now_dt: datetime, now_ts: float) -> bool:
-        """액션을 실제로 수행했으면 True. 레이트 상한으로 스킵하면 False."""
+        """액션을 실제로 수행했으면 True. 레이트 상한·관찰 종료로 스킵하면 False."""
         is_control = st.sender.arm == "control"
-        do_non_dm = is_control or should_insert_non_dm(self.rng, self.config.params.non_dm_ratio)
+        observing = self._in_observe_phase(st)
+        if observing and st.last_send_ts is not None:
+            observe_seconds = self.config.params.post_send_observe_days * 86400.0
+            if now_ts - st.last_send_ts >= observe_seconds:
+                st.finished = True   # 지연 밴 없이 관찰 기간 만료 — 생존 확정
+                return False
+        insert_non_dm = should_insert_non_dm(self.rng, self.config.params.non_dm_ratio)
+        if observing and not insert_non_dm:
+            return False   # 관찰 단계는 "켜두고 지켜보기" — non_dm_ratio 확률로만 드물게 활동
+        do_non_dm = is_control or observing or insert_non_dm
 
         if do_non_dm:
             res = self.client.do_non_dm(st.sender.alias)
@@ -145,6 +172,8 @@ class Runner:
                 dt_since_prev=None, message_variant=None,
             ))
             self._handle_grade(st, res.signal, grade, now_dt, now_ts, nth=st.dm_count)
+            # 비DM도 리듬을 둔다 — 무지연 연사면 대조군이 기준선이 아니라 봇 패턴이 된다
+            self._sleep_jitter(st)
             return True
 
         # DM 발송 — 레이트 상한 강제(§6 발송 전 가드). 초과면 死 아니라 이번 틱 지연.
@@ -181,14 +210,18 @@ class Runner:
         ))
         self._handle_grade(st, res.signal, grade, now_dt, now_ts, nth=st.dm_count)
 
-        # §5 발송 간 지터(등간격 금지) — 다음 발송 페이싱. 死한 계정엔 불필요.
+        # §5 발송 간 지터(등간격 금지) — 다음 발송 페이싱.
+        self._sleep_jitter(st)
+        return True
+
+    def _sleep_jitter(self, st: _AccountState) -> None:
+        """死한 계정엔 불필요."""
         if st.alive:
             self.sleep(jitter_delay_seconds(
                 self.rng,
                 self.config.params.jitter_min_seconds,
                 self.config.params.jitter_max_seconds,
             ))
-        return True
 
     def _grade_for(self, st: _AccountState, res) -> SignalGrade:
         """LoginRequired streak를 DM·non_dm 공통으로 누적·리셋하고 등급 산출."""
@@ -206,7 +239,8 @@ class Runner:
 
     def _handle_grade(self, st, signal, grade, now_dt, now_ts, nth) -> None:
         if grade == SignalGrade.TRANSIENT:
-            self.sleep(0)  # 실행 경로에서 백오프. 테스트는 no-op.
+            # 429/PleaseWait — 계속 두드리면 밴 가속. 설정된 백오프만큼 실제로 쉰다.
+            self.sleep(self.config.params.transient_backoff_seconds)
             return
         if is_death(grade):
             survival = 0.0 if st.first_send_ts is None else now_ts - st.first_send_ts

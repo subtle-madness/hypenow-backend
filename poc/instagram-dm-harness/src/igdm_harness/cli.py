@@ -17,6 +17,15 @@ from .runner import Runner
 _IG_APP_VERSION = "309.0.0.0.0"  # 핀 버전에 맞춰 갱신
 
 
+def instagrapi_version() -> str:
+    """instagrapi 모듈엔 __version__이 없다 — 패키지 메타데이터에서 실제 설치 버전을 읽는다."""
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return version("instagrapi")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 def build_runner_from_config(config_path: str, *, force_live: bool = False, max_actions: int = 10_000) -> Runner:
     cfg = load_config(config_path)
     ledger = Ledger(cfg.ledger_path)
@@ -24,7 +33,6 @@ def build_runner_from_config(config_path: str, *, force_live: bool = False, max_
     live = force_live and not cfg.dry_run
     if live:
         from .instagrapi_client import InstagrapiClient
-        import instagrapi
         rng = random.Random()
         device_profiles = {
             # str seed는 random.Random이 안정적으로 처리(PYTHONHASHSEED에 좌우되는
@@ -37,7 +45,7 @@ def build_runner_from_config(config_path: str, *, force_live: bool = False, max_
             client.register_credentials(s.alias, s.username, s.password)
         for d in cfg.dummies:
             client.register_dummy(d.username, d.password)
-        ig_version = getattr(instagrapi, "__version__", "unknown")
+        ig_version = instagrapi_version()
     else:
         rng = random.Random(0)
         client = DryRunClient()

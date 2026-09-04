@@ -18,6 +18,7 @@ params:
   circuit_threshold: 2        # 창 안 하드신호 계정 N개면 전체 정지
   login_required_death_streak: 2  # 연속 LoginRequired N회면 死
   post_send_observe_days: 3   # 발송 종료 후 관찰(지연 밴 포착)
+  transient_backoff_seconds: 600  # 일시 신호(429/PleaseWait) 뒤 실제 대기(10분)
 
 proxies:                      # 한국 sticky 레지던셜, 계정:출구 1:1 미중첩
   exit_1: "http://USER:PASS@resi.vendor.example:8000?country=kr&session=REPLACE_A"

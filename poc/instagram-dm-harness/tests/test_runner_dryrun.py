@@ -102,7 +102,7 @@ def test_dryrun_hard_signal_kills_account():
 
 
 def test_dryrun_transient_does_not_kill():
-    cfg = _config()
+    cfg = _config(dummies_n=5)   # 콜드 1건/더미 상한 — 3건 이상 보려면 더미 5
     client = DryRunClient(scripted={("s1", 2): RawSignal(status_code=429)})
     r = _runner(cfg, client, _active_clock(), max_actions=5)
     r.run()
@@ -211,3 +211,75 @@ def test_dryrun_repeated_login_required_kills_control():
     r.run()
     dist = r.ledger.death_cause_distribution()
     assert dist.get("LoginRequired") == 1  # 대조군도 반복 LoginRequired면 死
+
+
+# --- 09-04 실계정 투입 전 결함 수정분 ---
+
+def _sleep_collecting_runner(cfg, client, max_actions, clock=None):
+    calls = []
+    clock = clock or _active_clock()
+    r = Runner(
+        config=cfg, ledger=Ledger(cfg.ledger_path), client=client,
+        clock_dt=clock.now_dt, clock_ts=clock.now_ts, advance=clock.advance,
+        sleep=lambda s: calls.append(s), rng=random.Random(0), max_actions=max_actions,
+    )
+    return r, calls
+
+
+def test_dryrun_non_dm_action_sleeps_jitter():
+    # 대조군(비DM 전용)도 액션 뒤 지터 sleep — 무지연 연사면 대조군이 봇 패턴이 된다
+    cfg = _config(senders=[
+        SenderAccount("c1", "control_one", "p", "phone", "control", "exit_1"),
+    ])
+    cfg.params.non_dm_ratio = 1.0
+    cfg.params.jitter_min_seconds = 60
+    cfg.params.jitter_max_seconds = 300
+    r, calls = _sleep_collecting_runner(cfg, DryRunClient(), max_actions=1)
+    r.run()
+    assert any(60 <= c <= 300 for c in calls), f"비DM 뒤 지터 sleep 미호출: {calls}"
+
+
+def test_dryrun_transient_signal_backs_off():
+    # 일시 신호(429)면 설정된 백오프만큼 실제로 대기해야 한다(0초 금지)
+    cfg = _config(dummies_n=5)
+    cfg.params.transient_backoff_seconds = 600
+    client = DryRunClient(scripted={("s1", 1): RawSignal(status_code=429)})
+    r, calls = _sleep_collecting_runner(cfg, client, max_actions=1)
+    r.run()
+    assert 600 in calls, f"백오프 sleep(600) 미호출: {calls}"
+
+
+def test_dryrun_cold_dm_one_per_dummy_then_observe():
+    # 콜드 DM은 사람당 1건 — 더미를 다 돌면 재발송하지 않고 관찰(비DM만) 단계로
+    cfg = _config(dummies_n=2)
+    cfg.params.non_dm_ratio = 0.5
+    client = DryRunClient()
+    r = _runner(cfg, client, _active_clock(), max_actions=40)
+    r.run()
+    recipients = [rcp for _, rcp, _ in client.sent]
+    assert len(recipients) == 2
+    assert len(set(recipients)) == 2                    # 같은 더미 재발송 없음
+    assert client.non_dm_calls, "상한 뒤엔 관찰 단계 비DM만 이어져야 함"
+
+
+def test_dryrun_observe_window_elapsed_completes_run():
+    # 마지막 발송 후 post_send_observe_days가 지나면 계정 관찰 종료 → 발송 계정 전부 끝나면 런 완료
+    cfg = _config(dummies_n=1)
+    cfg.params.post_send_observe_days = 1
+    client = DryRunClient()
+    clock = FakeClock(datetime(2026, 9, 4, 3, 0, tzinfo=timezone.utc), step_seconds=86400.0)
+    r = _runner(cfg, client, clock, max_actions=50)
+    r.run()
+    assert r.ledger.cumulative_sends("s1") == 1
+    assert r.completed is True
+
+
+def test_dryrun_observe_phase_is_sparse_by_non_dm_ratio():
+    # 관찰 단계는 "켜두고 지켜보기" — non_dm_ratio=0이면 활동 없이 유휴 대기만(좋아요 수백 개 금지)
+    cfg = _config(dummies_n=2)
+    cfg.params.non_dm_ratio = 0.0
+    client = DryRunClient()
+    r = _runner(cfg, client, _active_clock(), max_actions=8)
+    r.run()
+    assert len(client.sent) == 2
+    assert client.non_dm_calls == []
