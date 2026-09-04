@@ -1,11 +1,9 @@
-package com.celfit.was;
+package com.celfit.was.crypto;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.was.IntegrationTest;
 import com.celfit.was.auth.UserRepository;
-import com.celfit.was.crypto.FieldCipher;
-import com.celfit.was.crypto.PiiVerifyRunner;
-import com.celfit.was.crypto.PiiVerifyRunner.VerifyReport;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -21,6 +19,11 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  *
  * <p>공유 컨테이너에 다른 테스트(PiiBackfillRunnerTest 등)가 남긴 정상 행이 있을 수 있으므로
  * 절대 카운트가 아니라 "시드 전 기준선 대비 증가분"으로 단언한다.
+ *
+ * <p>{@code com.celfit.was.crypto} 패키지에 둔 이유: {@link PiiVerifyRunner#PASSWORD_RESETS_SQL}이
+ * 패키지-프라이빗이라(리뷰 라운드 1 — password_resets는 PK가 email이라 WARN 로그에 평문 이메일이
+ * 노출되는 결함 수정) 같은 패키지에서만 "email AS id로 노출하지 않는다"를 코드로 고정할 수 있다.
+ * {@code DekStoreTest}와 동일한 선례.
  */
 class PiiVerifyRunnerTest extends IntegrationTest {
 
@@ -32,9 +35,14 @@ class PiiVerifyRunnerTest extends IntegrationTest {
 	}
 
 	@Test
+	void password_resets_sql은_email을_id로_노출하지_않는다() {
+		assertThat(PiiVerifyRunner.PASSWORD_RESETS_SQL).doesNotContain("email AS id");
+	}
+
+	@Test
 	void users_enc_불일치와_bidx_불일치_행을_각각_잡아낸다() {
 		PiiVerifyRunner runner = runner();
-		VerifyReport before = runner.verifyAll();
+		VerifyReportSnapshot before = snapshot(runner);
 
 		// 정합 행 — email/name 모두 올바른 enc, bidx도 정상
 		String emailOk = "verify-ok-" + UUID.randomUUID() + "@ex.com";
@@ -55,22 +63,61 @@ class PiiVerifyRunnerTest extends IntegrationTest {
 				"bogus-bidx-" + UUID.randomUUID(), fieldCipher.encrypt(nameBidxBad));
 
 		try {
-			VerifyReport after = runner.verifyAll();
+			VerifyReportSnapshot after = snapshot(runner);
 
-			assertThat(after.encMismatch().get("users") - before.encMismatch().getOrDefault("users", 0))
-					.isEqualTo(1);
-			assertThat(after.bidxMismatch().get("users") - before.bidxMismatch().getOrDefault("users", 0))
-					.isEqualTo(1);
+			assertThat(after.encUsers - before.encUsers).isEqualTo(1);
+			assertThat(after.bidxUsers - before.bidxUsers).isEqualTo(1);
 			// 다른 테이블은 이 테스트가 건드리지 않았으니 변화 없어야 한다
-			for (String table : List.of("inquiries", "password_resets", "signup_events")) {
-				assertThat(after.encMismatch().get(table)).isEqualTo(before.encMismatch().get(table));
-				assertThat(after.bidxMismatch().get(table)).isEqualTo(before.bidxMismatch().get(table));
-			}
+			assertThat(after.encInquiries).isEqualTo(before.encInquiries);
+			assertThat(after.bidxInquiries).isEqualTo(before.bidxInquiries);
+			assertThat(after.encPasswordResets).isEqualTo(before.encPasswordResets);
+			assertThat(after.bidxPasswordResets).isEqualTo(before.bidxPasswordResets);
+			assertThat(after.encSignupEvents).isEqualTo(before.encSignupEvents);
+			assertThat(after.bidxSignupEvents).isEqualTo(before.bidxSignupEvents);
 		} finally {
 			jdbcClient.sql("DELETE FROM app.users WHERE id IN (:ids)")
 					.param("ids", List.of(idOk, idEncBad, idBidxBad))
 					.update();
 		}
+	}
+
+	@Test
+	void password_resets_bidx_불일치_행을_잡아낸다() {
+		PiiVerifyRunner runner = runner();
+		VerifyReportSnapshot before = snapshot(runner);
+
+		String email = "verify-reset-bidxbad-" + UUID.randomUUID() + "@ex.com";
+		jdbcClient.sql("""
+				INSERT INTO app.password_resets (email, code_hash, code_expires_at, email_enc, email_bidx)
+				VALUES (:email, 'code-hash', now() + interval '5 minutes', :emailEnc, :emailBidx)""")
+				.param("email", email)
+				.param("emailEnc", fieldCipher.encrypt(email))
+				.param("emailBidx", "bogus-bidx-" + UUID.randomUUID())
+				.update();
+
+		try {
+			VerifyReportSnapshot after = snapshot(runner);
+
+			assertThat(after.bidxPasswordResets - before.bidxPasswordResets).isEqualTo(1);
+			assertThat(after.encPasswordResets).isEqualTo(before.encPasswordResets);
+		} finally {
+			jdbcClient.sql("DELETE FROM app.password_resets WHERE email = :email")
+					.param("email", email)
+					.update();
+		}
+	}
+
+	private VerifyReportSnapshot snapshot(PiiVerifyRunner runner) {
+		PiiVerifyRunner.VerifyReport r = runner.verifyAll();
+		return new VerifyReportSnapshot(
+				r.encMismatch().getOrDefault("users", 0), r.bidxMismatch().getOrDefault("users", 0),
+				r.encMismatch().getOrDefault("inquiries", 0), r.bidxMismatch().getOrDefault("inquiries", 0),
+				r.encMismatch().getOrDefault("password_resets", 0), r.bidxMismatch().getOrDefault("password_resets", 0),
+				r.encMismatch().getOrDefault("signup_events", 0), r.bidxMismatch().getOrDefault("signup_events", 0));
+	}
+
+	private record VerifyReportSnapshot(int encUsers, int bidxUsers, int encInquiries, int bidxInquiries,
+			int encPasswordResets, int bidxPasswordResets, int encSignupEvents, int bidxSignupEvents) {
 	}
 
 	private Long insertUser(String email, String name, String emailEnc, String emailBidx, String nameEnc) {

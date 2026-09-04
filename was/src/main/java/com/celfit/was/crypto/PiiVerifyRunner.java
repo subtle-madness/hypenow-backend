@@ -15,7 +15,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * PII 정합 검증(트랙 A PR 2 게이트) — 평문 vs decrypt(enc), bidx vs HMAC(normalize(평문))를 전 행 대조.
- * 아무것도 바꾸지 않는다. 불일치 행은 id만 로그(평문·암호문 금지). --crypto.verify=true 기동 시 1회.
+ * 아무것도 바꾸지 않는다. 불일치 행은 id만 로그(평문·암호문 금지 — password_resets는 PK가 email이라
+ * md5(email) 앞 8자를 대체 식별자로 로그한다). --crypto.verify=true 기동 시 1회.
  * 읽기 전환 배포 직전 0건 확인용 — 불일치 행은 읽기 전환 후 로그인 불가·오표시가 되므로 백필 재실행
  * (해당 행 enc를 NULL로 되돌린 뒤 --crypto.backfill=true)으로 먼저 고친다.
  */
@@ -31,6 +32,14 @@ public class PiiVerifyRunner implements ApplicationRunner {
 					+ bidxMismatch.values().stream().mapToInt(Integer::intValue).sum();
 		}
 	}
+
+	/**
+	 * password_resets는 PK가 email이라 그대로 id로 조회하면 WARN 로그(table+id)에 평문 이메일이
+	 * 노출된다 — md5(email) 앞 8자를 로그 전용 비식별 대체 식별자로 쓴다(대조 자체는 email 컬럼으로).
+	 * 패키지-프라이빗으로 노출해 테스트가 "email AS id로 노출하지 않는다"를 코드로 고정한다.
+	 */
+	static final String PASSWORD_RESETS_SQL =
+			"SELECT left(md5(email), 8) AS id, email, email_enc, email_bidx FROM app.password_resets";
 
 	private final JdbcClient jdbc;
 	private final FieldCipher cipher;
@@ -53,7 +62,7 @@ public class PiiVerifyRunner implements ApplicationRunner {
 				List.of("email", "name", "nickname", "phone_number"), true, true, enc, bidx);
 		verifyTable("inquiries", "SELECT id, name, email, organization, message, name_enc, email_enc, organization_enc, message_enc FROM app.inquiries",
 				List.of("name", "email", "organization", "message"), false, false, enc, bidx);
-		verifyTable("password_resets", "SELECT email AS id, email, email_enc, email_bidx FROM app.password_resets",
+		verifyTable("password_resets", PASSWORD_RESETS_SQL,
 				List.of("email"), true, true, enc, bidx);
 		verifyTable("signup_events", "SELECT id, email, ip, email_enc, ip_enc, email_bidx FROM app.signup_events",
 				List.of("email", "ip"), true, true, enc, bidx);
