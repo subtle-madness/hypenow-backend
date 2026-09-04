@@ -5,24 +5,42 @@ import com.celfit.was.archive.ArchiveTable;
 import com.celfit.was.archive.ArchiveTables;
 import com.celfit.was.archive.ArchiveWriter;
 import com.celfit.was.crypto.FieldCipher;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
-/** app.users CRUD — email은 항상 lower 정규화해 저장·조회한다(대소문자 무관 로그인). */
+/**
+ * app.users CRUD — email은 항상 lower 정규화해 저장·조회한다(대소문자 무관 로그인).
+ *
+ * <p><b>읽기는 암호문·블라인드 인덱스만 본다</b>(스펙 §전환 2, 09-04). 등가 조회는
+ * {@code email_bidx = blindIndex(normalizeEmail(q))}, 표시값은 {@code decrypt(*_enc)}다 —
+ * 평문 컬럼(email·name·nickname·phone_number)은 이제 <b>쓰기 전용</b>이고(PR 3에서 제거),
+ * 어떤 SELECT·WHERE도 그것을 읽지 않는다. 레코드(AppUser·UserProfile) 형상은 그대로라
+ * 호출부는 전환을 모른다. 복호화 실패는 {@link FieldCipher}가 예외로 던지고 여기서 삼키지
+ * 않는다 — 조용한 null은 "이름이 사라진 유저"가 되어 더 오래 숨는다(스펙 §실패 모드).
+ */
 @Repository
 public class UserRepository {
 
-	/** UserProfile 매핑용 컬럼 목록(단일 정본) — RETURNING·SELECT가 공유한다. */
+	/**
+	 * UserProfile 매핑용 컬럼 목록(단일 정본) — RETURNING·SELECT가 공유한다.
+	 * PII 4종은 암호문 컬럼으로 읽고 {@code profileMapper}가 복호화해 레코드를 채운다.
+	 */
 	private static final String PROFILE_COLUMNS = """
-			id, email, name, nickname, user_type, signup_route, phone_country_code, phone_number,
-			company_name, company_size, industry, job_title, agreed_marketing, marketing_updated_at,
-			profile_image_url, created_at, role, feature_overrides::text AS feature_overrides""";
+			id, email_enc, name_enc, nickname_enc, user_type, signup_route, phone_country_code,
+			phone_number_enc, company_name, company_size, industry, job_title, agreed_marketing,
+			marketing_updated_at, profile_image_url, created_at, role,
+			feature_overrides::text AS feature_overrides""";
+
+	/** AppUser 매핑용 컬럼 목록 — email은 암호문으로 읽는다. */
+	private static final String USER_COLUMNS = "id, email_enc, password_hash, role, created_at";
 
 	/**
 	 * PATCH /v1/me가 갱신할 수 있는 컬럼 화이트리스트(스펙 6.13) — 동적 SET 절은 이 목록만 순회하므로
@@ -42,29 +60,58 @@ public class UserRepository {
 	private final JdbcClient jdbcClient;
 	private final ArchiveWriter archiveWriter;
 	private final FieldCipher fieldCipher;
+	private final RowMapper<AppUser> userMapper;
+	private final RowMapper<UserProfile> profileMapper;
 
 	public UserRepository(JdbcClient jdbcClient, ArchiveWriter archiveWriter, FieldCipher fieldCipher) {
 		this.jdbcClient = jdbcClient;
 		this.archiveWriter = archiveWriter;
 		this.fieldCipher = fieldCipher;
+		// 자동 매핑(query(Class))은 컬럼명 ↔ 필드명 규약에 기대는데 이제 원본이 *_enc라 규약이 깨진다 —
+		// 명시 RowMapper로 전환해 복호화를 매핑 지점 하나에 모은다(레코드 형상은 불변).
+		this.userMapper = (rs, rowNum) -> new AppUser(
+				rs.getLong("id"),
+				fieldCipher.decrypt(rs.getString("email_enc")),
+				rs.getString("password_hash"),
+				rs.getString("role"),
+				rs.getObject("created_at", OffsetDateTime.class));
+		this.profileMapper = (rs, rowNum) -> new UserProfile(
+				rs.getLong("id"),
+				fieldCipher.decrypt(rs.getString("email_enc")),
+				fieldCipher.decrypt(rs.getString("name_enc")),
+				fieldCipher.decrypt(rs.getString("nickname_enc")),
+				rs.getString("user_type"),
+				rs.getString("signup_route"),
+				rs.getString("phone_country_code"),
+				fieldCipher.decrypt(rs.getString("phone_number_enc")),
+				rs.getString("company_name"),
+				rs.getString("company_size"),
+				rs.getString("industry"),
+				rs.getString("job_title"),
+				rs.getBoolean("agreed_marketing"),
+				rs.getObject("marketing_updated_at", OffsetDateTime.class),
+				rs.getString("profile_image_url"),
+				rs.getObject("created_at", OffsetDateTime.class),
+				rs.getString("role"),
+				rs.getString("feature_overrides"));
 	}
 
 	/**
 	 * 중복 이메일이면 DataIntegrityViolationException(구현체: DuplicateKeyException) — app.users.email
-	 * UNIQUE 제약. email_enc/email_bidx도 함께 채운다(스펙 §전환 1 이중 쓰기 — 읽기는 아직 평문).
+	 * UNIQUE와 email_bidx UNIQUE 둘 다 같은 예외를 낸다(읽기 전환 후에도 예외 계약 동일).
+	 * 쓰기는 여전히 이중(평문+암호문) — 평문 제거는 PR 3.
 	 */
 	public AppUser insert(String email, String passwordHash) {
 		String normalized = normalizeEmail(email);
 		return jdbcClient.sql("""
 				INSERT INTO app.users (email, password_hash, email_enc, email_bidx)
 				VALUES (:email, :passwordHash, :emailEnc, :emailBidx)
-				RETURNING id, email, password_hash, role, created_at
-				""")
+				RETURNING\s""" + USER_COLUMNS)
 				.param("email", normalized)
 				.param("passwordHash", passwordHash)
 				.param("emailEnc", fieldCipher.encrypt(normalized))
 				.param("emailBidx", fieldCipher.blindIndex(normalized))
-				.query(AppUser.class)
+				.query(userMapper)
 				.single();
 	}
 
@@ -108,15 +155,15 @@ public class UserRepository {
 				.param("nameEnc", fieldCipher.encrypt(newUser.name()))
 				.param("nicknameEnc", fieldCipher.encrypt(newUser.nickname()))
 				.param("phoneNumberEnc", fieldCipher.encrypt(newUser.phoneNumber()))
-				.query(UserProfile.class)
+				.query(profileMapper)
 				.single();
 	}
 
 	/** 로그인 응답(UserSummary) 조립용 프로필 — 세션의 AppUserDetails는 프로필을 안 가진다. */
 	public Optional<UserProfile> findProfileByEmail(String email) {
-		return jdbcClient.sql("SELECT " + PROFILE_COLUMNS + " FROM app.users WHERE email = :email")
-				.param("email", normalizeEmail(email))
-				.query(UserProfile.class)
+		return jdbcClient.sql("SELECT " + PROFILE_COLUMNS + " FROM app.users WHERE email_bidx = :emailBidx")
+				.param("emailBidx", fieldCipher.blindIndex(normalizeEmail(email)))
+				.query(profileMapper)
 				.optional();
 	}
 
@@ -124,7 +171,7 @@ public class UserRepository {
 	public Optional<UserProfile> findProfileById(long id) {
 		return jdbcClient.sql("SELECT " + PROFILE_COLUMNS + " FROM app.users WHERE id = :id")
 				.param("id", id)
-				.query(UserProfile.class)
+				.query(profileMapper)
 				.optional();
 	}
 
@@ -167,7 +214,7 @@ public class UserRepository {
 		for (Map.Entry<String, Object> entry : encParams.entrySet()) {
 			spec = spec.param(entry.getKey(), entry.getValue());
 		}
-		return spec.query(UserProfile.class).single();
+		return spec.query(profileMapper).single();
 	}
 
 	/** PUT /v1/me/password(스펙 6.13) — 현재 비밀번호 검증은 호출부(컨트롤러) 책임. */
@@ -249,25 +296,18 @@ public class UserRepository {
 		archiveWriter.verifyMatched(table, archivedCount, deleted);
 	}
 
+	/** 로그인·이메일 가용성 검사의 정본 조회 — 등가 비교는 블라인드 인덱스로 한다(평문 컬럼 미참조). */
 	public Optional<AppUser> findByEmail(String email) {
-		return jdbcClient.sql("""
-				SELECT id, email, password_hash, role, created_at
-				FROM app.users
-				WHERE email = :email
-				""")
-				.param("email", normalizeEmail(email))
-				.query(AppUser.class)
+		return jdbcClient.sql("SELECT " + USER_COLUMNS + " FROM app.users WHERE email_bidx = :emailBidx")
+				.param("emailBidx", fieldCipher.blindIndex(normalizeEmail(email)))
+				.query(userMapper)
 				.optional();
 	}
 
 	public Optional<AppUser> findById(long id) {
-		return jdbcClient.sql("""
-				SELECT id, email, password_hash, role, created_at
-				FROM app.users
-				WHERE id = :id
-				""")
+		return jdbcClient.sql("SELECT " + USER_COLUMNS + " FROM app.users WHERE id = :id")
 				.param("id", id)
-				.query(AppUser.class)
+				.query(userMapper)
 				.optional();
 	}
 
