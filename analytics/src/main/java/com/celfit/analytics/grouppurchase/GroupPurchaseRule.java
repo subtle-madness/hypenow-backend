@@ -10,13 +10,17 @@ import java.util.regex.Pattern;
  * 호출된다. 표는 순서대로 적용하고 앞 단계에서 확정되면 뒤는 생략한다.
  *
  * <pre>
- * 1) '공동구매' 포함              → CONFIRMED_TRUE
- * 2) '#공구' 포함                 → CONFIRMED_TRUE
- * 3) '공구' 포함 + 도구 어휘 동반  → AMBIGUOUS (LLM으로)
- * 3') '공구' 포함 + 부정·회의 문맥  → AMBIGUOUS (LLM으로, 2026-09-04)
- * 4) '공구' 포함, 도구 어휘 없음   → CONFIRMED_TRUE
- * 5) 둘 다 없음                    → CONFIRMED_FALSE
+ * 1) '공동구매' 포함                         → CONFIRMED_TRUE
+ * 2) '#공구' 포함(아님·템·리뷰 제외)          → CONFIRMED_TRUE
+ * 3) '공구' 포함 + 도구 어휘 동반             → AMBIGUOUS (LLM으로)
+ * 3') '공구' 포함 + 부정·회의 문맥             → AMBIGUOUS (LLM으로, 2026-09-04)
+ * 4) '공구' 포함, 도구 어휘 없음              → CONFIRMED_TRUE
+ * 5) 둘 다 없음                               → CONFIRMED_FALSE
  * </pre>
+ *
+ * <p>2) 는 "#공구아님"·"#공구템"·"#공구리뷰"만 제외한다(운영 검수: "#공구xxx" 분포는 오픈·예고·중·
+ * 마감·마켓·예정·진행중·알림 등 대부분 진짜 공구라 부분 문자열 그대로 두되, 이 세 접미사만 확정 참에서
+ * 빼서 맨몸 '공구' 경로(3')로 흘려보낸다 — 2026-09-04).
  *
  * <p>도구 어휘는 근처 N자가 아니라 <b>캡션 전체</b> 대상이다. 단 일상어와 겹치는 두 어휘는 좁혀
  * 잡는다(2026-09-04 운영 실측: 후보 4,808건 중 애매 1,717건의 원인이 "드릴게요"류 995건과
@@ -47,13 +51,20 @@ public final class GroupPurchaseRule {
 	/**
 	 * 부정·회의 문맥(2026-09-04 운영 검수) — "공구❌", "공구 아님", "공구 안 해요", "공구템 리뷰"는 맨몸 '공구'
 	 * 규칙이 확정 참으로 잘못 잡았다(운영 true 4,788건 중 38건, 그중 "일반공구 아님, 톡딜" 같은 진짜 공구도
-	 * 섞여 있어 확정 거짓으로 박지 않고 LLM에 보낸다).
+	 * 섞여 있어 확정 거짓으로 박지 않고 LLM에 보낸다). "공구리뷰"는 2026-09-04 정정 3에서 추가
+	 * (해시태그 "#공구리뷰"가 단독으로 쓰이면 맨몸 '공구' 경로로 흘러오는데 부정 문맥이 아니었다).
 	 */
 	private static final Pattern NEGATION_PHRASE = Pattern.compile(
-			"공구 ?[❌✖✕✗Xx×]|공구 ?(아님|아닙니다|아니에요|아니예요|는 아니|가 아니)|공구 ?(안 ?해요|안 ?합니다|안 ?함|하지 ?않)|공구템");
+			"공구 ?[❌✖✕✗Xx×]|공구 ?(아님|아닙니다|아니에요|아니예요|는 아니|가 아니)|공구 ?(안 ?해요|안 ?합니다|안 ?함|하지 ?않)|공구템|공구 ?리뷰");
+
+	/**
+	 * '#공구'가 있어도 "#공구아님·#공구템·#공구리뷰"는 확정 참에서 제외(2026-09-04 정정 3 — 부분
+	 * 문자열 contains가 이 세 접미사까지 확정 참으로 잡던 오탐). 제외된 캡션은 맨몸 '공구' 경로(3')로
+	 * 흘러 {@link #NEGATION_PHRASE}가 애매로 보낸다.
+	 */
+	private static final Pattern HASHTAG_PATTERN = Pattern.compile("#공구(?!아님|템|리뷰)");
 
 	private static final String KEYWORD_CONFIRMED = "공동구매";
-	private static final String KEYWORD_HASHTAG = "#공구";
 	private static final String KEYWORD_AMBIGUOUS_TRIGGER = "공구";
 
 	public enum Verdict { CONFIRMED_TRUE, AMBIGUOUS, CONFIRMED_FALSE }
@@ -68,8 +79,8 @@ public final class GroupPurchaseRule {
 		if (c.contains(KEYWORD_CONFIRMED)) {
 			return new Result(Verdict.CONFIRMED_TRUE, "'공동구매' 포함");
 		}
-		if (c.contains(KEYWORD_HASHTAG)) {
-			return new Result(Verdict.CONFIRMED_TRUE, "'#공구' 포함");
+		if (HASHTAG_PATTERN.matcher(c).find()) {
+			return new Result(Verdict.CONFIRMED_TRUE, "'#공구' 포함(아님·템·리뷰 제외)");
 		}
 		if (c.contains(KEYWORD_AMBIGUOUS_TRIGGER)) {
 			if (hasToolWord(c)) {

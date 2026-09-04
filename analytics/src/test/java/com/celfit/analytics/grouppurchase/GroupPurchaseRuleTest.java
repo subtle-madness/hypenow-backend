@@ -64,6 +64,21 @@ class GroupPurchaseRuleTest {
 	}
 
 	@Test
+	void 해시태그_공구아님_템_리뷰는_확정_참에서_제외되어_애매() {
+		assertEquals(Verdict.AMBIGUOUS,
+				GroupPurchaseRule.evaluate("#광고아님 #협찬아님 #공구아님 그냥 먹방").verdict());
+		assertEquals(Verdict.AMBIGUOUS,
+				GroupPurchaseRule.evaluate("#공구템 #공구리뷰 메이크업").verdict());
+		assertEquals(Verdict.AMBIGUOUS,
+				GroupPurchaseRule.evaluate("#공구리뷰 솔직후기").verdict());
+	}
+
+	@Test
+	void 해시태그_공구_뒤에_다른_말이_붙으면_여전히_확정_참() {
+		assertEquals(Verdict.CONFIRMED_TRUE, GroupPurchaseRule.evaluate("#공구예고 슈슈아띠 찜기").verdict());
+	}
+
+	@Test
 	void 부정_표현이_없는_맨몸_공구는_여전히_확정_참() {
 		assertEquals(Verdict.CONFIRMED_TRUE, GroupPurchaseRule.evaluate("고무장갑 공구 또 안 하니? 다시 열었어요").verdict());
 		assertEquals(Verdict.CONFIRMED_TRUE, GroupPurchaseRule.evaluate("공구 오픈 3일 한정").verdict());
