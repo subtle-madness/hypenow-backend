@@ -50,6 +50,26 @@ class GroupPurchaseRuleTest {
 	}
 
 	@Test
+	void 공구_부정_표현은_확정_참이_아니라_애매() {
+		assertEquals(Verdict.AMBIGUOUS, GroupPurchaseRule.evaluate("(광고,공구❌) Ep12. 퍼컬안타는 치크").verdict());
+		assertEquals(Verdict.AMBIGUOUS, GroupPurchaseRule.evaluate("광고❌ 협찬❌ 공구❌ 찐내돈내산").verdict());
+		assertEquals(Verdict.AMBIGUOUS, GroupPurchaseRule.evaluate("이건 공구 아님, 그냥 추천").verdict());
+		assertEquals(Verdict.AMBIGUOUS, GroupPurchaseRule.evaluate("저는 공구 안 해요").verdict());
+		assertEquals(Verdict.AMBIGUOUS, GroupPurchaseRule.evaluate("일반공구 아님, 카카오 톡딜 최저가").verdict());
+	}
+
+	@Test
+	void 공구템_리뷰는_애매() {
+		assertEquals(Verdict.AMBIGUOUS, GroupPurchaseRule.evaluate("인플루언서 공구템 실패한 것도 있고").verdict());
+	}
+
+	@Test
+	void 부정_표현이_없는_맨몸_공구는_여전히_확정_참() {
+		assertEquals(Verdict.CONFIRMED_TRUE, GroupPurchaseRule.evaluate("고무장갑 공구 또 안 하니? 다시 열었어요").verdict());
+		assertEquals(Verdict.CONFIRMED_TRUE, GroupPurchaseRule.evaluate("공구 오픈 3일 한정").verdict());
+	}
+
+	@Test
 	void 공구_없이는_도구_문맥이라_애매() {
 		assertEquals(Verdict.AMBIGUOUS, GroupPurchaseRule.evaluate("공구 없이 완성").verdict());
 		assertEquals(Verdict.AMBIGUOUS, GroupPurchaseRule.evaluate("공구없이 돌려서 끼우기만").verdict());
