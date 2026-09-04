@@ -47,7 +47,7 @@ analytics 층에 소형 판정기로 둔다.
 | 단계 | 조건 | 결과 |
 |---|---|---|
 | T1 확정 참 | `공동구매` 포함 | true (LLM 없음) |
-| T1 확정 참 | `#공구` 포함 | true |
+| T1 확정 참 | `#공구` 포함(`#공구아님`·`#공구템`·`#공구리뷰` 제외 — 정정 3) | true |
 | 애매 분류 | `공구` 포함이면서 캡션 어디든 도구 어휘 동반 | LLM으로 |
 | T1 확정 참 | `공구` 포함, 도구 어휘 없음 | true |
 | 확정 거짓 | `공구`·`공동구매` 없음 | false (LLM 없음) |
@@ -66,11 +66,34 @@ analytics 층에 소형 판정기로 둔다.
 - **2026-09-04 정정 2(운영 검수)**: 맨몸 `공구` 확정 참이 부정·회의 문맥을 못 걸렀다. 운영 true 4,788건 중 "공구❌/X" 9,
   "공구 아님" 14, "공구 안 해요" 3, "공구템 리뷰" 12. 진짜 공구("일반공구 아님, 톡딜 최저가")도 섞여 있어 확정 거짓이
   아니라 애매(LLM)로 보낸다(`GroupPurchaseRule.NEGATION_PHRASE`). 규칙 표에 3') 행 추가.
+- **2026-09-04 정정 3(운영 검수)**: 두 건 추가 오탐.
+  1. `#공구` 부분 문자열 매칭이 `#공구아님`·`#공구템`·`#공구리뷰`까지 확정 참으로 잡았다(`#공구xxx` 분포는
+     오픈·예고·중·마감·마켓·예정·진행중·알림 등 대부분 진짜 공구라 접두사 자체는 유지). 매칭을 정규식
+     `#공구(?!아님|템|리뷰)`(`GroupPurchaseRule.HASHTAG_PATTERN`)로 좁혀 이 세 접미사만 맨몸 `공구` 경로로
+     흘려보낸다. `NEGATION_PHRASE`에 `공구 ?리뷰`를 추가해 `#공구리뷰` 단독 캡션도 애매로 떨어지게 했다.
+  2. LLM true 224건 중 4건("공구템 욕먹을 각오하고 솔직하게 풀어드려요", "인플루언서 공구템 실패한것도
+     있고", "트로마츠 1년 써보고 써본 후기", "알고리즘에 지배당해 과소비한 후기")이 판매 신호 없는 사용
+     후기·리뷰·비판 글인데 true로 나왔다. `GeminiGroupPurchaseJudge.INSTRUCTIONS`에 "판매 신호(오픈·마감·
+     기간·구매 링크) 없는 후기·리뷰·비판·비교는 false, 남이 판 공구 제품 후기도 false, true면 reason에
+     판매 신호 문구를 인용" 지시를 추가했다. 프롬프트만으로는 재발을 막지 못할 수 있어 **사유/판정 모순
+     가드**를 더했다: `groupPurchase=true`인데 reason이 부정 근거(`CONTRADICTORY_REASON` 정규식 — 후기·
+     리뷰·사용기·비판·비교·"공구가 아니"·"판매 신호가 없" 등)면 같은 캡션으로 1회 재질의하고, 재질의도
+     true+모순이면 `Judgment(false, "<재질의 reason> [모순 가드: 사유가 부정 근거라 거짓 처리]")`로 강제
+     확정한다(API 호출 최대 2회). 배포 후 재판정 리셋 SQL(analysis DB):
+     ```sql
+     -- 1) #공구(아님|템|리뷰) 매칭 행 재판정
+     UPDATE group_purchase_judgments j SET judged_caption_hash = ''
+     FROM contents c WHERE c.short_code = j.short_code AND c.caption ~ '#공구(아님|템|리뷰)';
+     -- 2) LLM true 행 재판정(프롬프트·가드 반영, 약 230건)
+     UPDATE group_purchase_judgments SET judged_caption_hash = '' WHERE tier = 'LLM' AND verdict;
+     ```
+     이후 어드민 트리거 `POST http://127.0.0.1:8082/ui/jobs/group-purchase-judge` 1회 실행.
 
 ### LLM(애매분)
 
 - 입력: 캡션 1건. 질문: "이 게시물이 인플루언서 공동구매(공구) 판매 게시물인가. `공구`가 연장·도구
-  의미로만 쓰였으면 아니오." 출력 JSON `{groupPurchase: boolean, reason: string}`.
+  의미로만 쓰였으면 아니오." 판매 신호 없는 후기·리뷰·비판·비교는 false(정정 3). 출력 JSON
+  `{groupPurchase: boolean, reason: string}`.
 - 전송: analytics 자체 `llm` 패키지의 `GeminiApi`(구현 `VertexHttpApi`, 생성은 `LlmClientFactory`) 온라인
   호출(소량·즉시). analytics는 `common-llm` 의존이 없다(monitoring·was만 사용). 모델·프로젝트는
   콘텐츠 분석과 같은 설정(`LlmConfig`)을 재사용.
