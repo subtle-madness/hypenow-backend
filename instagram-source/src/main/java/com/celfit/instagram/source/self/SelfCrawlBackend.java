@@ -118,14 +118,15 @@ public class SelfCrawlBackend implements InstagramSource {
 			circuit.recordSuccess(surface);
 			return r;
 		} catch (SelfCrawlException e) {
-			recordIfBlock(surface, e);
-			throw e;
+			SelfCrawlException withSurface = e.withSurface(surface);
+			recordIfBlock(surface, withSurface);
+			throw withSurface;
 		}
 	}
 
 	private void guard(String surface) {
 		if (circuit.isOpen(surface)) {
-			throw new SelfCrawlException(SelfErrorClass.OTHER, "서킷 열림: " + surface);
+			throw new SelfCrawlException(SelfErrorClass.OTHER, "서킷 열림: " + surface, null, surface);
 		}
 	}
 

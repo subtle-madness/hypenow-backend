@@ -281,6 +281,36 @@ class SelfCrawlBackendTest {
 	}
 
 	@Test
+	void self_예외에는_발생한_표면이_부착된다() {
+		// throwing()이 만드는 예외는 surface가 없는 채(fetcher는 표면을 모른다) 던져진다 —
+		// SelfCrawlBackend.run()의 catch가 어느 surface에서 났는지를 부착해야 한다.
+		ScriptedFetch embedFetch = new ScriptedFetch(List.of(throwing(SelfErrorClass.STRUCTURAL_400)));
+		SelfCrawlBackend backend = backend(embedFetch);
+
+		assertThatThrownBy(() -> backend.fetchPost("SHORT"))
+				.isInstanceOf(SelfCrawlException.class)
+				.extracting(e -> ((SelfCrawlException) e).surface())
+				.isEqualTo("embed");
+	}
+
+	@Test
+	void 서킷_트립_후_가드가_던지는_예외에도_표면이_부착된다() {
+		ScriptedFetch embedFetch =
+				new ScriptedFetch(List.of(throwing(SelfErrorClass.FORBIDDEN_403)));
+		SelfCrawlBackend backend = backend(embedFetch);
+
+		for (int i = 0; i < 5; i++) {
+			assertThatThrownBy(() -> backend.fetchPost("SHORT")).isInstanceOf(SelfCrawlException.class);
+		}
+
+		// 6번째는 가드에서 곧장 OTHER — guard()가 생성 시점에 surface를 직접 넣는다.
+		assertThatThrownBy(() -> backend.fetchPost("SHORT"))
+				.isInstanceOf(SelfCrawlException.class)
+				.extracting(e -> ((SelfCrawlException) e).surface())
+				.isEqualTo("embed");
+	}
+
+	@Test
 	void NOT_FOUND는_재시도_없이_전파되고_서킷을_트립시키지_않는다() {
 		ScriptedFetch embedFetch = new ScriptedFetch(List.of(
 				throwing(SelfErrorClass.NOT_FOUND),

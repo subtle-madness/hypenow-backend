@@ -25,6 +25,7 @@ public class FailoverInstagramSource implements InstagramSource {
 	private final InstagramSource hiker;
 	private final Predicate<String> selfEnabledForPath;
 	private final InstagramSourceMetrics metrics;
+	private final RateLimitedWarn fallbackWarnLimiter;
 
 	/** 마일스톤 A 호환 — 자체 없이 Hiker 단독. */
 	public FailoverInstagramSource(InstagramSource hiker) {
@@ -52,10 +53,18 @@ public class FailoverInstagramSource implements InstagramSource {
 	/** 경로별(표면별) 자체크롤 토글 + 관측 훅. */
 	public FailoverInstagramSource(InstagramSource self, InstagramSource hiker,
 			Predicate<String> selfEnabledForPath, InstagramSourceMetrics metrics) {
+		this(self, hiker, selfEnabledForPath, metrics, new RateLimitedWarn());
+	}
+
+	/** 폴백 WARN 속도제한을 커스터마이즈하는 전체 생성자(테스트용 — 간격·시계 주입). */
+	FailoverInstagramSource(InstagramSource self, InstagramSource hiker,
+			Predicate<String> selfEnabledForPath, InstagramSourceMetrics metrics,
+			RateLimitedWarn fallbackWarnLimiter) {
 		this.self = self;
 		this.hiker = hiker;
 		this.selfEnabledForPath = selfEnabledForPath;
 		this.metrics = metrics;
+		this.fallbackWarnLimiter = fallbackWarnLimiter;
 	}
 
 	@Override
@@ -147,6 +156,7 @@ public class FailoverInstagramSource implements InstagramSource {
 				throw new SubjectNotFoundException(e.getMessage());
 			}
 			T r = hikerCall.get();
+			warnFallback(path, e);
 			metrics.record(path, "hiker", "fallback:" + e.errorClass());
 			return r;
 		} catch (SubjectNotFoundException e) {
@@ -169,5 +179,22 @@ public class FailoverInstagramSource implements InstagramSource {
 			metrics.record(path, "hiker", "fallback:UNEXPECTED");
 			return r;
 		}
+	}
+
+	/**
+	 * 자체크롤 폴백을 WARN으로 남긴다(NOT_FOUND 등 확정 판정 제외 — route()가 그 분기는 이미 걸러
+	 * 여기로 안 온다). 운영에서 self 실패가 로그 없이 묻혀 "self 사망"을 오진했던 관측 공백(09-04)을
+	 * 메운다. (path, errorClass) 키로 기본 30초에 1건만 실제 출력하고, 억제된 나머지는 다음 출력에
+	 * "(억제 N건)"으로 합산한다 — 억제 여부와 무관하게 메트릭 기록·폴백 동작은 그대로다.
+	 */
+	private void warnFallback(String path, SelfCrawlException e) {
+		String surface = e.surface() != null ? e.surface() : "unknown";
+		long suppressed = fallbackWarnLimiter.shouldEmit(path + "|" + e.errorClass());
+		if (suppressed < 0) {
+			return;
+		}
+		String suffix = suppressed > 0 ? " (억제 " + suppressed + "건)" : "";
+		log.warn("자체크롤 {} 폴백 — surface={} errorClass={} message={}{}", path, surface, e.errorClass(),
+				e.getMessage(), suffix);
 	}
 }
