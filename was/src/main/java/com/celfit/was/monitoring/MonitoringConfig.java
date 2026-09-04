@@ -33,6 +33,8 @@ public class MonitoringConfig {
 
 	private final HikariDataSource monitoringDataSource;
 	private final JdbcClient monitoringJdbc;
+	private final HikariDataSource adminMonitoringDataSource;
+	private final JdbcClient adminMonitoringJdbc;
 	private final RestClient monitoringRestClient;
 	private final RestClient directPostRestClient;
 	private final ThreadPoolTaskExecutor registrationTaskExecutor;
@@ -78,6 +80,20 @@ public class MonitoringConfig {
 		this.monitoringDataSource = new HikariDataSource(hikari);
 		this.monitoringJdbc = JdbcClient.create(monitoringDataSource);
 
+		// 어드민 "등록된 브랜드 목록" 전용 풀(2026-09-04, monitoring-ro 풀 경합 해소 — 원인·설계는
+		// AdminBrandReadRepository 클래스 주석 참조). 같은 DB에 붙는 완전히 별개의 커넥션이라, 어드민
+		// 화면의 전량 집계 쿼리가 아무리 몰려도 monitoring-ro(사용자 대시보드·AI 어시스턴트)를 굶기지
+		// 않는다. max=2 — 어드민 트래픽은 낮고, 조회 자체가 다른 admin 엔드포인트와 경합할 일도 적다.
+		HikariConfig adminHikari = new HikariConfig();
+		adminHikari.setJdbcUrl(dbUrl);
+		adminHikari.setUsername(dbUsername);
+		adminHikari.setPassword(dbPassword);
+		adminHikari.setMaximumPoolSize(2);
+		adminHikari.setInitializationFailTimeout(-1);   // monitoring-ro와 동일 이유 — 지연 초기화
+		adminHikari.setPoolName("monitoring-admin");
+		this.adminMonitoringDataSource = new HikariDataSource(adminHikari);
+		this.adminMonitoringJdbc = JdbcClient.create(adminMonitoringDataSource);
+
 		// 등록 백그라운드 실행기 전용 풀 — 등록 접수(6.27)는 동기로 끝나고, 첫 확인(monitoring 호출)만
 		// 여기서 돈다. 코어=최대=2(등록 트래픽이 아직 낮아 상한 고정), 큐 100으로 스파이크 흡수한다.
 		// 큐까지 찬 초과분은 AbortPolicy로 즉시 거부한다 — submit()이 접수 트랜잭션의 afterCommit
@@ -114,8 +130,8 @@ public class MonitoringConfig {
 		brandPool.initialize();
 		this.brandDirectRegistrationTaskExecutor = brandPool;
 
-		log.info("모니터링 통신 계층 활성 base-url={} (조회 풀 monitoring-ro, max 3 / 등록 실행기 풀 2 / "
-				+ "브랜드 direct 등록 실행기 풀 2)", baseUrl);
+		log.info("모니터링 통신 계층 활성 base-url={} (조회 풀 monitoring-ro, max 3 / 어드민 전용 조회 풀 "
+				+ "monitoring-admin, max 2 / 등록 실행기 풀 2 / 브랜드 direct 등록 실행기 풀 2)", baseUrl);
 	}
 
 	/** 내부 접근자 — 빈이 아니다. 도메인 빈 조립과 테스트에서만 쓴다. */
@@ -137,10 +153,20 @@ public class MonitoringConfig {
 		return new MonitoringReadRepository(monitoringJdbc);
 	}
 
-	/** 브랜드 조회 계층 — 레거시 조회와 같은 읽기 전용 풀(monitoring-ro)을 공유한다. */
+	/** 브랜드 조회 계층 — 레거시 조회·사용자 표면과 같은 읽기 전용 풀(monitoring-ro)을 공유한다. */
 	@Bean
 	BrandReadRepository brandReadRepository() {
 		return new BrandReadRepository(monitoringJdbc);
+	}
+
+	/**
+	 * 어드민 "등록된 브랜드 목록" 전용 조회 계층(2026-09-04) — {@link #brandReadRepository()}와
+	 * 타입이 달라(같은 타입 빈이 둘이 되는 걸 피하려 별도 클래스로 뺐다) 별 조치 없이 공존한다.
+	 * monitoring-ro가 아니라 전용 풀(monitoring-admin)의 JdbcClient로 만든다.
+	 */
+	@Bean
+	AdminBrandReadRepository adminBrandReadRepository() {
+		return new AdminBrandReadRepository(adminMonitoringJdbc);
 	}
 
 	/**
@@ -167,5 +193,6 @@ public class MonitoringConfig {
 		registrationTaskExecutor.shutdown();
 		brandDirectRegistrationTaskExecutor.shutdown();
 		monitoringDataSource.close();
+		adminMonitoringDataSource.close();
 	}
 }

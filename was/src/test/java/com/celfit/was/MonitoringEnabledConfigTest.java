@@ -2,6 +2,7 @@ package com.celfit.was;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.celfit.was.monitoring.AdminBrandReadRepository;
 import com.celfit.was.monitoring.MonitoringConfig;
 import com.celfit.was.monitoring.WeeklyDigestJob;
 import com.celfit.was.v1.brandmonitoring.V1BrandAccountService;
@@ -87,5 +88,12 @@ class MonitoringEnabledConfigTest extends IntegrationTest {
 	void 활성이면_다이제스트_크론과_복구_크론이_뜬다() {
 		assertThat(context.getBeanNamesForType(WeeklyDigestJob.class)).hasSize(1);
 		assertThat(context.getBeanNamesForType(RecoverStalePendingScheduler.class)).hasSize(1);
+	}
+
+	@Test
+	void 활성이면_어드민_전용_브랜드_조회_리포지토리가_뜬다() {
+		// monitoring-admin 전용 풀로 배선된 AdminBrandReadRepository(2026-09-04, 어드민 브랜드 목록
+		// 60초 캐시 제거 대응) — brandReadRepository()와 타입이 달라 같은 컨텍스트에 공존해야 한다.
+		assertThat(context.getBeanNamesForType(AdminBrandReadRepository.class)).hasSize(1);
 	}
 }

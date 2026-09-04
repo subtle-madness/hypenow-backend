@@ -1,17 +1,15 @@
 package com.celfit.was.v1.admin;
 
+import com.celfit.was.monitoring.AdminBrandReadRepository;
+import com.celfit.was.monitoring.AdminBrandReadRepository.BrandCallSumRow;
+import com.celfit.was.monitoring.AdminBrandReadRepository.PostCountRow;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
-import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
-import com.celfit.was.monitoring.BrandReadRepository.BrandCallSumRow;
-import com.celfit.was.monitoring.BrandReadRepository.PostCountRow;
 import com.celfit.was.v1.brandmonitoring.BrandAccountAssembler;
 import com.celfit.was.v1.common.KstTimestamps;
 import com.celfit.was.v1.common.V1ApiException;
 import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
@@ -32,100 +30,82 @@ import org.springframework.stereotype.Service;
  * 기준 수천 행대)라 전량 인메모리 조립이 부담이 아니다({@link AdminMonitoringRegistrationsController}·
  * {@link AdminCrawlingUsageService}와 같은 관용구).
  *
- * <p>monitoring이 꺼져 있으면({@code monitoring.enabled=false}) {@link BrandReadRepository} 빈이
+ * <p>monitoring이 꺼져 있으면({@code monitoring.enabled=false}) {@link AdminBrandReadRepository} 빈이
  * 없다 — 그 경우 행은 링크·유저만으로 나가고 monitoring 유래 필드(postCount·crawlingCalls·
  * collectionStatus·backfillCompletedAt·lastCollectedAt)는 전부 0/null이다. username도 그때만 링크의
  * 스냅샷 값(등록 시점 관측)으로 대체한다 — monitoring이 살아 있으면 계정 최신 관측값이 정본이다.
  *
- * <p><b>조립 결과는 60초 인메모리 캐시</b>다(staging 실측 2026-09-03 — 이 API가 정렬·페이지만
- * 바꿔도 매 요청 monitoring DB에 4쿼리를 새로 날려, 실사용자 브랜드 대시보드·AI 어시스턴트와
- * 공유하는 {@code monitoring-ro} 풀(max=3)을 두고 경합했다. 어드민 API 20회 연속 호출 중 사용자
- * API p95가 8.9배(최대 3.36초)로 치솟는 것을 staging에서 실측. 어드민 화면은 실시간성이 필요
- * 없다는 전제로(계약 문서 §1 "최대 60초 지연" 명시) 정렬·검색·페이지는 캐시된 전체 목록에서
- * 수행한다 — DB 부하는 60초에 한 번, 그 사이 어드민이 정렬을 몇 번 눌러도 재조회하지 않는다.
- * 키가 단일(전체 목록)이라 {@link java.util.concurrent.ConcurrentHashMap} 같은 다중 키 캐시가
- * 필요 없어 volatile 스냅샷 + synchronized 재로드로 충분하다. 롤링 배포 중 인스턴스가 여럿이면
- * 각자 캐시를 채운다 — 무해(관용구는 {@link com.celfit.was.v1.brandmonitoring.BrandIndexCache}
- * 참조, 다만 그쪽은 다중 키·버전 무효화라 필요조건이 달라 그대로 재사용하지 않았다).
+ * <p><b>60초 캐시는 없다(2026-09-04 제거)</b>. 원래(PR #766) 조립 결과를 60초 인메모리 캐시해
+ * monitoring-ro 풀 경합을 막았지만, 등록·해지 직후 새로고침해도 최대 60초 옛 목록이 보이는 신선도
+ * 결함으로 판정됐다. 대신 원인 두 가지를 직접 잡는다.
+ * <ol>
+ *   <li><b>전용 읽기 풀</b> — 계정 메타(findAccountsByIds, PK IN이라 가볍다)와 게시물 수·콜 합계
+ *       집계(전량 GROUP BY라 무겁다)는 {@link AdminBrandReadRepository}를 통해 monitoring-admin
+ *       풀({@link com.celfit.was.monitoring.MonitoringConfig})로 조회한다 — 실사용자 브랜드
+ *       대시보드·AI 어시스턴트가 쓰는 monitoring-ro 풀과 완전히 분리돼 경합하지 않는다.
+ *   <li><b>집계는 페이지 분량만</b> — 정렬 키가 postCount·crawlingCalls가 아니면(user·username·
+ *       collectionStatus·registeredAt) 두 집계 쿼리를 페이지에 남은 ≤limit개 brandId로만 좁혀
+ *       부른다({@link #mergeAggregates}). postCount·crawlingCalls 정렬은 순서를 정하려면 불가피하게
+ *       필터링된 전체 brandId로 집계한다.
+ * </ol>
+ * 링크·유저·계정 메타 조회는 여전히 전량이다(비집계·PK IN이라 가볍다) — q 검색·기본 정렬·페이지
+ * 컷은 이 전량 조회 결과로 수행한다.
  */
 @Service
 public class AdminBrandAccountService {
 
 	private static final Set<String> ALLOWED_SORT_KEYS =
 			Set.of("user", "username", "postCount", "crawlingCalls", "collectionStatus", "registeredAt");
+	private static final Set<String> AGGREGATE_SORT_KEYS = Set.of("postCount", "crawlingCalls");
 	private static final String DEFAULT_SORT = "registeredAt:desc";
-	static final Duration CACHE_TTL = Duration.ofSeconds(60);
 
 	private final BrandLinkRepository linkRepository;
 	private final AdminUserRepository userRepository;
-	private final Optional<BrandReadRepository> brandReads;
+	private final Optional<AdminBrandReadRepository> adminReads;
 	private final Clock clock;
 
-	/** 조립된 전체 목록의 캐시 스냅샷 — 없으면(콜드 스타트·TTL 경과 직후) null. */
-	private volatile CachedSnapshot cache;
-
 	public AdminBrandAccountService(BrandLinkRepository linkRepository, AdminUserRepository userRepository,
-			Optional<BrandReadRepository> brandReads, Clock clock) {
+			Optional<AdminBrandReadRepository> adminReads, Clock clock) {
 		this.linkRepository = linkRepository;
 		this.userRepository = userRepository;
-		this.brandReads = brandReads;   // monitoring.enabled=false면 비어 있다 — monitoring 필드는 전부 0/null
+		this.adminReads = adminReads;   // monitoring.enabled=false면 비어 있다 — monitoring 필드는 전부 0/null
 		this.clock = clock;
 	}
 
 	public Result list(AdminPageRequest pageRequest, String sort, String q) {
-		Comparator<Assembled> comparator = resolveComparator(sort);
+		SortSpec sortSpec = parseSort(sort);
+		Comparator<Assembled> comparator = buildComparator(sortSpec);
 
-		List<Assembled> assembled = cachedAssembled();
-		if (assembled.isEmpty()) {
+		List<Assembled> base = loadBase();
+		if (base.isEmpty()) {
 			return new Result(List.of(), 0);
 		}
 
 		String normalizedQ = normalize(q);
-		List<Assembled> filtered = normalizedQ == null ? assembled
-				: assembled.stream().filter(a -> matches(a, normalizedQ)).toList();
+		List<Assembled> filtered = normalizedQ == null ? base
+				: base.stream().filter(a -> matches(a, normalizedQ)).toList();
 
-		List<Assembled> sorted = filtered.stream().sorted(comparator).toList();
+		boolean fullAggregation = AGGREGATE_SORT_KEYS.contains(sortSpec.key());
+		List<Assembled> ordered = fullAggregation ? mergeAggregates(filtered, brandIdsOf(filtered)) : filtered;
+
+		List<Assembled> sorted = ordered.stream().sorted(comparator).toList();
 		long total = sorted.size();
-		List<AdminBrandAccountRow> page = sorted.stream()
-				.skip(pageRequest.offset())
-				.limit(pageRequest.limit())
+		List<Assembled> page = sorted.stream().skip(pageRequest.offset()).limit(pageRequest.limit()).toList();
+		// postCount·crawlingCalls 정렬이면 sorted 단계에서 이미 실값이 채워져 있다 — 그 외 정렬은 여기서
+		// 처음이자 유일하게 집계를 부른다(페이지에 남은 ≤limit개 brandId로만).
+		List<Assembled> pageWithAggregates = fullAggregation ? page : mergeAggregates(page, brandIdsOf(page));
+
+		List<AdminBrandAccountRow> rows = pageWithAggregates.stream()
 				.map(AdminBrandAccountService::toResponse)
 				.toList();
-		return new Result(page, total);
+		return new Result(rows, total);
 	}
 
 	/**
-	 * 캐시 조회 → (없거나 만료면) 계산 → 적재. 계산(4쿼리 + 조립)은 락 밖에서 하지 않는다 — 이 캐시는
-	 * {@link com.celfit.was.v1.brandmonitoring.BrandIndexCache}와 달리 키가 하나뿐이라, 동시 미스 시
-	 * 매번 재계산하면 캐시를 도입한 의미(monitoring-ro 풀 경합 해소)가 사라진다. synchronized로 좁혀
-	 * "동시 미스 시 1회만 로드"를 보장한다 — 조립 자체가 4쿼리 고정 배치라 락 보유 시간이 짧다
-	 * (§staging 실측 p95 368ms대).
+	 * 링크·유저·계정 메타(monitoring PK IN — 가벼움)만으로 조립한 목록. postCount·crawlingCalls는
+	 * 전부 0 자리표시자다 — 실값은 {@link #mergeAggregates}가 필요한 범위에만 채운다.
 	 */
-	private List<Assembled> cachedAssembled() {
-		CachedSnapshot snapshot = cache;
-		Instant now = clock.instant();
-		if (snapshot != null && now.isBefore(snapshot.expiresAt())) {
-			return snapshot.rows();
-		}
-		synchronized (this) {
-			snapshot = cache;
-			now = clock.instant();
-			if (snapshot != null && now.isBefore(snapshot.expiresAt())) {
-				return snapshot.rows();
-			}
-			List<Assembled> rows = loadAssembled();
-			cache = new CachedSnapshot(rows, now.plus(CACHE_TTL));
-			return rows;
-		}
-	}
-
-	/** 테스트 전용 훅 — 운영에서는 TTL이 알아서 걷어간다. 통합 테스트가 케이스마다 DB를 초기화한 뒤
-	 * 이전 테스트가 채운 캐시를 보지 않도록 {@code @BeforeEach}에서 호출한다. */
-	public void invalidateCacheForTests() {
-		this.cache = null;
-	}
-
-	private List<Assembled> loadAssembled() {
+	private List<Assembled> loadBase() {
 		List<BrandLinkRow> links = linkRepository.findAllActive();
 		if (links.isEmpty()) {
 			return List.of();
@@ -136,50 +116,64 @@ public class AdminBrandAccountService {
 				.collect(Collectors.toMap(AdminUserRow::id, Function.identity()));
 
 		Set<Long> brandIds = links.stream().map(BrandLinkRow::brandId).collect(Collectors.toSet());
-		Map<Long, BrandAccountRow> accountsById;
-		Map<Long, Long> postCountsByBrand;
-		Map<Long, BrandCallSumRow> callSumsByBrand;
-		if (brandReads.isPresent()) {
-			BrandReadRepository reads = brandReads.get();
-			LocalDate today = LocalDate.now(clock.withZone(KstTimestamps.KST));
-			LocalDate monthStart = today.withDayOfMonth(1);
-			accountsById = reads.findAccountsByIds(brandIds).stream()
-					.collect(Collectors.toMap(BrandAccountRow::id, Function.identity()));
-			postCountsByBrand = reads.countPostsByBrand(brandIds).stream()
-					.collect(Collectors.toMap(PostCountRow::brandId, PostCountRow::postCount));
-			callSumsByBrand = reads.sumCallCountsByBrand(brandIds, monthStart).stream()
-					.collect(Collectors.toMap(BrandCallSumRow::brandId, Function.identity()));
-		} else {
-			accountsById = Map.of();
-			postCountsByBrand = Map.of();
-			callSumsByBrand = Map.of();
-		}
+		Map<Long, BrandAccountRow> accountsById = adminReads.isPresent()
+				? adminReads.get().findAccountsByIds(brandIds).stream()
+						.collect(Collectors.toMap(BrandAccountRow::id, Function.identity()))
+				: Map.of();
 
 		return List.copyOf(links.stream()
-				.map(link -> assemble(link, usersById.get(link.userId()), accountsById.get(link.brandId()),
-						postCountsByBrand, callSumsByBrand))
+				.map(link -> assembleBase(link, usersById.get(link.userId()), accountsById.get(link.brandId())))
 				.toList());
 	}
 
-	private static Assembled assemble(BrandLinkRow link, AdminUserRow user, BrandAccountRow account,
-			Map<Long, Long> postCountsByBrand, Map<Long, BrandCallSumRow> callSumsByBrand) {
+	private static Assembled assembleBase(BrandLinkRow link, AdminUserRow user, BrandAccountRow account) {
 		// user는 app.brand_monitorings.user_id가 app.users(id) FK(ON DELETE CASCADE)라 활성 링크에
 		// 짝이 없을 수 없다 — 그래도 못 찾으면 데이터 정합 위반이니 조용히 삼키지 않고 바로 던진다.
 		if (user == null) {
 			throw new IllegalStateException("브랜드 연결의 유저를 찾을 수 없어요(userId=" + link.userId() + ")");
 		}
 		String username = account != null ? account.username() : link.username();
-		long postCount = postCountsByBrand.getOrDefault(link.brandId(), 0L);
-		BrandCallSumRow callSum = callSumsByBrand.get(link.brandId());
-		long callsTotal = callSum != null ? callSum.total() : 0L;
-		long callsMonth = callSum != null ? callSum.month() : 0L;
 		String collectionStatus = account != null ? BrandAccountAssembler.collectionStatus(account) : null;
 		OffsetDateTime backfillCompletedAt = account != null ? account.backfillCompletedAt() : null;
 		OffsetDateTime lastCollectedAt = account != null ? account.lastSweptAt() : null;
 
 		return new Assembled(link.brandId(), username, link.accountType(), user.id(), user.email(),
-				blankToNull(user.name()), blankToNull(user.companyName()), postCount, callsTotal, callsMonth,
+				blankToNull(user.name()), blankToNull(user.companyName()), 0L, 0L, 0L,
 				collectionStatus, link.collectionMonths(), backfillCompletedAt, link.createdAt(), lastCollectedAt);
+	}
+
+	/**
+	 * 주어진 brandId 집합에 대해서만 postCount·crawlingCalls 실값을 채운 새 목록을 돌려준다(원본은
+	 * 불변이라 record를 새로 만든다). monitoring 비활성이면(adminReads 없음) 그대로 돌려준다 — 이미
+	 * 0 자리표시자다.
+	 */
+	private List<Assembled> mergeAggregates(List<Assembled> rows, Set<Long> brandIds) {
+		if (rows.isEmpty() || adminReads.isEmpty()) {
+			return rows;
+		}
+		AdminBrandReadRepository reads = adminReads.get();
+		LocalDate today = LocalDate.now(clock.withZone(KstTimestamps.KST));
+		LocalDate monthStart = today.withDayOfMonth(1);
+		Map<Long, Long> postCountsByBrand = reads.countPostsByBrand(brandIds).stream()
+				.collect(Collectors.toMap(PostCountRow::brandId, PostCountRow::postCount));
+		Map<Long, BrandCallSumRow> callSumsByBrand = reads.sumCallCountsByBrand(brandIds, monthStart).stream()
+				.collect(Collectors.toMap(BrandCallSumRow::brandId, Function.identity()));
+		return rows.stream()
+				.map(a -> withAggregates(a, postCountsByBrand.getOrDefault(a.accountId(), 0L),
+						callSumsByBrand.get(a.accountId())))
+				.toList();
+	}
+
+	private static Assembled withAggregates(Assembled a, long postCount, BrandCallSumRow callSum) {
+		long callsTotal = callSum != null ? callSum.total() : 0L;
+		long callsMonth = callSum != null ? callSum.month() : 0L;
+		return new Assembled(a.accountId(), a.username(), a.mode(), a.userId(), a.userEmail(), a.userName(),
+				a.userOrgName(), postCount, callsTotal, callsMonth, a.collectionStatus(), a.collectionMonths(),
+				a.backfillCompletedAt(), a.registeredAt(), a.lastCollectedAt());
+	}
+
+	private static Set<Long> brandIdsOf(List<Assembled> rows) {
+		return rows.stream().map(Assembled::accountId).collect(Collectors.toSet());
 	}
 
 	private static AdminBrandAccountRow toResponse(Assembled a) {
@@ -209,10 +203,9 @@ public class AdminBrandAccountService {
 
 	/**
 	 * sort=<key>:<asc|desc> 파싱(계약 문서 §쿼리 파라미터) — 미지정은 registeredAt:desc, 그 외 형식·
-	 * 키·방향 오류는 전부 400 VALIDATION_FAILED. 타이브레이크(registeredAt desc → accountId asc →
-	 * user id asc)는 정렬 키와 무관하게 항상 마지막에 붙어 페이지 경계에서 순서가 흔들리지 않게 한다.
+	 * 키·방향 오류는 전부 400 VALIDATION_FAILED.
 	 */
-	private static Comparator<Assembled> resolveComparator(String sort) {
+	private static SortSpec parseSort(String sort) {
 		String raw = (sort == null) ? DEFAULT_SORT : sort;
 		int colon = raw.indexOf(':');
 		if (colon < 0) {
@@ -231,8 +224,15 @@ public class AdminBrandAccountService {
 		} else {
 			throw invalidSort(raw);
 		}
+		return new SortSpec(key, ascending);
+	}
 
-		Comparator<Assembled> base = switch (key) {
+	/**
+	 * 타이브레이크(registeredAt desc → accountId asc → user id asc)는 정렬 키와 무관하게 항상 마지막에
+	 * 붙어 페이지 경계에서 순서가 흔들리지 않게 한다.
+	 */
+	private static Comparator<Assembled> buildComparator(SortSpec spec) {
+		Comparator<Assembled> base = switch (spec.key()) {
 			case "user" -> Comparator.comparing(a -> a.userEmail().toLowerCase(Locale.ROOT));
 			case "username" -> Comparator.comparing(a -> a.username().toLowerCase(Locale.ROOT));
 			case "postCount" -> Comparator.comparingLong(Assembled::postCount);
@@ -241,9 +241,9 @@ public class AdminBrandAccountService {
 			case "collectionStatus" ->
 					Comparator.comparing(Assembled::collectionStatus, Comparator.nullsFirst(Comparator.naturalOrder()));
 			case "registeredAt" -> Comparator.comparing(Assembled::registeredAt);
-			default -> throw invalidSort(raw);   // ALLOWED_SORT_KEYS와 동기 — 도달 불가 방어
+			default -> throw invalidSort(spec.key() + ":" + (spec.ascending() ? "asc" : "desc"));   // 도달 불가 방어
 		};
-		if (!ascending) {
+		if (!spec.ascending()) {
 			base = base.reversed();
 		}
 		return base.thenComparing(Comparator.comparing(Assembled::registeredAt).reversed())
@@ -258,14 +258,13 @@ public class AdminBrandAccountService {
 	public record Result(List<AdminBrandAccountRow> rows, long total) {
 	}
 
+	private record SortSpec(String key, boolean ascending) {
+	}
+
 	/** 필터·정렬·조립 중간 표현 — 원시 타입을 그대로 들고 있어 정렬·검색이 문자열 변환 없이 돈다. */
 	private record Assembled(long accountId, String username, String mode, long userId, String userEmail,
 			String userName, String userOrgName, long postCount, long callsTotal, long callsMonth,
 			String collectionStatus, int collectionMonths, OffsetDateTime backfillCompletedAt,
 			OffsetDateTime registeredAt, OffsetDateTime lastCollectedAt) {
-	}
-
-	/** 60초 캐시 스냅샷 — {@code rows}는 {@link #loadAssembled()}에서 이미 불변으로 넘어온다. */
-	private record CachedSnapshot(List<Assembled> rows, Instant expiresAt) {
 	}
 }

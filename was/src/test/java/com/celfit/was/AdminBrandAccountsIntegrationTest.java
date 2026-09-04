@@ -7,7 +7,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.celfit.was.v1.admin.AdminBrandAccountService;
 import jakarta.servlet.http.Cookie;
 import java.sql.Connection;
 import java.time.Clock;
@@ -76,17 +75,12 @@ class AdminBrandAccountsIntegrationTest extends IntegrationTest {
 	DataSource dataSource;
 	@Autowired
 	PasswordEncoder passwordEncoder;
-	@Autowired
-	AdminBrandAccountService adminBrandAccountService;
 
 	private Cookie adminSession;
 	private long targetUserId;
 
 	@BeforeEach
 	void setUp() throws Exception {
-		// 조립 결과가 60초 캐시된다(2026-09-04, monitoring-ro 풀 경합 대응) — Spring 컨텍스트가 테스트
-		// 메서드 간 재사용되므로, 이전 테스트가 채운 캐시를 이 테스트가 그대로 보지 않도록 매번 비운다.
-		adminBrandAccountService.invalidateCacheForTests();
 		try (Connection conn = dataSource.getConnection()) {
 			ScriptUtils.executeSqlScript(conn, new ClassPathResource("monitoring-brand-schema.sql"));
 		}

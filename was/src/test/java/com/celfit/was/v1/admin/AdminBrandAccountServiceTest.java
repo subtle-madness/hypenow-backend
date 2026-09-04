@@ -6,35 +6,35 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
+import com.celfit.was.monitoring.AdminBrandReadRepository;
+import com.celfit.was.monitoring.AdminBrandReadRepository.BrandCallSumRow;
+import com.celfit.was.monitoring.AdminBrandReadRepository.PostCountRow;
 import com.celfit.was.monitoring.BrandLinkRepository;
 import com.celfit.was.monitoring.BrandLinkRow;
-import com.celfit.was.monitoring.BrandReadRepository;
 import com.celfit.was.monitoring.BrandReadRepository.BrandAccountRow;
-import com.celfit.was.monitoring.BrandReadRepository.BrandCallSumRow;
-import com.celfit.was.monitoring.BrandReadRepository.PostCountRow;
 import com.celfit.was.v1.common.V1ApiException;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
 
 /**
- * 어드민 브랜드 목록 계정 API 집계 순서 로직 검증(2026-09-03) — q 필터·정렬 6종·정렬 유효성·
- * offset/page/limit 정규화·월 경계·monitoring 비활성 경로·같은 계정 다중 유저 행을 고정 픽스처로
- * 고정한다. 실 DB 왕복·인가는 AdminBrandAccountsIntegrationTest가 커버(같은 관례는
- * AdminCrawlingUsageServiceTest 참조).
+ * 어드민 브랜드 목록 계정 API 집계 순서 로직 검증(2026-09-03, 2026-09-04 캐시 제거·페이지 분량 집계
+ * 반영) — q 필터·정렬 6종·정렬 유효성·offset/page/limit 정규화·월 경계·monitoring 비활성 경로·같은
+ * 계정 다중 유저 행·집계 호출 범위(페이지 분량 vs 전체)를 고정 픽스처로 고정한다. 실 DB 왕복·인가는
+ * AdminBrandAccountsIntegrationTest가 커버(같은 관례는 AdminCrawlingUsageServiceTest 참조).
  */
 class AdminBrandAccountServiceTest {
 
 	private final BrandLinkRepository links = mock(BrandLinkRepository.class);
-	private final BrandReadRepository reads = mock(BrandReadRepository.class);
+	private final AdminBrandReadRepository reads = mock(AdminBrandReadRepository.class);
 	private final AdminUserRepository users = mock(AdminUserRepository.class);
 
 	private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-08-20T01:00:00Z"), ZoneOffset.UTC);
@@ -334,10 +334,10 @@ class AdminBrandAccountServiceTest {
 		assertThat(result.rows()).extracting(AdminBrandAccountRow::mode).containsExactly("own", "competitor");
 	}
 
-	// --- 60초 캐시(2026-09-04, staging monitoring-ro 풀 경합 실측 대응) ---
+	// --- 집계 호출 범위: 캐시 없음, 페이지 분량 vs 전체(2026-09-04) ---
 
 	@Test
-	void 조립_결과는_60초_안에_재조회하면_리포지토리를_다시_부르지_않는다() {
+	void 캐시가_없어_두번_호출하면_리포지토리도_두번_불린다() {
 		given(links.findAllActive()).willReturn(List.of(
 				link(1, 10, 100, "a", "own", 12, "2026-08-01T00:00:00+09:00")));
 		given(users.findByIds(anyCollection())).willReturn(List.of(user(10, "u1@test.io", "", "")));
@@ -345,66 +345,77 @@ class AdminBrandAccountServiceTest {
 		given(reads.countPostsByBrand(anyCollection())).willReturn(List.of());
 		given(reads.sumCallCountsByBrand(anyCollection(), org.mockito.ArgumentMatchers.any())).willReturn(List.of());
 
-		AdminBrandAccountService service = service();   // 같은 인스턴스를 재사용해야 캐시가 걸린다
+		AdminBrandAccountService service = service();
 		service.list(allPage(), null, null);
-		// 정렬·검색이 바뀌어도 조립(4쿼리)은 캐시된 목록에서 재사용돼야 한다.
 		service.list(allPage(), "username:asc", "a");
 
-		org.mockito.Mockito.verify(links, org.mockito.Mockito.times(1)).findAllActive();
-		org.mockito.Mockito.verify(reads, org.mockito.Mockito.times(1)).findAccountsByIds(anyCollection());
+		Mockito.verify(links, Mockito.times(2)).findAllActive();
+		Mockito.verify(reads, Mockito.times(2)).findAccountsByIds(anyCollection());
 	}
 
 	@Test
-	void TTL_60초가_지나면_다시_조회한다() {
+	void 기본_정렬에서는_집계가_페이지에_남은_brandId로만_좁혀_불린다() {
+		// 링크 3건 중 registeredAt desc(기본 정렬) 상위 2건만 페이지에 남는다 — 집계는 그 2건의
+		// brandId(300, 200)로만 불려야 하고, 페이지에서 밀린 100은 넘기지 않아야 한다.
 		given(links.findAllActive()).willReturn(List.of(
-				link(1, 10, 100, "a", "own", 12, "2026-08-01T00:00:00+09:00")));
-		given(users.findByIds(anyCollection())).willReturn(List.of(user(10, "u1@test.io", "", "")));
+				link(1, 10, 100, "a", "own", 12, "2026-08-01T00:00:00+09:00"),   // 가장 오래됨 — 페이지 밖
+				link(2, 11, 200, "b", "own", 12, "2026-08-02T00:00:00+09:00"),
+				link(3, 12, 300, "c", "own", 12, "2026-08-03T00:00:00+09:00")));  // 가장 최신
+		given(users.findByIds(anyCollection())).willReturn(List.of(
+				user(10, "u10@test.io", "", ""), user(11, "u11@test.io", "", ""), user(12, "u12@test.io", "", "")));
 		given(reads.findAccountsByIds(anyCollection())).willReturn(List.of());
 		given(reads.countPostsByBrand(anyCollection())).willReturn(List.of());
 		given(reads.sumCallCountsByBrand(anyCollection(), org.mockito.ArgumentMatchers.any())).willReturn(List.of());
 
-		MutableClock clock = new MutableClock(Instant.parse("2026-08-20T01:00:00Z"));
-		AdminBrandAccountService service = new AdminBrandAccountService(links, users, Optional.of(reads), clock);
+		service().list(AdminPageRequest.ofOffset(0, 2), null, null);   // 기본 정렬(registeredAt:desc), limit=2
 
-		service.list(allPage(), null, null);
-		clock.advance(Duration.ofSeconds(61));   // CACHE_TTL(60초) 경과
-		service.list(allPage(), null, null);
+		ArgumentCaptor<java.util.Collection<Long>> captor = ArgumentCaptor.forClass(java.util.Collection.class);
+		Mockito.verify(reads).countPostsByBrand(captor.capture());
+		assertThat(captor.getValue()).containsExactlyInAnyOrder(300L, 200L);
 
-		org.mockito.Mockito.verify(links, org.mockito.Mockito.times(2)).findAllActive();
+		ArgumentCaptor<java.util.Collection<Long>> callsCaptor = ArgumentCaptor.forClass(java.util.Collection.class);
+		Mockito.verify(reads).sumCallCountsByBrand(callsCaptor.capture(), org.mockito.ArgumentMatchers.any());
+		assertThat(callsCaptor.getValue()).containsExactlyInAnyOrder(300L, 200L);
 	}
 
-	/** 테스트 전용 가변 Clock — {@link AdminBrandAccountService#CACHE_TTL} 경과를 재현한다. */
-	private static final class MutableClock extends Clock {
-		private final AtomicReference<Instant> instant;
-		private final ZoneId zone;
+	@Test
+	void postCount_정렬이면_집계가_전체_brandId로_불린다() {
+		given(links.findAllActive()).willReturn(List.of(
+				link(1, 10, 100, "a", "own", 12, "2026-08-01T00:00:00+09:00"),
+				link(2, 11, 200, "b", "own", 12, "2026-08-02T00:00:00+09:00"),
+				link(3, 12, 300, "c", "own", 12, "2026-08-03T00:00:00+09:00")));
+		given(users.findByIds(anyCollection())).willReturn(List.of(
+				user(10, "u10@test.io", "", ""), user(11, "u11@test.io", "", ""), user(12, "u12@test.io", "", "")));
+		given(reads.findAccountsByIds(anyCollection())).willReturn(List.of());
+		given(reads.countPostsByBrand(anyCollection())).willReturn(List.of(
+				new PostCountRow(100, 1), new PostCountRow(200, 2), new PostCountRow(300, 3)));
+		given(reads.sumCallCountsByBrand(anyCollection(), org.mockito.ArgumentMatchers.any())).willReturn(List.of());
 
-		MutableClock(Instant start) {
-			this(new AtomicReference<>(start), ZoneOffset.UTC);
-		}
+		// limit=2로 페이지를 잘라도 정렬(postCount)을 정하려면 순서를 매기기 전에 전 brandId가 필요하다.
+		service().list(AdminPageRequest.ofOffset(0, 2), "postCount:desc", null);
 
-		private MutableClock(AtomicReference<Instant> instant, ZoneId zone) {
-			this.instant = instant;
-			this.zone = zone;
-		}
+		ArgumentCaptor<java.util.Collection<Long>> captor = ArgumentCaptor.forClass(java.util.Collection.class);
+		Mockito.verify(reads).countPostsByBrand(captor.capture());
+		assertThat(captor.getValue()).containsExactlyInAnyOrder(100L, 200L, 300L);
+	}
 
-		@Override
-		public ZoneId getZone() {
-			return zone;
-		}
+	@Test
+	void 페이지_분량_집계_경로에서도_응답에_집계값이_올바르게_붙는다() {
+		given(links.findAllActive()).willReturn(List.of(
+				link(1, 10, 100, "a", "own", 12, "2026-08-01T00:00:00+09:00")));
+		given(users.findByIds(anyCollection())).willReturn(List.of(user(10, "u1@test.io", "", "")));
+		given(reads.findAccountsByIds(anyCollection())).willReturn(List.of(account(100, "a", null, null)));
+		given(reads.countPostsByBrand(Set.of(100L))).willReturn(List.of(new PostCountRow(100, 7)));
+		given(reads.sumCallCountsByBrand(org.mockito.ArgumentMatchers.eq(Set.of(100L)), org.mockito.ArgumentMatchers.any()))
+				.willReturn(List.of(new BrandCallSumRow(100, 55, 5)));
 
-		@Override
-		public Clock withZone(ZoneId zone) {
-			return new MutableClock(instant, zone);
-		}
+		AdminBrandAccountService.Result result = service().list(allPage(), null, null);   // 기본 정렬(페이지 분량 경로)
 
-		@Override
-		public Instant instant() {
-			return instant.get();
-		}
-
-		void advance(Duration duration) {
-			instant.updateAndGet(i -> i.plus(duration));
-		}
+		assertThat(result.rows()).hasSize(1);
+		AdminBrandAccountRow row = result.rows().get(0);
+		assertThat(row.postCount()).isEqualTo(7);
+		assertThat(row.crawlingCalls().total()).isEqualTo(55);
+		assertThat(row.crawlingCalls().month()).isEqualTo(5);
 	}
 
 	@Test
