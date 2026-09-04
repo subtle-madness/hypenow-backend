@@ -13,7 +13,7 @@
 |---|---|---|
 | GET | `/v1/admin/brand-monitoring/accounts` | 등록된 브랜드 목록(연결 단위) |
 
-목록은 서버에서 **최대 60초 인메모리 캐시**된다(2026-09-04 — monitoring-ro 커넥션 풀을 실사용자 API와 공유해서 매 요청 재조회를 피했다). 정렬·검색·페이지는 캐시된 목록에서 동작해 DB에 새로 쿼리를 날리지 않는다 - 등록·해지 직후 이 목록에 반영되기까지 최대 60초 지연될 수 있다.
+목록은 매 요청 최신이다(2026-09-04 - 캐시 제거. 어드민 조회는 전용 커넥션 풀(monitoring-admin)을 써서 실사용자 브랜드 대시보드·AI 어시스턴트가 쓰는 monitoring-ro 풀과 경합하지 않고, 게시물 수·콜 합계 집계는 postCount·crawlingCalls로 정렬할 때만 전체를 계산하며 그 외 정렬에서는 페이지 분량만 계산한다).
 
 ## 2. 인증·인가
 
@@ -44,8 +44,8 @@
 |---|---|
 | `user` | 등록한 유저의 이메일, 대소문자 무시 |
 | `username` | 브랜드 계정 아이디, 대소문자 무시 |
-| `postCount` | §6 `postCount` 값 |
-| `crawlingCalls` | §6 `crawlingCalls.total` 값(월간 값이 아니라 전체 누적 기준) |
+| `postCount` | §6 `postCount` 값. 순서를 정하려면 후보 전체를 집계해야 해서, 이 정렬을 쓰면 서버가 전체 후보(q 필터 적용 후) 대상으로 게시물 수를 계산한다(다른 정렬 키는 페이지 분량만 계산). |
+| `crawlingCalls` | §6 `crawlingCalls.total` 값(월간 값이 아니라 전체 누적 기준). `postCount`와 같은 이유로 이 정렬을 쓰면 전체 후보 대상으로 콜 합계를 계산한다. |
 | `collectionStatus` | 상태 문자열 알파벳순(`collecting` < `error` < `ready`). 값이 `null`인 행(monitoring 비활성 또는 계정 미확인)은 가장 작은 값으로 취급한다(오름차순이면 맨 앞, 내림차순이면 맨 끝) |
 | `registeredAt` | 이 유저가 이 계정을 등록한 시각(연결 생성 시각) |
 
