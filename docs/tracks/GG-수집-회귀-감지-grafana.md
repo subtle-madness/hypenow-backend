@@ -2,7 +2,7 @@
 
 - **소속 트랙군**: 운영 관측(crawler + monitoring 수집 파이프라인)
 - **의존**: 없음(감시층만 — 폴백 수정은 별도 브랜치 `fix/self-hiker-fallback-gaps`)
-- **상태**: 🔨 구현 완료·push, PR 승인 대기(브랜치 `feat/grafana-collection-alerts`, develop 대상)
+- **상태**: 🔨 PR #791 OPEN(develop 대상, 브랜치 `feat/grafana-collection-alerts`)
 
 ## 배경
 
