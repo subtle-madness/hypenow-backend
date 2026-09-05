@@ -37,4 +37,6 @@ APP_SCHEMA="CREATE SCHEMA IF NOT EXISTS app;"
 apply_dir analytics/src/main/resources/db/migration/analysis analysis ""    "$ROLES"
 apply_dir was/src/main/resources/db/migration/app            analysis app  "$APP_SCHEMA"
 apply_dir monitoring/src/main/resources/db/migration         monitoring "" "$ROLES"
+# crawler 마이그레이션은 롤·스키마·확장 전제가 없다(전수 확인 — public 스키마·bigserial·jsonb뿐).
+apply_dir crawler/src/main/resources/db/migration            crawler ""    ""
 echo "완료"

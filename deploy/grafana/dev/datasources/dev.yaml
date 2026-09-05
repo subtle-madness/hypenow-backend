@@ -21,6 +21,16 @@ datasources:
     user: dev
     jsonData: { database: monitoring, sslmode: disable, postgresVersion: 1700 }
     secureJsonData: { password: dev }
+  - name: HypeNow crawler (dev)
+    uid: hypenow-crawler-pg
+    type: postgres
+    access: proxy
+    editable: false
+    url: postgres:5432
+    database: crawler
+    user: dev
+    jsonData: { database: crawler, sslmode: disable, postgresVersion: 1700 }
+    secureJsonData: { password: dev }
   - name: Prometheus (dev)
     uid: hypenow-prometheus
     type: prometheus

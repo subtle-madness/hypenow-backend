@@ -55,18 +55,19 @@ bash deploy/grafana/dev/apply-migrations.sh
 
 ### 2-2. 시드 적용
 
-`seed.sql`은 2026-08-18 운영 실측 밀도를 복제한 **정상(초록) 시드**다. analysis·monitoring 두 DB를
-한 파일에 담고 `-- BEGIN <db>` / `-- END <db>` 주석으로 구간을 나눠 뒀다(psql 세션은 DB 하나만
-보므로 구간을 잘라 두 번 실행한다).
+`seed.sql`은 2026-08-18 운영 실측 밀도를 복제한 **정상(초록) 시드**다. analysis·monitoring·crawler
+세 DB를 한 파일에 담고 `-- BEGIN <db>` / `-- END <db>` 주석으로 구간을 나눠 뒀다(psql 세션은 DB
+하나만 보므로 구간을 잘라 세 번 실행한다).
 
 ```bash
 C="docker compose -f deploy/grafana/dev/compose.dev.yaml exec -T postgres psql -v ON_ERROR_STOP=1 -q -U dev"
 sed -n '/^-- BEGIN analysis/,/^-- END analysis/p'     deploy/grafana/dev/seed.sql | $C -d analysis
 sed -n '/^-- BEGIN monitoring/,/^-- END monitoring/p' deploy/grafana/dev/seed.sql | $C -d monitoring
+sed -n '/^-- BEGIN crawler/,/^-- END crawler/p'       deploy/grafana/dev/seed.sql | $C -d crawler
 ```
 
-`^-- ` 앵커를 빼면 안 된다 — 앵커 없는 패턴은 파일 상단 안내 주석 줄(그 안에 두 마커 문자열이
-다 들어 있다)을 구간 시작으로 잡아 analysis 구간까지 monitoring DB로 흘려보낸다.
+`^-- ` 앵커를 빼면 안 된다 — 앵커 없는 패턴은 파일 상단 안내 주석 줄(그 안에 마커 문자열이
+다 들어 있다)을 구간 시작으로 잡아 다른 DB 구간까지 흘려보낸다.
 
 **`seed.sql`은 재적용 가능하다**(각 구간 첫머리에서 시드 대상 테이블을 `TRUNCATE ... RESTART
 IDENTITY CASCADE` 한다). 난수도 `setseed`로 고정이라 재적용 때 같은 분포가 나온다.
@@ -76,22 +77,31 @@ IDENTITY CASCADE` 한다). 난수도 `setseed`로 고정이라 재적용 때 같
 | | 값 |
 |---|---|
 | analysis | users 53 · brand_monitorings 130 · campaigns 12 · monitoring_items 76 · registrations 20 · digests 20 · accounts 200 · contents 2,400 |
-| monitoring | brand_account 130 · target 73 · sweep_run 30 · alarm_event 97 · brand_hashtag_post 2,543 · brand_tagged_post 28,255 · brand_post_meta 8,000(판정 60%) · Hiker 콜 30일 ≈48,700(브랜드)+3,600(타깃) |
+| monitoring | brand_account 130 · target 73 · sweep_run 30 · alarm_event 97 · brand_hashtag_post 2,543 · brand_tagged_post 28,255 · brand_post_meta 8,000(판정 60%) · raw.fetch_payload 14일 ≈129,000(하루 5~15k) · post_snapshot 7,000 · brand_post_snapshot 4,200 · Hiker 콜 30일 ≈48,700(브랜드)+3,600(타깃) |
+| crawler(09-04~) | influencer 300 · crawl_run 84,000(COLLECT/REELS 각 14일×~3,000) · raw_profile 42,000(SELF_GQL 85%/HIKER_MOBILE 15%) · raw_media_page 210 |
 
 ### 2-3. 빨간불 상태 확인
 
 `seed-red.sql`은 초록 시드 위에 덧입혀 홈 신호등의 **DB 판정 타일 5개**(스윕 신선도·오늘 Hiker
 콜·미러 신선도·멈춘 등록·알림 발송 실패)를 전부 빨강으로 뒤집는다. 나머지 8개 타일은
-Prometheus/Loki/node-exporter 소관이라 여기서 못 만든다.
+Prometheus/Loki/node-exporter 소관이라 여기서 못 만든다. 09-04부터는 **수집 회귀 알람**(그룹
+`hypenow-collection`) 검증용으로 crawler·monitoring 구간에 "어제(KST) 수집이 사실상 멈췄다"
+시나리오도 덧붙는다(raw_profile 30건·REELS 런 40·fetch_payload 300·brand_post_snapshot 어제
+likes null ~60% — 09-02~09-04 인스타 로그아웃 프로필 401 사고를 재현한 값).
 
 ```bash
 sed -n '/^-- BEGIN analysis/,/^-- END analysis/p'     deploy/grafana/dev/seed-red.sql | $C -d analysis
 sed -n '/^-- BEGIN monitoring/,/^-- END monitoring/p' deploy/grafana/dev/seed-red.sql | $C -d monitoring
+sed -n '/^-- BEGIN crawler/,/^-- END crawler/p'       deploy/grafana/dev/seed-red.sql | $C -d crawler
 ```
 
 브랜드 폴더 2장의 빨간불도 같이 뒤집는다 — **[브랜드] 운영**(적재 결과 row): 오늘 신규 태그 게시물 0 ·
 백필 미완 브랜드 4 · enrich 잔여 600(빨강 임계 500 초과), **[브랜드] 광고 표기**: 오늘 판정 0건
 (판정 잡 정지 양상).
+
+알람 룰이 실제로 firing 하는지는 `curl -s -u admin:admin http://localhost:3300/api/v1/provisioning/alert-rules`
+로 룰 목록을 받아 확인하거나(§"알림" 문단 참조), Grafana UI의 Alerting → Alert rules에서 상태를 본다.
+평가 주기(rules.yaml의 `interval`)만큼 기다려야 상태가 갱신된다.
 
 복원은 **`seed.sql` 재적용**이면 된다(`down -v`까지 갈 필요 없다).
 
@@ -147,10 +157,21 @@ bash deploy/grafana/dev/apply-migrations.sh                     # §2-1
 - **데이터가 전부 목이다.** 운영 DB·운영 프로메테우스를 절대 붙이지 않는다(계정도 dev/dev).
 - **Loki는 스텁이다.** 로컬엔 로키를 띄우지 않아 `hypenow-loki` 데이터소스는 항상 연결 실패다 —
   로그 패널이 로컬에서 에러로 보이는 건 **정상**이고, 그 패널들의 검증은 운영에서 한다.
-- **알림(alerting)은 마운트하지 않는다.** 운영 `provisioning/alerting`은 컨택트포인트가 실제
-  디스코드라서 로컬에서 울리면 안 된다. 데이터소스도 운영 파일 대신 `./datasources/dev.yaml`로
-  대체한다 — **uid는 운영과 동일**(`hypenow-analysis-pg`·`hypenow-monitoring-pg`·`hypenow-prometheus`
-  ·`hypenow-loki`)해서 대시보드 JSON을 손대지 않고 그대로 쓴다.
+- **알림(alerting)은 룰·정책만 운영 파일을 그대로 마운트한다(09-04~).** `rules.yaml`·`policies.yaml`은
+  운영 `../provisioning/alerting`을 읽기 전용으로 그대로 써서 로컬에서 룰(SQL·reduce·threshold)
+  자체를 검증할 수 있다. **컨택포인트만 `./alerting/contact-points.yaml`로 대체**한다 — name·uid는
+  운영과 동일(`discord-ops`/`discord-ops-webhook`, policies.yaml이 이 이름을 참조하므로 다르면
+  프로비저닝이 실패한다)하되 type을 `webhook`으로, url을 아무것도 안 듣는 로컬 포트
+  (`http://127.0.0.1:9/dev-null`)로 바꿔서 룰이 firing 해도 **실제 디스코드로는 절대 안 나간다**.
+  검증은 `curl -u admin:admin http://localhost:3300/api/v1/provisioning/alert-rules`로 룰 목록을,
+  Grafana UI의 Alerting → Alert rules에서 firing 상태를 확인한다.
+  데이터소스는 운영 파일 대신 `./datasources/dev.yaml`로 대체한다 — **uid는 운영과 동일**
+  (`hypenow-analysis-pg`·`hypenow-monitoring-pg`·`hypenow-crawler-pg`·`hypenow-prometheus`·
+  `hypenow-loki`)해서 대시보드 JSON을 손대지 않고 그대로 쓴다.
+- **잔액 패널(`hypenow_vendor_balance`)은 로컬 무데이터가 정상이다.** 이 지표는 서버 크론
+  `deploy/scripts/vendor-balance.sh`가 node-exporter textfile 컬렉터로 쓰는 값이라, 로컬
+  node-exporter는 그 크론이 안 돌아 해당 시계열 자체가 없다 — Loki 스텁·호스트 디스크 지표와
+  같은 취급(검증은 운영에서, README §14-2-6 참조).
 - **postgres 초기화 스크립트가 다르다.** 운영 `db/init`은 `crawler`·`monitoring`·`was_reader` 롤을
   전제해서 하니스에선 초기화가 깨진다(`role "crawler" does not exist` → 컨테이너 exit 3).
   하니스는 `./initdb/01-create-monitoring-db.sql`로 `monitoring` DB만 만들고 `analysis`는

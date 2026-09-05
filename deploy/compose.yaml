@@ -556,8 +556,14 @@ services:
     mem_limit: 64m
     oom_score_adj: 500
     pid: host
-    command: ["--path.rootfs=/rootfs"]
-    volumes: ["/:/rootfs:ro"]
+    # textfile 컬렉터(09-04) — 벤더 잔액 크론(deploy/scripts/vendor-balance.sh)이 15분마다 쓰는
+    # hypenow_vendor_balance* 지표를 여기서 읽어 스크레이프한다. 디렉토리는 CD가 mkdir로
+    # 선생성한다 — docker가 마운트 시점에 만들면 root 소유가 되어 크론(ubuntu 사용자)이 못 쓰는
+    # 기존 함정과 같은 패턴(README §14-2-6).
+    command: ["--path.rootfs=/rootfs", "--collector.textfile.directory=/textfile"]
+    volumes:
+      - "/:/rootfs:ro"
+      - "./textfile:/textfile:ro"
 
   cadvisor:
     # 0.49는 containerd 스냅샷터 이미지 스토어(도커 29 기본, 서버 Storage Driver "overlayfs")를
