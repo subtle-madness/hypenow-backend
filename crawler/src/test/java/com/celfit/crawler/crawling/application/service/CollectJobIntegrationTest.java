@@ -54,6 +54,7 @@ class CollectJobIntegrationTest extends IntegrationTest {
     static final String USERNAME_CAPTION = "it-collect-caption-user";
     static final String CAPTION_SHORT_CODE = "it-caption-post";
     static final String CAPTION_TEXT = "오늘의 데일리룩 #ootd";
+    static final String USERNAME_FAILURE = "it-collect-visit-failure";
 
     @Autowired InfluencerRepository influencers;
     @Autowired RawProfileRepository rawProfiles;
@@ -63,6 +64,7 @@ class CollectJobIntegrationTest extends IntegrationTest {
     @Autowired com.celfit.crawler.crawling.application.port.out.RawMediaPageRepository rawMediaPages;
     @Autowired CrawlRunRepository crawlRuns;
     @Autowired CrawlExecutor executor;
+    @Autowired CrawlRunFailureRecorder failureRecorder;
     @Autowired SettingsService settings;
     @Autowired Clock clock;
     @Autowired JobProgress progress;
@@ -87,6 +89,9 @@ class CollectJobIntegrationTest extends IntegrationTest {
         jdbc.update("delete from raw_run_item where crawl_run_id in (select id from crawl_run where target_username = ?)", USERNAME_CAPTION);
         jdbc.update("delete from crawl_run where target_username = ?", USERNAME_CAPTION);
         jdbc.update("delete from influencer where username = ?", USERNAME_CAPTION);
+        jdbc.update("delete from raw_profile where influencer_id in (select id from influencer where username = ?)", USERNAME_FAILURE);
+        jdbc.update("delete from crawl_run where target_username = ?", USERNAME_FAILURE);
+        jdbc.update("delete from influencer where username = ?", USERNAME_FAILURE);
     }
 
     @Test
@@ -116,7 +121,7 @@ class CollectJobIntegrationTest extends IntegrationTest {
                 influencers, rawProfiles, contents,
                 new ContentUpserter(contents, clock), captionUpserter, rawComments, rawMediaPages,
                 profileSource, commentSource, java.util.List.of(), executor, settings, clock,
-                progress, new JobStopFlag(), new TransactionTemplate(txManager));
+                progress, new JobStopFlag(), new TransactionTemplate(txManager), failureRecorder);
 
         var summary = job.run(TriggerType.MANUAL);
         assertThat(summary.visited()).isEqualTo(1);
@@ -170,7 +175,7 @@ class CollectJobIntegrationTest extends IntegrationTest {
                 influencers, rawProfiles, contents,
                 new ContentUpserter(contents, clock), captionUpserter, rawComments, rawMediaPages,
                 profileSource, commentSource, java.util.List.of(), executor, settings, clock,
-                progress, new JobStopFlag(), new TransactionTemplate(txManager));
+                progress, new JobStopFlag(), new TransactionTemplate(txManager), failureRecorder);
 
         var summary = job.run(TriggerType.MANUAL);
         assertThat(summary.visited()).isEqualTo(1);
@@ -312,4 +317,62 @@ class CollectJobIntegrationTest extends IntegrationTest {
     }
 
     // rejudge 선정(오래된 판정 우선·재료 갱신 조건)은 BeautySelectionIntegrationTest가 고정한다.
+
+    // ---------------------------------------------------------------------
+    // 방문 트랜잭션 롤백 후에도 crawl_run에 실패 흔적이 남는지 — 실 Postgres로 검증.
+    // 프로필 응답에 userId가 없으면(자체·Hiker 폴백 셰이프가 예상과 다를 때 등) refreshProfile이
+    // ApifyException을 던지는데, 그 시점엔 이미 같은 방문 트랜잭션 안에서 raw_profile 저장과
+    // influencer.followers/lastProfiledAt 세팅까지 끝난 뒤다 — 트랜잭션 롤백으로 그 변경들과
+    // CrawlExecutor가 남긴 crawl_run(SUCCEEDED)까지 전부 사라지는 것이 배경 버그다.
+    // CrawlRunFailureRecorder가 REQUIRES_NEW로 별도 커밋한 FAILED 행만 살아남아야 한다.
+    // ---------------------------------------------------------------------
+    @Test
+    void 방문_트랜잭션이_롤백돼도_crawl_run에_FAILED_행이_username을_포함해_남고_다른_변경은_롤백된다() {
+        Influencer inf = new Influencer(USERNAME_FAILURE);
+        inf.setStatus(InfluencerStatus.QUALIFIED);
+        inf.setBeauty(true);
+        Long infId = influencers.save(inf).getId();
+
+        Map<String, Object> noUserId = new LinkedHashMap<>();
+        noUserId.put("username", USERNAME_FAILURE);
+        noUserId.put("followersCount", 999L);   // userId 없음 — refreshProfile이 ApifyException으로 방문 실패
+
+        ProfileSourceSelector profileSource = mock(ProfileSourceSelector.class);
+        when(profileSource.currentSource()).thenReturn(RawSource.APIFY_ACTOR);
+        when(profileSource.fetchAndSupplement(any(), any(), any()))
+                .thenReturn(new CrawlExecutor.Execution(1L, List.of(noUserId)));
+
+        CommentSourceSelector commentSource = mock(CommentSourceSelector.class); // 빈 열거 → 댓글 호출 없음
+
+        CollectJob job = new CollectJob(new CollectProperties(10, 50, 3, 7, false),
+                influencers, rawProfiles, contents,
+                new ContentUpserter(contents, clock), captionUpserter, rawComments, rawMediaPages,
+                profileSource, commentSource, java.util.List.of(), executor, settings, clock,
+                progress, new JobStopFlag(), new TransactionTemplate(txManager), failureRecorder);
+
+        var summary = job.run(TriggerType.MANUAL);
+        assertThat(summary.failedVisits()).isEqualTo(1);
+        assertThat(summary.visited()).isZero();
+
+        // 핵심 검증 1: 방문 트랜잭션이 롤백돼도 crawl_run FAILED 행이 새 트랜잭션으로 남아 있다.
+        List<Map<String, Object>> failedRuns = jdbc.queryForList(
+                "select job, trigger_type, target_username, error_message from crawl_run "
+                        + "where target_username = ? and status = 'FAILED'", USERNAME_FAILURE);
+        assertThat(failedRuns).hasSize(1);
+        Map<String, Object> row = failedRuns.get(0);
+        assertThat(row.get("job")).isEqualTo(JobName.COLLECT.name());
+        assertThat(row.get("trigger_type")).isEqualTo(TriggerType.MANUAL.name());
+        assertThat((String) row.get("error_message")).as("어느 계정이 왜 실패했는지 이 행만으로 알 수 있어야 한다")
+                .contains(USERNAME_FAILURE);
+
+        // 핵심 검증 2: 같은 롤백된 트랜잭션 안에서 있었던 다른 변경(followers·lastProfiledAt·raw_profile)은
+        // 남지 않아야 한다 — FAILED 행 영속화가 실패한 방문의 부작용까지 살려내면 안 된다.
+        Influencer reloaded = influencers.findById(infId).orElseThrow();
+        assertThat(reloaded.getFollowers()).isNull();
+        assertThat(reloaded.getLastProfiledAt()).isNull();
+        assertThat(reloaded.getLastCollectedAt()).isNull();
+        Long rawProfileCount = jdbc.queryForObject(
+                "select count(*) from raw_profile where influencer_id = ?", Long.class, infId);
+        assertThat(rawProfileCount).isZero();
+    }
 }

@@ -76,6 +76,7 @@ class CollectJobTest {
     SettingsService settings = mock(SettingsService.class);
     JobProgress progress = mock(JobProgress.class);
     JobStopFlag stopFlag = new JobStopFlag();
+    CrawlRunFailureRecorder failureRecorder = mock(CrawlRunFailureRecorder.class);
     // 실객체 주입 — execute()가 콜백을 즉시 실행하므로 방문 단위 트랜잭션 래핑을 그대로 재현한다.
     TransactionTemplate txTemplate = new TransactionTemplate(mock(PlatformTransactionManager.class));
 
@@ -182,7 +183,7 @@ class CollectJobTest {
         return new CollectJob(props, influencers, rawProfiles, contents,
                 new ContentUpserter(contents, CLOCK), captionUpserter, rawComments,
                 rawMediaPages, profileSourceSelector, commentSource, mediaFetchers, executor, settings,
-                CLOCK, progress, stopFlag, txTemplate);
+                CLOCK, progress, stopFlag, txTemplate, failureRecorder);
     }
 
     @Test
@@ -228,6 +229,8 @@ class CollectJobTest {
         verify(influencers).save(gone);
         assertThat(s.failedVisits()).isZero();   // 재시도 무의미 — 실패로 세지 않는다
         assertThat(gone.getLastCollectedAt()).isNull();  // 방문 완료로도 치지 않는다
+        // 404 소프트 딜리트는 방문 "실패"가 아니라 종결 — crawl_run 실패 행을 남기지 않는다
+        verify(failureRecorder, never()).recordFailed(any(), any(), any(), any(), any());
     }
 
     // ── 확인된 빈 응답(자체·Hiker 폴백 모두 계정 없음) 30일 수명 정책 ──
@@ -247,6 +250,7 @@ class CollectJobTest {
         assertThat(dormant.getStatus()).isEqualTo(InfluencerStatus.DELETED);
         verify(influencers).save(dormant);
         assertThat(s.failedVisits()).isZero();   // 재시도 무의미 — 404와 동일 취급
+        verify(failureRecorder, never()).recordFailed(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -263,6 +267,8 @@ class CollectJobTest {
 
         assertThat(recent.getStatus()).isEqualTo(InfluencerStatus.QUALIFIED);
         assertThat(s.failedVisits()).isEqualTo(1);
+        verify(failureRecorder).recordFailed(eq(JobName.COLLECT), eq(TriggerType.MANUAL), eq("recent_empty"),
+                any(), argThat(msg -> msg.contains("recent_empty")));
     }
 
     @Test
@@ -279,6 +285,8 @@ class CollectJobTest {
 
         assertThat(fresh.getStatus()).isEqualTo(InfluencerStatus.QUALIFIED);
         assertThat(s.failedVisits()).isEqualTo(1);
+        verify(failureRecorder).recordFailed(eq(JobName.COLLECT), eq(TriggerType.MANUAL), eq("fresh_empty"),
+                any(), argThat(msg -> msg.contains("fresh_empty")));
     }
 
     static Influencer influencer(Long id, String username, Instant firstCollectedAt, Instant lastCollectedAt) {
@@ -472,6 +480,10 @@ class CollectJobTest {
         assertThat(summary.visited()).isEqualTo(0);
         assertThat(inf.getLastCollectedAt()).isNull();     // 방문 시각 미갱신
         assertThat(inf.getFirstCollectedAt()).isNull();
+        // 방문 트랜잭션 롤백으로 CrawlExecutor가 남긴 crawl_run도 함께 사라지므로,
+        // 트랜잭션 밖에서 별도로 실패 흔적(username 포함)을 남겨야 한다.
+        verify(failureRecorder).recordFailed(eq(JobName.COLLECT), eq(TriggerType.MANUAL), eq("bob"),
+                any(), argThat(msg -> msg.contains("bob")));
     }
 
     // ---------------------------------------------------------------------
@@ -495,6 +507,8 @@ class CollectJobTest {
         assertThat(summary.visited()).isZero();
         assertThat(inf.getLastCollectedAt()).isNull();   // 북키핑 미갱신 — 다음 실행 재선정
         verify(rawProfiles, never()).save(any());
+        verify(failureRecorder).recordFailed(eq(JobName.COLLECT), eq(TriggerType.MANUAL), eq("alice"),
+                any(), argThat(msg -> msg.contains("alice")));
     }
 
     @Test
@@ -513,6 +527,8 @@ class CollectJobTest {
         assertThat(summary.failedVisits()).isEqualTo(1);
         assertThat(summary.visited()).isZero();
         assertThat(inf.getLastCollectedAt()).isNull();
+        verify(failureRecorder).recordFailed(eq(JobName.COLLECT), eq(TriggerType.MANUAL), eq("alice"),
+                any(), argThat(msg -> msg.contains("alice") && msg.contains("프로필 요청 실패")));
     }
 
     // ---------------------------------------------------------------------
@@ -876,6 +892,10 @@ class CollectJobTest {
         assertThat(summary.visited()).isEqualTo(1);
         assertThat(bad.getLastCollectedAt()).isNull();          // 실패 방문 — 시각 미갱신
         assertThat(good.getLastCollectedAt()).isEqualTo(NOW);   // 다음 인플루언서는 정상 처리
+        // ApifyException이 아닌 일반 RuntimeException도 동일하게 실패 흔적을 남긴다
+        verify(failureRecorder).recordFailed(eq(JobName.COLLECT), eq(TriggerType.MANUAL), eq("bad_user"),
+                any(), argThat(msg -> msg.contains("bad_user") && msg.contains("예상 못한 런타임 오류")));
+        verify(failureRecorder, never()).recordFailed(any(), any(), eq("good_user"), any(), any());
     }
 
     // ---------------------------------------------------------------------

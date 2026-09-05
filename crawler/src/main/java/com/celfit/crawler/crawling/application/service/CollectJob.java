@@ -82,6 +82,7 @@ public class CollectJob {
     private final JobProgress progress;
     private final JobStopFlag stopFlag;
     private final TransactionTemplate txTemplate;
+    private final CrawlRunFailureRecorder failureRecorder;
 
     public CollectJob(CollectProperties collectProps, InfluencerRepository influencers,
                       RawProfileRepository rawProfiles, ContentRepository contents,
@@ -91,7 +92,8 @@ public class CollectJob {
                       ProfileSourceSelector profileSourceSelector, CommentSourceSelector commentSource,
                       List<UserMediaPageFetcher> mediaFetchers,
                       CrawlExecutor executor, SettingsService settings, Clock clock, JobProgress progress,
-                      JobStopFlag stopFlag, TransactionTemplate txTemplate) {
+                      JobStopFlag stopFlag, TransactionTemplate txTemplate,
+                      CrawlRunFailureRecorder failureRecorder) {
         this.collectProps = collectProps;
         this.influencers = influencers;
         this.rawProfiles = rawProfiles;
@@ -109,6 +111,7 @@ public class CollectJob {
         this.progress = progress;
         this.stopFlag = stopFlag;
         this.txTemplate = txTemplate;
+        this.failureRecorder = failureRecorder;
     }
 
     /**
@@ -164,6 +167,7 @@ public class CollectJob {
                           java.util.concurrent.atomic.AtomicInteger upserted,
                           java.util.concurrent.atomic.AtomicInteger collected,
                           java.util.concurrent.atomic.AtomicInteger failed) {
+        Instant startedAt = clock.instant();
         try {
             VisitResult r = txTemplate.execute(status -> visit(inf, trigger));
             upserted.addAndGet(r.upserted());
@@ -177,6 +181,13 @@ public class CollectJob {
             log.info("collect 계정 소멸(404) — DELETED: {}", inf.getUsername());
         } catch (RuntimeException e) {
             failed.incrementAndGet();   // 인플루언서 단위 실패(방문 트랜잭션 롤백) — 다음 실행 재시도
+            // 방문 트랜잭션이 롤백되면 그 안에서 CrawlExecutor가 이미 남긴 crawl_run 행도
+            // 함께 사라진다(CrawlExecutor 클래스 주석 참고) — 그래서 여기(트랜잭션 밖)서
+            // 별도 트랜잭션으로 대표 실패 행 1건을 남긴다. 어느 하위 단계에서 터졌든 이
+            // 계정의 방문 자체가 실패했다는 사실은 이 행 하나로 충분하다.
+            String detail = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            failureRecorder.recordFailed(JobName.COLLECT, trigger, inf.getUsername(), startedAt,
+                    inf.getUsername() + " — " + detail);
             log.warn("collect 방문 실패: {}", inf.getUsername(), e);
         } finally {
             progress.advance(JobName.COLLECT, 1);
