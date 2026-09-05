@@ -131,11 +131,25 @@ public class FailoverInstagramSource implements InstagramSource {
 		}
 		try {
 			T r = selfCall.get();
-			// 댓글 미완주(CommentsFetch.complete=false)는 라우팅 자체는 성공이라 폴백하지 않지만,
-			// 커버리지 저하가 "ok"에 묻히면 관측이 안 되므로 별도 outcome으로 구분한다(F9, 서킷·폴백
-			// 동작은 그대로 — 관측만 바뀐다).
-			String outcome = (r instanceof CommentsFetch cf && !cf.complete()) ? "partial" : "ok";
-			metrics.record(path, "self", outcome);
+			if (r instanceof CommentsFetch cf && !cf.complete()) {
+				// V8 — 댓글 미완주(complete=false, 중간 페이지 실패로 뒤 페이지 누락)를 예전엔
+				// "partial" 관측만 남기고 그대로 반환해 커버리지 저하가 조용히 굳어졌다. "self가
+				// 반복 실패하면 무조건 Hiker가 돌아야 한다"는 원칙에 따라 같은 콜 안에서 Hiker로
+				// 승격한다 — Hiker가 성공하면 그 결과(더 완전한 커버리지)를 쓰고, Hiker도
+				// 실패하면 self가 이미 받아둔 부분 결과(예: 1페이지 SSR분)를 그대로 보존해 데이터
+				// 유실을 막는다.
+				try {
+					T hikerResult = hikerCall.get();
+					metrics.record(path, "hiker", "fallback:PARTIAL");
+					return hikerResult;
+				} catch (RuntimeException hikerFailure) {
+					log.warn("자체크롤 {} 댓글 부분 결과 — Hiker 재확인도 실패, self 부분 결과 보존: {}",
+							path, hikerFailure.getMessage(), hikerFailure);
+					metrics.record(path, "self", "partial");
+					return r;
+				}
+			}
+			metrics.record(path, "self", "ok");
 			return r;
 		} catch (UnsupportedOperationException e) {
 			T r = hikerCall.get();

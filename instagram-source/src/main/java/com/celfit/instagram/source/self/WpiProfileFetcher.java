@@ -74,9 +74,14 @@ public class WpiProfileFetcher {
 		}
 		JsonNode user = root.path("data").path("user");
 		if (user.isMissingNode() || user.isNull() || user.isEmpty()) {
-			// 존재하지 않는 계정도 200 + user:null로 온다 — 폴백 없이 NOT_FOUND.
-			throw new SelfCrawlException(SelfErrorClass.NOT_FOUND,
-					"web_profile_info user 부재: " + username);
+			// V7 — 09-02부터 IG가 로그아웃 wpi 요청에 401 대신 200 + user:null(또는 빈 객체)을
+			// 주는 사례가 실측됐다(08-18 crawler 실측: 이런 계정도 Hiker로는 수집 가능). 이걸
+			// NOT_FOUND로 확정하면 FailoverInstagramSource가 Hiker 재확인 없이 SubjectNotFoundException으로
+			// 끝내버려 존재하는 계정을 부재로 오판정한다 — HTTP 404(진짜 확정 부재, ofStatus 분기)와
+			// 달리 이 경로는 비확정이라 OTHER로 던져 Hiker 재확인을 유도한다. Hiker가 404를 주면
+			// 그때 비로소 SubjectNotFoundException으로 확정된다(Hiker 경로 계약).
+			throw new SelfCrawlException(SelfErrorClass.OTHER,
+					"web_profile_info user 부재(200, 비확정 — Hiker 재확인 필요): " + username);
 		}
 		if (user.path("is_private").asBoolean(false)) {
 			throw new PrivateAccountException("비공개 계정: " + username);

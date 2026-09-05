@@ -218,10 +218,18 @@ class FeedUserPostsFetcherTest {
 		assertThat(posts.get(0).thumbnailUrl()).isNull();
 	}
 
+	/**
+	 * V9 — items:[]는 "게시물 0개인 실계정"과 "로그아웃에 빈 목록을 주는 차단"이 200 + 빈 배열로
+	 * 동일하게 온다(09-02부터 로그아웃 표면 전면 차단 실측, 구분 신호 없음). 정상 0건으로 단정하면
+	 * 진짜 차단을 놓치므로 비확정 OTHER로 던져 Hiker 재확인을 강제한다(Hiker도 0건이면 진짜 0건).
+	 */
 	@Test
-	void 빈_items는_빈_리스트() {
+	void 빈_items는_비확정_OTHER로_hiker_재확인을_유도한다() {
 		String body = "{\"items\":[],\"num_results\":0,\"status\":\"ok\"}";
-		assertThat(fetcher(body, 200).fetchRecentPosts("nasa", "528817151")).isEmpty();
+		assertThatThrownBy(() -> fetcher(body, 200).fetchRecentPosts("nasa", "528817151"))
+				.isInstanceOf(SelfCrawlException.class)
+				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
+						.isEqualTo(SelfErrorClass.OTHER));
 	}
 
 	// ── 캡션 3-상태 구분(데이터 보호 결함 수정 — 수정 3, 사용자 요구: 캡션 결손 제로) ──

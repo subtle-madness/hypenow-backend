@@ -60,6 +60,14 @@ public class FeedUserPostsFetcher {
 			throw new SelfCrawlException(SelfErrorClass.OTHER,
 					"feed/user items 부재(예상외 셰이프) userId=" + userId);
 		}
+		if (items.isEmpty()) {
+			// V9 — items:[]는 "게시물 0개인 실계정"과 "로그아웃에 빈 목록을 주는 차단"이 200 +
+			// 빈 배열로 동일하게 온다(구분 신호 없음, 09-02부터 로그아웃 표면 전면 차단 실측). 정상
+			// 0건으로 단정하면 진짜 차단을 놓치므로 비확정 OTHER로 던져 Hiker 재확인을 강제한다 —
+			// Hiker도 0건이면 그게 진짜 0건이다.
+			throw new SelfCrawlException(SelfErrorClass.OTHER,
+					"feed/user items 빈 배열(비확정 — Hiker 재확인 필요) userId=" + userId);
+		}
 		List<PostInfo> posts = new ArrayList<>();
 		for (JsonNode item : items) {
 			posts.add(toPost(item, username, userId));

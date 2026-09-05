@@ -275,7 +275,8 @@ class CrawlExecutorTest extends IntegrationTest {
         var counting = new CountingHikerHttp(raw, paidCalls);
         var fetcher = new SelfWithHikerFallbackProfileFetcher(
                 new SelfProfileFetcher(web, executor, om, java.time.Duration.ZERO),
-                new HikerMobileProfileFetcher(counting, executor, paidCalls, om), executor);
+                new HikerMobileProfileFetcher(counting, executor, paidCalls, om), executor,
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
 
         var execution = fetcher.fetch(JobName.QUALIFY,
                 List.of("ok1", "ok2", "ok3", "bugged1", "bugged2"), TriggerType.MANUAL);

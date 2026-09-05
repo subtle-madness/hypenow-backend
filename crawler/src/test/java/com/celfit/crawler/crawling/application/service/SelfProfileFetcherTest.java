@@ -142,9 +142,10 @@ class SelfProfileFetcherTest {
         assertThat(ProfileExtractor.username(ex.items().get(0), RawSource.SELF_GQL)).isEqualTo("ok_user");
     }
 
-    // 429(rate limit)가 연속으로 임계값만큼 나면 IP 스로틀 신호로 보고 남은 계정을 두드리지 않고 중단한다.
-    // (스로틀 상태에서 계속 두드리면 스로틀만 깊어지고 홈 IP까지 위험)
-    @Test void 연속_429가_임계값에_도달하면_남은_계정을_두드리지_않고_중단한다() {
+    // 429가 20명 전원에게 나도 SelfProfileFetcher 단독으로는 배치를 중단하지 않는다 —
+    // 배치 단위 회로 차단은 제거됐고(죽은 코드), 계정별 재시도(BLOCK_MAX_ATTEMPTS) 소진 후
+    // blockedOut 수집만 한다. 프로세스 수준 헬스 게이트는 컴포지트(SelfWithHikerFallbackProfileFetcherTest)가 검증한다.
+    @Test void 연속_429가_전원에게_나도_배치는_중단되지_않고_전_계정을_시도한다() {
         java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
         InstagramWebClient web = new InstagramWebClient() {
             @Override public Response get(String url) {
@@ -157,44 +158,17 @@ class SelfProfileFetcherTest {
         };
         var f = new SelfProfileFetcher(web, passthroughExecutor(), new ObjectMapper(), Duration.ZERO);
 
-        // 20명을 넣어도 임계값만큼만 호출하고 멈춘다.
         List<String> many = java.util.stream.IntStream.range(0, 20).mapToObj(i -> "u" + i).toList();
         var ex = f.fetch(JobName.QUALIFY, many, TriggerType.MANUAL);
 
         assertThat(ex.items()).isEmpty();
-        // 병렬(FETCH_CONCURRENCY) 회로 차단 — 트립 시점에 진행 중이던 요청까지는 나갈 수 있다
-        assertThat(calls.get()).isBetween(SelfProfileFetcher.RATE_LIMIT_STREAK_LIMIT,
-                SelfProfileFetcher.RATE_LIMIT_STREAK_LIMIT + SelfProfileFetcher.FETCH_CONCURRENCY - 1);
-        assertThat(calls.get()).isLessThan(20);
+        // 계정당 최대 BLOCK_MAX_ATTEMPTS회씩 전원 시도 — 배치 중단 없음
+        assertThat(calls.get()).isEqualTo(20 * SelfProfileFetcher.BLOCK_MAX_ATTEMPTS);
     }
 
-    // 401/403(하드 블록)도 rate-limit/블록 신호 — 429처럼 연속 임계값에서 회로를 트립시킨다.
-    // (인스타는 과도한 요청 시 429 소프트 → 401 하드 블록으로 에스컬레이션하므로 둘 다 잡아야 한다)
-    @Test void 연속_401_하드블록도_임계값에_도달하면_배치를_중단한다() {
-        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
-        InstagramWebClient web = new InstagramWebClient() {
-            @Override public Response get(String url) {
-                calls.incrementAndGet();
-                return new Response(401, "", Map.of());
-            }
-            @Override public Response post(String url, String formBody, Map<String, String> headers) {
-                throw new UnsupportedOperationException();
-            }
-        };
-        var f = new SelfProfileFetcher(web, passthroughExecutor(), new ObjectMapper(), Duration.ZERO);
-
-        List<String> many = java.util.stream.IntStream.range(0, 20).mapToObj(i -> "u" + i).toList();
-        var ex = f.fetch(JobName.QUALIFY, many, TriggerType.MANUAL);
-
-        assertThat(ex.items()).isEmpty();
-        assertThat(calls.get()).isBetween(SelfProfileFetcher.RATE_LIMIT_STREAK_LIMIT,
-                SelfProfileFetcher.RATE_LIMIT_STREAK_LIMIT + SelfProfileFetcher.FETCH_CONCURRENCY - 1);
-    }
-
-    // 성공(200)이 사이에 끼면 연속 카운터가 리셋 — 간헐적 429는 회로를 트립시키지 않는다.
-    @Test void 성공이_사이에_끼면_429_연속_카운터가_리셋되어_중단하지_않는다() {
-        // 계정별 패턴: 1회차 429 → 2회차 200. 로테이팅 프록시 전제라 재시도가 새 IP로 나가
-        // 성공하고, 성공이 연속 카운터를 리셋하므로 회로는 트립하지 않는다.
+    // 성공(200)이 사이에 끼어도, 안 끼어도 계정별 재시도는 서로 독립 — 회귀 확인용 회복 케이스.
+    @Test void 성공이_사이에_끼면_해당_계정은_재시도로_회복한다() {
+        // 계정별 패턴: 1회차 429 → 2회차 200. 로테이팅 프록시 전제라 재시도가 새 IP로 나가 성공한다.
         Map<String, java.util.concurrent.atomic.AtomicInteger> perUser = Map.of(
                 "a", new java.util.concurrent.atomic.AtomicInteger(),
                 "b", new java.util.concurrent.atomic.AtomicInteger());
@@ -263,6 +237,77 @@ class SelfProfileFetcherTest {
         assertThat(calls.get()).isEqualTo(SelfProfileFetcher.BLOCK_MAX_ATTEMPTS);
         assertThat(ex.items()).isEmpty();       // 소진 — 방문 실패로 다음 실행 재시도
         assertThat(ex.notFound()).isEmpty();    // 404(계정 소멸)와는 구분된다
+    }
+
+    // 블록이 BLOCK_MAX_ATTEMPTS까지 소진되면 blockedOut에 담겨 컴포지트가 Hiker 폴백을 판단할 수 있다.
+    @Test void 블록_응답이_최대_시도까지_소진되면_blockedOut에_수집된다() {
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                return new Response(401, "", Map.of());
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        var f = new SelfProfileFetcher(web, passthroughExecutor(), new ObjectMapper(), Duration.ZERO);
+
+        List<String> badRequest = new java.util.ArrayList<>();
+        List<String> empty = new java.util.ArrayList<>();
+        List<String> blocked = new java.util.ArrayList<>();
+        ApifyResult r = f.collect(List.of("blocked_user"), badRequest, empty, blocked);
+
+        assertThat(r.items()).isEmpty();
+        assertThat(r.notFound()).isEmpty();
+        assertThat(blocked).containsExactly("blocked_user");
+    }
+
+    // 전송 오류(407·타임아웃·JSON 파싱 실패 등)도 블록과 동일한 재시도 규칙을 따르며,
+    // 소진되면 blockedOut에 담긴다 — 재시도 없이 스킵하던 기존 동작과 달리 폴백 대상이 된다.
+    @Test void 전송_오류도_재시도_후_소진되면_blockedOut에_수집된다() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                calls.incrementAndGet();
+                throw new ApifyException("인스타 요청 실패: BUFFER_UNDERFLOW with EOF");
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        var f = new SelfProfileFetcher(web, passthroughExecutor(), new ObjectMapper(), Duration.ZERO);
+
+        List<String> badRequest = new java.util.ArrayList<>();
+        List<String> empty = new java.util.ArrayList<>();
+        List<String> blocked = new java.util.ArrayList<>();
+        ApifyResult r = f.collect(List.of("flaky_user"), badRequest, empty, blocked);
+
+        assertThat(calls.get()).isEqualTo(SelfProfileFetcher.BLOCK_MAX_ATTEMPTS);   // 재시도 후 소진
+        assertThat(r.items()).isEmpty();
+        assertThat(blocked).containsExactly("flaky_user");
+    }
+
+    // 전송 오류도 재시도 중간에 회복(성공)하면 정상 확보 — 블록과 동일한 회복 경로.
+    @Test void 전송_오류는_재시도_중_성공하면_확보한다() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                if (calls.getAndIncrement() < 1) {
+                    throw new ApifyException("407 Proxy Authentication Required");
+                }
+                return new Response(200,
+                        """
+                        {"data":{"user":{"username":"recovered","id":"1"}}}""", Map.of());
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        var f = new SelfProfileFetcher(web, passthroughExecutor(), new ObjectMapper(), Duration.ZERO);
+
+        var ex = f.fetch(JobName.COLLECT, List.of("recovered"), TriggerType.MANUAL);
+
+        assertThat(calls.get()).isEqualTo(2);
+        assertThat(ex.items()).hasSize(1);
     }
 
     @Test void 상태코드_400은_badRequestOut에_수집되고_스킵된다() {

@@ -21,6 +21,11 @@ import org.springframework.stereotype.Component;
 /**
  * 액터 실행 1회를 crawl_run으로 감싼다: RUNNING 기록 → 실행 → SUCCEEDED/FAILED 마감.
  * crawl_run 저장은 REQUIRES_NEW가 아니라 호출자 트랜잭션에 합류한다 — 잡 단위 원자성 우선.
+ * 그래서 호출자가 "작업 단위 = 트랜잭션 1개"로 감싸고 있다면(CollectJob.visitOne 등), 여기서
+ * 이미 RUNNING/SUCCEEDED/FAILED로 마감해 save()까지 한 crawl_run 행도 그 트랜잭션이 나중에
+ * (이 메서드 밖에서 던져진 다른 예외로) 롤백되면 함께 사라진다 — 이 클래스 자체는 그 상황을
+ * 감지할 수 없다. 그런 호출자는 트랜잭션 롤백 후 잡히는 catch에서 별도로 실패 흔적을 남겨야
+ * 한다(REQUIRES_NEW 컴포넌트 — CrawlRunFailureRecorder, CollectJob.visitOne 사용례 참고).
  * 성공 응답의 전 아이템은 raw_run_item으로 아카이브한다 — 이후 잡이 무엇을 버리든
  * (규칙 탈락 등) 과금된 응답이 남도록. 실패 경로는 아이템이 없으므로 아카이브도 없다.
  * 단, 응답 payload가 타입 raw 테이블에 1:1 무가공 저장되는 잡({@link JobName#archivesRunItems()}
