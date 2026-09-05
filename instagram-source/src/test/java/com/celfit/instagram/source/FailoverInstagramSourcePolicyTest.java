@@ -284,9 +284,42 @@ class FailoverInstagramSourcePolicyTest {
 		assertThat(metrics.records).containsExactly("fetchPost|hiker|fallback:STRUCTURAL_400");
 	}
 
-	/** F9 — 댓글 미완주(complete=false)는 self 호출 자체는 성공이라 폴백 안 하지만 "partial"로 구분 관측된다. */
+	// ── V8 — 댓글 미완주(complete=false)는 같은 콜 안에서 Hiker로 승격한다 ─────────
+	// "self가 반복 실패하면 무조건 Hiker가 돌아야 한다"는 원칙 — 예전엔 partial을 관측만 하고
+	// 그대로 반환해 커버리지 저하가 조용히 굳어졌다(F9 결함).
+
+	/** self 부분 결과 → Hiker 재확인 성공 시 Hiker의 더 완전한 결과를 그대로 쓴다. */
 	@Test
-	void self_댓글_미완주는_self_partial로_관측된다() {
+	void self_댓글_부분_결과는_hiker로_승격되고_hiker_성공시_hiker_결과를_반환한다() {
+		CommentInfo selfComment = new CommentInfo("1", "u", "text", null, Instant.now(), null);
+		CommentsFetch partial = new CommentsFetch(List.of(selfComment), false);
+		CommentInfo hikerComment1 = new CommentInfo("1", "u", "text", null, Instant.now(), null);
+		CommentInfo hikerComment2 = new CommentInfo("2", "u2", "text2", null, Instant.now(), null);
+		CommentsFetch hikerComplete = new CommentsFetch(List.of(hikerComment1, hikerComment2), true);
+		InstagramSource self = new ThrowingSource("self") {
+			@Override
+			public CommentsFetch fetchComments(String shortCode, String postUsername, int pages) {
+				return partial;
+			}
+		};
+		InstagramSource hiker = new ThrowingSource("hiker") {
+			@Override
+			public CommentsFetch fetchComments(String shortCode, String postUsername, int pages) {
+				return hikerComplete;
+			}
+		};
+		RecordingMetrics metrics = new RecordingMetrics();
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, () -> true, metrics);
+
+		CommentsFetch result = source.fetchComments("ABC", "acct", 3);
+
+		assertThat(result).isSameAs(hikerComplete);
+		assertThat(metrics.records).containsExactly("fetchComments|hiker|fallback:PARTIAL");
+	}
+
+	/** self 부분 결과 → Hiker 재확인마저 실패하면 self가 이미 받아둔 부분 결과를 보존한다(데이터 유실 방지). */
+	@Test
+	void self_댓글_부분_결과에서_hiker도_실패하면_self_부분_결과를_보존한다() {
 		CommentInfo comment = new CommentInfo("1", "u", "text", null, Instant.now(), null);
 		CommentsFetch partial = new CommentsFetch(List.of(comment), false);
 		InstagramSource self = new ThrowingSource("self") {
@@ -295,9 +328,14 @@ class FailoverInstagramSourcePolicyTest {
 				return partial;
 			}
 		};
+		InstagramSource hiker = new ThrowingSource("hiker") {
+			@Override
+			public CommentsFetch fetchComments(String shortCode, String postUsername, int pages) {
+				throw new RuntimeException("hiker도 다운");
+			}
+		};
 		RecordingMetrics metrics = new RecordingMetrics();
-		FailoverInstagramSource source =
-				new FailoverInstagramSource(self, new ThrowingSource("hiker"), () -> true, metrics);
+		FailoverInstagramSource source = new FailoverInstagramSource(self, hiker, () -> true, metrics);
 
 		CommentsFetch result = source.fetchComments("ABC", "acct", 3);
 

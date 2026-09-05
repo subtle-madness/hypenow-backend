@@ -92,9 +92,24 @@ class WpiProfileFetcherTest {
 				.isInstanceOf(SelfCrawlException.class);
 	}
 
+	/**
+	 * V7 — 09-02부터 IG는 로그아웃 wpi에 401 대신 200 + user:null(또는 빈 객체)을 주는 경우가
+	 * 실측됐다(08-18 crawler 실측: 이런 계정도 Hiker로는 수집 가능). 확정 NOT_FOUND로 끝내버리면
+	 * FailoverInstagramSource가 Hiker 재확인 없이 SubjectNotFoundException으로 종료해 실존 계정을
+	 * 부재로 오판정한다 — 비확정 OTHER로 던져 Hiker 재확인을 유도해야 한다.
+	 */
 	@Test
-	void user_부재는_NOT_FOUND() {
+	void user_부재는_비확정_OTHER다() {
 		assertThatThrownBy(() -> fetcher("{\"data\":{\"user\":null}}", 200).fetchProfile("ghost"))
+				.isInstanceOf(SelfCrawlException.class)
+				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
+						.isEqualTo(SelfErrorClass.OTHER));
+	}
+
+	/** HTTP 404 응답의 NOT_FOUND 분류는 그대로 둔다(V7 범위 밖 — ofStatus 경로, 확정 부재). */
+	@Test
+	void HTTP_404는_그대로_NOT_FOUND다() {
+		assertThatThrownBy(() -> fetcher("", 404).fetchProfile("ghost"))
 				.isInstanceOf(SelfCrawlException.class)
 				.satisfies(e -> assertThat(((SelfCrawlException) e).errorClass())
 						.isEqualTo(SelfErrorClass.NOT_FOUND));
