@@ -1,0 +1,19 @@
+# 로컬 하니스 전용 컨택포인트 — 09-04 수집 회귀 감시 트랙.
+# 운영 provisioning/alerting/rules.yaml·policies.yaml은 그대로(읽기 전용) 마운트해 알람 룰
+# 자체를 로컬에서 검증할 수 있게 하되(compose.dev.yaml 참조), 컨택포인트만 이 파일로 대체한다.
+# name·uid는 운영과 반드시 동일해야 한다(discord-ops / discord-ops-webhook) — policies.yaml이
+# 루트 receiver로 이 이름을 참조하므로, 이름이 다르면 정책 프로비저닝 자체가 실패한다.
+# type을 discord가 아니라 webhook으로, url을 존재하지 않는 로컬 포트(127.0.0.1:9 = discard 포트,
+# 아무것도 안 듣는다)로 바꿔 두면 알람이 firing 해도 실제로 어디에도 나가지 않는다 — 운영
+# 디스코드로 잘못 나가는 사고를 막으면서 "룰이 firing 하는지"는 alert-rules API로 확인 가능.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: discord-ops
+    receivers:
+      - uid: discord-ops-webhook
+        type: webhook
+        settings:
+          url: http://127.0.0.1:9/dev-null
+        disableResolveMessage: false

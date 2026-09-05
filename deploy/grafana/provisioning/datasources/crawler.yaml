@@ -1,0 +1,27 @@
+# crawler DB(raw 스키마) 읽기 전용 데이터소스 — 09-04 수집 회귀 감시 트랙.
+# postgres-raw는 analysis·monitoring이 붙는 postgres 클러스터와 **별도 클러스터**다(compose 서비스
+# postgres-raw, 컨테이너 deploy-postgres-raw-1) — grafana_reader 롤이 클러스터 전역이라 이 클러스터엔
+# 아직 롤 자체가 없다. 그래서 GRANT뿐 아니라 **CREATE ROLE부터 새로 해야 한다**(README §14-2-6).
+# 비밀번호는 같은 GRAFANA_READER_PASSWORD를 재사용(별도 시크릿 아님).
+apiVersion: 1
+
+datasources:
+  - name: HypeNow crawler (raw, 읽기 전용)
+    uid: hypenow-crawler-pg
+    type: postgres
+    access: proxy
+    url: postgres-raw:5432
+    database: crawler
+    user: grafana_reader
+    editable: false
+    jsonData:
+      # ⚠️ 최상위 `database:`(위)만으로는 패널이 No data가 된다 — postgres.yaml 08-02 실측 주석과
+      # 동일 원인(Grafana 13 Postgres 플러그인이 프론트엔드에서 jsonData.database를 읽는다).
+      database: crawler
+      sslmode: disable
+      postgresVersion: 1700
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+    secureJsonData:
+      password: $__env{GRAFANA_READER_PASSWORD}

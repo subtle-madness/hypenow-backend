@@ -4,3 +4,7 @@
 --   * 02는 monitoring·was_reader 롤까지 만드는데, 하니스는 데이터소스가 전부 dev 한 계정이라 불필요.
 -- 하니스에 필요한 건 "monitoring DB가 dev 소유로 존재한다" 하나뿐이다(analysis는 POSTGRES_DB).
 CREATE DATABASE monitoring OWNER dev;
+
+-- 09-04 수집 회귀 감시 트랙: crawler DB도 같은 이유로 추가(운영 db/init 01은 `OWNER crawler` 롤을
+-- 전제해 하니스에선 초기화가 깨진다 — dev 소유로 대체).
+CREATE DATABASE crawler OWNER dev;

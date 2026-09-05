@@ -4,6 +4,7 @@
 --   C="docker compose -f deploy/grafana/dev/compose.dev.yaml exec -T postgres psql -v ON_ERROR_STOP=1 -q -U dev"
 --   sed -n '/^-- BEGIN analysis/,/^-- END analysis/p'     deploy/grafana/dev/seed-red.sql | $C -d analysis
 --   sed -n '/^-- BEGIN monitoring/,/^-- END monitoring/p' deploy/grafana/dev/seed-red.sql | $C -d monitoring
+--   sed -n '/^-- BEGIN crawler/,/^-- END crawler/p'       deploy/grafana/dev/seed-red.sql | $C -d crawler
 --
 -- (`^-- ` 앵커 필요 — 앵커 없이 쓰면 이 안내 주석 줄이 구간 시작으로 잡힌다.)
 --
@@ -14,6 +15,11 @@
 -- 커버 범위: 홈 13타일 중 **DB로 판정하는 5개**(5 스윕 신선도 · 6 오늘 Hiker 콜 · 7 미러 신선도 ·
 -- 8 멈춘 등록 · 9 알림 발송 실패). 1·2·3·4(Prometheus/Loki)와 10~13(node-exporter/JVM)은
 -- DB가 아니라 여기서 못 만든다 — 그쪽은 실제 지표를 흘려 넣거나 임계값을 낮춰서 확인한다.
+--
+-- 09-04 수집 회귀 감시 트랙 추가분: crawler·monitoring에 "어제(KST) 수집이 사실상 멈췄다"
+-- 시나리오를 덧입힌다(09-02~09-04 인스타 로그아웃 프로필 401 사고 재현 — raw_profile 정상
+-- 2,600~3,850건/일이 며칠간 두 자릿수로 무너졌던 그 양상). hypenow-collection 알람 그룹의
+-- 회귀 알람이 firing 하는지 로컬에서 확인하는 용도.
 
 -- ============================================================================
 -- BEGIN analysis  (psql -d analysis)
@@ -38,7 +44,8 @@ SELECT max(id), 1, 'acct_stuck', 'account', 'pending' FROM app.monitoring_regist
 -- BEGIN monitoring  (psql -d monitoring)
 -- ============================================================================
 
--- 타일 5(스윕 신선도, 임계 26h) 빨강 — 최근 3일치 스윕 삭제 → 마지막 성공이 3일 10시간 전
+-- 타일 5(스윕 신선도, 임계 26h) 빨강 — 최근 3일치 스윕 삭제 → 마지막 성공이 3일 10시간 전.
+-- (09-04 수집 회귀 감시 트랙이 요구하는 "sweep_run 최근 행 3일 전" 시나리오도 이 문장이 그대로 충족)
 DELETE FROM sweep_run WHERE started_at > now() - interval '3 days';
 
 -- 타일 6(오늘 Hiker 콜 0건 = 스윕 불발) 빨강.
@@ -71,6 +78,61 @@ UPDATE brand_tagged_post SET enriched_at = NULL
 -- [브랜드] 광고 표기 빨강 — 오늘 판정 0건(판정 잡 정지 양상)
 UPDATE brand_post_meta SET ad_judged_at = ad_judged_at - interval '2 days'
  WHERE (ad_judged_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date;
+
+-- ---- 09-04 수집 회귀 감시 트랙 추가분 ----------------------------------------
+
+-- raw.fetch_payload 어제(KST) 300건으로 축소(정상 5,000~15,000/일 대비 붕괴) — id 오름차순 300건만
+-- 남기고 나머지 삭제. `OFFSET n`은 앞 n건을 건너뛰고 그 뒤를 전부 돌려주므로 "n건만 남기고 삭제"에
+-- 그대로 쓸 수 있다(랜덤 샘플링 없이 결정적).
+DELETE FROM raw.fetch_payload WHERE id IN (
+    SELECT id FROM raw.fetch_payload
+     WHERE (fetched_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date - 1
+     ORDER BY id OFFSET 300
+);
+
+-- brand_post_snapshot 어제(KST) likes null ~60%로 악화(정상 시드는 ~16%) — 수집 자체는 도는데
+-- 좋아요 값만 못 받아오는 부분 장애 양상. likes_hidden은 false로 둔다 — 알람 룰
+-- quality-brand-post-likes-null-daily가 "숨김 아닌데 null"만 세므로(숨김 좋아요는 정상), hidden=true로
+-- 시드하면 룰이 안 울린다(09-05 dev 실측: 62% null인데 룰 A=0.08).
+UPDATE brand_post_snapshot
+   SET likes = NULL, likes_hidden = false
+ WHERE captured_on = (now() AT TIME ZONE 'Asia/Seoul')::date - 1
+   AND random() < 0.6;
 -- ============================================================================
 -- END monitoring
+-- ============================================================================
+
+
+-- ============================================================================
+-- BEGIN crawler  (psql -d crawler)
+-- ============================================================================
+
+-- raw_profile 어제(KST) 30건으로 축소(정상 ~3,000/일 대비 09-02~09-04 사고 재현 —
+-- 실측 09-02 31·09-03 76건과 같은 자릿수). raw_profile은 아무 테이블도 참조하지 않아 그냥 지운다.
+DELETE FROM raw_profile WHERE id IN (
+    SELECT id FROM raw_profile
+     WHERE (captured_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date - 1
+     ORDER BY id OFFSET 30
+);
+
+-- crawl_run REELS 어제(KST) 40건으로 축소(정상 ~3,000/일). raw_media_page가 REELS 풀만 참조하므로
+-- (seed.sql 주석 참조) crawl_run을 지우기 전에 그 crawl_run_id를 참조하는 raw_media_page부터
+-- 먼저 지워야 FK 위반이 안 난다 — 삭제 대상 id 집합을 CTE로 한 번만 계산해 두 DELETE에 재사용.
+WITH doomed AS (
+    SELECT id FROM crawl_run
+     WHERE job = 'REELS'
+       AND (started_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date - 1
+     ORDER BY id OFFSET 40
+)
+DELETE FROM raw_media_page WHERE crawl_run_id IN (SELECT id FROM doomed);
+
+WITH doomed AS (
+    SELECT id FROM crawl_run
+     WHERE job = 'REELS'
+       AND (started_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date - 1
+     ORDER BY id OFFSET 40
+)
+DELETE FROM crawl_run WHERE id IN (SELECT id FROM doomed);
+-- ============================================================================
+-- END crawler
 -- ============================================================================

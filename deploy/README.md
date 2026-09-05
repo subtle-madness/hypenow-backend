@@ -1198,6 +1198,75 @@ docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
 GRANT 런북 추가 + 서버 실행**이 항상 따라붙어야 한다 — grafana_reader는 컬럼 단위
 최소권한(§14-2)이라 테이블 GRANT와 달리 새 컬럼이 자동 포함되지 않는다.
 
+#### 14-2-6. 수집 회귀 감시 GRANT + 벤더 잔액 크론 (09-04, ⚠️ **main 배포 전 서버 실행 필수**)
+
+09-02~09-04 인스타가 로그아웃 프로필 API를 401로 막아 crawler COLLECT가 3일간 사실상 100%
+실패했는데(raw_profile 일건수 정상 2,600~3,850 → 09-02 31·09-03 76) 실패가 DB에 안 남고 수집량
+알람이 없어 09-04에야 발견했다. 이 절은 그 재발을 막는 감시층(Grafana 알람 + 대시보드 +
+벤더 잔액 지표)이 실제로 데이터를 읽을 수 있게 하는 서버 1회 셋업이다.
+
+**시스템 경계**: raw DB(`crawler`)에는 3개 테이블(`raw_profile`·`crawl_run`·`raw_media_page`)의
+집계용 컬럼만 GRANT한다 — `payload`(jsonb 원문)는 절대 포함하지 않는다(§ 상단 "시스템 경계"
+원칙과 동일, raw는 crawler 소관이라 분석 계층에서 원문을 직접 볼 이유가 없다).
+
+**① postgres-raw 클러스터에 `grafana_reader` 롤 신설.** analysis·monitoring이 붙는 클러스터
+(§14-2)와 `postgres-raw`는 **별도 postgres 클러스터**(compose 서비스 `postgres-raw`, 컨테이너
+`deploy-postgres-raw-1`)라 롤이 클러스터 전역이어도 여기엔 아직 없다 — `GRANT`가 아니라
+`CREATE ROLE`부터 해야 한다. 비밀번호는 §14-2에서 쓴 `GRAFANA_READER_PASSWORD`와 **같은 값**
+(신규 시크릿 아님). `statement_timeout`은 §13-1·§13-5-2의 다른 읽기 전용 롤과 같은 이유로
+5초로 제한(회귀 알람 쿼리가 8일 count 40~50ms급이라 여유는 충분, 폭주 쿼리 방지가 목적).
+
+```bash
+docker exec -it deploy-postgres-raw-1 psql -U <RAW_DB_USER> -d crawler \
+  -c "CREATE ROLE grafana_reader LOGIN PASSWORD '<GRAFANA_READER_PASSWORD 실값>'" \
+  -c "ALTER ROLE grafana_reader SET statement_timeout = '5s'" \
+  -c "GRANT CONNECT ON DATABASE crawler TO grafana_reader" \
+  -c "GRANT USAGE ON SCHEMA public TO grafana_reader" \
+  -c "GRANT SELECT (source, captured_at) ON raw_profile TO grafana_reader" \
+  -c "GRANT SELECT (job, actor_id, status, started_at, finished_at, request_count, item_count) ON crawl_run TO grafana_reader" \
+  -c "GRANT SELECT (source, captured_at) ON raw_media_page TO grafana_reader"
+```
+
+**② monitoring DB 추가 GRANT.** 09-04 이전엔 `raw.fetch_payload`·`post_snapshot`·
+`brand_post_snapshot`·`author_profile`이 미GRANT였다(§14-2 이후 신설 패널이 처음 조회) —
+`raw` 스키마는 `USAGE`부터 별도로 필요하다(§14-2의 기존 GRANT는 전부 `public` 스키마).
+
+```bash
+docker exec -it deploy-postgres-1 psql -U <DB_USER> -d monitoring \
+  -c "GRANT USAGE ON SCHEMA raw TO grafana_reader" \
+  -c "GRANT SELECT (kind, fetched_at, http_status) ON raw.fetch_payload TO grafana_reader" \
+  -c "GRANT SELECT (captured_on, likes, comments, likes_hidden, views) ON post_snapshot TO grafana_reader" \
+  -c "GRANT SELECT (captured_on, likes, comments, likes_hidden, views) ON brand_post_snapshot TO grafana_reader" \
+  -c "GRANT SELECT (fetched_at) ON author_profile TO grafana_reader"
+```
+
+**③ 벤더 잔액 크론 등록.** `deploy/scripts/vendor-balance.sh`는 CD가 이미 동기화한다(§14-2-6
+작업과 같은 PR의 cd.yml 변경). 서버에서 디렉토리 생성 + 크론 등록 + 첫 실행 확인만 하면 된다
+(디렉토리는 CD의 mkdir로도 선생성되지만, CD가 아직 안 돈 시점에 먼저 크론을 등록하는 경우를
+대비해 여기서도 명시 — `mkdir -p`는 멱등이라 중복 실행 무해).
+
+```bash
+mkdir -p ~/deploy/textfile
+crontab -l 2>/dev/null | { cat; echo "*/15 * * * * /home/ubuntu/deploy/scripts/vendor-balance.sh >> /home/ubuntu/vendor-balance.log 2>&1"; } | crontab -
+~/deploy/scripts/vendor-balance.sh   # 첫 실행 — 크론 주기(15분) 전에 지표를 바로 채운다
+cat ~/deploy/textfile/vendor_balance.prom   # hypenow_vendor_balance{...} 값 확인
+```
+
+**④ 검증.**
+
+```bash
+# Grafana 데이터소스 "HypeNow crawler" 테스트(UI: Configuration → Data sources → 해당 항목 → Test,
+# 또는 API):
+curl -s -u <admin>:<암호> -X POST http://localhost:3001/api/datasources/uid/hypenow-crawler-pg/health
+
+# Prometheus에서 벤더 잔액 지표 확인(node-exporter textfile 컬렉터 반영 후):
+docker exec deploy-prometheus-1 wget -qO- 'http://localhost:9090/api/v1/query?query=hypenow_vendor_balance'
+```
+
+새 컬럼을 조회하는 패널·알람이 추가될 때마다 이 절의 GRANT 목록도 함께 갱신할 것 —
+§14-2-5 "재발 관찰"과 같은 이유(grafana_reader는 컬럼 단위 최소권한이라 신규 컬럼이 자동
+포함되지 않는다).
+
 ### 14-3. `.env` 신규 항목 (`.env.example`에도 반영됨)
 
 | 변수 | 설명 |

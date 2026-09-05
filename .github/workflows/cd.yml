@@ -117,7 +117,10 @@ jobs:
           # 디렉토리로 만들어버려 이후 scp가 Permission denied로 죽는다(08-02 실측, caddy.d와 같은 함정 §14).
           # dumps는 1777 필수 — JVM 컨테이너가 non-root(was·crawler 등 이미지별 상이한 uid)라서,
           # docker 자동 생성(root 755)에 맡기면 OOM 힙 덤프 쓰기가 Permission denied로 조용히 실패한다.
-          ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" 'mkdir -p ~/deploy/scripts ~/deploy/grafana/provisioning ~/deploy/prometheus ~/deploy/loki ~/deploy/alloy && install -d -m 1777 ~/deploy/dumps'
+          # ~/deploy/textfile(09-04)도 같은 함정 — node-exporter textfile 컬렉터가 여기를 읽기 전용
+          # 마운트하는데, docker가 먼저 만들면 root 소유가 되어 벤더 잔액 크론(ubuntu 사용자)이
+          # .prom 파일을 못 쓴다. mkdir은 -p라 소유자가 이미 ubuntu인 채로 존재해도 무해.
+          ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" 'mkdir -p ~/deploy/scripts ~/deploy/grafana/provisioning ~/deploy/prometheus ~/deploy/loki ~/deploy/alloy ~/deploy/textfile && install -d -m 1777 ~/deploy/dumps'
           scp -i ~/.ssh/id_deploy deploy/compose.yaml deploy/Caddyfile "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/"
           # Grafana 프로비저닝(데이터소스·대시보드·알림) — compose가 이 디렉토리를 바인드 마운트하므로
           # 파일이 서버에 없으면 grafana는 healthy로 뜨지만 데이터소스·대시보드·알림이 전부 0건인
@@ -141,7 +144,9 @@ jobs:
           # 전환(B2)도 서버에만 있고 레포에 반영이 안 되는 반대 방향 드리프트까지 겹쳤다.
           # post-container-metrics.py도 동기화 — 서버 크론이 이 경로를 직접 실행하므로 레포만
           # 고치면 SERVICES 목록이 갈라진다(backup.sh가 겪은 드리프트와 동일 구조, 08-05 추가).
-          scp -i ~/.ssh/id_deploy deploy/scripts/rollout.sh deploy/scripts/backup.sh deploy/scripts/post-container-metrics.py "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/scripts/"
+          # vendor-balance.sh도 여기서 동기화 — 서버 크론(README §14-2-6)이 이 경로를 직접
+          # 실행하므로 레포만 고치면 backup.sh와 같은 드리프트가 난다.
+          scp -i ~/.ssh/id_deploy deploy/scripts/rollout.sh deploy/scripts/backup.sh deploy/scripts/post-container-metrics.py deploy/scripts/vendor-balance.sh "ubuntu@${{ secrets.DEPLOY_HOST }}:~/deploy/scripts/"
           ssh -i ~/.ssh/id_deploy "ubuntu@${{ secrets.DEPLOY_HOST }}" \
             'cd ~/deploy && out=$(docker compose config 2>&1 >/dev/null) || { echo "$out"; exit 1; }
              if echo "$out" | grep -q "is not set"; then

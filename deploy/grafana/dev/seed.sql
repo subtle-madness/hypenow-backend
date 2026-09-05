@@ -1,9 +1,10 @@
 -- 그라파나 하니스 목 시드 — 2026-08-18 운영 실측 밀도 복제(정상/초록 상태)
 --
--- 적용(DB 2개라 구간을 나눠 두 번 실행한다 — psql 세션은 DB 하나만 본다):
+-- 적용(DB 3개라 구간을 나눠 실행한다 — psql 세션은 DB 하나만 본다):
 --   C="docker compose -f deploy/grafana/dev/compose.dev.yaml exec -T postgres psql -v ON_ERROR_STOP=1 -q -U dev"
 --   sed -n '/^-- BEGIN analysis/,/^-- END analysis/p'     deploy/grafana/dev/seed.sql | $C -d analysis
 --   sed -n '/^-- BEGIN monitoring/,/^-- END monitoring/p' deploy/grafana/dev/seed.sql | $C -d monitoring
+--   sed -n '/^-- BEGIN crawler/,/^-- END crawler/p'       deploy/grafana/dev/seed.sql | $C -d crawler
 --
 -- (`^-- ` 앵커가 필요하다 — 앵커 없이 쓰면 이 안내 주석 줄 자체가 구간 시작으로 잡혀 두 구간이
 --  한 덩어리로 뽑힌다.)
@@ -18,6 +19,11 @@
 --   monitoring: brand_tagged_post 28,255 · brand_hashtag_post 2,543 · brand_post_meta 8,000 · target 73 ·
 --        sweep_run 7일 7/7 성공 · Hiker 콜 30일 49,756(브랜드) + 3,536(타깃) · alarm_event 97
 --
+-- crawler·monitoring 추가분(09-04 수집 회귀 감시 트랙, CONTEXT.md 운영 실측 근거):
+--   crawler: raw_profile 하루 ~3,000건(SELF_GQL 85%·HIKER_MOBILE 15%, 14일) ·
+--            crawl_run COLLECT/REELS 각 하루 ~3,000런(대부분 SUCCEEDED) · raw_media_page 소량(하루 15)
+--   monitoring: raw.fetch_payload 하루 5~15k(kind 7종, http_status 200) ·
+--               post_snapshot/brand_post_snapshot 14일치(likes null ~16%, likes_hidden 일부)
 -- 빨간불 상태가 필요하면 이 시드 위에 seed-red.sql을 덧입힌다(복원은 리셋 후 이 파일 재적용).
 --
 -- 시간대 규약: `called_on`·`last_swept_on` 등 date 컬럼은 **KST 달력일이 정본**이다
@@ -30,11 +36,15 @@
 --   · app.spring_session / spring_session_attributes — 세션 저장소. 대시보드 표면이 아니다
 --   · app.gate_events / admin_audit_logs / notices / password_resets / brand_direct_posts /
 --     monitoring_email_opt_outs / notice_items / notice_seen / app_setting — 패널 근거 없음
---   · monitoring.post_meta / post_snapshot / post_comment / profile_meta / profile_snapshot /
---     author_profile / brand_post_* / brand_profile_snapshot — 성과 패널이 설계 §4에서 기각됨
+--   · monitoring.post_meta / post_comment / profile_meta / profile_snapshot / author_profile /
+--     brand_post_comment / brand_post_matched_tag / brand_profile_snapshot — 성과 패널이 설계 §4에서
+--     기각됨(post_snapshot·brand_post_snapshot은 09-04 수집 회귀 감시 트랙에서 시드 추가 — 별개 목적)
 --   · monitoring.detected_candidate — 실측 0건이 정상(설계 §3), 의도적 공백
 --   · analysis public.* 분석 산출물(account_analyses·content_analyses·image_assets 등) — 이번
 --     개편 패널이 읽지 않는다(탐색 대시보드는 accounts·contents·landing_stats만 본다)
+--   · crawler.content / raw_comment / raw_discovery_post / raw_run_item / influencer_discovery /
+--     search_keyword / app_setting / content_caption — 회귀 감시 패널이 raw_profile·crawl_run·
+--     raw_media_page만 본다(화이트리스트 컬럼 밖이라 GRANT도 없음 — CONTEXT.md §신규 GRANT 참조)
 
 -- ============================================================================
 -- BEGIN analysis  (psql -d analysis)
@@ -191,6 +201,8 @@ TRUNCATE sweep_run RESTART IDENTITY;
 TRUNCATE alarm_event RESTART IDENTITY;
 TRUNCATE brand_call_count, target_call_count;
 TRUNCATE brand_post_meta;                          -- 게시물 전역 테이블 — brand_account CASCADE가 못 지움
+TRUNCATE raw.fetch_payload RESTART IDENTITY;       -- 09-04 수집 회귀 감시 트랙 추가분
+TRUNCATE post_snapshot, brand_post_snapshot;       -- PK가 (short_code, captured_on)라 RESTART 불필요
 
 -- 브랜드 계정 130(app.brand_monitorings.brand_id와 1:1). 스윕은 10시간 전 완료 = 초록.
 -- CLOSED 4건(127~130)은 closed_at을 채우고 스윕 흔적을 종결 이전으로 되돌린다 — 종결된 계정이
@@ -376,6 +388,123 @@ WHERE closed_at IS NULL;
 -- (수집 소요·신선도·브랜드별 처리 현황)이 이 컬럼을 본다. CLOSED 브랜드는 종결 이전 시각 그대로.
 UPDATE brand_account SET sweep_completed_at = last_swept_at WHERE last_swept_on IS NOT NULL;
 
+-- ---- 09-04 수집 회귀 감시 트랙 추가분 ----------------------------------------
+
+-- raw.fetch_payload: 최근 14일 하루 5,000~15,000건(CONTEXT.md 실측처럼 일별 변동을 크게 준다 —
+-- 등록 폭증·백필 때문에 절대치가 널뛰는 걸 시드에도 반영해야 회귀 알람이 "변동 자체"를 오탐하지
+-- 않는지 로컬에서 확인할 수 있다). kind 7종은 균등 분포, http_status는 전부 200(정상 시드).
+WITH days AS (
+    SELECT d, now() - (d || ' days')::interval AS day_start,
+           5000 + (random() * 10000)::int      AS day_count
+    FROM generate_series(0, 13) d
+)
+INSERT INTO raw.fetch_payload (kind, subject, fetched_at, http_status, payload)
+SELECT (ARRAY['COMMENTS','PROFILE_BY_ID','TAGGED','POST','POSTS','PROFILE','OTHER'])[1 + trunc(random() * 7)::int],
+       'mock-subject-' || trunc(random() * 5000)::int,
+       days.day_start - (random() * interval '1 day'),
+       200,
+       '{}'::jsonb
+FROM days, LATERAL generate_series(1, days.day_count) n;
+
+-- post_snapshot(피드 전역) 14일치 — 대상 500개 short_code. 피드 게시물은 조회수(views)가 항상
+-- NULL이라는 함정(CLAUDE.md 「함정」)을 시드에도 그대로 반영: content_type=FEED 행은 views NULL.
+-- likes는 ~16% NULL(likes_hidden 일부 동반)로 IG의 좋아요 수 숨김 기능을 근사한다.
+INSERT INTO post_snapshot (username, short_code, captured_on, content_type, likes, comments, views,
+                           saves, shares, reposts, fb_plays, likes_hidden, shares_hidden)
+SELECT 'feeduser' || g, 'PS' || g, (now() AT TIME ZONE 'Asia/Seoul')::date - d,
+       CASE WHEN g % 4 = 0 THEN 'FEED' ELSE 'REELS' END,
+       CASE WHEN random() < 0.16 THEN NULL ELSE (random() * 5000)::bigint END,
+       (random() * 200)::bigint,
+       CASE WHEN g % 4 = 0 THEN NULL ELSE (random() * 20000)::bigint END,
+       (random() * 300)::bigint, (random() * 20)::bigint, (random() * 100)::bigint, (random() * 15000)::bigint,
+       g % 11 = 0,
+       false
+FROM generate_series(1, 500) g, generate_series(0, 13) d;
+
+-- brand_post_snapshot — 브랜드 게시물 300개(brand_tagged_post의 TP1~TP300 short_code 재사용,
+-- 실제 FK는 없다 — 좋아요/신선도 패널용 독립 시계열 테이블) × 14일.
+INSERT INTO brand_post_snapshot (username, short_code, captured_on, content_type, likes, likes_hidden,
+                                 comments, views, fb_plays, saves, shares, shares_hidden, reposts)
+SELECT 'author' || (g % 2000), 'TP' || g, (now() AT TIME ZONE 'Asia/Seoul')::date - d,
+       CASE WHEN g % 4 = 0 THEN 'FEED' ELSE 'REELS' END,
+       CASE WHEN random() < 0.16 THEN NULL ELSE (random() * 5000)::bigint END,
+       g % 11 = 0,
+       (random() * 200)::bigint,
+       CASE WHEN g % 4 = 0 THEN NULL ELSE (random() * 20000)::bigint END,
+       (random() * 15000)::bigint, (random() * 300)::bigint, (random() * 20)::bigint, false, (random() * 100)::bigint
+FROM generate_series(1, 300) g, generate_series(0, 13) d;
+
 -- ============================================================================
 -- END monitoring
+-- ============================================================================
+
+
+-- ============================================================================
+-- BEGIN crawler  (psql -d crawler)
+-- ============================================================================
+SELECT setseed(0.4242);
+
+-- influencer·crawl_run은 raw_profile/raw_media_page의 FK를 만족시키기 위한 최소 시드다
+-- (회귀 감시 패널은 raw_profile·crawl_run·raw_media_page 세 테이블만 본다 — 화이트리스트 참조).
+-- CASCADE로 raw_profile·raw_media_page·content·influencer_discovery·raw_comment·
+-- raw_discovery_post·raw_run_item까지 함께 비운다(이 구간이 처음 채우는 테이블들이라 안전).
+TRUNCATE influencer, crawl_run RESTART IDENTITY CASCADE;
+
+-- 인플루언서 300명(수집 대상 풀 — 실제 인원수는 회귀 감시와 무관, FK만 만족하면 된다)
+INSERT INTO influencer (id, username, status, followers, first_collected_at, last_collected_at, last_profiled_at)
+SELECT g, 'inf' || g, 'COLLECTED', (random() * 500000)::bigint,
+       now() - interval '200 days', now() - interval '1 day', now() - interval '1 day'
+FROM generate_series(1, 300) g;
+SELECT setval('influencer_id_seq', 300);
+
+-- crawl_run: COLLECT를 먼저 넣어 id 1~42,000을 차지하게 하고(raw_profile이 이 구간만 참조),
+-- REELS를 이어 42,001~84,000에 넣는다(raw_media_page가 이 구간만 참조) — 두 job의 id 범위를
+-- 겹치지 않게 고정해 두면 나중에 seed-red.sql이 "REELS 어제분만" 안전하게 지울 수 있다
+-- (raw_profile이 COLLECT만 보므로 REELS 삭제가 raw_profile의 FK를 절대 건드리지 않는다).
+-- 실측 근거: COLLECT 2,600~3,850런/일 · REELS 2,500~3,500런/일(CONTEXT.md) → 각각 ~3,000/일.
+INSERT INTO crawl_run (job, trigger_type, actor_id, status, item_count, error_message,
+                       started_at, finished_at, request_count)
+SELECT 'COLLECT', 'SCHEDULE', 'actor-collect-1',
+       CASE WHEN random() < 0.95 THEN 'SUCCEEDED' ELSE 'FAILED' END,
+       (random() * 50)::int,
+       CASE WHEN random() < 0.95 THEN NULL ELSE 'timeout' END,
+       ts, ts + (random() * 120 || ' seconds')::interval,
+       1 + (random() * 3)::int
+FROM (SELECT now() - (d || ' days')::interval - (random() * interval '1 day') AS ts
+      FROM generate_series(0, 13) d, generate_series(1, 3000) n) s;
+
+INSERT INTO crawl_run (job, trigger_type, actor_id, status, item_count, error_message,
+                       started_at, finished_at, request_count)
+SELECT 'REELS', 'SCHEDULE', 'actor-reels-1',
+       CASE WHEN random() < 0.95 THEN 'SUCCEEDED' ELSE 'FAILED' END,
+       (random() * 50)::int,
+       CASE WHEN random() < 0.95 THEN NULL ELSE 'timeout' END,
+       ts, ts + (random() * 120 || ' seconds')::interval,
+       1 + (random() * 3)::int
+FROM (SELECT now() - (d || ' days')::interval - (random() * interval '1 day') AS ts
+      FROM generate_series(0, 13) d, generate_series(1, 3000) n) s;
+
+-- raw_profile: 최근 14일 하루 ~3,000건, source SELF_GQL 85% · HIKER_MOBILE 15%(CONTEXT.md 운영
+-- 실측 비율 근사). crawl_run_id는 COLLECT 풀(1~42,000)에서만 뽑는다(위 주석 참조 — id가 연속
+-- 채번이라 서브쿼리 없이 산술로 유효한 FK를 보장한다. 날짜·job 단위 정밀 대응은 하지 않는다).
+INSERT INTO raw_profile (influencer_id, crawl_run_id, payload, captured_at, source, username, followers)
+SELECT 1 + trunc(random() * 300)::bigint,
+       1 + trunc(random() * 42000)::bigint,
+       '{}'::jsonb,
+       ts,
+       CASE WHEN random() < 0.85 THEN 'SELF_GQL' ELSE 'HIKER_MOBILE' END,
+       NULL, NULL
+FROM (SELECT now() - (d || ' days')::interval - (random() * interval '1 day') AS ts
+      FROM generate_series(0, 13) d, generate_series(1, 3000) n) s;
+
+-- raw_media_page 소량(하루 15건) — crawl_run_id는 REELS 풀(42,001~84,000)에서만 뽑는다.
+INSERT INTO raw_media_page (influencer_id, crawl_run_id, source, payload, captured_at)
+SELECT 1 + trunc(random() * 300)::bigint,
+       42001 + trunc(random() * 42000)::bigint,
+       'REELS', '{}'::jsonb, ts
+FROM (SELECT now() - (d || ' days')::interval - (random() * interval '1 day') AS ts
+      FROM generate_series(0, 13) d, generate_series(1, 15) n) s;
+
+-- ============================================================================
+-- END crawler
 -- ============================================================================
