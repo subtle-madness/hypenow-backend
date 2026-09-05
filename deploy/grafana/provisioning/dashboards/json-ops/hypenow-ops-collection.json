@@ -1,0 +1,2251 @@
+{
+  "uid": "hypenow-ops-collection",
+  "title": "운영 / 수집",
+  "description": "수집 파이프라인(crawler·monitoring) 회귀 감지 - 09-02 인스타 로그아웃 프로필 401로 COLLECT가 3일간 사실상 100% 실패했는데 DB에 실패가 안 남고 알람도 없어 09-04에야 발견한 사고 재발 감지용. 알람 룰 그룹 hypenow-collection과 같은 판정식(어제 값 vs 7일 중앙값)을 대시보드로도 본다.",
+  "tags": [
+    "hypenow",
+    "hypenow-ops"
+  ],
+  "timezone": "Asia/Seoul",
+  "time": {
+    "from": "now-14d",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "editable": true,
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": [
+        "hypenow-ops"
+      ],
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "title": "",
+      "icon": "external link",
+      "targetBlank": false
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "회귀 요약",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "어제 raw_profile / 7일 중앙값 비율",
+      "description": "crawler 프로필 수집 전체 건수 회귀 지표. 어제(KST) 값 / 직전 7일(2일 전~8일 전) 중앙값. 상향 스파이크는 알람 대상이 아니라 회귀만 본다. 09-02 로그아웃 프로필 401 사고를 이 지표로 잡는다.",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-crawler-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "percentunit",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-crawler-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "WITH d AS (\n  SELECT (captured_at AT TIME ZONE 'Asia/Seoul')::date AS day, count(*) c\n  FROM raw_profile\n  WHERE captured_at >= now() - interval '9 days'\n  GROUP BY 1\n)\nSELECT\n  coalesce((SELECT c FROM d WHERE day = (now() AT TIME ZONE 'Asia/Seoul')::date - 1), 0)::float\n  / NULLIF((SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY c) FROM d WHERE day BETWEEN (now() AT TIME ZONE 'Asia/Seoul')::date - 8 AND (now() AT TIME ZONE 'Asia/Seoul')::date - 2), 0)\n  AS value"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "어제 REELS 런 비율",
+      "description": "crawler REELS 잡(crawl_run) 일 실행 건수 회귀 지표. 어제(KST) 값 / 직전 7일(2일 전~8일 전) 중앙값. 상향 스파이크는 알람 대상이 아니라 회귀만 본다.",
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-crawler-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "percentunit",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-crawler-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "WITH d AS (\n  SELECT (started_at AT TIME ZONE 'Asia/Seoul')::date AS day, count(*) c\n  FROM crawl_run\n  WHERE job = 'REELS' AND started_at >= now() - interval '9 days'\n  GROUP BY 1\n)\nSELECT\n  coalesce((SELECT c FROM d WHERE day = (now() AT TIME ZONE 'Asia/Seoul')::date - 1), 0)::float\n  / NULLIF((SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY c) FROM d WHERE day BETWEEN (now() AT TIME ZONE 'Asia/Seoul')::date - 8 AND (now() AT TIME ZONE 'Asia/Seoul')::date - 2), 0)\n  AS value"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "어제 Hiker 콜 비율",
+      "description": "monitoring raw.fetch_payload(Hiker 실 콜 로그) 일 건수 회귀 지표. 어제(KST) 값 / 직전 7일(2일 전~8일 전) 중앙값. 상향 스파이크는 알람 대상이 아니라 회귀만 본다. 등록 폭증·백필로 절대값 변동이 커서 비율로 본다.",
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "percentunit",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "WITH d AS (\n  SELECT (fetched_at AT TIME ZONE 'Asia/Seoul')::date AS day, count(*) c\n  FROM raw.fetch_payload\n  WHERE fetched_at >= now() - interval '9 days'\n  GROUP BY 1\n)\nSELECT\n  coalesce((SELECT c FROM d WHERE day = (now() AT TIME ZONE 'Asia/Seoul')::date - 1), 0)::float\n  / NULLIF((SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY c) FROM d WHERE day BETWEEN (now() AT TIME ZONE 'Asia/Seoul')::date - 8 AND (now() AT TIME ZONE 'Asia/Seoul')::date - 2), 0)\n  AS value"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "어제 태그 게시물 발견 비율",
+      "description": "brand_tagged_post 신규 발견(first_seen_at) 일 건수 회귀 지표. 어제(KST) 값 / 직전 7일(2일 전~8일 전) 중앙값. 상향 스파이크는 알람 대상이 아니라 회귀만 본다. 태그 스캔이 멈추면 여기가 먼저 무너진다.",
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "percentunit",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "WITH d AS (\n  SELECT (first_seen_at AT TIME ZONE 'Asia/Seoul')::date AS day, count(*) c\n  FROM brand_tagged_post\n  WHERE first_seen_at >= now() - interval '9 days'\n  GROUP BY 1\n)\nSELECT\n  coalesce((SELECT c FROM d WHERE day = (now() AT TIME ZONE 'Asia/Seoul')::date - 1), 0)::float\n  / NULLIF((SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY c) FROM d WHERE day BETWEEN (now() AT TIME ZONE 'Asia/Seoul')::date - 8 AND (now() AT TIME ZONE 'Asia/Seoul')::date - 2), 0)\n  AS value"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "어제 self 스윕 ok 비율",
+      "description": "self 백엔드로 성공(outcome=ok)한 fetchPost·fetchComments 최근 26시간 합계 / 최근 7일 평균(하루치로 환산). self가 로그아웃 401 등으로 막히면 hiker로 폴백돼 self ok는 떨어진다.",
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "percentunit",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "instant": true,
+          "range": false,
+          "legendFormat": "",
+          "expr": "sum(increase(instagram_source_route_total{backend=\"self\",outcome=\"ok\",path=~\"fetchPost|fetchComments\"}[26h])) / (sum(increase(instagram_source_route_total{backend=\"self\",outcome=\"ok\",path=~\"fetchPost|fetchComments\"}[7d]))/7)"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "마지막 sweep_run",
+      "description": "monitoring 일일 스윕(성공 기준, sweep_run.ok) 마지막 시작으로부터 경과 시간. 스윕은 하루 1회(02:00 KST경)라 26시간을 넘기면 어젯밤 스윕이 안 돈 것이다.",
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "s",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 93600
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT extract(epoch from now()-max(started_at)) AS value FROM sweep_run WHERE ok"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "회귀 표",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "회귀 표 - crawler",
+      "description": "지표별 어제(KST) 값 · 직전 7일(2~8일 전) 중앙값 · 비율. row1의 요약을 지표 단위로 펼친 것. raw_profile은 전체·SELF_GQL·HIKER_MOBILE 소스별, crawl_run은 REELS 런·COLLECT 성공 런.",
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-crawler-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "비율"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 0.5
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.8
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "sortBy": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-crawler-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "WITH raw AS (\n  SELECT '1_전체 raw_profile' m, (captured_at AT TIME ZONE 'Asia/Seoul')::date d, count(*) c\n    FROM raw_profile WHERE captured_at >= now() - interval '9 days' GROUP BY 2\n  UNION ALL\n  SELECT '2_SELF_GQL raw_profile', (captured_at AT TIME ZONE 'Asia/Seoul')::date, count(*)\n    FROM raw_profile WHERE source='SELF_GQL' AND captured_at >= now() - interval '9 days' GROUP BY 2\n  UNION ALL\n  SELECT '3_HIKER_MOBILE raw_profile', (captured_at AT TIME ZONE 'Asia/Seoul')::date, count(*)\n    FROM raw_profile WHERE source='HIKER_MOBILE' AND captured_at >= now() - interval '9 days' GROUP BY 2\n  UNION ALL\n  SELECT '4_REELS 런', (started_at AT TIME ZONE 'Asia/Seoul')::date, count(*)\n    FROM crawl_run WHERE job='REELS' AND started_at >= now() - interval '9 days' GROUP BY 2\n  UNION ALL\n  SELECT '5_COLLECT SUCCEEDED 런', (started_at AT TIME ZONE 'Asia/Seoul')::date, count(*)\n    FROM crawl_run WHERE job='COLLECT' AND status='SUCCEEDED' AND started_at >= now() - interval '9 days' GROUP BY 2\n  UNION ALL\n  SELECT '6_raw_media_page', (captured_at AT TIME ZONE 'Asia/Seoul')::date, count(*)\n    FROM raw_media_page WHERE captured_at >= now() - interval '9 days' GROUP BY 2\n)\nSELECT\n  right(m, length(m)-2) AS \"지표\",\n  coalesce(sum(c) FILTER (WHERE d = (now() AT TIME ZONE 'Asia/Seoul')::date - 1), 0) AS \"어제\",\n  round((percentile_cont(0.5) WITHIN GROUP (ORDER BY c) FILTER (WHERE d BETWEEN (now() AT TIME ZONE 'Asia/Seoul')::date - 8 AND (now() AT TIME ZONE 'Asia/Seoul')::date - 2))::numeric, 1) AS \"7일 중앙값\",\n  round(\n    coalesce(sum(c) FILTER (WHERE d = (now() AT TIME ZONE 'Asia/Seoul')::date - 1), 0)::numeric\n    / NULLIF((percentile_cont(0.5) WITHIN GROUP (ORDER BY c) FILTER (WHERE d BETWEEN (now() AT TIME ZONE 'Asia/Seoul')::date - 8 AND (now() AT TIME ZONE 'Asia/Seoul')::date - 2))::numeric, 0)\n  , 2) AS \"비율\"\nFROM raw\nGROUP BY m\nORDER BY m"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "회귀 표 - monitoring",
+      "description": "지표별 어제(KST) 값 · 직전 7일(2~8일 전) 중앙값 · 비율. row1의 요약을 지표 단위로 펼친 것. fetch_payload은 Hiker 콜 전체 합계, 태그 게시물은 발견(first_seen_at)·보강(enriched_at), author_profile은 조회(fetched_at) 건수.",
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "비율"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 0.5
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.8
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "sortBy": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "WITH raw AS (\n  SELECT '1_fetch_payload 합계' m, (fetched_at AT TIME ZONE 'Asia/Seoul')::date d, count(*) c\n    FROM raw.fetch_payload WHERE fetched_at >= now() - interval '9 days' GROUP BY 2\n  UNION ALL\n  SELECT '2_태그 게시물 발견', (first_seen_at AT TIME ZONE 'Asia/Seoul')::date, count(*)\n    FROM brand_tagged_post WHERE first_seen_at >= now() - interval '9 days' GROUP BY 2\n  UNION ALL\n  SELECT '3_태그 게시물 보강', (enriched_at AT TIME ZONE 'Asia/Seoul')::date, count(*)\n    FROM brand_tagged_post WHERE enriched_at >= now() - interval '9 days' GROUP BY 2\n  UNION ALL\n  SELECT '4_author_profile 조회', (fetched_at AT TIME ZONE 'Asia/Seoul')::date, count(*)\n    FROM author_profile WHERE fetched_at >= now() - interval '9 days' GROUP BY 2\n)\nSELECT\n  right(m, length(m)-2) AS \"지표\",\n  coalesce(sum(c) FILTER (WHERE d = (now() AT TIME ZONE 'Asia/Seoul')::date - 1), 0) AS \"어제\",\n  round((percentile_cont(0.5) WITHIN GROUP (ORDER BY c) FILTER (WHERE d BETWEEN (now() AT TIME ZONE 'Asia/Seoul')::date - 8 AND (now() AT TIME ZONE 'Asia/Seoul')::date - 2))::numeric, 1) AS \"7일 중앙값\",\n  round(\n    coalesce(sum(c) FILTER (WHERE d = (now() AT TIME ZONE 'Asia/Seoul')::date - 1), 0)::numeric\n    / NULLIF((percentile_cont(0.5) WITHIN GROUP (ORDER BY c) FILTER (WHERE d BETWEEN (now() AT TIME ZONE 'Asia/Seoul')::date - 8 AND (now() AT TIME ZONE 'Asia/Seoul')::date - 2))::numeric, 0)\n  , 2) AS \"비율\"\nFROM raw\nGROUP BY m\nORDER BY m"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "crawler 일별 시계열",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "raw_profile 일건수 by source",
+      "description": "crawler 프로필 수집 일별 건수, 소스별 누적 막대. 09-02 사고처럼 SELF_GQL이 꺼지면 여기서 색이 바뀐다.",
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-crawler-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 80,
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-crawler-pg"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT\n  (date_trunc('day', captured_at AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul') AS time,\n  count(*) AS \"건수\",\n  source\nFROM raw_profile\nWHERE $__timeFilter(captured_at)\nGROUP BY 1, 3\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "crawl_run 일 런수 by job",
+      "description": "잡 종류별 일일 실행 건수(모든 상태 포함). 실패만 보려면 옆 패널.",
+      "gridPos": {
+        "x": 6,
+        "y": 15,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-crawler-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 80,
+            "drawStyle": "bars",
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-crawler-pg"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT\n  (date_trunc('day', started_at AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul') AS time,\n  count(*) AS \"런수\",\n  job\nFROM crawl_run\nWHERE $__timeFilter(started_at)\nGROUP BY 1, 3\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "실패 런 by job",
+      "description": "status='FAILED'인 crawl_run만 집계. 평시 0에 가깝다 - 튀면 해당 잡부터 원인 확인.",
+      "gridPos": {
+        "x": 12,
+        "y": 15,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-crawler-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 80,
+            "drawStyle": "bars",
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-crawler-pg"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT\n  (date_trunc('day', started_at AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul') AS time,\n  count(*) AS \"실패\",\n  job\nFROM crawl_run\nWHERE status = 'FAILED' AND $__timeFilter(started_at)\nGROUP BY 1, 3\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "request_count 일 합계 by actor_id",
+      "description": "crawl_run.request_count(외부 콜 수) 합계를 actor_id(수집 방식)별로. Apify 등 유료 콜 추정치.",
+      "gridPos": {
+        "x": 18,
+        "y": 15,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-crawler-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 80,
+            "drawStyle": "bars",
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-crawler-pg"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT\n  (date_trunc('day', started_at AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul') AS time,\n  sum(request_count) AS \"요청수\",\n  coalesce(actor_id, '(없음)') AS actor_id\nFROM crawl_run\nWHERE $__timeFilter(started_at)\nGROUP BY 1, 3\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "monitoring Hiker",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "fetch_payload 일 콜 by kind",
+      "description": "monitoring이 실제로 쏜 Hiker 콜(raw.fetch_payload) 일별 건수, kind별 누적 막대.",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 80,
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT\n  (date_trunc('day', fetched_at AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul') AS time,\n  count(*) AS \"콜수\",\n  kind\nFROM raw.fetch_payload\nWHERE $__timeFilter(fetched_at)\nGROUP BY 1, 3\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "http_status != 200 일건수",
+      "description": "Hiker 응답 중 200이 아닌 건수. 평시 0 - 늘면 Hiker 쪽 요율제한·인증 문제 의심.",
+      "gridPos": {
+        "x": 8,
+        "y": 24,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 80,
+            "drawStyle": "bars",
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT\n  (date_trunc('day', fetched_at AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul') AS time,\n  count(*) AS \"오류건수\"\nFROM raw.fetch_payload\nWHERE http_status IS DISTINCT FROM 200 AND $__timeFilter(fetched_at)\nGROUP BY 1\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "일 콜 비용 추정",
+      "description": "Hiker 콜 건수 × $0.693/1,000콜 근사 단가. 실제 청구와는 오차가 있을 수 있다 - 정확한 잔액은 아래 벤더 잔액 패널.",
+      "gridPos": {
+        "x": 16,
+        "y": 24,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "fillOpacity": 80,
+            "drawStyle": "bars",
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT\n  (date_trunc('day', fetched_at AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul') AS time,\n  count(*) * 0.693 / 1000 AS \"비용\"\nFROM raw.fetch_payload\nWHERE $__timeFilter(fetched_at)\nGROUP BY 1\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "monitoring self 스윕 (Prometheus)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "self 콜 by path (1일)",
+      "description": "self(직접 크롤) 백엔드로 나간 콜을 path별 1일 증가량으로. instagram_source_route_total 카운터 기반.",
+      "gridPos": {
+        "x": 0,
+        "y": 33,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 80,
+            "drawStyle": "bars",
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{path}}",
+          "expr": "sum by(path) (increase(instagram_source_route_total{backend=\"self\"}[1d]))"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "self vs hiker 폴백 비율",
+      "description": "self 성공(ok) / (self 성공 + self 실패로 hiker에 넘어간 콜) - self 실패는 backend=hiker,outcome=fallback:*로 찍힌다(self 라벨엔 안 남는다). 09-02 사고처럼 self가 막히면 이 비율이 떨어진다.",
+      "gridPos": {
+        "x": 6,
+        "y": 33,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "range": true,
+          "instant": false,
+          "legendFormat": "self 비율",
+          "expr": "sum(rate(instagram_source_route_total{backend=\"self\",outcome=\"ok\"}[30m])) / clamp_min(sum(rate(instagram_source_route_total{backend=\"self\",outcome=\"ok\"}[30m])) + sum(rate(instagram_source_route_total{backend=\"hiker\",outcome=~\"fallback:.*\"}[30m])), 1e-9)"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "self GB/일 추정",
+      "description": "콜당 embed 125KB(fetchPost)·댓글 160KB(fetchComments) 환산 근사치 - 실측 사용량은 아래 벤더 잔액·소비 패널(DataImpulse) 참고.",
+      "gridPos": {
+        "x": 12,
+        "y": 33,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "fillOpacity": 80,
+            "drawStyle": "bars",
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "range": true,
+          "instant": false,
+          "legendFormat": "추정 바이트",
+          "expr": "sum(increase(instagram_source_route_total{backend=\"self\",path=\"fetchPost\"}[1d]))*125000 + sum(increase(instagram_source_route_total{backend=\"self\",path=\"fetchComments\"}[1d]))*160000"
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "self partial 비율",
+      "description": "self 콜 중 outcome=partial(일부만 성공) 비율. 완전 실패(hiker 폴백)는 안 잡히고 self가 불완전 응답을 주는 비율만 본다.",
+      "gridPos": {
+        "x": 18,
+        "y": 33,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "range": true,
+          "instant": false,
+          "legendFormat": "partial 비율",
+          "expr": "sum(increase(instagram_source_route_total{backend=\"self\",outcome=\"partial\"}[1d])) / clamp_min(sum(increase(instagram_source_route_total{backend=\"self\"}[1d])), 1e-9)"
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "type": "row",
+      "title": "벤더 잔액·소비 (Prometheus) - 신설 지표, 운영 크론 등록 전에는 무데이터가 정상",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 26,
+      "type": "stat",
+      "title": "Hiker 남은 요청",
+      "description": "Hiker 선불 잔여 요청 수(hypenow_vendor_balance{vendor=hiker,unit=requests}). 신설 지표(hypenow_vendor_balance*) - node-exporter textfile + 서버 크론(deploy/scripts/vendor-balance.sh, 15분 주기) 등록 전이라 운영·로컬 dev 모두 현재는 무데이터가 정상이다. 크론 등록 후 값이 채워진다.",
+      "gridPos": {
+        "x": 0,
+        "y": 42,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 30000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "instant": true,
+          "range": false,
+          "legendFormat": "",
+          "expr": "hypenow_vendor_balance{vendor=\"hiker\",unit=\"requests\"}"
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "type": "stat",
+      "title": "Hiker 남은 USD",
+      "description": "Hiker 선불 잔액(USD 환산). 신설 지표(hypenow_vendor_balance*) - node-exporter textfile + 서버 크론(deploy/scripts/vendor-balance.sh, 15분 주기) 등록 전이라 운영·로컬 dev 모두 현재는 무데이터가 정상이다. 크론 등록 후 값이 채워진다.",
+      "gridPos": {
+        "x": 6,
+        "y": 42,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "currencyUSD",
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "instant": true,
+          "range": false,
+          "legendFormat": "",
+          "expr": "hypenow_vendor_balance{vendor=\"hiker\",unit=\"usd\"}"
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "type": "stat",
+      "title": "DataImpulse 레지 남은 GB",
+      "description": "DataImpulse 레지던셜 프록시 잔여 트래픽. 신설 지표(hypenow_vendor_balance*) - node-exporter textfile + 서버 크론(deploy/scripts/vendor-balance.sh, 15분 주기) 등록 전이라 운영·로컬 dev 모두 현재는 무데이터가 정상이다. 크론 등록 후 값이 채워진다.",
+      "gridPos": {
+        "x": 12,
+        "y": 42,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "decbytes",
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 4000000000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "instant": true,
+          "range": false,
+          "legendFormat": "",
+          "expr": "hypenow_vendor_balance{vendor=\"dataimpulse_residential\",unit=\"bytes\"}"
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "type": "stat",
+      "title": "DataImpulse 모바일 남은 GB",
+      "description": "DataImpulse 모바일 프록시 잔여 트래픽. 신설 지표(hypenow_vendor_balance*) - node-exporter textfile + 서버 크론(deploy/scripts/vendor-balance.sh, 15분 주기) 등록 전이라 운영·로컬 dev 모두 현재는 무데이터가 정상이다. 크론 등록 후 값이 채워진다.",
+      "gridPos": {
+        "x": 18,
+        "y": 42,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "decbytes",
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 500000000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "instant": true,
+          "range": false,
+          "legendFormat": "",
+          "expr": "hypenow_vendor_balance{vendor=\"dataimpulse_mobile\",unit=\"bytes\"}"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "stat",
+      "title": "벤더 잔액 갱신 경과",
+      "description": "잔액 크론 마지막 실행(hypenow_vendor_balance_updated_seconds)으로부터 경과 시간. 15분 주기라 3600초(1시간)를 넘기면 크론이 멎은 것. 신설 지표(hypenow_vendor_balance*) - node-exporter textfile + 서버 크론(deploy/scripts/vendor-balance.sh, 15분 주기) 등록 전이라 운영·로컬 dev 모두 현재는 무데이터가 정상이다. 크론 등록 후 값이 채워진다.",
+      "gridPos": {
+        "x": 0,
+        "y": 46,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "s",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 3600
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "instant": true,
+          "range": false,
+          "legendFormat": "",
+          "expr": "time() - hypenow_vendor_balance_updated_seconds"
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "일 소비 GB by vendor",
+      "description": "hypenow_vendor_traffic_used_bytes(누적 사용량)의 1일 증가분 - 벤더별 실측 일 소비량. 신설 지표(hypenow_vendor_balance*) - node-exporter textfile + 서버 크론(deploy/scripts/vendor-balance.sh, 15분 주기) 등록 전이라 운영·로컬 dev 모두 현재는 무데이터가 정상이다. 크론 등록 후 값이 채워진다.",
+      "gridPos": {
+        "x": 0,
+        "y": 50,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "custom": {
+            "fillOpacity": 80,
+            "drawStyle": "bars",
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{vendor}}",
+          "expr": "increase(hypenow_vendor_traffic_used_bytes[1d])"
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "일 소비 비용 환산",
+      "description": "일 소비량을 단가로 환산 - DataImpulse 레지 $1/GB, 모바일 $2/GB. 신설 지표(hypenow_vendor_balance*) - node-exporter textfile + 서버 크론(deploy/scripts/vendor-balance.sh, 15분 주기) 등록 전이라 운영·로컬 dev 모두 현재는 무데이터가 정상이다. 크론 등록 후 값이 채워진다.",
+      "gridPos": {
+        "x": 8,
+        "y": 50,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "fillOpacity": 80,
+            "drawStyle": "bars",
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{series}}",
+          "expr": "label_replace(increase(hypenow_vendor_traffic_used_bytes{vendor=\"dataimpulse_residential\"}[1d]) * 1/1e9, \"series\", \"레지던셜\", \"\", \"\")"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{series}}",
+          "expr": "label_replace(increase(hypenow_vendor_traffic_used_bytes{vendor=\"dataimpulse_mobile\"}[1d]) * 2/1e9, \"series\", \"모바일\", \"\", \"\")"
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Hiker 일 소비 (요청수)",
+      "description": "Hiker 잔여 요청수(hypenow_vendor_balance{vendor=hiker,unit=requests})의 1일 감소분(-delta) - 충전 시 일시적으로 음수가 나올 수 있다. 신설 지표(hypenow_vendor_balance*) - node-exporter textfile + 서버 크론(deploy/scripts/vendor-balance.sh, 15분 주기) 등록 전이라 운영·로컬 dev 모두 현재는 무데이터가 정상이다. 크론 등록 후 값이 채워진다.",
+      "gridPos": {
+        "x": 16,
+        "y": 50,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "hypenow-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 80,
+            "drawStyle": "bars",
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "hypenow-prometheus"
+          },
+          "range": true,
+          "instant": false,
+          "legendFormat": "Hiker 소비 요청수",
+          "expr": "-delta(hypenow_vendor_balance{vendor=\"hiker\",unit=\"requests\"}[1d])"
+        }
+      ]
+    },
+    {
+      "id": 34,
+      "type": "row",
+      "title": "품질",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 58,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 35,
+      "type": "timeseries",
+      "title": "likes null 비율",
+      "description": "post_snapshot·brand_post_snapshot 일별 likes 결측 비율 - likes_hidden(비공개 설정)으로 인한 결측은 제외하고 순수 수집 실패만 본다.",
+      "gridPos": {
+        "x": 0,
+        "y": 59,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT\n  (captured_on::timestamp AT TIME ZONE 'Asia/Seoul') AS time,\n  avg((likes IS NULL AND NOT likes_hidden)::int) AS \"비율\",\n  'post_snapshot' AS \"구분\"\nFROM post_snapshot\nWHERE $__timeFilter(captured_on)\nGROUP BY 1\nUNION ALL\nSELECT\n  (captured_on::timestamp AT TIME ZONE 'Asia/Seoul') AS time,\n  avg((likes IS NULL AND NOT likes_hidden)::int) AS \"비율\",\n  'brand_post_snapshot' AS \"구분\"\nFROM brand_post_snapshot\nWHERE $__timeFilter(captured_on)\nGROUP BY 1\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 36,
+      "type": "timeseries",
+      "title": "comments null 비율",
+      "description": "post_snapshot·brand_post_snapshot 일별 comments 결측 비율(captured_on 기준).",
+      "gridPos": {
+        "x": 8,
+        "y": 59,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT\n  (captured_on::timestamp AT TIME ZONE 'Asia/Seoul') AS time,\n  avg((comments IS NULL)::int) AS \"비율\",\n  'post_snapshot' AS \"구분\"\nFROM post_snapshot\nWHERE $__timeFilter(captured_on)\nGROUP BY 1\nUNION ALL\nSELECT\n  (captured_on::timestamp AT TIME ZONE 'Asia/Seoul') AS time,\n  avg((comments IS NULL)::int) AS \"비율\",\n  'brand_post_snapshot' AS \"구분\"\nFROM brand_post_snapshot\nWHERE $__timeFilter(captured_on)\nGROUP BY 1\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 37,
+      "type": "stat",
+      "title": "어제 likes null 비율",
+      "description": "post_snapshot + brand_post_snapshot 합산, 어제(KST) likes 결측 비율(likes_hidden 제외).",
+      "gridPos": {
+        "x": 16,
+        "y": 59,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "percentunit",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.3
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT avg((likes IS NULL AND NOT likes_hidden)::int) AS value\nFROM (\n  SELECT likes, likes_hidden FROM post_snapshot WHERE captured_on = (now() AT TIME ZONE 'Asia/Seoul')::date - 1\n  UNION ALL\n  SELECT likes, likes_hidden FROM brand_post_snapshot WHERE captured_on = (now() AT TIME ZONE 'Asia/Seoul')::date - 1\n) x"
+        }
+      ]
+    },
+    {
+      "id": 38,
+      "type": "stat",
+      "title": "어제 comments null 비율",
+      "description": "post_snapshot + brand_post_snapshot 합산, 어제(KST) comments 결측 비율.",
+      "gridPos": {
+        "x": 16,
+        "y": 63,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "hypenow-monitoring-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "데이터 없음",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null+nan",
+                "result": {
+                  "text": "데이터 없음",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "percentunit",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.3
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "hypenow-monitoring-pg"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT avg((comments IS NULL)::int) AS value\nFROM (\n  SELECT comments FROM post_snapshot WHERE captured_on = (now() AT TIME ZONE 'Asia/Seoul')::date - 1\n  UNION ALL\n  SELECT comments FROM brand_post_snapshot WHERE captured_on = (now() AT TIME ZONE 'Asia/Seoul')::date - 1\n) x"
+        }
+      ]
+    }
+  ]
+}
