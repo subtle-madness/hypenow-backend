@@ -3,6 +3,7 @@ package com.celfit.crawler.crawling.application.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.celfit.crawler.crawling.adapter.out.hiker.HikerHttp;
+import com.celfit.crawler.crawling.application.port.out.ApifyException;
 import com.celfit.crawler.crawling.application.port.out.InstagramWebClient;
 import com.celfit.crawler.crawling.application.port.out.PaidCallCounter;
 import com.celfit.crawler.crawling.application.port.out.NotFoundException;
@@ -10,7 +11,11 @@ import com.celfit.crawler.crawling.domain.JobName;
 import com.celfit.crawler.crawling.domain.RawSource;
 import com.celfit.crawler.crawling.domain.TriggerType;
 import com.celfit.crawler.settings.domain.ProfileSource;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -38,10 +43,37 @@ class SelfWithHikerFallbackProfileFetcherTest {
         };
     }
 
+    /** blocked 집합은 매 시도 401(블록 소진까지), 나머지는 SELF_GQL 원형 200. */
+    static InstagramWebClient webWith401For(Set<String> blocked) {
+        return new InstagramWebClient() {
+            @Override public Response get(String url) {
+                String u = url.substring(url.lastIndexOf('=') + 1);
+                if (blocked.contains(u)) return new Response(401, "", Map.of());
+                return new Response(200,
+                        "{\"data\":{\"user\":{\"username\":\"" + u + "\",\"id\":\"1\"}}}", Map.of());
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+    }
+
     SelfWithHikerFallbackProfileFetcher fetcher(InstagramWebClient web, HikerHttp http) {
+        return fetcher(web, http, new SimpleMeterRegistry());
+    }
+
+    SelfWithHikerFallbackProfileFetcher fetcher(InstagramWebClient web, HikerHttp http, SimpleMeterRegistry registry) {
         var self = new SelfProfileFetcher(web, passthrough(), om, Duration.ZERO);
         var hiker = new HikerMobileProfileFetcher(http, passthrough(), new PaidCallCounter(), om);
-        return new SelfWithHikerFallbackProfileFetcher(self, hiker, passthrough());
+        return new SelfWithHikerFallbackProfileFetcher(self, hiker, passthrough(), registry);
+    }
+
+    /** Clock 고정 주입 — half-open 쿨다운 시나리오를 결정적으로 재현한다. */
+    SelfWithHikerFallbackProfileFetcher fetcherWithClock(InstagramWebClient web, HikerHttp http,
+                                                         SimpleMeterRegistry registry, Clock clock) {
+        var self = new SelfProfileFetcher(web, passthrough(), om, Duration.ZERO);
+        var hiker = new HikerMobileProfileFetcher(http, passthrough(), new PaidCallCounter(), om);
+        return new SelfWithHikerFallbackProfileFetcher(self, hiker, passthrough(), registry, clock);
     }
 
     @Test void 소스는_SELF_HIKER_FALLBACK_기본_rawSource는_SELF_GQL() {
@@ -298,5 +330,254 @@ class SelfWithHikerFallbackProfileFetcherTest {
 
         assertThat(ex.items()).isEmpty();
         assertThat(ex.notFound()).containsExactly("gone");
+    }
+
+    // ── 블록(429·401·403)·전송오류 소진 폴백 — 잡 무관, 연속 게이트 없음(재시도 소진 자체가 게이트) ──
+
+    @Test void 자체조회_블록_소진_계정은_잡_무관으로_즉시_Hiker_폴백된다() {
+        AtomicInteger hikerCalls = new AtomicInteger();
+        HikerHttp http = path -> {
+            hikerCalls.incrementAndGet();
+            assertThat(path).contains("username=blocked");
+            return "{\"user\":{\"username\":\"blocked\",\"pk\":\"2\"}}";
+        };
+        var f = fetcher(webWith401For(Set.of("blocked")), http);
+
+        // COLLECT — 400/빈응답과 달리 연속 게이트가 없어 첫 방문에 바로 폴백된다
+        var ex = f.fetch(JobName.COLLECT, List.of("ok", "blocked"), TriggerType.MANUAL);
+
+        assertThat(hikerCalls.get()).isEqualTo(1);
+        assertThat(ex.items()).hasSize(2);
+        var sources = ex.items().stream().map(i -> ProfileExtractor.detect(i, RawSource.SELF_GQL)).toList();
+        assertThat(sources).containsExactlyInAnyOrder(RawSource.SELF_GQL, RawSource.HIKER_MOBILE);
+    }
+
+    @Test void 자체조회_전송오류_소진_계정도_Hiker로_폴백된다() {
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                if (url.endsWith("flaky")) throw new ApifyException("BUFFER_UNDERFLOW with EOF");
+                return new Response(200,
+                        "{\"data\":{\"user\":{\"username\":\"ok\",\"id\":\"1\"}}}", Map.of());
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        AtomicInteger hikerCalls = new AtomicInteger();
+        HikerHttp http = path -> {
+            hikerCalls.incrementAndGet();
+            return "{\"user\":{\"username\":\"flaky\",\"pk\":\"2\"}}";
+        };
+        var f = fetcher(web, http);
+
+        var ex = f.fetch(JobName.QUALIFY, List.of("ok", "flaky"), TriggerType.MANUAL);
+
+        assertThat(hikerCalls.get()).isEqualTo(1);
+        assertThat(ex.items()).hasSize(2);
+    }
+
+    // ── V3 프로세스 수준 헬스 게이트 — SELF 연속 전량 블록 N회면 강등, 쿨다운 후 half-open 프로브 ──
+
+    @Test void 연속_5회_전량_블록이면_다음_호출은_SELF를_건너뛰고_Hiker로_직행한다() {
+        AtomicInteger selfCalls = new AtomicInteger();
+        AtomicInteger hikerCalls = new AtomicInteger();
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                selfCalls.incrementAndGet();
+                return new Response(401, "", Map.of());
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        HikerHttp http = path -> {
+            hikerCalls.incrementAndGet();
+            String u = path.substring(path.lastIndexOf('=') + 1);
+            return "{\"user\":{\"username\":\"" + u + "\",\"pk\":\"2\"}}";
+        };
+        var f = fetcher(web, http);
+
+        // 5회 연속 방문(계정당 1명, COLLECT 방식) 전량 블록 — 5번째 호출까지는 SELF가 여전히 시도된다
+        int streak = SelfWithHikerFallbackProfileFetcher.SELF_DEGRADE_STREAK;
+        for (int i = 1; i <= streak; i++) {
+            f.fetch(JobName.COLLECT, List.of("u" + i), TriggerType.MANUAL);
+        }
+        int selfCallsAfterStreak = selfCalls.get();
+        assertThat(selfCallsAfterStreak).isGreaterThan(0);   // 5회 모두 SELF를 두드렸다(재시도 포함)
+
+        // 강등 이후 — SELF를 전혀 두드리지 않고 곧장 Hiker로
+        var ex = f.fetch(JobName.COLLECT, List.of("u_after"), TriggerType.MANUAL);
+
+        assertThat(selfCalls.get()).isEqualTo(selfCallsAfterStreak);   // SELF 추가 호출 없음
+        assertThat(ex.items()).hasSize(1);   // Hiker 직행으로 확보
+        assertThat(ProfileExtractor.detect(ex.items().get(0), RawSource.SELF_GQL))
+                .isEqualTo(RawSource.HIKER_MOBILE);
+    }
+
+    @Test void 강등_카운터는_비블록_결과가_하나라도_있으면_리셋된다() {
+        // 4회 전량 블록(임계값 미만) 후 정상 응답 1회 — 카운터가 리셋돼 강등되지 않는다
+        AtomicInteger selfCalls = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean healthy = new java.util.concurrent.atomic.AtomicBoolean(false);
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                selfCalls.incrementAndGet();
+                if (healthy.get()) {
+                    return new Response(200,
+                            "{\"data\":{\"user\":{\"username\":\"u\",\"id\":\"1\"}}}", Map.of());
+                }
+                return new Response(401, "", Map.of());
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        HikerHttp http = path -> "{\"user\":{\"username\":\"u\",\"pk\":\"2\"}}";
+        var f = fetcher(web, http);
+
+        int streak = SelfWithHikerFallbackProfileFetcher.SELF_DEGRADE_STREAK;
+        for (int i = 1; i < streak; i++) {
+            f.fetch(JobName.COLLECT, List.of("u"), TriggerType.MANUAL);
+        }
+        healthy.set(true);
+        f.fetch(JobName.COLLECT, List.of("u"), TriggerType.MANUAL);   // 카운터 리셋
+        healthy.set(false);
+        int before = selfCalls.get();
+        f.fetch(JobName.COLLECT, List.of("u"), TriggerType.MANUAL);   // 다시 1회 블록 — 강등 안 됨
+
+        assertThat(selfCalls.get()).isGreaterThan(before);   // SELF가 계속 시도됐다(강등 안 됐다는 증거)
+    }
+
+    @Test void 쿨다운_경과_후_half_open_프로브가_성공하면_SELF로_복귀한다() {
+        AtomicInteger selfCalls = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean recovered = new java.util.concurrent.atomic.AtomicBoolean(false);
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                selfCalls.incrementAndGet();
+                if (recovered.get()) {
+                    return new Response(200,
+                            "{\"data\":{\"user\":{\"username\":\"u\",\"id\":\"1\"}}}", Map.of());
+                }
+                return new Response(401, "", Map.of());
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        HikerHttp http = path -> "{\"user\":{\"username\":\"u\",\"pk\":\"2\"}}";
+        Instant[] now = { Instant.parse("2026-09-05T00:00:00Z") };
+        Clock clock = new Clock() {
+            @Override public ZoneOffset getZone() { return ZoneOffset.UTC; }
+            @Override public Clock withZone(java.time.ZoneId zone) { return this; }
+            @Override public Instant instant() { return now[0]; }
+        };
+        var f = fetcherWithClock(web, http, new SimpleMeterRegistry(), clock);
+
+        int streak = SelfWithHikerFallbackProfileFetcher.SELF_DEGRADE_STREAK;
+        for (int i = 1; i <= streak; i++) {
+            f.fetch(JobName.COLLECT, List.of("u"), TriggerType.MANUAL);
+        }
+        int selfCallsAtDegrade = selfCalls.get();
+
+        // 쿨다운 미경과 — 여전히 Hiker 직행(SELF 미호출)
+        now[0] = now[0].plus(SelfWithHikerFallbackProfileFetcher.SELF_DEGRADE_COOLDOWN.minusMinutes(1));
+        f.fetch(JobName.COLLECT, List.of("u"), TriggerType.MANUAL);
+        assertThat(selfCalls.get()).isEqualTo(selfCallsAtDegrade);
+
+        // 쿨다운 경과 + 회복 — half-open 프로브가 SELF를 1회 시도해 성공, 정상 복귀
+        recovered.set(true);
+        now[0] = now[0].plus(Duration.ofMinutes(2));
+        var ex = f.fetch(JobName.COLLECT, List.of("u"), TriggerType.MANUAL);
+
+        assertThat(selfCalls.get()).isGreaterThan(selfCallsAtDegrade);   // 프로브가 SELF를 두드렸다
+        assertThat(ex.items()).hasSize(1);
+        assertThat(ProfileExtractor.detect(ex.items().get(0), RawSource.SELF_GQL))
+                .isEqualTo(RawSource.SELF_GQL);   // Hiker를 거치지 않고 SELF로 확보
+    }
+
+    @Test void 쿨다운_경과_후_half_open_프로브가_다시_블록되면_강등이_연장된다() {
+        AtomicInteger selfCalls = new AtomicInteger();
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) {
+                selfCalls.incrementAndGet();
+                return new Response(401, "", Map.of());   // 항상 블록 — 프로브도 실패
+            }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        HikerHttp http = path -> "{\"user\":{\"username\":\"u\",\"pk\":\"2\"}}";
+        Instant[] now = { Instant.parse("2026-09-05T00:00:00Z") };
+        Clock clock = new Clock() {
+            @Override public ZoneOffset getZone() { return ZoneOffset.UTC; }
+            @Override public Clock withZone(java.time.ZoneId zone) { return this; }
+            @Override public Instant instant() { return now[0]; }
+        };
+        var f = fetcherWithClock(web, http, new SimpleMeterRegistry(), clock);
+
+        int streak = SelfWithHikerFallbackProfileFetcher.SELF_DEGRADE_STREAK;
+        for (int i = 1; i <= streak; i++) {
+            f.fetch(JobName.COLLECT, List.of("u"), TriggerType.MANUAL);
+        }
+        int selfCallsAtDegrade = selfCalls.get();
+
+        // 쿨다운 경과 — 프로브 1회 시도되지만 다시 블록 → 강등 연장
+        now[0] = now[0].plus(SelfWithHikerFallbackProfileFetcher.SELF_DEGRADE_COOLDOWN.plusMinutes(1));
+        f.fetch(JobName.COLLECT, List.of("u"), TriggerType.MANUAL);
+        int selfCallsAfterProbe = selfCalls.get();
+        assertThat(selfCallsAfterProbe).isGreaterThan(selfCallsAtDegrade);   // 프로브가 SELF를 1회 두드렸다
+
+        // 연장된 쿨다운 안(방금 갱신된 시각 기준 1분 후)에는 다시 스킵된다
+        now[0] = now[0].plus(Duration.ofMinutes(1));
+        f.fetch(JobName.COLLECT, List.of("u"), TriggerType.MANUAL);
+        assertThat(selfCalls.get()).isEqualTo(selfCallsAfterProbe);   // 추가 SELF 호출 없음 — 강등 유지
+    }
+
+    // ── Micrometer 카운터 ──
+
+    @Test void 카운터가_소스_결과별로_증가한다() {
+        var registry = new SimpleMeterRegistry();
+        // "gone"은 Hiker 쪽에서 전송 오류(ApifyException) — notFound가 아니라 조용히
+        // 드롭되므로 fallback_failed로 잡힌다(HikerMobileProfileFetcher.collect 참조).
+        HikerHttp http = path -> {
+            String u = path.substring(path.lastIndexOf('=') + 1);
+            if (u.equals("bugged")) return "{\"user\":{\"username\":\"bugged\",\"pk\":\"2\"}}";
+            throw new ApifyException("Hiker HTTP 503");
+        };
+        var f = fetcher(webWith400For(Set.of("bugged", "gone")), http, registry);
+
+        f.fetch(JobName.QUALIFY, List.of("ok", "bugged", "gone"), TriggerType.MANUAL);
+
+        assertThat(registry.counter("crawler.profile.fetch", "job", "qualify", "source", "self", "outcome", "ok")
+                .count()).isEqualTo(1.0);
+        assertThat(registry.counter("crawler.profile.fetch", "job", "qualify", "source", "self",
+                "outcome", "bad_request").count()).isEqualTo(2.0);
+        assertThat(registry.counter("crawler.profile.fetch", "job", "qualify", "source", "hiker",
+                "outcome", "fallback_ok").count()).isEqualTo(1.0);
+        assertThat(registry.counter("crawler.profile.fetch", "job", "qualify", "source", "hiker",
+                "outcome", "fallback_failed").count()).isEqualTo(1.0);
+    }
+
+    @Test void 강등_스킵도_degraded_skip_카운터로_집계된다() {
+        var registry = new SimpleMeterRegistry();
+        InstagramWebClient web = new InstagramWebClient() {
+            @Override public Response get(String url) { return new Response(401, "", Map.of()); }
+            @Override public Response post(String url, String formBody, Map<String, String> headers) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        HikerHttp http = path -> {
+            String u = path.substring(path.lastIndexOf('=') + 1);
+            return "{\"user\":{\"username\":\"" + u + "\",\"pk\":\"2\"}}";
+        };
+        var f = fetcher(web, http, registry);
+
+        int streak = SelfWithHikerFallbackProfileFetcher.SELF_DEGRADE_STREAK;
+        for (int i = 1; i <= streak; i++) {
+            f.fetch(JobName.COLLECT, List.of("u" + i), TriggerType.MANUAL);
+        }
+        f.fetch(JobName.COLLECT, List.of("u_after"), TriggerType.MANUAL);
+
+        assertThat(registry.counter("crawler.profile.fetch", "job", "collect", "source", "self",
+                "outcome", "degraded_skip").count()).isEqualTo(1.0);
     }
 }

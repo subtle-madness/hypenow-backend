@@ -27,8 +27,6 @@ import tools.jackson.databind.ObjectMapper;
 public class SelfProfileFetcher implements ProfileFetcher {
 
     static final String LABEL = "profile-self";
-    /** 연속 rate-limit/블록 응답 회로 차단기 임계값 — 이만큼 연달아 나면 배치를 중단해 IP 스로틀·차단 심화를 막는다. */
-    static final int RATE_LIMIT_STREAK_LIMIT = 5;
     /**
      * 계정당 블록(429·401·403) 최대 시도 횟수. 로테이팅 프록시는 요청마다 새 exit IP라 401은
      * "그 IP 하나가 차단됨"일 뿐 — 즉시 재시도가 곧 IP 교체다. 재시도 없이 스킵하면 방문 실패율이
@@ -72,8 +70,8 @@ public class SelfProfileFetcher implements ProfileFetcher {
 
     /**
      * FETCH_CONCURRENCY 워커가 계정을 나눠 순차 처리한다 — 프록시 로테이션(요청마다 새 exit IP)
-     * 전제라 동시 요청도 IP가 분산돼 안전하다. 회로 차단은 워커들이 공유하는 연속 카운터로 판단하며,
-     * 트립 후 최대 (동시성-1)건의 진행 중 요청은 마저 나갈 수 있다(중단 의미는 동일).
+     * 전제라 동시 요청도 IP가 분산돼 안전하다. 배치 단위 회로 차단은 없다(프로세스 수준 헬스
+     * 게이트는 컴포지트 SelfWithHikerFallbackProfileFetcher가 담당 — blockedOut 참조).
      */
     private ApifyResult collect(List<String> usernames) {
         return collect(usernames, new ArrayList<>());
@@ -83,24 +81,29 @@ public class SelfProfileFetcher implements ProfileFetcher {
         return collect(usernames, badRequestOut, new ArrayList<>());
     }
 
+    ApifyResult collect(List<String> usernames, List<String> badRequestOut, List<String> emptyOut) {
+        return collect(usernames, badRequestOut, emptyOut, new ArrayList<>());
+    }
+
     /**
      * 컴포지트(SELF_HIKER_FALLBACK)용 — HTTP 400이 난 계정을 badRequestOut에, 200이지만
-     * 응답에 계정이 없는(user null) 계정을 emptyOut에 수집한다. 수집 외 동작은 단독 SELF와
-     * 동일(두 부류 모두 items·notFound에 안 들어가고 스킵).
+     * 응답에 계정이 없는(user null) 계정을 emptyOut에, 블록(429·401·403)·전송오류가
+     * BLOCK_MAX_ATTEMPTS까지 소진된 계정을 blockedOut에 수집한다. 세 부류 모두
+     * items·notFound에 안 들어가고 스킵되며, 컴포지트가 폴백 여부를 판단하는 재료다.
      */
-    ApifyResult collect(List<String> usernames, List<String> badRequestOut, List<String> emptyOut) {
+    ApifyResult collect(List<String> usernames, List<String> badRequestOut, List<String> emptyOut,
+                        List<String> blockedOut) {
         List<Map<String, Object>> out = java.util.Collections.synchronizedList(new ArrayList<>());
         List<String> notFound = java.util.Collections.synchronizedList(new ArrayList<>());
         // 워커들이 동시에 add하므로 동기화 래핑 — 호출자는 일반 리스트를 넘겨도 된다
         List<String> badRequest = java.util.Collections.synchronizedList(badRequestOut);
         List<String> empty = java.util.Collections.synchronizedList(emptyOut);
+        List<String> blocked = java.util.Collections.synchronizedList(blockedOut);
         int total = usernames.size();
         var done = new java.util.concurrent.atomic.AtomicInteger();
-        var rateLimitStreak = new java.util.concurrent.atomic.AtomicInteger();
-        var tripped = new java.util.concurrent.atomic.AtomicBoolean(false);
         // 1명(collect 방문 경로)은 풀 없이 즉시 처리 — 방문마다 스레드풀을 만들 이유가 없다
         if (total == 1) {
-            fetchOne(usernames.get(0), total, done, rateLimitStreak, tripped, out, notFound, badRequest, empty);
+            fetchOne(usernames.get(0), total, done, out, notFound, badRequest, empty, blocked);
             return new ApifyResult(null, out, notFound);
         }
         // close()가 제출된 작업 완료까지 대기(Java 21) — 반환 시점에 결과가 전부 모여 있다
@@ -109,8 +112,7 @@ public class SelfProfileFetcher implements ProfileFetcher {
                 final int offset = w;
                 pool.submit(() -> {
                     for (int idx = offset; idx < total; idx += FETCH_CONCURRENCY) {
-                        if (tripped.get()) return;   // 회로 트립 — 남은 계정은 다음 실행 재시도
-                        fetchOne(usernames.get(idx), total, done, rateLimitStreak, tripped, out, notFound, badRequest, empty);
+                        fetchOne(usernames.get(idx), total, done, out, notFound, badRequest, empty, blocked);
                         sleep();
                     }
                 });
@@ -119,18 +121,19 @@ public class SelfProfileFetcher implements ProfileFetcher {
         return new ApifyResult(null, out, notFound);
     }
 
-    /** 계정 1명 처리 — 계정 단위 격리(요청 예외는 해당 계정만 스킵). 블록 응답은 재시도(=새 IP)로 회복 시도. */
+    /**
+     * 계정 1명 처리 — 계정 단위 격리. 블록 응답(429·401·403)과 전송 오류(ApifyException —
+     * 407·타임아웃·JSON 파싱 실패 등)는 같은 재시도 규칙(최대 BLOCK_MAX_ATTEMPTS회, 재시도=새
+     * exit IP)을 따르며, 소진되면 blockedOut에 담아 컴포지트가 Hiker로 폴백할 수 있게 한다.
+     */
     private void fetchOne(String u, int total, java.util.concurrent.atomic.AtomicInteger done,
-                          java.util.concurrent.atomic.AtomicInteger rateLimitStreak,
-                          java.util.concurrent.atomic.AtomicBoolean tripped,
                           List<Map<String, Object>> out, List<String> notFound,
-                          List<String> badRequest, List<String> empty) {
+                          List<String> badRequest, List<String> empty, List<String> blocked) {
         int i = done.incrementAndGet();
-        try {
-            for (int attempt = 1; attempt <= BLOCK_MAX_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= BLOCK_MAX_ATTEMPTS; attempt++) {
+            try {
                 InstagramWebClient.Response res = web.get(URL + u);
                 if (res.status() == 200) {
-                    rateLimitStreak.set(0);   // 성공 = 스로틀 해소 신호, 회로 카운터 리셋
                     Map<String, Object> p = readRoot(res.body());
                     if (ProfileExtractor.username(p, RawSource.SELF_GQL) != null) {
                         out.add(p);
@@ -144,46 +147,47 @@ public class SelfProfileFetcher implements ProfileFetcher {
                     return;
                 }
                 if (isBlockStatus(res.status())) {
-                    // rate limit/블록(429·401·403) — 연속으로 임계값에 도달하면 IP 차단으로 판단해 중단.
-                    int streak = rateLimitStreak.incrementAndGet();
-                    if (streak >= RATE_LIMIT_STREAK_LIMIT) {
-                        tripped.set(true);
-                        log.warn("프로필 블록(HTTP {}) 연속 {}회 — IP 차단으로 판단해 배치 중단(남은 {}명은 다음 실행 재시도)",
-                                res.status(), streak, total - i);
-                        return;
-                    }
-                    if (attempt < BLOCK_MAX_ATTEMPTS && !tripped.get()) {
+                    if (attempt < BLOCK_MAX_ATTEMPTS) {
                         // 로테이팅 프록시 전제 — 재시도가 곧 새 exit IP. 간격은 계정 간 딜레이와 동일.
                         log.info("프로필 ({}/{}) {} — HTTP {} 블록, 재시도 {}/{}",
                                 i, total, u, res.status(), attempt + 1, BLOCK_MAX_ATTEMPTS);
                         sleep();
                         continue;
                     }
-                    log.info("프로필 ({}/{}) {} — 스킵(HTTP {} rate limit/블록, {}회 시도 소진, 연속 {}회)",
-                            i, total, u, res.status(), attempt, streak);
+                    blocked.add(u);
+                    log.warn("프로필 ({}/{}) {} — 스킵(HTTP {} 블록, {}회 시도 소진), 폴백 대상 수집",
+                            i, total, u, res.status(), attempt);
                     return;
                 }
                 if (res.status() == 400) {
                     // IP 무관 400(비즈니스 카테고리 버그) — 재시도 무의미. 컴포지트가 Hiker로
-                    // 폴백할 수 있게 수집만 하고 스킵한다(블록 신호가 아니므로 회로 카운터 리셋).
-                    rateLimitStreak.set(0);
+                    // 폴백할 수 있게 수집만 하고 스킵한다.
                     badRequest.add(u);
                     log.info("프로필 ({}/{}) {} — HTTP 400(버그 계정) 스킵, 폴백 대상 수집", i, total, u);
                     return;
                 }
                 if (res.status() == 404) {
                     // 계정 소멸(삭제·개명) — 재시도 무의미, 호출자가 소프트 딜리트한다
-                    rateLimitStreak.set(0);
                     notFound.add(u);
                     log.info("프로필 ({}/{}) {} — 계정 소멸(HTTP 404)", i, total, u);
                 } else {
-                    rateLimitStreak.set(0);
                     log.info("프로필 ({}/{}) {} — 스킵(HTTP {})", i, total, u, res.status());
                 }
                 return;
+            } catch (ApifyException e) {
+                // 전송 오류(프록시 커넥션 절단·407·타임아웃·JSON 파싱 실패 등) — 블록과 동일한
+                // 재시도 규칙을 따른다: 로테이팅 프록시라 재시도가 곧 새 exit IP다.
+                if (attempt < BLOCK_MAX_ATTEMPTS) {
+                    log.info("프로필 ({}/{}) {} — 요청 실패, 재시도 {}/{} ({})",
+                            i, total, u, attempt + 1, BLOCK_MAX_ATTEMPTS, e.getMessage());
+                    sleep();
+                    continue;
+                }
+                blocked.add(u);
+                log.warn("프로필 ({}/{}) {} — 요청 실패 {}회 소진, 폴백 대상 수집 ({})",
+                        i, total, u, attempt, e.getMessage());
+                return;
             }
-        } catch (ApifyException e) {
-            log.warn("프로필 ({}/{}) {} — 요청 실패, 해당 계정만 건너뜀 ({})", i, total, u, e.getMessage());
         }
     }
 
