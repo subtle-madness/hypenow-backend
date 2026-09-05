@@ -8,3 +8,15 @@ policies:
     group_wait: 30s
     group_interval: 5m
     repeat_interval: 3h
+    # 09-04 수집 회귀 감시 트랙 — 일별 회귀 룰(labels.kind=daily, rules.yaml의 hypenow-collection
+    # 그룹)은 하루 안에는 같은 값이 계속 유지되는 성격이라(다음 KST 자정에나 값이 바뀐다) 루트의
+    # repeat_interval 3h를 그대로 쓰면 하루에 여러 번 같은 알림이 반복돼 디스코드 소음만 커진다.
+    # 24h로 늘려 "하루에 한 번만" 재알림한다. fast(10분류) 룰은 라우트 없이 루트 정책(3h)을 그대로
+    # 따른다 — 그쪽은 값이 자주 바뀌어 3h 반복이 적절하다.
+    routes:
+      - receiver: discord-ops
+        object_matchers: [["kind", "=", "daily"]]
+        group_by: ["alertname"]
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 24h

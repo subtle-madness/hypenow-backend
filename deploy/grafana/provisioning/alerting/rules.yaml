@@ -54,3 +54,1084 @@ groups:
                 - evaluator:
                     type: gt
                     params: [0]
+
+  # 09-04 수집 회귀 감시 트랙(feat/grafana-collection-alerts) — 2026-09-02~09-04 인스타 로그아웃
+  # 프로필 API 401 차단으로 crawler COLLECT가 3일간 사실상 전멸했는데(raw_profile 09-03 KST 31건,
+  # 정상 2,600~3,850) 실패가 DB에 안 남고(FAILED row 없음, 그냥 성공 건수가 0에 가깝게 줄어든다)
+  # 수집량 알람 자체가 없어 09-04에야 발견됐다. 아래 그룹은 그 재발 감시용.
+  #
+  # 회귀 판정 공통 관용구: A=어제(KST) 값 → B=최근 7일(어제 제외 직전 7일, generate_series로
+  # 결측일 0 채움) 중앙값 → C/D=reduce(last) → E=math(($C < $D*0.5 && $C < SOFT) || $C < HARD)
+  # → F=threshold(E gt 0), condition F. SOFT=변동 큰 지표의 병행 절대 하한, HARD=중앙값 자체가
+  # 무너진 장기 장애까지 잡는 절대 최저선. 상향 스파이크는 알람 아님(E가 하락만 본다).
+  #
+  # 백테스트 근거는 deploy/grafana/backtest/2026-09-04-collection-regression.md 참조 — 운영
+  # 08-16~09-05 KST 실측(SELECT만). 아래 각 룰 주석의 SOFT/HARD는 그 문서와 동기화된 수치다.
+  - orgId: 1
+    name: hypenow-collection
+    folder: 운영
+    interval: 1h
+    rules:
+      # (a)-1 raw_profile 일별 전체 건수 회귀. 08-26 이후 안정 구간 실측 2,647~5,222(스파이크 제외
+      # 2,647~3,905), 09-03 KST 31건으로 붕괴. SOFT 1500(중앙값 절반이 안정구간 하한 밑으로
+      # 떨어지는 지점) / HARD 500(어떤 소스 조합으로도 정상 운영에서 나올 수 없는 값 — 사고 당일 실측
+      # 31·76의 중간). 08-19·08-22에 반복되던 옛 저조 패턴(~580~600, 08-25 이전에만 존재, 백테스트
+      # 문서 §1 참조)은 08-20~09-01 오탐 점검 창에 08-22가 걸리지만 이후 재발이 없어 그대로 둔다 —
+      # 오히려 당시엔 알람이 없어서 놓친 이상치였다는 뜻이라 하한을 더 낮추지 않았다.
+      - uid: collection-raw-profile-daily
+        title: "raw_profile 일별 수집량 회귀"
+        condition: F
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          kind: daily
+        annotations:
+          summary: "raw_profile(crawler): 어제 {{ $values.C }}건, 최근 7일 중앙값 {{ $values.D }}건. 기준: 중앙값 50% 미만 또는 절대 하한 500건. 확인: 인스타 프로필 API 401(로그아웃 게이트) 여부, crawl_run COLLECT 성공 건수 룰과 함께 볼 것."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-crawler-pg
+            model:
+              refId: A
+              format: table
+              rawSql: |-
+                SELECT count(*) AS value FROM raw_profile
+                WHERE (captured_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date - 1
+          - refId: B
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-crawler-pg
+            model:
+              refId: B
+              format: table
+              rawSql: |-
+                SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY v) AS value FROM (
+                  SELECT COALESCE(cnt, 0) AS v FROM generate_series(
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 8,
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 2,
+                    interval '1 day'
+                  ) AS d
+                  LEFT JOIN (
+                    SELECT (captured_at AT TIME ZONE 'Asia/Seoul')::date AS day, count(*) AS cnt
+                    FROM raw_profile WHERE captured_at >= now() - interval '10 days' GROUP BY 1
+                  ) x ON x.day = d
+                ) s
+          - refId: C
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: D
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: D
+              type: reduce
+              expression: B
+              reducer: last
+          - refId: E
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: E
+              type: math
+              expression: "($C < $D * 0.5 && $C < 1500) || $C < 500"
+          - refId: F
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: F
+              type: threshold
+              expression: E
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # (a)-2 REELS 성공 런수 회귀. 사고 기간(09-02~09-03 KST) 동안 REELS는 2,499~2,994로 영향
+      # 없었다(프로필 401은 COLLECT job만 때렸다) — 그래도 REELS 자체 장애 감지용으로 둔다. 08-26
+      # 이후 안정 2,494~3,395. 08-18~08-24에 있던 옛 저조 패턴(~700~730, raw_profile과 같은 시기·
+      # 같은 원인 추정)은 08-25 이후 재발 없음 — HARD를 그 대역(700대) 위에 두지 않고 800으로 잡아
+      # 재발 시에는 여전히 잡히게 했다.
+      - uid: collection-reels-runs-daily
+        title: "crawl_run REELS 성공 런수 회귀"
+        condition: F
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          kind: daily
+        annotations:
+          summary: "REELS 성공 런(crawler): 어제 {{ $values.C }}건, 최근 7일 중앙값 {{ $values.D }}건. 기준: 중앙값 50% 미만 또는 절대 하한 800건. 확인: crawl_run WHERE job='REELS' 최근 상태."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-crawler-pg
+            model:
+              refId: A
+              format: table
+              rawSql: |-
+                SELECT count(*) AS value FROM crawl_run
+                WHERE job = 'REELS' AND status = 'SUCCEEDED'
+                  AND (started_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date - 1
+          - refId: B
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-crawler-pg
+            model:
+              refId: B
+              format: table
+              rawSql: |-
+                SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY v) AS value FROM (
+                  SELECT COALESCE(cnt, 0) AS v FROM generate_series(
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 8,
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 2,
+                    interval '1 day'
+                  ) AS d
+                  LEFT JOIN (
+                    SELECT (started_at AT TIME ZONE 'Asia/Seoul')::date AS day, count(*) AS cnt
+                    FROM crawl_run WHERE job = 'REELS' AND status = 'SUCCEEDED'
+                      AND started_at >= now() - interval '10 days' GROUP BY 1
+                  ) x ON x.day = d
+                ) s
+          - refId: C
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: D
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: D
+              type: reduce
+              expression: B
+              reducer: last
+          - refId: E
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: E
+              type: math
+              expression: "($C < $D * 0.5 && $C < 1500) || $C < 800"
+          - refId: F
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: F
+              type: threshold
+              expression: E
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # (a)-3 COLLECT 성공 런수 회귀 — 09-02~09-04 사고를 정확히 잡는 룰(09-03 KST 41건, 정상
+      # 2,819~4,357). raw_profile-daily와 사실상 같은 신호라 둘 다 살려둔다(하나는 crawl_run 관점,
+      # 하나는 raw_profile 적재 관점 — 원인 진단 시 어느 단계에서 끊겼는지 교차 확인용).
+      - uid: collection-collect-runs-daily
+        title: "crawl_run COLLECT 성공 런수 회귀"
+        condition: F
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          kind: daily
+        annotations:
+          summary: "COLLECT 성공 런(crawler): 어제 {{ $values.C }}건, 최근 7일 중앙값 {{ $values.D }}건. 기준: 중앙값 50% 미만 또는 절대 하한 800건. 확인: 인스타 프로필 API 401 여부, raw_profile 일별 수집량 룰과 함께 볼 것."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-crawler-pg
+            model:
+              refId: A
+              format: table
+              rawSql: |-
+                SELECT count(*) AS value FROM crawl_run
+                WHERE job = 'COLLECT' AND status = 'SUCCEEDED'
+                  AND (started_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date - 1
+          - refId: B
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-crawler-pg
+            model:
+              refId: B
+              format: table
+              rawSql: |-
+                SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY v) AS value FROM (
+                  SELECT COALESCE(cnt, 0) AS v FROM generate_series(
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 8,
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 2,
+                    interval '1 day'
+                  ) AS d
+                  LEFT JOIN (
+                    SELECT (started_at AT TIME ZONE 'Asia/Seoul')::date AS day, count(*) AS cnt
+                    FROM crawl_run WHERE job = 'COLLECT' AND status = 'SUCCEEDED'
+                      AND started_at >= now() - interval '10 days' GROUP BY 1
+                  ) x ON x.day = d
+                ) s
+          - refId: C
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: D
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: D
+              type: reduce
+              expression: B
+              reducer: last
+          - refId: E
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: E
+              type: math
+              expression: "($C < $D * 0.5 && $C < 1500) || $C < 800"
+          - refId: F
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: F
+              type: threshold
+              expression: E
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # (a)-4 Hiker 콜(raw.fetch_payload) 일 합계 회귀 — 등록 폭증·백필로 변동이 극심하다(운영
+      # 실측 534~29,710, 최대/최소 비율 약 55배). 스펙 제안 SOFT 2000은 백테스트에서 08-22(1,490건,
+      # 당시 중앙값 3,200의 47% — 정상적인 등록 저조일)에 오탐이 나 SOFT를 1000으로 낮췄다(HARD는
+      # 그대로 500). 09-02~09-04 사고 기간엔 오히려 이 지표가 올라갔다(hiker 폴백 증가) — 이
+      # 룰만으로는 그 사고를 못 잡는다, raw_profile·COLLECT 룰이 주 감지선이고 이건 hiker 콜 자체가
+      # 끊기는 별개 장애(과금 소진, 키 폐기, 네트워크) 전용 가드다.
+      - uid: collection-hiker-calls-daily
+        title: "Hiker 콜(raw.fetch_payload) 일 합계 회귀"
+        condition: F
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          kind: daily
+        annotations:
+          summary: "Hiker 콜(monitoring): 어제 {{ $values.C }}건, 최근 7일 중앙값 {{ $values.D }}건. 기준: 중앙값 50% 미만(SOFT 1000) 또는 절대 하한 500건. 변동이 큰 지표라 절대 하한 위주로 본다. 확인: Hiker 잔액/키 상태, 벤더 API 응답."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-monitoring-pg
+            model:
+              refId: A
+              format: table
+              rawSql: |-
+                SELECT count(*) AS value FROM raw.fetch_payload
+                WHERE (fetched_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date - 1
+          - refId: B
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-monitoring-pg
+            model:
+              refId: B
+              format: table
+              rawSql: |-
+                SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY v) AS value FROM (
+                  SELECT COALESCE(cnt, 0) AS v FROM generate_series(
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 8,
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 2,
+                    interval '1 day'
+                  ) AS d
+                  LEFT JOIN (
+                    SELECT (fetched_at AT TIME ZONE 'Asia/Seoul')::date AS day, count(*) AS cnt
+                    FROM raw.fetch_payload WHERE fetched_at >= now() - interval '10 days' GROUP BY 1
+                  ) x ON x.day = d
+                ) s
+          - refId: C
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: D
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: D
+              type: reduce
+              expression: B
+              reducer: last
+          - refId: E
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: E
+              type: math
+              expression: "($C < $D * 0.5 && $C < 1000) || $C < 500"
+          - refId: F
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: F
+              type: threshold
+              expression: E
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # (a)-5 브랜드 태그 게시물 "발견"(first_seen_at) 일별 건수 회귀 — 브랜드 등록 폭증에 따라
+      # 상향 변동이 극심하다(운영 실측 54~18,198). 09-02~09-04 사고 기간엔 오히려 증가(1,787→9,713→
+      # 9,122) — 태그 발견 파이프라인은 무관했다는 뜻. SOFT/HARD를 백테스트로 낮게 잡아(150/50)
+      # "거의 0에 가까운 붕괴"만 잡는 절대 하한 위주 가드로 설계 — 등록량 기반 자연 변동(352~1,847
+      # 대) 오탐 없음을 08-16~09-04 KST 전 구간에서 확인.
+      - uid: collection-brand-tagged-discovery-daily
+        title: "브랜드 태그 게시물 발견 일별 건수 회귀"
+        condition: F
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          kind: daily
+        annotations:
+          summary: "태그 발견(monitoring): 어제 {{ $values.C }}건, 최근 7일 중앙값 {{ $values.D }}건. 기준: 중앙값 50% 미만(SOFT 150) 또는 절대 하한 50건. 등록량에 따라 변동이 커서 절대 하한 위주로 본다. 확인: brand_tagged_post 태그 감지 파이프라인, 크론 상태."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-monitoring-pg
+            model:
+              refId: A
+              format: table
+              rawSql: |-
+                SELECT count(*) AS value FROM brand_tagged_post
+                WHERE (first_seen_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date - 1
+          - refId: B
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-monitoring-pg
+            model:
+              refId: B
+              format: table
+              rawSql: |-
+                SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY v) AS value FROM (
+                  SELECT COALESCE(cnt, 0) AS v FROM generate_series(
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 8,
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 2,
+                    interval '1 day'
+                  ) AS d
+                  LEFT JOIN (
+                    SELECT (first_seen_at AT TIME ZONE 'Asia/Seoul')::date AS day, count(*) AS cnt
+                    FROM brand_tagged_post WHERE first_seen_at >= now() - interval '10 days' GROUP BY 1
+                  ) x ON x.day = d
+                ) s
+          - refId: C
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: D
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: D
+              type: reduce
+              expression: B
+              reducer: last
+          - refId: E
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: E
+              type: math
+              expression: "($C < $D * 0.5 && $C < 150) || $C < 50"
+          - refId: F
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: F
+              type: threshold
+              expression: E
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # (a)-6 브랜드 태그 게시물 "보강"(enriched_at) 일별 건수 회귀 — first_seen보다도 더 변동이
+      # 크다(운영 실측 3~13,943). SOFT 30/HARD 10으로 아주 낮게 잡았다 — 08-23 실측 3건은 이 기준으로도
+      # 걸리는데(그날 median 787 대비 3건은 명백히 이상), 그 시점엔 보강 대상 백로그가 실제로 없었을
+      # 가능성도 있어 완전히 배제하지 못했다(백테스트 문서 §6 참조). 그래도 절대치 자체가 10 미만인
+      # 날은 파이프라인이 죽었다고 보는 게 안전해 HARD는 낮게 유지했다.
+      - uid: collection-brand-tagged-enrich-daily
+        title: "브랜드 태그 게시물 보강 일별 건수 회귀"
+        condition: F
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          kind: daily
+        annotations:
+          summary: "태그 보강(monitoring): 어제 {{ $values.C }}건, 최근 7일 중앙값 {{ $values.D }}건. 기준: 중앙값 50% 미만(SOFT 30) 또는 절대 하한 10건. 변동이 매우 커서 절대 하한 위주로 본다. 확인: brand_tagged_post 보강(enrich) 크론 상태 - 백로그 없어 정상적으로 낮을 수도 있음."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-monitoring-pg
+            model:
+              refId: A
+              format: table
+              rawSql: |-
+                SELECT count(*) AS value FROM brand_tagged_post
+                WHERE (enriched_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date - 1
+          - refId: B
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-monitoring-pg
+            model:
+              refId: B
+              format: table
+              rawSql: |-
+                SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY v) AS value FROM (
+                  SELECT COALESCE(cnt, 0) AS v FROM generate_series(
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 8,
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 2,
+                    interval '1 day'
+                  ) AS d
+                  LEFT JOIN (
+                    SELECT (enriched_at AT TIME ZONE 'Asia/Seoul')::date AS day, count(*) AS cnt
+                    FROM brand_tagged_post WHERE enriched_at >= now() - interval '10 days' GROUP BY 1
+                  ) x ON x.day = d
+                ) s
+          - refId: C
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: D
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: D
+              type: reduce
+              expression: B
+              reducer: last
+          - refId: E
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: E
+              type: math
+              expression: "($C < $D * 0.5 && $C < 30) || $C < 10"
+          - refId: F
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: F
+              type: threshold
+              expression: E
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # (a)-7 self 경로 스윕(fetchPost/fetchComments) 26시간 누적 건수 회귀 — 17:00 UTC 스윕 1회를
+      # 창에 온전히 담기 위해 26h(스윕 소요 최대 55분 + 여유). B는 SQL처럼 결측일 0 채움이 안 되는
+      # PromQL 특성상 최근 7일 평균으로 근사(increase(...[7d])/7). ⚠️ self는 09-05 현재 IG 하이브리드
+      # Phase1 트랙에서 feed/user 401로 확장이 보류돼 있어(memory: "self 확장 보류") self 트래픽이
+      # 실질 0에 가깝다 — 그래서 E에 기준선 게이트 `$D >= HARD`를 앞세운다: 직전 7일 평균이 HARD
+      # 미만이면(self가 애초에 꺼져 있던 주) 침묵하고, self가 돌다가 끊긴 경우에만 운다(09-05 dev
+      # 실측: 게이트 없이는 Prometheus 무데이터에서 `or vector(0)` 때문에 상시 fire). 부작용: self가
+      # 일주일 넘게 죽어 있으면 이 룰도 조용해진다 — 그 상태는 hiker 폴백 비율(대시보드)로 본다. 리텐션 30d지만
+      # instagram_source_route_total{backend="self"} 라벨 조합 자체가 09-03 UTC 이전으로는 조회되지
+      # 않아(백테스트 문서 §7) 사고 당일 소급 검증은 못 했다 — SOFT/HARD는 CONTEXT 실측(self ok
+      # 24h~15,324, self 활성 시점 기준)의 절반/오분의 일 근사치.
+      - uid: collection-self-sweep-daily
+        title: "self 스윕(fetchPost/fetchComments) 26h 누적 회귀"
+        condition: F
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          kind: daily
+        annotations:
+          summary: "self 스윕(prometheus): 최근 26h {{ $values.C }}건, 최근 7일 평균 {{ $values.D }}건. 기준: 평균 50% 미만(SOFT 8000) 또는 절대 하한 3000건(직전 7일 평균이 3000 이상일 때만 판정). 확인: monitoring 로그의 self 라우트 오류, hiker 폴백 비율 패널."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 93600, to: 0 }
+            datasourceUid: hypenow-prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: 'sum(increase(instagram_source_route_total{backend="self",outcome="ok",path=~"fetchPost|fetchComments"}[26h])) or vector(0)'
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 604800, to: 0 }
+            datasourceUid: hypenow-prometheus
+            model:
+              refId: B
+              editorMode: code
+              expr: '(sum(increase(instagram_source_route_total{backend="self",outcome="ok",path=~"fetchPost|fetchComments"}[7d])) or vector(0)) / 7'
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: C
+            relativeTimeRange: { from: 93600, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: D
+            relativeTimeRange: { from: 604800, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: D
+              type: reduce
+              expression: B
+              reducer: last
+          - refId: E
+            relativeTimeRange: { from: 93600, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: E
+              type: math
+              expression: "$D >= 3000 && (($C < $D * 0.5 && $C < 8000) || $C < 3000)"
+          - refId: F
+            relativeTimeRange: { from: 93600, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: F
+              type: threshold
+              expression: E
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # (b) sweep_run 미실행/실패 — 매일 17:00 UTC(KST 02:00) 1행, value: 1=26시간 넘게 신규 스윕
+      # 행 없음(크론 사망), 2=가장 최근 스윕이 ok=false(스윕 자체는 돌았는데 실패), 0=정상.
+      - uid: collection-sweep-run-missing
+        title: "sweep_run 미실행 또는 실패"
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          kind: daily
+        annotations:
+          summary: "sweep_run 이상(monitoring): {{ $values.B }} (1=26시간 넘게 신규 스윕 없음/크론 사망, 2=가장 최근 스윕 실패). 확인: sweep_run 최근 행, 크론 로그."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 172800, to: 0 }
+            datasourceUid: hypenow-monitoring-pg
+            model:
+              refId: A
+              format: table
+              rawSql: |-
+                SELECT CASE
+                  WHEN max(started_at) < now() - interval '26 hours' THEN 1
+                  WHEN (SELECT ok FROM sweep_run ORDER BY started_at DESC LIMIT 1) IS FALSE THEN 2
+                  ELSE 0
+                END AS value
+                FROM sweep_run
+          - refId: B
+            relativeTimeRange: { from: 172800, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 172800, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # (d) 벤더 잔액 하한 — hypenow_vendor_balance{vendor,unit}는 09-05 현재 미배포(런북 §14-2-6
+      # node-exporter textfile 컬렉터 + vendor-balance.sh 크론이 아직 서버에 없음, 백테스트 문서 §8
+      # 확인) → 지금은 항상 NoData. noDataState OK로 둬서 배포 전까지는 조용하다.
+      - uid: vendor-hiker-requests-low
+        title: "Hiker 잔여 요청 수 부족"
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          kind: daily
+        annotations:
+          summary: "Hiker 잔액(prometheus): {{ $values.B }}건 남음. 기준: 30,000건(약 2일치, 일 소비 실측 15,000~25,000 기준 · 약 $21) 미만. 확인: https://api.hikerapi.com/sys/balance, 충전 필요 여부."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: hypenow-prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: 'hypenow_vendor_balance{vendor="hiker",unit="requests"}'
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [30000]
+
+      - uid: vendor-dataimpulse-residential-low
+        title: "DataImpulse 레지던시 잔여 트래픽 부족"
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          kind: daily
+        annotations:
+          summary: "DataImpulse 레지던시 잔액(prometheus): {{ $values.B }}바이트 남음. 기준: 4GB(약 2일치, self 스윕 실측 1.75GB/일 기준) 미만. 확인: gw.dataimpulse.com:777/api/stats, 충전 필요 여부."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: hypenow-prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: 'hypenow_vendor_balance{vendor="dataimpulse_residential",unit="bytes"}'
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [4000000000]
+
+      - uid: vendor-dataimpulse-mobile-low
+        title: "DataImpulse 모바일 잔여 트래픽 부족"
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          kind: daily
+        annotations:
+          summary: "DataImpulse 모바일 잔액(prometheus): {{ $values.B }}바이트 남음. 기준: 500MB 미만(레지던시 대비 소진 속도 대략치, 모바일은 사용량이 작아 넉넉히 잡음). 확인: gw.dataimpulse.com:777/api/stats, 충전 필요 여부."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: hypenow-prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: 'hypenow_vendor_balance{vendor="dataimpulse_mobile",unit="bytes"}'
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [500000000]
+
+      # Hiker 일 소비 이상 급증 — delta(...[24h])는 잔액이 줄면 음수라 부호를 뒤집어(-delta) 소비량
+      # 형태로 만든다. 충전(값이 오히려 오름)은 delta가 양수가 돼 burn이 음수가 되므로 gt 임계값에
+      # 안전 방향(알람 안 남). 실측 일 소비 15,000~25,000 대비 40,000은 통상 소비의 약 2배.
+      - uid: vendor-hiker-daily-burn-high
+        title: "Hiker 일 소비 이상 급증"
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          kind: daily
+        annotations:
+          summary: "Hiker 24h 소비(prometheus): {{ $values.B }}건. 기준: 40,000건 초과(실측 정상 소비 15,000~25,000의 약 2배). 확인: 콜 폭주 원인(재시도 루프, 신규 등록 폭증)."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 86400, to: 0 }
+            datasourceUid: hypenow-prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: '-delta(hypenow_vendor_balance{vendor="hiker",unit="requests"}[24h])'
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 86400, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 86400, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [40000]
+
+      # (e) 좋아요 NULL 비율(likes_hidden 제외) 일별 회귀 — 스펙 제안 절대 하한 0.3(30%)은 백테스트
+      # 실측과 안 맞는다: 08-16~09-02 KST는 전부 0~0.5%대(사실상 0)였고, 사고 여파로 09-03 2.5%→
+      # 09-04 5.9%까지 오른 게 관측된 최댓값이다(백테스트 문서 §9) — 30%는 이 지표로는 사실상 영원히
+      # 안 울리는 죽은 임계값이라 0.02(2%)로 낮췄다. 그 결과 09-03(2.54%)부터 바로 잡히고, 08-30~
+      # 09-02 정상구간(0.14~0.53%)에는 오탐이 없다.
+      - uid: quality-brand-post-likes-null-daily
+        title: "브랜드 게시물 좋아요 NULL 비율 회귀"
+        condition: F
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          kind: daily
+        annotations:
+          summary: "좋아요 NULL 비율(monitoring): 어제 {{ $values.C }}, 최근 7일 중앙값 {{ $values.D }}. 기준: 중앙값의 2배 초과이면서 절대 0.02(2%) 초과. 확인: brand_post_snapshot 수집 완결성, 프로필 API 상태."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-monitoring-pg
+            model:
+              refId: A
+              format: table
+              rawSql: |-
+                SELECT avg((likes IS NULL AND NOT likes_hidden)::int)::float AS value
+                FROM brand_post_snapshot
+                WHERE captured_on = (now() AT TIME ZONE 'Asia/Seoul')::date - 1
+          - refId: B
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: hypenow-monitoring-pg
+            model:
+              refId: B
+              format: table
+              rawSql: |-
+                SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY v) AS value FROM (
+                  SELECT COALESCE(r, 0) AS v FROM generate_series(
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 8,
+                    (now() AT TIME ZONE 'Asia/Seoul')::date - 2,
+                    interval '1 day'
+                  ) AS d
+                  LEFT JOIN (
+                    SELECT captured_on AS day, avg((likes IS NULL AND NOT likes_hidden)::int)::float AS r
+                    FROM brand_post_snapshot
+                    WHERE captured_on >= (now() AT TIME ZONE 'Asia/Seoul')::date - 10 GROUP BY 1
+                  ) x ON x.day = d
+                ) s
+          - refId: C
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: D
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: D
+              type: reduce
+              expression: B
+              reducer: last
+          - refId: E
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: E
+              type: math
+              expression: "$C > $D * 2 && $C > 0.02"
+          - refId: F
+            relativeTimeRange: { from: 864000, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: F
+              type: threshold
+              expression: E
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+  # 빠른 반응 그룹(10분 주기) — self 백엔드 건강도·잔액 신선도. self는 09-05 현재 IG 하이브리드
+  # Phase1에서 보류 중이라 아래 self 관련 두 룰은 볼륨 게이트(>30) 덕에 self가 꺼져 있는 동안은
+  # 조용하다(분모가 게이트 미만이면 E가 애초에 평가 안 됨) — collection-self-sweep-daily(느린 그룹,
+  # 절대 하한 방식)와 설계가 다른 이유가 이거다.
+  - orgId: 1
+    name: hypenow-collection-fast
+    folder: 운영
+    interval: 10m
+    rules:
+      # (c) self 성공률 30분 — self 실패는 backend="hiker",outcome="fallback:*"로 찍힌다(self
+      # 라벨엔 ok·partial만 존재, CONTEXT 확인됨) → 분모를 self 전체 + hiker fallback으로 잡아야
+      # "self로 시도했다가 실패해 hiker로 넘어간" 것까지 분모에 포함된다. or vector(0)으로 0/0을
+      # 방어(self 트래픽이 아예 없으면 분모 0 → 볼륨 게이트에서 걸러짐, NoData 아님).
+      - uid: collection-self-success-rate-30m
+        title: "self 백엔드 성공률 저하(30분)"
+        condition: F
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          kind: fast
+        annotations:
+          summary: "self 성공률(prometheus): 30분간 성공 {{ $values.C }}건 / 시도 {{ $values.D }}건. 기준: 시도 30건 초과이면서 성공률 50% 미만. 확인: fallback:LOGIN_WALL 비율 급증 여부(로그아웃 게이트 재발 신호)."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: hypenow-prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: 'sum(increase(instagram_source_route_total{backend="self",outcome="ok"}[30m])) or vector(0)'
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: hypenow-prometheus
+            model:
+              refId: B
+              editorMode: code
+              expr: '(sum(increase(instagram_source_route_total{backend="self"}[30m])) or vector(0)) + (sum(increase(instagram_source_route_total{backend="hiker",outcome=~"fallback:.*"}[30m])) or vector(0))'
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: C
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: D
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: D
+              type: reduce
+              expression: B
+              reducer: last
+          - refId: E
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: E
+              type: math
+              expression: "$D > 30 && $C < $D * 0.5"
+          - refId: F
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: F
+              type: threshold
+              expression: E
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # partial 급증 30분 — fetchComments 기준 시도 대비 partial 비율. 볼륨 게이트 30(fetchComments
+      # 시도 기준).
+      - uid: quality-self-partial-30m
+        title: "self partial 응답 급증(30분)"
+        condition: F
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          kind: fast
+        annotations:
+          summary: "self partial 비율(prometheus): 30분간 partial {{ $values.C }}건 / fetchComments 시도 {{ $values.D }}건. 기준: 시도 30건 초과이면서 partial 비율 30% 초과. 확인: 댓글 응답 스키마 변경, 레이트리밋 여부."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: hypenow-prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: 'sum(increase(instagram_source_route_total{backend="self",outcome="partial"}[30m])) or vector(0)'
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: hypenow-prometheus
+            model:
+              refId: B
+              editorMode: code
+              expr: 'sum(increase(instagram_source_route_total{backend="self",path="fetchComments"}[30m])) or vector(0)'
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: C
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: D
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: D
+              type: reduce
+              expression: B
+              reducer: last
+          - refId: E
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: E
+              type: math
+              expression: "$D > 30 && $C > $D * 0.3"
+          - refId: F
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: F
+              type: threshold
+              expression: E
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # 잔액 신선도(크론 사망 감지) — updated_seconds가 없으면(or vector(0)) time()과의 차가 커져
+      # 결국 절대치로도 걸리지만, noDataState를 Alerting으로 둬서 메트릭 자체가 아예 없는 경우도
+      # 잡는다. ⚠️ 09-05 현재 vendor-balance.sh 크론이 런북 §14-2-6 배포 전이라 이 룰은 배포되는
+      # 즉시 상시 fire한다(메트릭 자체가 없음) — 크론 등록 전까지는 이 룰의 알람을 무시할 것.
+      - uid: vendor-balance-stale
+        title: "벤더 잔액 지표 갱신 정지"
+        condition: C
+        for: 0m
+        noDataState: Alerting
+        execErrState: Error
+        labels:
+          severity: warning
+          kind: fast
+        annotations:
+          summary: "벤더 잔액 갱신 지연(prometheus): 마지막 갱신 후 {{ $values.B }}초 경과. 기준: 3600초(1시간) 초과. ⚠️ vendor-balance.sh 크론(런북 §14-2-6) 배포 전에는 메트릭이 없어 상시 fire - 크론 등록 여부부터 확인."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: hypenow-prometheus
+            model:
+              refId: A
+              editorMode: code
+              expr: 'time() - (max(hypenow_vendor_balance_updated_seconds) or vector(0))'
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3600]
